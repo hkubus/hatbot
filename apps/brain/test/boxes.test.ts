@@ -118,6 +118,39 @@ test("a bot changes only its own boxes; with a code bot, every box is its to mak
   expect(t.boxes.feeds?.list(2)).toEqual([]);
 });
 
+test("a box's picture for the list: drawn once with what it saved, again after it saves or changes, none without a desktop", async () => {
+  const t = await testApp();
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Habits", html: PAGE }, {});
+  const picture = (q = "") => t.call("GET", `/boxes/1/preview${q}`, undefined, signIn(t));
+  t.agent.look = {
+    png: Buffer.from("png").toString("base64"),
+    width: 960,
+    height: 600,
+    errors: [],
+  };
+
+  const [a, b] = await Promise.all([picture(), picture()]);
+  expect(a.headers.get("content-type")).toBe("image/png");
+  expect(await a.text()).toBe("png");
+  expect(await b.text()).toBe("png");
+  expect(t.agent.looks).toHaveLength(1);
+  await picture();
+  expect(t.agent.looks).toHaveLength(1);
+  await picture("?dark=1");
+  expect(t.agent.looks.map((l) => l.dark)).toEqual([false, true]);
+
+  await page(t, { op: "set", key: "streak", value: 4 });
+  await picture();
+  expect(t.agent.looks[2]?.html).toContain('"streak":4');
+  t.boxes.save(1, "Habits", PAGE.replace("Walk", "Run"), {});
+  await picture();
+  expect(t.agent.looks[3]?.html).toContain("Run");
+
+  t.agent.configured = false;
+  t.boxes.save(1, "Habits", PAGE, {});
+  expect((await picture()).status).toBe(404);
+});
+
 test("box_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
   const model = new FakeModel([
     { content: [toolUse("box_look", { box: 1 })] },

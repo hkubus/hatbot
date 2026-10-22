@@ -1,17 +1,26 @@
 // Each box's page is sandboxed on an opaque origin; what it saves goes through the app to the brain.
-import type { Box, BoxAnswer, BoxDetail, BoxSecret, BoxPage as BoxSource } from "@hatbot/shared";
+import {
+  API_PREFIX,
+  type Box,
+  type BoxAnswer,
+  type BoxDetail,
+  type BoxSecret,
+  type BoxPage as BoxSource,
+} from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask } from "../confirm";
 import { NoForm } from "../form";
 import { timeOrDay } from "../format";
+import { Icon } from "../icons";
+import { Link } from "../link";
 import { LoadError } from "../load";
 import { useMedia } from "../media";
 import { navigate } from "../router";
 import { loadBoxes, putBox, useStore } from "../store";
 import { useTheme } from "../theme";
-import { BackHead, Group, LinkRow, Row, Select } from "../ui";
+import { BackHead, Group, Row, Select } from "../ui";
 
 export function BoxesPage() {
   const boxes = useStore((s) => s.boxes);
@@ -32,26 +41,47 @@ export function BoxesPage() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id);
   return (
     <section className="view">
-      <div className="page narrow">
+      <div className="page">
         {error && <LoadError error={error} retry={() => setAttempt((n) => n + 1)} />}
-        {loaded && (
-          <Group>
+        {loaded && !list.length && (
+          <p className="muted">
+            No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.
+          </p>
+        )}
+        {loaded && !!list.length && (
+          <div className="box-grid">
             {list.map((b) => (
-              <LinkRow key={b.id} to={`/boxes/${b.id}`} label={b.title}>
-                <span className="val">{timeOrDay(b.updatedAt)}</span>
-              </LinkRow>
+              <BoxCard key={b.id} box={b} />
             ))}
-            {!list.length && (
-              <div className="row">
-                <span className="muted">
-                  No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.
-                </span>
-              </div>
-            )}
-          </Group>
+          </div>
         )}
       </div>
     </section>
+  );
+}
+
+function useDark() {
+  const theme = useTheme();
+  const systemDark = useMedia("(prefers-color-scheme: dark)");
+  return theme === "dark" || (theme === "system" && systemDark);
+}
+
+function BoxCard({ box }: { box: Box }) {
+  const dark = useDark();
+  const src = `${API_PREFIX}/boxes/${box.id}/preview?v=${box.version}${dark ? "&dark=1" : ""}`;
+  const [failed, setFailed] = useState("");
+  return (
+    <Link className="box-card" to={`/boxes/${box.id}`}>
+      <div className="box-shot">
+        {failed === src ? (
+          <Icon name="box" />
+        ) : (
+          <img src={src} alt="" loading="lazy" onError={() => setFailed(src)} />
+        )}
+      </div>
+      <b>{box.title}</b>
+      <span className="muted">{timeOrDay(box.updatedAt)}</span>
+    </Link>
   );
 }
 
@@ -293,9 +323,7 @@ const SANDBOX =
  * the frame has left that page, which then doesn't show under Hatbot's toolbar either.
  */
 function BoxFrame({ id, version, title }: { id: number; version: number; title: string }) {
-  const theme = useTheme();
-  const systemDark = useMedia("(prefers-color-scheme: dark)");
-  const dark = theme === "dark" || (theme === "system" && systemDark);
+  const dark = useDark();
   const darkNow = useRef(dark);
   darkNow.current = dark;
   const frame = useRef<HTMLIFrameElement>(null);

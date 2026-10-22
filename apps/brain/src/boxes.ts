@@ -28,6 +28,7 @@ import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./
 import { sameText, secretKey } from "./auth/keys";
 import type { BoxFeeds } from "./box-feeds";
 import type { Db } from "./db";
+import type { DesktopAgent } from "./desktop/client";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import type { Backends } from "./hatbox/backends";
@@ -67,6 +68,8 @@ const sorted = (files: BoxFile[] | undefined) =>
   files?.length ? [...files].sort((a, b) => (a.path < b.path ? -1 : 1)) : undefined;
 
 const OPEN_MS = 10 * 60_000;
+const PREVIEW_SCREEN = { width: 960, height: 600 };
+const PREVIEW_RETRY_MS = 10 * 60_000;
 
 export const BOX_ASK_MODEL = "claude-haiku-5-5";
 const ASK_TOKENS = 4000;
@@ -90,6 +93,11 @@ export class Boxes {
   /** What hatbox.ask's answers on their way may still cost, held against the boxes' daily limit. */
   private asking = 0;
   backends?: Backends;
+  private previewing = new Map<string, Promise<Uint8Array | null>>();
+  private drawing: Promise<unknown> = Promise.resolve();
+  private failedPreviews = new Map<string, number>();
+  /** Bumped when a page saves, so a picture drawn before that isn't kept. */
+  private saves = new Map<number, number>();
 
   constructor(
     private db: Db,
@@ -404,6 +412,7 @@ export class Boxes {
         };
       case "delete":
         this.db.query("DELETE FROM box_store WHERE box_id = ? AND key = ?").run(id, c.key);
+        this.saved(id);
         return {};
       case "set": {
         const json = JSON.stringify(c.value);
@@ -423,6 +432,7 @@ export class Boxes {
              ON CONFLICT (box_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
           )
           .run(id, c.key, json, this.now());
+        this.saved(id);
         return {};
       }
       case "ask":
@@ -534,6 +544,63 @@ export class Boxes {
       )
       .all(id);
     return Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value)]));
+  }
+
+  private saved(id: number) {
+    this.saves.set(id, (this.saves.get(id) ?? 0) + 1);
+    this.db.query("DELETE FROM box_previews WHERE box_id = ?").run(id);
+  }
+
+  /**
+   * The top of the box's page as you'd see it, with what it saved, drawn on the desktop. Kept until a
+   * new version or the page saves again. Null without a desktop, or for a while after it failed.
+   */
+  async preview(id: number, dark: boolean, desktop: DesktopAgent): Promise<Uint8Array | null> {
+    const box = this.get(id);
+    if (!box) return null;
+    const n = box.version;
+    const kept = this.db
+      .query<{ png: Uint8Array }, [number, number, number]>(
+        "SELECT png FROM box_previews WHERE box_id = ? AND n = ? AND dark = ?",
+      )
+      .get(id, n, dark ? 1 : 0);
+    if (kept) return kept.png;
+    const key = `${id}:${n}:${dark}`;
+    if (
+      !desktop.configured ||
+      this.clock() - (this.failedPreviews.get(key) ?? -Infinity) < PREVIEW_RETRY_MS
+    )
+      return null;
+    let drawn = this.previewing.get(key);
+    if (!drawn) {
+      // One at a time: the desktop turns away more than a few waiting.
+      drawn = this.drawing
+        .then(() => this.drawPreview(id, n, dark, desktop))
+        .catch(() => {
+          this.failedPreviews.set(key, this.clock());
+          return null;
+        })
+        .finally(() => this.previewing.delete(key));
+      this.drawing = drawn;
+      this.previewing.set(key, drawn);
+    }
+    return drawn;
+  }
+
+  private async drawPreview(id: number, n: number, dark: boolean, desktop: DesktopAgent) {
+    const page = this.page(id, n);
+    if (!page) return null;
+    const saves = this.saves.get(id);
+    const { html } = previewed(page.html, dark, this.data(id));
+    const look = await desktop.lookAtBox({ html, csp: FRAME_CSP, ...PREVIEW_SCREEN, dark });
+    const png = Buffer.from(look.png, "base64");
+    if (this.saves.get(id) === saves && this.get(id)?.version === n) {
+      this.db.query("DELETE FROM box_previews WHERE box_id = ? AND n != ?").run(id, n);
+      this.db
+        .query("INSERT OR REPLACE INTO box_previews (box_id, n, dark, png) VALUES (?, ?, ?, ?)")
+        .run(id, n, dark ? 1 : 0, png);
+    }
+    return png;
   }
 
   private sign(id: number, n: number, exp: number): string {

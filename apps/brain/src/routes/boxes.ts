@@ -46,6 +46,13 @@ export const boxRoutes = new Hono<AppEnv>()
   .get("/boxes/:id/versions/:n", (c) =>
     found(c, c.var.boxes.page(id(c), Number(c.req.param("n"))), GONE),
   )
+  .get("/boxes/:id/preview", async (c) => {
+    const png = await c.var.boxes.preview(id(c), c.req.query("dark") === "1", c.var.desktop.agent);
+    if (!png) return c.json({ error: "There's no picture of that box." }, 404);
+    return new Response(png, {
+      headers: { "content-type": "image/png", "cache-control": "private, no-cache" },
+    });
+  })
   .post("/boxes/:id/open", json(OpenBox), (c) => {
     const { version, dark } = c.req.valid("json");
     const box = c.var.boxes.get(id(c));

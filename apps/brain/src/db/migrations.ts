@@ -839,4 +839,14 @@ export const migrations: string[] = [
   CREATE INDEX messages_unread ON messages (conversation_id, id) WHERE role = 'assistant'
     AND status != 'streaming' AND incognito = 0 AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at));
   `,
+  // 49: pictures of boxes for the boxes list, one per version and theme.
+  `
+  CREATE TABLE box_previews (
+    box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+    n INTEGER NOT NULL,
+    dark INTEGER NOT NULL,
+    png BLOB NOT NULL,
+    PRIMARY KEY (box_id, n, dark)
+  );
+  `,
 ];
