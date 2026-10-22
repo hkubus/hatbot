@@ -1,12 +1,11 @@
 import { describeEvery, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
-import { plainText, stamp } from "./format";
-import { Link } from "./link";
+import { plainText } from "./format";
 import { LoadError, useLoad } from "./load";
 import { loadSchedules, loadTasks, useStore } from "./store";
 import { Switch } from "./switch";
-import { StatusChip } from "./tasks";
+import { TaskTable } from "./tasks";
 import { Select } from "./ui";
 
 /** `missing` once everything has loaded without it, or it's been deleted. */
@@ -61,23 +60,7 @@ export function Runs({
       ) : !shown.length ? (
         <div className="muted">Hasn't run yet.</div>
       ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <tbody>
-              {shown.map((t) => (
-                <tr key={t.id} className="link-row">
-                  <td className="wrap">
-                    <Link to={`/tasks/${t.id}`}>{t.summary ? plainText(t.summary) : t.title}</Link>
-                  </td>
-                  <td>
-                    <StatusChip status={t.status} />
-                  </td>
-                  <td className="muted">{stamp(t.startedAt ?? t.createdAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <TaskTable tasks={shown} name={(t) => (t.summary ? plainText(t.summary) : t.title)} />
       )}
     </div>
   );

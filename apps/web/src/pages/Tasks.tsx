@@ -9,9 +9,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
-import { modelName, plainText, shortStamp, time, timeOrDay, usd } from "../format";
+import { modelName, plainText, shortStamp, time, usd } from "../format";
 import { Icon } from "../icons";
-import { Link } from "../link";
 import { LiveView, StepIcon } from "../live";
 import { LoadError, PageLoad, useItem, useLoad } from "../load";
 import { AssistantBody, isMarkdownFile } from "../markdown";
@@ -28,7 +27,15 @@ import {
   negotiationOf,
   useStore,
 } from "../store";
-import { ApprovalCard, isActive, PendingQuestion, Shot, StatusChip, taskLine } from "../tasks";
+import {
+  ApprovalCard,
+  isActive,
+  PendingQuestion,
+  Shot,
+  StatusChip,
+  TaskTable,
+  taskLine,
+} from "../tasks";
 import { BackHead, Group, LinkRow, Seg } from "../ui";
 
 const TASK_PAGE = 50;
@@ -149,36 +156,7 @@ export function Tasks() {
         {ids && !shown.length && (
           <div className="empty">{filter === "active" ? "Nothing running." : "No tasks yet."}</div>
         )}
-        {shown.length > 0 && (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Status</th>
-                  <th>Started</th>
-                  <th className="num">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((t) => (
-                  <tr key={t.id} className="link-row">
-                    <td className="wrap">
-                      <Link className="task-title" to={`/tasks/${t.id}`}>
-                        {t.title}
-                      </Link>
-                    </td>
-                    <td>
-                      <StatusChip status={t.status} />
-                    </td>
-                    <td className="muted">{timeOrDay(t.startedAt ?? t.createdAt)}</td>
-                    <td className="num">{"costUsd" in t ? usd(t.costUsd) : ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {shown.length > 0 && <TaskTable tasks={shown} />}
         {loadingOlder.error && <LoadError error={loadingOlder.error} retry={older} />}
         {filter === "done" && hasOlder && !load.error && !loadingOlder.error && (
           <button
@@ -249,7 +227,7 @@ function Details({ task }: { task: Task }) {
         </>
       )}
       <dt>Started</dt>
-      <dd>{task.startedAt ? shortStamp(task.startedAt) : "–"}</dd>
+      <dd>{task.startedAt ? shortStamp(task.startedAt) : "Not yet"}</dd>
       <dt>Model</dt>
       <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>

@@ -8,12 +8,11 @@ import type {
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { useWidth } from "../chart";
-import { day, modelName, time, usd } from "../format";
+import { dateOnly, day, modelName, time, tokens, usd, weekday } from "../format";
 import { PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { spendAxis, withToday } from "../spend";
 import { useStore } from "../store";
-import { tokenText } from "../tasks";
 import { Seg } from "../ui";
 
 const PURPOSE_NAMES: Record<string, string> = {
@@ -33,9 +32,6 @@ const PURPOSE_NAMES: Record<string, string> = {
 };
 const purposeName = (p: string) =>
   PURPOSE_NAMES[p] ?? p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, " ");
-const parseDay = (d: string) => new Date(`${d}T12:00:00`);
-const fmtDay = (d: string) =>
-  parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
 type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
 
@@ -257,13 +253,13 @@ export function Spend() {
     usd: h.usd,
     axis: i % 6 === 0 ? time(h.hour) : undefined,
     title: `${time(h.hour)}–${time(new Date(Date.parse(h.hour) + 3600_000).toISOString())}`,
-    detail: `${usd(h.usd)} · ${tokenText(h.tokens)} tokens`,
+    detail: `${usd(h.usd)} · ${tokens(h.tokens)} tokens`,
   }));
   const dayPoints: Point[] = days.map((d, i) => ({
     key: d.date,
     usd: d.usd,
-    axis: i % 7 === 0 ? day(parseDay(d.date)) : undefined,
-    title: fmtDay(d.date),
+    axis: i % 7 === 0 ? day(dateOnly(d.date)) : undefined,
+    title: weekday(dateOnly(d.date)),
     detail: usd(d.usd),
   }));
 

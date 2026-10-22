@@ -4,7 +4,7 @@ import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
 import { lineDiff } from "../diff";
-import { dayTime } from "../format";
+import { dayTime, shortSha } from "../format";
 import { Icon } from "../icons";
 import { LoadError, useLoad } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
@@ -238,7 +238,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       setConflict(null);
       // Its new version comes with the refresh that follows.
       setDoc((d) => (d?.path === path ? { ...d, saved: content, state: "ready" } : d));
-      toast(r.sha ? `Saved (${r.sha.slice(0, 7)})` : "No changes", r.sha ? "done" : "info");
+      toast(r.sha ? `Saved (${shortSha(r.sha)})` : "No changes", r.sha ? "done" : "info");
       bumpMemory();
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -312,7 +312,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     try {
       const r = await api<{ sha: string | null }>(`/memory/revert/${c.sha}`, { body: {} });
       toast(
-        r.sha ? `Reverted. New commit ${r.sha.slice(0, 7)}` : "Nothing to revert",
+        r.sha ? `Reverted. New commit ${shortSha(r.sha)}` : "Nothing to revert",
         r.sha ? "done" : "info",
       );
       bumpMemory();
@@ -472,7 +472,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               </>
             ) : sel.kind === "diff" ? (
               <>
-                <span className="path">{sel.commit.sha.slice(0, 7)}</span>
+                <span className="path">{shortSha(sel.commit.sha)}</span>
                 <span title={sel.commit.author}>{sel.commit.message}</span>
                 <span className="spacer" />
                 <button
@@ -597,7 +597,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             )}
             {shownHist?.log.map((c) => (
               <div className="commit" key={c.sha}>
-                <span className="sha">{c.sha.slice(0, 7)}</span>
+                <span className="sha">{shortSha(c.sha)}</span>
                 <div title={`${c.author}: ${c.files.join(", ")}`}>
                   {c.message} <span className="muted">{dayTime(c.date)}</span>
                 </div>

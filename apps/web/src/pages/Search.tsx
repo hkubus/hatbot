@@ -1,7 +1,7 @@
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
-import { plainText } from "../format";
+import { plainText, timeOrDay } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { navigate } from "../router";
@@ -10,9 +10,6 @@ import { StatusChip } from "../tasks";
 import { Group, LinkRow } from "../ui";
 
 const ROUTINE = { schedule: "/schedules", trigger: "/triggers", watcher: "/watchers" } as const;
-
-const day = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 function Snippet({ text: markdown }: { text: string }) {
   const text = plainText(markdown);
@@ -104,7 +101,7 @@ export function Search({ query }: { query: string }) {
                   </div>
                   <span className="val">
                     {manyChats && chat ? `${chatName(getState(), chat)}, ` : ""}
-                    {day(m.createdAt)}
+                    {timeOrDay(m.createdAt)}
                   </span>
                 </Link>
               );
@@ -119,7 +116,7 @@ export function Search({ query }: { query: string }) {
                   <b>{t.title}</b>
                 </div>
                 <StatusChip status={t.status} />
-                <span className="val">{day(t.createdAt)}</span>
+                <span className="val">{timeOrDay(t.startedAt ?? t.createdAt)}</span>
               </Link>
             ))}
           </Group>

@@ -30,7 +30,7 @@ import {
   setDraftFiles,
   useDraftFiles,
 } from "../drafts";
-import { plainText, time } from "../format";
+import { plainText, time, tokens } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
@@ -59,14 +59,7 @@ import {
   trustSchedule,
   useStore,
 } from "../store";
-import {
-  isActive,
-  PendingApproval,
-  PendingQuestion,
-  taskLine,
-  tokenText,
-  whenText,
-} from "../tasks";
+import { isActive, PendingApproval, PendingQuestion, taskLine, whenText } from "../tasks";
 import { splitWaiting } from "../waiting";
 
 const SEEN_AFTER_MS = 1500;
@@ -374,7 +367,7 @@ function ReplyMessage({
             {note && used && " · "}
             {used && (
               <span className="tnum">
-                {tokenText(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
+                {tokens(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
               </span>
             )}
           </div>

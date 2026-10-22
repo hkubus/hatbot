@@ -2,6 +2,7 @@ import { localDay, type Task, type TodoItem, type TodoList } from "@hatbot/share
 import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
+import { dateOnly, day } from "../format";
 import { Link } from "../link";
 import { PageLoad, useLoad } from "../load";
 import { useStore } from "../store";
@@ -9,11 +10,7 @@ import { isActive } from "../tasks";
 import type { Toast } from "../toast";
 import { Group } from "../ui";
 
-/** "25 Oct", from a YYYY-MM-DD date in local time (a bare date would be read as UTC). */
-const dayOf = (date: string) => {
-  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
-  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-};
+const dayOf = (date: string) => day(dateOnly(date));
 
 function Due({ item }: { item: TodoItem }) {
   if (!item.due) return null;

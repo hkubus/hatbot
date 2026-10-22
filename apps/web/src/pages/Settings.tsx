@@ -11,7 +11,7 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
 import { clearDrafts } from "../drafts";
-import { stamp } from "../format";
+import { shortSha, stamp } from "../format";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
@@ -309,9 +309,6 @@ const ANSWER: Record<Approval["status"], string> = {
   cancelled: "Replaced",
 };
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
-
 function TestApprovalRow() {
   const [approval, setApproval] = useState<Approval | null>(null);
   const live = useStore((s) => (approval ? s.approvals[approval.id] : undefined));
@@ -342,7 +339,7 @@ function TestApprovalRow() {
             <span>
               {ANSWER[shown.status]}
               {shown.decidedVia === "ntfy" ? " from the notification" : ""}
-              {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
+              {shown.decidedAt ? `, ${stamp(shown.decidedAt)}` : ""}
             </span>
           )
         )
@@ -476,8 +473,6 @@ function RollbackRow({ toast }: { toast: Toast }) {
   );
 }
 
-const short = (sha?: string) => sha?.slice(0, 7) ?? "";
-
 function UpdateRow({ toast }: { toast: Toast }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState("");
@@ -512,7 +507,7 @@ function UpdateRow({ toast }: { toast: Toast }) {
           else if (s.state === "current") toast("Already up to date", "info");
           else if (next.current?.sha !== w.sha) {
             // The brain restarted on new code; load the new web app too.
-            toast(`Updated to ${short(next.current?.sha)}`);
+            toast(`Updated to ${shortSha(next.current?.sha)}`);
             setTimeout(() => location.reload(), 1200);
           }
         }
@@ -556,7 +551,7 @@ function UpdateRow({ toast }: { toast: Toast }) {
       </div>
       <span className="val">
         {info.current?.sha
-          ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
+          ? `${shortSha(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
           : "Unknown"}
       </span>
       {info.source ? (
