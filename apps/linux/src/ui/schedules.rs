@@ -1,4 +1,5 @@
-// As SchedulesView.swift on iOS. Triggers are set up on the web; their page is trigger.rs.
+// Automations: the built-in jobs, then schedules, watchers and triggers. As SchedulesView.swift on
+// iOS. Triggers are set up on the web; their page is trigger.rs.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -7,14 +8,33 @@ use gtk::glib;
 use gtk::glib::DateTime;
 use hatbot::core::format;
 use hatbot::core::links::Link;
-use hatbot::core::models::{Schedule, TriggerKind};
+use hatbot::core::looking;
+use hatbot::core::models::{AppSettings, Schedule, TriggerKind, WeeklyReport};
 use hatbot::core::schedule::ScheduleForm;
 use hatbot::store::{Change, Listener, Store};
+use serde_json::{Value, json};
 
-use super::form::{TextArea, bot_row, confirm, error_label, note};
+use super::form::{Choice, TextArea, bot_row, confirm, error_label, note};
 use super::icon::Icon;
+use super::looking::HeartbeatPage;
 use super::route;
 use super::shell::Banners;
+
+const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+
+fn hours() -> Vec<(String, String)> {
+    (0..24)
+        .map(|h| (h.to_string(), format!("{h:02}:00")))
+        .collect()
+}
 
 pub struct Schedules {
     pub page: adw::NavigationPage,
@@ -25,10 +45,13 @@ pub struct Schedules {
 struct Inner {
     store: Store,
     error: gtk::Label,
+    built_in: Rc<BuiltIn>,
     schedules: adw::PreferencesGroup,
+    watchers: adw::PreferencesGroup,
     triggers: adw::PreferencesGroup,
     rows: RefCell<Vec<(adw::PreferencesGroup, gtk::Widget)>>,
     loaded: Cell<bool>,
+    watchers_loaded: Cell<bool>,
 }
 
 impl Schedules {
@@ -42,18 +65,22 @@ impl Schedules {
         let error = error_label();
         let top = adw::PreferencesGroup::new();
         top.add(&error);
+        let built_in = BuiltIn::new(store, &error);
         let schedules = adw::PreferencesGroup::builder().title("Schedules").build();
+        let watchers = adw::PreferencesGroup::builder().title("Watchers").build();
         let triggers = adw::PreferencesGroup::builder().title("Triggers").build();
         let prefs = adw::PreferencesPage::new();
         prefs.add(&top);
+        prefs.add(&built_in.group);
         prefs.add(&schedules);
+        prefs.add(&watchers);
         prefs.add(&triggers);
         let view = adw::ToolbarView::new();
         view.add_top_bar(&header);
         banners.add(&view);
         view.set_content(Some(&prefs));
         let page = adw::NavigationPage::builder()
-            .title("Schedules & Triggers")
+            .title("Automations")
             .tag("schedules")
             .child(&view)
             .build();
@@ -61,10 +88,13 @@ impl Schedules {
         let inner = Rc::new(Inner {
             store: store.clone(),
             error,
+            built_in,
             schedules,
+            watchers,
             triggers,
             rows: RefCell::default(),
             loaded: Cell::new(false),
+            watchers_loaded: Cell::new(false),
         });
         let s = store.clone();
         add.connect_clicked(move |_| {
@@ -74,12 +104,15 @@ impl Schedules {
         let weak = Rc::downgrade(&inner);
         page.connect_showing(move |_| {
             let Some(i) = weak.upgrade() else { return };
+            i.built_in.load();
             let weak = Rc::downgrade(&i);
             let store = i.store.clone();
             glib::spawn_future_local(async move {
-                let result = store.load_schedules().await;
+                let (schedules, watchers) =
+                    futures_util::join!(store.load_schedules(), store.load_watchers());
                 let Some(i) = weak.upgrade() else { return };
-                match result {
+                i.watchers_loaded.set(true);
+                match schedules.and(watchers) {
                     Ok(()) => {
                         i.loaded.set(true);
                         i.error.set_visible(false);
@@ -94,12 +127,16 @@ impl Schedules {
         });
         let weak = Rc::downgrade(&inner);
         let listener = store.listen(move |change| {
-            if matches!(
-                change,
-                Change::Schedules | Change::Schedule(_) | Change::Trigger(_) | Change::Chats
-            ) && let Some(i) = weak.upgrade()
-            {
-                i.render();
+            let Some(i) = weak.upgrade() else { return };
+            match change {
+                Change::Schedules
+                | Change::Schedule(_)
+                | Change::Trigger(_)
+                | Change::Chats
+                | Change::Watchers
+                | Change::Watcher(_) => i.render(),
+                Change::Settings => i.built_in.load(),
+                _ => {}
             }
         });
         inner.render();
@@ -130,6 +167,21 @@ impl Inner {
             self.schedules.add(&row);
             rows.push((self.schedules.clone(), row.upcast()));
         }
+        let mut watchers: Vec<_> = st.watchers.values().collect();
+        watchers.sort_by_key(|w| w.id);
+        for w in &watchers {
+            let row = link_row(
+                &w.name,
+                &looking::watcher_line(w),
+                !w.enabled,
+                Link::Watcher(w.id),
+            );
+            if w.enabled && w.last_error.is_some() {
+                row.add_css_class("watcher-trouble");
+            }
+            self.watchers.add(&row);
+            rows.push((self.watchers.clone(), row.upcast()));
+        }
         let mut triggers: Vec<_> = st.triggers.values().collect();
         triggers.sort_by_key(|t| t.id);
         for t in &triggers {
@@ -147,12 +199,17 @@ impl Inner {
                 (
                     &self.schedules,
                     schedules.is_empty(),
-                    "No schedules. Ask Hatbot in the chat, or add one.",
+                    "None yet. Ask Hatbot in chat, or add one here.",
+                ),
+                (
+                    &self.watchers,
+                    watchers.is_empty() && self.watchers_loaded.get(),
+                    "None yet. Ask Hatbot to tell you when something changes.",
                 ),
                 (
                     &self.triggers,
                     triggers.is_empty(),
-                    "No triggers. Set up webhooks and Uptime Kuma on the web.",
+                    "None yet. Set them up on the web.",
                 ),
             ] {
                 if empty {
@@ -162,6 +219,221 @@ impl Inner {
                 }
             }
         }
+    }
+}
+
+/// The jobs Hatbot runs on its own, each set only here.
+struct BuiltIn {
+    store: Store,
+    group: adw::PreferencesGroup,
+    error: gtk::Label,
+    heartbeat: gtk::Label,
+    weekly: adw::SwitchRow,
+    weekday: Rc<Choice>,
+    hour: Rc<Choice>,
+    send_report: adw::ButtonRow,
+    todo_hour: Rc<Choice>,
+    tidy: adw::SwitchRow,
+    settings: RefCell<Option<AppSettings>>,
+    /// Saves on their way: a load meanwhile would put back what they change.
+    saving: Cell<u32>,
+    syncing: Cell<bool>,
+}
+
+impl BuiltIn {
+    fn new(store: &Store, error: &gtk::Label) -> Rc<BuiltIn> {
+        let group = adw::PreferencesGroup::builder()
+            .title("Built in")
+            .visible(false)
+            .build();
+        let heartbeat = gtk::Label::builder().css_classes(["dim-label"]).build();
+        let heartbeat_row = adw::ActionRow::builder()
+            .title("Heartbeat")
+            .activatable(true)
+            .build();
+        heartbeat_row.add_suffix(&heartbeat);
+        heartbeat_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        let s = store.clone();
+        heartbeat_row.connect_activated(move |_| {
+            let p = HeartbeatPage::new(&s);
+            route::push(p.page.clone(), Box::new(p));
+        });
+        group.add(&heartbeat_row);
+        let b = Rc::new_cyclic(|weak: &std::rc::Weak<BuiltIn>| {
+            let w = weak.clone();
+            let weekly_pick = move |field: &'static str| {
+                let w = w.clone();
+                move |v: &str| {
+                    if let Some(b) = w.upgrade() {
+                        b.save_weekly(|wr| match field {
+                            "weekday" => wr.weekday = v.parse().unwrap_or(1),
+                            _ => wr.hour = v.parse().unwrap_or(9),
+                        });
+                    }
+                }
+            };
+            let w = weak.clone();
+            BuiltIn {
+                store: store.clone(),
+                group: group.clone(),
+                error: error.clone(),
+                heartbeat,
+                weekly: adw::SwitchRow::builder().title("Weekly report").build(),
+                weekday: Choice::new("Sent on", weekly_pick("weekday")),
+                hour: Choice::new("Sent at", weekly_pick("hour")),
+                send_report: adw::ButtonRow::builder().title("Send now").build(),
+                todo_hour: Choice::new("To-do reminder each morning at", move |v| {
+                    if let Some(b) = w.upgrade() {
+                        b.save(json!({ "todoHour": v.parse::<i64>().unwrap_or(0) }));
+                    }
+                }),
+                tidy: adw::SwitchRow::builder()
+                    .title("Propose a memory tidy-up weekly")
+                    .build(),
+                settings: RefCell::default(),
+                saving: Cell::new(0),
+                syncing: Cell::new(false),
+            }
+        });
+        for w in [
+            b.weekly.upcast_ref::<gtk::Widget>(),
+            b.weekday.row.upcast_ref(),
+            b.hour.row.upcast_ref(),
+            b.send_report.upcast_ref(),
+            b.todo_hour.row.upcast_ref(),
+            b.tidy.upcast_ref(),
+        ] {
+            group.add(w);
+        }
+        b.connect();
+        b
+    }
+
+    fn connect(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.tidy.connect_active_notify(move |row| {
+            if let Some(b) = weak.upgrade()
+                && !b.syncing.get()
+            {
+                b.save(json!({ "memoryTidy": row.is_active() }));
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.weekly.connect_active_notify(move |row| {
+            if let Some(b) = weak.upgrade()
+                && !b.syncing.get()
+            {
+                let on = row.is_active();
+                b.save_weekly(|w| w.enabled = on);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.send_report.connect_activated(move |row| {
+            let Some(b) = weak.upgrade() else { return };
+            row.set_sensitive(false);
+            let (weak, store, row) = (Rc::downgrade(&b), b.store.clone(), row.clone());
+            glib::spawn_future_local(async move {
+                let result = store.send_report().await;
+                row.set_sensitive(true);
+                match result {
+                    Ok(()) => store.toast("Sent to Hatbot's chat"),
+                    Err(e) => {
+                        if let Some(b) = weak.upgrade() {
+                            b.show_error(&e.message);
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_error(&self, text: &str) {
+        self.error.set_label(text);
+        self.error.set_visible(true);
+    }
+
+    fn load(self: &Rc<Self>) {
+        let (weak, store) = (Rc::downgrade(self), self.store.clone());
+        glib::spawn_future_local(async move {
+            let result = store.load_settings().await;
+            let Some(b) = weak.upgrade() else { return };
+            match result {
+                Ok(s) if b.saving.get() == 0 => {
+                    b.settings.replace(Some(s));
+                    b.render();
+                }
+                Ok(_) => {}
+                Err(e) => b.show_error(&e.message),
+            }
+        });
+    }
+
+    fn save(self: &Rc<Self>, change: Value) {
+        self.saving.set(self.saving.get() + 1);
+        let (weak, store) = (Rc::downgrade(self), self.store.clone());
+        glib::spawn_future_local(async move {
+            let result = store.save_settings(&change).await;
+            let Some(b) = weak.upgrade() else { return };
+            b.saving.set(b.saving.get() - 1);
+            match result {
+                Ok(s) => {
+                    b.error.set_visible(false);
+                    b.settings.replace(Some(s));
+                    store.toast("Saved");
+                }
+                Err(e) => b.show_error(&e.message),
+            }
+            // A failed save puts the control back.
+            b.render();
+        });
+    }
+
+    fn save_weekly(self: &Rc<Self>, edit: impl FnOnce(&mut WeeklyReport)) {
+        let Some(mut w) = self
+            .settings
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.weekly_report.clone())
+        else {
+            return;
+        };
+        edit(&mut w);
+        self.save(json!({ "weeklyReport": w }));
+    }
+
+    fn render(&self) {
+        let Some(s) = self.settings.borrow().clone() else {
+            return;
+        };
+        self.syncing.set(true);
+        self.group.set_visible(true);
+        self.heartbeat.set_label(&match &s.heartbeat {
+            Some(h) if h.enabled => looking::every(h.every_minutes),
+            _ => "Off".into(),
+        });
+        let weekly = s.weekly_report.as_ref();
+        self.weekly.set_visible(weekly.is_some());
+        let on = weekly.is_some_and(|w| w.enabled);
+        self.weekly.set_active(on);
+        self.weekday.row.set_visible(on);
+        self.hour.row.set_visible(on);
+        self.send_report.set_visible(on);
+        if let Some(w) = weekly {
+            let days: Vec<_> = WEEKDAYS
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (i.to_string(), d.to_string()))
+                .collect();
+            self.weekday.set(&days, &w.weekday.to_string());
+            self.hour.set(&hours(), &w.hour.to_string());
+        }
+        self.todo_hour.row.set_visible(s.todo_hour.is_some());
+        if let Some(h) = s.todo_hour {
+            self.todo_hour.set(&hours(), &h.to_string());
+        }
+        self.tidy.set_visible(s.memory_tidy.is_some());
+        self.tidy.set_active(s.memory_tidy == Some(true));
+        self.syncing.set(false);
     }
 }
 

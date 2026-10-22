@@ -859,7 +859,7 @@ pub const CHAT_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 pub const MAX_GROUP_BOTS: usize = 6;
 
-/// A new bot, or every field of one. The model, effort and plugins go as null for "as in Settings"
+/// A new bot, or every field of one. The model, effort and plugins go as null for "Default"
 /// and "every plugin that's on"; Hatbot's name doesn't go at all, since it can't be renamed.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -885,6 +885,13 @@ pub struct GroupChange {
 pub struct PluginName {
     pub id: String,
     pub name: String,
+    /// A brain from before plugins could be off has them all on.
+    #[serde(default = "on")]
+    pub enabled: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]

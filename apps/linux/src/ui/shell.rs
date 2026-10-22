@@ -20,6 +20,7 @@ use super::route;
 use super::schedules::{SchedulePage, Schedules};
 use super::search::Search;
 use super::settings::Settings;
+use super::spend::Spend;
 use super::task::TaskPage;
 use super::tasks::Tasks;
 use super::todo::Todos;
@@ -42,6 +43,7 @@ enum Place {
     Live,
     Schedules,
     Memory,
+    Spend,
     Settings,
 }
 
@@ -97,6 +99,7 @@ struct Inner {
     search: RefCell<Option<Search>>,
     todo: RefCell<Option<Todos>>,
     boxes: RefCell<Option<Boxes>>,
+    spend: RefCell<Option<Spend>>,
     settings: RefCell<Option<Settings>>,
     /// The pages opened over a section, with what drives each, kept while they're in `nav`.
     pushed: RefCell<Vec<(adw::NavigationPage, Box<dyn Any>)>>,
@@ -200,6 +203,7 @@ impl Shell {
             search: RefCell::default(),
             todo: RefCell::default(),
             boxes: RefCell::default(),
+            spend: RefCell::default(),
             settings: RefCell::default(),
             pushed: RefCell::default(),
             place: RefCell::new(Place::Chat(store.state().conversation_id)),
@@ -381,6 +385,12 @@ impl Inner {
                 .get_or_insert_with(|| Schedules::new(&self.store, &self.banners))
                 .page
                 .clone(),
+            Place::Spend => self
+                .spend
+                .borrow_mut()
+                .get_or_insert_with(|| Spend::new(&self.store, &self.banners))
+                .page
+                .clone(),
             Place::Settings => self
                 .settings
                 .borrow_mut()
@@ -439,8 +449,15 @@ impl Inner {
             }
             Link::Live => self.open(Place::Live),
             Link::Watcher(id) => {
+                self.open(Place::Schedules);
                 let p = WatcherPage::new(&self.store, id);
                 self.push(p.page.clone(), Box::new(p));
+            }
+            Link::Spending => {
+                self.open(Place::Settings);
+                if let Some(s) = &*self.settings.borrow() {
+                    s.show_spending();
+                }
             }
             Link::Memory(path) => {
                 self.open(Place::Memory);
@@ -573,12 +590,15 @@ impl Inner {
         let live = sidebar_row(Icon::new("monitor", 18), "Live", None);
         self.sidebar.append(&live);
         rows.push((Place::Live, live));
-        let schedules = sidebar_row(Icon::new("clock", 18), "Schedules & Triggers", None);
+        let schedules = sidebar_row(Icon::new("clock", 18), "Automations", None);
         self.sidebar.append(&schedules);
         rows.push((Place::Schedules, schedules));
         let memory = sidebar_row(Icon::new("book", 18), "Memory", None);
         self.sidebar.append(&memory);
         rows.push((Place::Memory, memory));
+        let spend = sidebar_row(Icon::new("gauge", 18), "Spend", None);
+        self.sidebar.append(&spend);
+        rows.push((Place::Spend, spend));
         let settings = sidebar_row(Icon::new("sliders", 18), "Settings", None);
         self.sidebar.append(&settings);
         rows.push((Place::Settings, settings));

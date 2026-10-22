@@ -15,6 +15,8 @@ pub enum Link {
     Memory(String),
     /// No URL has it: search's watchers open it.
     Watcher(i64),
+    /// No URL has it: Spend's Limits opens Settings at its limits.
+    Spending,
 }
 
 impl Link {

@@ -1,5 +1,5 @@
 // As LookingViews.swift on iOS. Watchers are made and changed in the chat or on the web; here
-// you switch them, look now and delete them.
+// you switch them, look now and delete them. Automations lists them.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -9,7 +9,7 @@ use hatbot::core::format;
 use hatbot::core::links::Link;
 use hatbot::core::looking;
 use hatbot::core::models::{
-    CheckReport, CheckState, ChecksInfo, HeartbeatInfo, HeartbeatSettings, Watcher, WatcherValue,
+    CheckReport, CheckState, ChecksInfo, HATBOT_ID, HeartbeatInfo, HeartbeatSettings, WatcherValue,
 };
 use hatbot::store::{Change, Listener, Store};
 use serde_json::json;
@@ -63,94 +63,6 @@ impl Groups {
             prefs.add(g);
         }
         self.0.replace(groups);
-    }
-}
-
-pub struct WatchersPage {
-    pub page: adw::NavigationPage,
-    _inner: Rc<WatcherList>,
-    _listener: Listener,
-}
-
-struct WatcherList {
-    store: Store,
-    prefs: adw::PreferencesPage,
-    error: gtk::Label,
-    loaded: Cell<bool>,
-    groups: Groups,
-}
-
-impl WatchersPage {
-    pub fn new(store: &Store) -> WatchersPage {
-        let error = error_label();
-        let top = adw::PreferencesGroup::new();
-        top.add(&error);
-        let prefs = adw::PreferencesPage::new();
-        prefs.add(&top);
-        let page = page_with("Watchers", &adw::HeaderBar::new(), &prefs);
-        let l = Rc::new(WatcherList {
-            store: store.clone(),
-            prefs,
-            error,
-            loaded: Cell::new(false),
-            groups: Groups::default(),
-        });
-        let (weak, s) = (Rc::downgrade(&l), store.clone());
-        glib::spawn_future_local(async move {
-            let result = s.load_watchers().await;
-            let Some(l) = weak.upgrade() else { return };
-            l.loaded.set(true);
-            if let Err(e) = result {
-                l.error.set_label(&e.message);
-                l.error.set_visible(true);
-            }
-            l.render();
-        });
-        let weak = Rc::downgrade(&l);
-        let listener = store.listen(move |change| {
-            if let (Some(l), Change::Watchers | Change::Watcher(_)) = (weak.upgrade(), change) {
-                l.render();
-            }
-        });
-        WatchersPage {
-            page,
-            _inner: l,
-            _listener: listener,
-        }
-    }
-}
-
-impl WatcherList {
-    fn render(&self) {
-        if !self.loaded.get() {
-            return;
-        }
-        let group = adw::PreferencesGroup::new();
-        let mut list: Vec<Watcher> = self.store.state().watchers.values().cloned().collect();
-        list.sort_by_key(|w| w.id);
-        if list.is_empty() {
-            group.add(&note(
-                "No watchers. Ask Hatbot in the chat to watch a page or a value.",
-            ));
-        }
-        for w in &list {
-            let row = adw::ActionRow::builder()
-                .title(&w.name)
-                .subtitle(looking::watcher_line(w))
-                .use_markup(false)
-                .activatable(true)
-                .build();
-            if !w.enabled {
-                row.add_css_class("dim-label");
-            } else if w.last_error.is_some() {
-                row.add_css_class("watcher-trouble");
-            }
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-            let id = w.id;
-            row.connect_activated(move |_| route::go(Link::Watcher(id)));
-            group.add(&row);
-        }
-        self.groups.replace(&self.prefs, vec![group]);
     }
 }
 
@@ -470,7 +382,6 @@ impl WatcherView {
 pub struct ChecksPage {
     pub page: adw::NavigationPage,
     _inner: Rc<Checks>,
-    _listener: Listener,
 }
 
 struct Checks {
@@ -478,11 +389,8 @@ struct Checks {
     prefs: adw::PreferencesPage,
     error: gtk::Label,
     check: gtk::Button,
-    test: gtk::Button,
-    test_row: adw::ActionRow,
     groups: Groups,
     report: RefCell<Option<CheckReport>>,
-    approval: Cell<Option<i64>>,
     loaded: Cell<bool>,
     running: Cell<bool>,
 }
@@ -498,30 +406,16 @@ impl ChecksPage {
         let error = error_label();
         let top = adw::PreferencesGroup::new();
         top.add(&error);
-        let phone = adw::PreferencesGroup::builder()
-            .title("From your phone")
-            .build();
-        let test_row = adw::ActionRow::builder().title("Test approval").build();
-        let test = gtk::Button::builder()
-            .label("Send")
-            .valign(gtk::Align::Center)
-            .build();
-        test_row.add_suffix(&test);
-        phone.add(&test_row);
         let prefs = adw::PreferencesPage::new();
         prefs.add(&top);
-        prefs.add(&phone);
         let page = page_with("Check everything", &header, &prefs);
         let c = Rc::new(Checks {
             store: store.clone(),
             prefs,
             error,
             check,
-            test,
-            test_row,
             groups: Groups::default(),
             report: RefCell::default(),
-            approval: Cell::new(None),
             loaded: Cell::new(false),
             running: Cell::new(false),
         });
@@ -531,24 +425,15 @@ impl ChecksPage {
                 c.run();
             }
         });
-        let weak = Rc::downgrade(&c);
-        c.test.connect_clicked(move |_| {
-            if let Some(c) = weak.upgrade() {
-                c.send_test();
-            }
-        });
         let (weak, s) = (Rc::downgrade(&c), store.clone());
         glib::spawn_future_local(async move {
             let result = s.checks().await;
             let Some(c) = weak.upgrade() else { return };
             c.loaded.set(true);
             match result {
-                Ok(ChecksInfo { report, approval }) => {
+                Ok(ChecksInfo { report, .. }) => {
                     if c.report.borrow().is_none() {
                         c.report.replace(report);
-                    }
-                    if c.approval.get().is_none() {
-                        c.approval.set(approval.map(|a| a.id));
                     }
                 }
                 Err(e) => c.show_error(&e.message),
@@ -556,17 +441,7 @@ impl ChecksPage {
             c.render();
         });
         c.render();
-        let weak = Rc::downgrade(&c);
-        let listener = store.listen(move |change| {
-            if let (Some(c), Change::NeedsYou) = (weak.upgrade(), change) {
-                c.render_answer();
-            }
-        });
-        ChecksPage {
-            page,
-            _inner: c,
-            _listener: listener,
-        }
+        ChecksPage { page, _inner: c }
     }
 }
 
@@ -576,17 +451,7 @@ impl Checks {
         self.error.set_visible(true);
     }
 
-    fn render_answer(&self) {
-        let answer = self
-            .approval
-            .get()
-            .and_then(|id| self.store.state().approvals.get(&id).map(looking::answer));
-        self.test_row
-            .set_subtitle(&glib::markup_escape_text(&answer.unwrap_or_default()));
-    }
-
     fn render(&self) {
-        self.render_answer();
         let running = self.running.get();
         self.check
             .set_label(if running { "Checking…" } else { "Check" });
@@ -643,23 +508,6 @@ impl Checks {
             c.render();
         });
     }
-
-    fn send_test(self: &Rc<Self>) {
-        self.test.set_sensitive(false);
-        let (weak, store) = (Rc::downgrade(self), self.store.clone());
-        glib::spawn_future_local(async move {
-            let result = store.test_approval().await;
-            let Some(c) = weak.upgrade() else { return };
-            c.test.set_sensitive(true);
-            match result {
-                Ok(a) => {
-                    c.approval.set(Some(a.id));
-                    c.render_answer();
-                }
-                Err(e) => c.show_error(&e.message),
-            }
-        });
-    }
 }
 
 pub struct HeartbeatPage {
@@ -677,6 +525,7 @@ struct Heartbeat {
     bot: Rc<Choice>,
     instructions: TextArea,
     save: gtk::Button,
+    check: gtk::Button,
     groups: Groups,
     settings: RefCell<Option<HeartbeatSettings>>,
     info: RefCell<Option<HeartbeatInfo>>,
@@ -707,18 +556,22 @@ impl HeartbeatPage {
         prefs.add(&top);
         prefs.add(&main);
         prefs.add(&what);
-        let page = page_with("Heartbeat", &adw::HeaderBar::new(), &prefs);
+        // It looks with what's saved: off while you have unsaved instructions.
+        let check = gtk::Button::builder().label("Check now").build();
+        let header = adw::HeaderBar::new();
+        header.pack_end(&check);
+        let page = page_with("Heartbeat", &header, &prefs);
 
         let h = Rc::new_cyclic(|weak: &std::rc::Weak<Heartbeat>| {
             let w = weak.clone();
-            let every = Choice::new("How often", move |v| {
+            let every = Choice::new("Check every", move |v| {
                 if let Some(h) = w.upgrade() {
                     let n = v.parse().unwrap_or(30);
                     h.save_with(|s| s.every_minutes = n);
                 }
             });
             let w = weak.clone();
-            let bot = Choice::new("Bot", move |v| {
+            let bot = Choice::new("Runs as", move |v| {
                 if let Some(h) = w.upgrade() {
                     let v = v.to_string();
                     h.save_with(|s| s.bot_id = v);
@@ -728,11 +581,12 @@ impl HeartbeatPage {
                 store: store.clone(),
                 prefs,
                 error,
-                on: adw::SwitchRow::builder().title("On").build(),
+                on: adw::SwitchRow::builder().title("Heartbeat").build(),
                 every,
                 bot,
                 instructions,
                 save,
+                check,
                 groups: Groups::default(),
                 settings: RefCell::default(),
                 info: RefCell::default(),
@@ -763,6 +617,12 @@ impl HeartbeatPage {
             if let Some(h) = weak.upgrade() {
                 let text = h.instructions.text().trim().to_string();
                 h.save_with(|s| s.instructions = text);
+            }
+        });
+        let weak = Rc::downgrade(&h);
+        h.check.connect_clicked(move |_| {
+            if let Some(h) = weak.upgrade() {
+                h.look();
             }
         });
         h.load_settings();
@@ -830,7 +690,11 @@ impl Heartbeat {
             .unwrap_or_default();
         let text = self.instructions.text();
         let text = text.trim();
-        self.save.set_sensitive(!text.is_empty() && text != saved);
+        let unsaved = text != saved;
+        self.save.set_sensitive(!text.is_empty() && unsaved);
+        self.check.set_sensitive(!self.looking.get() && !unsaved);
+        self.check
+            .set_tooltip_text(unsaved.then_some("Save your changes first"));
     }
 
     fn render_settings(&self, text_too: bool) {
@@ -851,6 +715,9 @@ impl Heartbeat {
                 .map(|b| (b.clone(), st.bot_name(Some(b))))
                 .collect()
         };
+        self.bot
+            .row
+            .set_visible(bots.len() > 1 || s.bot_id != HATBOT_ID);
         self.bot.set(&looking::choices(&bots, &s.bot_id), &s.bot_id);
         if text_too {
             self.instructions.set_text(&s.instructions);
@@ -898,25 +765,11 @@ impl Heartbeat {
             }
             None => last.add(&note("Not yet.")),
         }
-        let look = adw::ButtonRow::builder()
-            .title(if self.looking.get() {
-                "Looking…"
-            } else {
-                "Look Now"
-            })
-            .sensitive(!self.looking.get())
-            .build();
-        let weak = Rc::downgrade(self);
-        look.connect_activated(move |_| {
-            if let Some(h) = weak.upgrade() {
-                h.look();
-            }
-        });
-        let looks = adw::PreferencesGroup::new();
-        looks.add(&look);
-        let mut groups = vec![last, looks];
+        let mut groups = vec![last];
         if !info.recent.is_empty() {
-            let before = adw::PreferencesGroup::builder().title("Before").build();
+            let before = adw::PreferencesGroup::builder()
+                .title("Recent finds")
+                .build();
             for run in &info.recent {
                 let row = adw::ActionRow::builder()
                     .title(format::stamp(&run.at))
@@ -940,12 +793,13 @@ impl Heartbeat {
         if self.looking.replace(true) {
             return;
         }
-        self.render_info();
+        self.sync_save();
         let (weak, store) = (Rc::downgrade(self), self.store.clone());
         glib::spawn_future_local(async move {
             let result = store.run_heartbeat().await;
             let Some(h) = weak.upgrade() else { return };
             h.looking.set(false);
+            h.sync_save();
             match result {
                 Ok(info) => {
                     h.error.set_visible(false);
