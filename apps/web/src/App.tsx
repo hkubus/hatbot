@@ -30,7 +30,6 @@ import {
   unreadCount,
   useStore,
 } from "./store";
-import { setTheme, type Theme, useTheme } from "./theme";
 import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
@@ -58,7 +57,7 @@ const VIEWS = [
   { path: "/boxes", title: "Boxes", icon: "box", phone: false },
   { path: "/search", title: "Search", icon: "search", phone: false },
   { path: "/live", title: "Live", icon: "monitor", phone: true },
-  { path: "/schedules", title: "Schedules & Triggers", icon: "clock", phone: false },
+  { path: "/schedules", title: "Automations", icon: "clock", phone: false },
   { path: "/memory", title: "Memory", icon: "book", phone: true },
   { path: "/spend", title: "Spend", icon: "gauge", phone: false },
   { path: "/settings", title: "Settings", icon: "sliders", phone: true },
@@ -79,13 +78,36 @@ const viewOf = (path: string) => {
   const first = path.split("/")[1] ?? "";
   return VIEWS.find((v) => v.path === (VIEW_OF[first] ?? `/${first}`)) ?? VIEWS[0];
 };
-/** On a phone, To-do, Boxes, Spend and Schedules are reached from Settings, so its tab stays lit. */
+/** On a phone, To-do, Boxes, Spend and Automations are reached from Settings, so its tab stays lit. */
 const TAB_OF: Record<string, string> = {
   "/todo": "/settings",
   "/boxes": "/settings",
   "/spend": "/settings",
   "/schedules": "/settings",
 };
+
+/** Sub-pages that have a name of their own; anything else is named by its view. */
+const SUB_TITLE: Record<string, string> = {
+  "/settings/plugins": "Plugins",
+  "/settings/notifications": "ntfy server",
+  "/settings/api-key": "Anthropic API key",
+  "/settings/allowed": "Always allowed",
+  "/settings/account": "Password and authenticator",
+  "/settings/devices": "Devices and tokens",
+  "/settings/checks": "Check everything",
+  "/schedules/heartbeat": "Heartbeat",
+  "/schedules/new": "New schedule",
+  "/watchers/new": "New watcher",
+  "/triggers/new": "New trigger",
+};
+
+function subTitle(s: ReturnType<typeof getState>, path: string) {
+  if (SUB_TITLE[path]) return SUB_TITLE[path];
+  const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
+  if (plugin) return s.plugins[plugin]?.name;
+  const m = /^\/(schedules|triggers|watchers)\/(\d+)$/.exec(path);
+  if (m) return s[m[1] as "schedules" | "triggers" | "watchers"][Number(m[2])]?.name;
+}
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -135,7 +157,6 @@ export function App() {
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {
   const { path, params } = useRoute();
-  const theme = useTheme();
   const pending = useStore(needsYou);
   const unread = useStore(unreadCount);
   const incognito = useStore((s) => s.incognito);
@@ -198,6 +219,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               : "Group"
             : ((negotiationId ? s.negotiations[Number(negotiationId)]?.title : undefined) ??
               (boxId ? s.boxes[Number(boxId)]?.title : undefined) ??
+              subTitle(s, path) ??
               view.title),
   );
 
@@ -289,10 +311,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [chatMenu, insp]);
 
-  const cycleTheme = () => {
-    const order: Theme[] = ["system", "light", "dark"];
-    setTheme(order[(order.indexOf(theme) + 1) % 3] as Theme);
-  };
   const toggleInsp = () => {
     localStorage.setItem("hatbot:insp", insp ? "0" : "1");
     setInsp(!insp);
@@ -391,9 +409,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 <Icon name="monitor" />
               </button>
             )}
-            <button type="button" className="tb-btn" onClick={cycleTheme} title={`Theme: ${theme}`}>
-              <Icon name={theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"} />
-            </button>
           </header>
           {down && (
             <div className="paused-banner offline-banner">
@@ -429,7 +444,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           )}
           <Suspense fallback={<section className="view" />}>
             {negotiationId && <NegotiationPage key={negotiationId} id={Number(negotiationId)} />}
-            {page === "/schedules" && <SchedulesView path={path} params={params} />}
+            {page === "/schedules" && <SchedulesView path={path} params={params} toast={toast} />}
             {page === "/memory" &&
               (teachId ? (
                 <SkillDraft key={teachId} id={Number(teachId)} toast={toast} />

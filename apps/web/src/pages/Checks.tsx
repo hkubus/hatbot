@@ -1,8 +1,7 @@
-import type { Approval, CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
+import type { CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { useStore } from "../store";
 import { BackHead, Group, Row } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
@@ -12,49 +11,19 @@ const CHIP: Record<CheckState, { label: string; className: string }> = {
   skip: { label: "Skipped", className: "chip" },
 };
 
-const ANSWER: Record<Approval["status"], string> = {
-  pending: "Waiting for your answer",
-  approved: "Approved",
-  denied: "Denied",
-  expired: "Expired",
-  cancelled: "Replaced",
-};
-
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
-
 export function Checks() {
   const [report, setReport] = useState<CheckReport | null>(null);
-  const [approvalId, setApprovalId] = useState<number | null>(null);
-  const live = useStore((s) => (approvalId ? s.approvals[approvalId] : undefined));
-  const [approval, setApproval] = useState<Approval | null>(null);
   const { busy: running, error, setError, run } = useAction();
 
   useEffect(() => {
     api<ChecksInfo>("/checks").then(
-      (info) => {
-        setReport(info.report);
-        setApproval(info.approval);
-        setApprovalId(info.approval?.id ?? null);
-      },
+      (info) => setReport(info.report),
       (err) => setError(errorText(err)),
     );
   }, [setError]);
 
   const check = () => run(async () => setReport(await api<CheckReport>("/checks", { body: {} })));
 
-  const tryApproval = async () => {
-    setError("");
-    try {
-      const a = await api<Approval>("/checks/approval", { body: {} });
-      setApproval(a);
-      setApprovalId(a.id);
-    } catch (err) {
-      setError(errorText(err));
-    }
-  };
-
-  const shown = live ?? approval;
   const problems = report?.results.filter((r) => r.state === "fail" || r.state === "warn") ?? [];
 
   return (
@@ -78,25 +47,6 @@ export function Checks() {
               ))}
           </Group>
         )}
-
-        <Group title="From your phone">
-          <Row
-            label="Test approval"
-            sub={
-              shown && (
-                <span>
-                  {ANSWER[shown.status]}
-                  {shown.decidedVia === "ntfy" ? " from the notification" : ""}
-                  {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
-                </span>
-              )
-            }
-          >
-            <button type="button" className="btn sm" onClick={tryApproval}>
-              Send
-            </button>
-          </Row>
-        </Group>
       </div>
     </section>
   );

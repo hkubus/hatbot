@@ -1,34 +1,49 @@
-import {
-  type ApiToken,
-  type ApprovalRule,
-  type AppSettings,
-  type CreateTokenResponse,
-  describeEvery,
-  type Limits,
-  type UpdateInfo,
+import type {
+  Approval,
+  ApprovalRule,
+  AppSettings,
+  ChecksInfo,
+  Limits,
+  UpdateInfo,
 } from "@hatbot/shared";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { ask, askText } from "../confirm";
+import { ask } from "../confirm";
 import { clearDrafts } from "../drafts";
-import { day, stamp } from "../format";
+import { stamp } from "../format";
 import { LoadError } from "../load";
+import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
-import { CHAT_MODELS, EFFORTS, Group, LinkRow, MODELS, Row, Seg, Select } from "../ui";
-import { PluginPage, PluginsGroup } from "./Plugins";
+import {
+  BackHead,
+  CHAT_MODELS,
+  Disclosure,
+  EFFORTS,
+  Group,
+  LinkRow,
+  MODELS,
+  Row,
+  Seg,
+  Select,
+} from "../ui";
+import { PluginPage, PluginsPage } from "./Plugins";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
+const ApiKeyPage = lazy(() => import("./Connections").then((m) => ({ default: m.ApiKeyPage })));
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
-const Connections = lazy(() => import("./Connections").then((m) => ({ default: m.Connections })));
-const HeartbeatPage = lazy(() => import("./Heartbeat").then((m) => ({ default: m.HeartbeatPage })));
+const Devices = lazy(() => import("./Devices").then((m) => ({ default: m.Devices })));
+const NtfyPage = lazy(() => import("./Connections").then((m) => ({ default: m.NtfyPage })));
 
-const HOURS = Array.from({ length: 24 }, (_, h) => h);
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/** Old addresses, for bookmarks and links from before the regroup. */
+const MOVED: Record<string, string> = {
+  "/settings/heartbeat": "/schedules/heartbeat",
+  "/settings/connections": "/settings/api-key",
+};
 
 /**
  * A change to the settings. The brain merges limits into the saved ones, so only the one edited is
@@ -45,26 +60,47 @@ export function Settings({
   toast: Toast;
   onSignOut: () => void;
 }) {
+  const moved = MOVED[path];
+  useEffect(() => {
+    if (moved) navigate(moved, true);
+  }, [moved]);
+  if (moved) return null;
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
   const page = plugin ? (
     <PluginPage key={plugin} id={plugin} toast={toast} />
+  ) : path === "/settings/plugins" ? (
+    <PluginsPage />
   ) : path === "/settings/account" ? (
     <Account toast={toast} />
-  ) : path === "/settings/connections" ? (
-    <Connections toast={toast} />
+  ) : path === "/settings/devices" ? (
+    <Devices toast={toast} />
+  ) : path === "/settings/api-key" ? (
+    <ApiKeyPage toast={toast} />
+  ) : path === "/settings/notifications" ? (
+    <NtfyPage toast={toast} />
+  ) : path === "/settings/allowed" ? (
+    <AllowedPage />
   ) : path === "/settings/checks" ? (
     <Checks />
-  ) : path === "/settings/heartbeat" ? (
-    <HeartbeatPage toast={toast} />
   ) : null;
   if (page) return <Suspense fallback={<section className="view" />}>{page}</Suspense>;
   return <SettingsHome toast={toast} onSignOut={onSignOut} />;
 }
 
+const LIMITS = [
+  ["dailyUsd", "Per day"],
+  ["monthlyUsd", "Per month"],
+] as const;
+const MORE_LIMITS = [
+  ["taskUsd", "Per task"],
+  ["researchUsd", "Per research task"],
+  ["boxesUsd", "Boxes per day"],
+  ["alertReserveUsd", "Kept for alerts"],
+] as const;
+
 function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => void }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [tokens, setTokens] = useState<ApiToken[]>([]);
-  const [newToken, setNewToken] = useState<CreateTokenResponse | null>(null);
+  const [rules, setRules] = useState<number | null>(null);
   const theme = useTheme();
   const paused = useStore((s) => s.paused);
   const [loadError, setLoadError] = useState("");
@@ -76,15 +112,19 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
   const load = useCallback(() => {
     setLoadError("");
-    Promise.all([api<AppSettings>("/settings"), api<ApiToken[]>("/tokens")]).then(
-      ([s, t]) => {
-        setSettings(s);
-        setTokens(t);
-      },
-      (err) => setLoadError(errorText(err)),
+    api<AppSettings>("/settings").then(setSettings, (err) => setLoadError(errorText(err)));
+    api<ApprovalRule[]>("/approval-rules").then(
+      (r) => setRules(r.length),
+      () => {},
     );
   }, []);
   useEffect(load, [load]);
+  // Spend's Limits opens /settings#spending.
+  const loaded = settings !== null;
+  useEffect(() => {
+    if (loaded && location.hash === "#spending")
+      document.getElementById("spending")?.scrollIntoView({ block: "start" });
+  }, [loaded]);
 
   /** Rejects with the brain's message, for a field to show beside itself. */
   const put = async (patch: Patch) => {
@@ -94,36 +134,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const update = (patch: Partial<AppSettings>) =>
     put(patch).catch((err) => toast(errorText(err, "Couldn't save"), "error"));
 
-  const tokenEdit = useAction();
   const pausing = useAction();
-  const createToken = async () => {
-    const name = await askText({
-      text: "Name for the new token",
-      placeholder: "iPhone",
-      ok: "Create",
-    });
-    if (!name) return;
-    await tokenEdit.run(async () => {
-      setNewToken(await api<CreateTokenResponse>("/tokens", { body: { name } }));
-      setTokens(await api<ApiToken[]>("/tokens"));
-    });
-  };
-
-  const revoke = async (t: ApiToken) => {
-    if (
-      !(await ask({ text: `Revoke "${t.name}"? Apps using it will be signed out.`, ok: "Revoke" }))
-    )
-      return;
-    await tokenEdit.run(async () => {
-      await api(`/tokens/${t.id}`, { method: "DELETE" });
-      setTokens(await api<ApiToken[]>("/tokens"));
-    });
-  };
-
-  const pause = () =>
+  const pause = (on: boolean) =>
     pausing.run(async () => {
-      await setPaused(!paused);
-      toast(paused ? "Resumed" : "All activity paused");
+      await setPaused(on);
+      toast(on ? "All activity paused" : "Resumed");
     });
 
   const signOut = async () => {
@@ -143,9 +158,138 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
       </section>
     );
 
+  const limitRow = ([key, label]: (typeof LIMITS | typeof MORE_LIMITS)[number]) => {
+    // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
+    const zero = key === "alertReserveUsd" || key === "boxesUsd";
+    return (
+      <SavedRow
+        key={key}
+        label={label}
+        saved={settings.limits[key]}
+        parse={(text) => parseLimit(text, zero)}
+        save={(n) => put({ limits: { [key]: n } })}
+        prefix="$"
+        input={{ type: "number", inputMode: "decimal", min: zero ? "0" : "0.01", step: "0.01" }}
+      />
+    );
+  };
+
   return (
     <section className="view">
       <div className="page">
+        <Group>
+          <Row
+            label="Pause all activity"
+            sub={pausing.error && <span className="form-error">{pausing.error}</span>}
+          >
+            <Switch on={paused} onChange={pause} />
+          </Row>
+        </Group>
+
+        <Group className="show-phone">
+          <LinkRow to="/todo" label="To-do" />
+          <LinkRow to="/boxes" label="Boxes" />
+          <LinkRow to="/schedules" label="Automations" />
+          <LinkRow to="/spend" label="Spend" />
+        </Group>
+
+        <Group title="Models">
+          <Row label="Chat">
+            <Select
+              label="Chat model"
+              value={settings.chatModel}
+              options={CHAT_MODELS}
+              onChange={(chatModel) => update({ chatModel })}
+            />
+          </Row>
+          <Row label="Chat effort">
+            <Select
+              label="Chat effort"
+              value={settings.chatEffort}
+              options={EFFORTS}
+              onChange={(chatEffort) => update({ chatEffort })}
+            />
+          </Row>
+          <Row label="Background tasks">
+            <Select
+              label="Model for background tasks"
+              value={settings.taskModel}
+              options={MODELS}
+              onChange={(taskModel) => update({ taskModel })}
+            />
+          </Row>
+          <Row label="Desktop tasks">
+            <Select
+              label="Model for desktop tasks"
+              value={settings.desktopModel}
+              options={MODELS}
+              onChange={(desktopModel) => update({ desktopModel })}
+            />
+          </Row>
+          {settings.desktopModel === "claude-haiku-5-5" && (
+            <Row label="Try desktop tasks again on Opus when Haiku fails">
+              <Switch
+                on={settings.desktopEscalate}
+                onChange={(desktopEscalate) => update({ desktopEscalate })}
+              />
+            </Row>
+          )}
+        </Group>
+
+        <div id="spending">
+          <Group title="Spending">
+            {LIMITS.map(limitRow)}
+            <Disclosure label="More limits">{MORE_LIMITS.map(limitRow)}</Disclosure>
+          </Group>
+        </div>
+
+        <Group title="Notifications">
+          <LinkRow to="/settings/notifications" label="ntfy server" />
+          <Row label="Tapping one opens">
+            <Select
+              label="Tapping one opens"
+              value={settings.notificationsOpen}
+              options={[
+                ["web", "The web app"],
+                ["app", "The iOS app"],
+              ]}
+              onChange={(notificationsOpen) => update({ notificationsOpen })}
+            />
+          </Row>
+          <TestApprovalRow />
+        </Group>
+
+        <Group title="Safety">
+          <Row label="Let a safety review allow safe changes without asking you">
+            <Switch on={settings.reviewChanges} onChange={(on) => update({ reviewChanges: on })} />
+          </Row>
+          <LinkRow to="/settings/allowed" label="Always allowed">
+            {rules !== null && <span className="val">{rules || "None"}</span>}
+          </LinkRow>
+        </Group>
+
+        <Group title="Integrations">
+          <LinkRow to="/settings/plugins" label="Plugins" />
+          <LinkRow to="/settings/api-key" label="Anthropic API key" />
+        </Group>
+
+        <Group title="Account">
+          <SavedRow
+            label="Your name on memory edits"
+            saved={settings.owner.name}
+            parse={parseName}
+            save={(name) => put({ owner: { ...settings.owner, name } })}
+            input={{ type: "text" }}
+          />
+          <LinkRow to="/settings/account" label="Password and authenticator" />
+          <LinkRow to="/settings/devices" label="Devices and tokens" />
+          <Row label="Sign out">
+            <button type="button" className="btn sm" onClick={signOut}>
+              Sign out
+            </button>
+          </Row>
+        </Group>
+
         <Group title="Appearance">
           <Row label="Theme">
             <Seg
@@ -160,259 +304,72 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
           </Row>
         </Group>
 
-        <Group className="show-phone">
-          <LinkRow to="/todo" label="To-do" />
-          <LinkRow to="/boxes" label="Boxes" />
-          <LinkRow to="/schedules" label="Schedules & Triggers" />
-          <LinkRow to="/spend" label="Spend" />
-        </Group>
-
-        <Group title="Spending limits">
-          {(
-            [
-              ["dailyUsd", "Per day"],
-              ["monthlyUsd", "Per month"],
-              ["taskUsd", "Per task"],
-              ["researchUsd", "Per research task"],
-              ["alertReserveUsd", "Kept for alerts"],
-              ["boxesUsd", "Boxes per day"],
-            ] as const
-          ).map(([key, label]) => (
-            <SavedRow
-              key={key}
-              label={label}
-              saved={settings.limits[key]}
-              // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
-              parse={(text) => parseLimit(text, key === "alertReserveUsd" || key === "boxesUsd")}
-              save={(n) => put({ limits: { [key]: n } })}
-              prefix="$"
-              input={{
-                type: "number",
-                inputMode: "decimal",
-                min: key === "alertReserveUsd" || key === "boxesUsd" ? "0" : "0.01",
-                step: "0.01",
-              }}
-            />
-          ))}
-        </Group>
-
-        <Group title="Chat">
-          <Row label="Model">
-            <Select
-              label="Chat model"
-              value={settings.chatModel}
-              options={CHAT_MODELS}
-              onChange={(chatModel) => update({ chatModel })}
-            />
-          </Row>
-          <Row label="Effort">
-            <Select
-              label="Chat effort"
-              value={settings.chatEffort}
-              options={EFFORTS}
-              onChange={(chatEffort) => update({ chatEffort })}
-            />
-          </Row>
-          <SavedRow
-            label="Your name on memory edits"
-            saved={settings.owner.name}
-            parse={parseName}
-            save={(name) => put({ owner: { ...settings.owner, name } })}
-            input={{ type: "text" }}
-          />
-        </Group>
-
-        <Group title="Tasks">
-          <Row label="Model for background tasks">
-            <Select
-              label="Model for background tasks"
-              value={settings.taskModel}
-              options={MODELS}
-              onChange={(taskModel) => update({ taskModel })}
-            />
-          </Row>
-        </Group>
-
-        <Group title="Looking after things">
-          <LinkRow to="/settings/heartbeat" label="Heartbeat">
-            <span className="val">
-              {settings.heartbeat.enabled ? describeEvery(settings.heartbeat.everyMinutes) : "Off"}
-            </span>
-          </LinkRow>
-          <Row label="Propose a memory tidy-up weekly">
-            <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
-          </Row>
-          <Row label="Weekly report">
-            <Switch
-              on={settings.weeklyReport.enabled}
-              onChange={(enabled) =>
-                update({ weeklyReport: { ...settings.weeklyReport, enabled } })
-              }
-            />
-          </Row>
-          {settings.weeklyReport.enabled && (
-            <Row label="Sent on">
-              <select
-                aria-label="Sent on"
-                value={settings.weeklyReport.weekday}
-                onChange={(e) =>
-                  update({
-                    weeklyReport: { ...settings.weeklyReport, weekday: Number(e.target.value) },
-                  })
-                }
-              >
-                {WEEKDAYS.map((d, i) => (
-                  <option key={d} value={i}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Sent at"
-                value={settings.weeklyReport.hour}
-                onChange={(e) =>
-                  update({
-                    weeklyReport: { ...settings.weeklyReport, hour: Number(e.target.value) },
-                  })
-                }
-              >
-                {HOURS.map((h) => (
-                  <option key={h} value={h}>
-                    {String(h).padStart(2, "0")}:00
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="btn sm"
-                onClick={() =>
-                  api("/report/send", { body: {} }).then(
-                    () => toast("Sent to Hatbot's chat"),
-                    () => toast("Couldn't send", "error"),
-                  )
-                }
-              >
-                Send now
-              </button>
-            </Row>
-          )}
-          <Row label="To-do reminder each morning at">
-            <select
-              aria-label="To-do reminder each morning at"
-              value={settings.todoHour}
-              onChange={(e) => update({ todoHour: Number(e.target.value) })}
-            >
-              {HOURS.map((h) => (
-                <option key={h} value={h}>
-                  {String(h).padStart(2, "0")}:00
-                </option>
-              ))}
-            </select>
-          </Row>
-        </Group>
-
-        <Group title="Desktop">
-          <Row label="Model for desktop tasks">
-            <Select
-              label="Model for desktop tasks"
-              value={settings.desktopModel}
-              options={MODELS}
-              onChange={(desktopModel) => update({ desktopModel })}
-            />
-          </Row>
-          {settings.desktopModel === "claude-haiku-5-5" && (
-            <Row label="Try again on Opus when Haiku fails">
-              <Switch
-                on={settings.desktopEscalate}
-                onChange={(desktopEscalate) => update({ desktopEscalate })}
-              />
-            </Row>
-          )}
-        </Group>
-
-        <Group title="Connections">
-          <LinkRow to="/settings/connections" label="Anthropic API key and ntfy server" />
-        </Group>
-
-        <Group title="Notifications">
-          <Row label="Tapping one opens">
-            <Select
-              label="Tapping one opens"
-              value={settings.notificationsOpen}
-              options={[
-                ["web", "The web app"],
-                ["app", "The iOS app"],
-              ]}
-              onChange={(notificationsOpen) => update({ notificationsOpen })}
-            />
-          </Row>
-        </Group>
-
-        <Group title="Account">
-          <LinkRow to="/settings/account" label="Password and sign-ins" />
-          <Row
-            label="API tokens"
-            sub={tokenEdit.error && <span className="form-error">{tokenEdit.error}</span>}
-          >
-            <button type="button" className="btn sm" onClick={createToken}>
-              New token
-            </button>
-          </Row>
-          {newToken && (
-            <div className="row" style={{ display: "grid", gap: 6 }}>
-              <div className="muted" style={{ fontSize: 12 }}>
-                Copy this token now. It won't be shown again.
-              </div>
-              <div className="token-new">{newToken.token}</div>
-            </div>
-          )}
-          {tokens.map((t) => (
-            <Row key={t.id} label={t.name}>
-              <span className="val">
-                {t.lastUsedAt ? `Used ${day(t.lastUsedAt)}` : "Never used"}
-              </span>
-              <button type="button" className="btn sm danger-text" onClick={() => revoke(t)}>
-                Revoke
-              </button>
-            </Row>
-          ))}
-          <Row label="Sign out">
-            <button type="button" className="btn sm" onClick={signOut}>
-              Sign out
-            </button>
-          </Row>
-        </Group>
-
-        <PluginsGroup />
-
-        <Group title="Safety">
-          <Row
-            label="Pause all activity"
-            sub={pausing.error && <span className="form-error">{pausing.error}</span>}
-          >
-            <button type="button" className={`btn sm ${paused ? "" : "danger"}`} onClick={pause}>
-              {paused ? "Resume" : "Pause all"}
-            </button>
-          </Row>
-          <Row label="Let Haiku and Opus allow safe changes">
-            <Switch on={settings.reviewChanges} onChange={(on) => update({ reviewChanges: on })} />
-          </Row>
-          <AllowedRows />
+        <Group title="System">
+          <LinkRow to="/settings/checks" label="Check everything" />
+          <UpdateRow toast={toast} />
           <RollbackRow toast={toast} />
         </Group>
-
-        <Group>
-          <LinkRow to="/settings/checks" label="Check everything" />
-        </Group>
-
-        <UpdateGroup toast={toast} />
       </div>
     </section>
   );
 }
 
-function AllowedRows() {
-  const [rules, setRules] = useState<ApprovalRule[]>([]);
+const ANSWER: Record<Approval["status"], string> = {
+  pending: "Waiting for your answer",
+  approved: "Approved",
+  denied: "Denied",
+  expired: "Expired",
+  cancelled: "Replaced",
+};
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+
+function TestApprovalRow() {
+  const [approval, setApproval] = useState<Approval | null>(null);
+  const live = useStore((s) => (approval ? s.approvals[approval.id] : undefined));
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api<ChecksInfo>("/checks").then(
+      (info) => setApproval(info.approval),
+      () => {},
+    );
+  }, []);
+  const send = async () => {
+    setError("");
+    try {
+      setApproval(await api<Approval>("/checks/approval", { body: {} }));
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  const shown = live ?? approval;
+  return (
+    <Row
+      label="Test approval"
+      sub={
+        error ? (
+          <span className="form-error">{error}</span>
+        ) : (
+          shown && (
+            <span>
+              {ANSWER[shown.status]}
+              {shown.decidedVia === "ntfy" ? " from the notification" : ""}
+              {shown.decidedAt ? `, ${when(shown.decidedAt)}` : ""}
+            </span>
+          )
+        )
+      }
+    >
+      <button type="button" className="btn sm" onClick={send}>
+        Send
+      </button>
+    </Row>
+  );
+}
+
+function AllowedPage() {
+  const [rules, setRules] = useState<ApprovalRule[] | null>(null);
   const [error, setError] = useState("");
   const bots = useStore((s) => s.bots);
   useEffect(() => {
@@ -422,27 +379,38 @@ function AllowedRows() {
     setError("");
     try {
       await api(`/approval-rules/${r.id}`, { method: "DELETE" });
-      setRules(rules.filter((x) => x.id !== r.id));
+      setRules((rules ?? []).filter((x) => x.id !== r.id));
     } catch (err) {
       setError(errorText(err));
     }
   };
-  if (!rules.length && !error) return null;
   return (
-    <>
-      <Row label="Always allowed" sub={error && <span className="form-error">{error}</span>} />
-      {rules.map((r) => (
-        <Row
-          key={r.id}
-          label={<span className="mono">{r.summary}</span>}
-          sub={r.botId !== "hatbot" && bots[r.botId]?.name}
-        >
-          <button type="button" className="btn sm danger-text" onClick={() => remove(r)}>
-            Remove
-          </button>
-        </Row>
-      ))}
-    </>
+    <section className="view">
+      <div className="page narrow">
+        <BackHead to="/settings" label="Settings" />
+        {error && <div className="form-error">{error}</div>}
+        {rules && (
+          <Group>
+            {rules.map((r) => (
+              <Row
+                key={r.id}
+                label={<span className="mono">{r.summary}</span>}
+                sub={r.botId !== "hatbot" && bots[r.botId]?.name}
+              >
+                <button type="button" className="btn sm danger-text" onClick={() => remove(r)}>
+                  Remove
+                </button>
+              </Row>
+            ))}
+            {!rules.length && (
+              <div className="row">
+                <span className="muted">None yet. Approve something with Always to add it.</span>
+              </div>
+            )}
+          </Group>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -491,35 +459,37 @@ function RollbackRow({ toast }: { toast: Toast }) {
   };
 
   return (
-    <Row label="Roll back desktop" sub={error && <span className="form-error">{error}</span>}>
-      {snaps.length > 0 ? (
-        <>
-          <select
-            aria-label="Snapshot"
-            value={picked}
-            onChange={(e) => setPicked(e.target.value)}
-            disabled={busy}
-          >
-            {snaps.map((s) => (
-              <option key={s.name} value={s.name}>
-                {snapLabel(s)}
-              </option>
-            ))}
-          </select>
-          <button type="button" className="btn sm danger-text" disabled={busy} onClick={rollback}>
-            {busy ? "Rolling back…" : "Roll back"}
-          </button>
-        </>
-      ) : (
-        !error && <span className="val">No snapshots yet</span>
-      )}
-    </Row>
+    <Disclosure label="Advanced">
+      <Row label="Roll back desktop" sub={error && <span className="form-error">{error}</span>}>
+        {snaps.length > 0 ? (
+          <>
+            <select
+              aria-label="Snapshot"
+              value={picked}
+              onChange={(e) => setPicked(e.target.value)}
+              disabled={busy}
+            >
+              {snaps.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {snapLabel(s)}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn sm danger-text" disabled={busy} onClick={rollback}>
+              {busy ? "Rolling back…" : "Roll back"}
+            </button>
+          </>
+        ) : (
+          !error && <span className="val">No snapshots yet</span>
+        )}
+      </Row>
+    </Disclosure>
   );
 }
 
 const short = (sha?: string) => sha?.slice(0, 7) ?? "";
 
-function UpdateGroup({ toast }: { toast: Toast }) {
+function UpdateRow({ toast }: { toast: Toast }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState("");
   // The update being watched: the status that was there before it started.
@@ -587,30 +557,26 @@ function UpdateGroup({ toast }: { toast: Toast }) {
   const notes = !busy && info.status?.state === "done" ? info.status.notes : [];
 
   return (
-    <Group title="Updates">
-      <Row label="Version">
-        <span className="val">
-          {info.current?.sha
-            ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
-            : "Unknown"}
-        </span>
-      </Row>
-      <div className="row">
-        <div className="txt">
-          <b>Update from git</b>
-          {error && <span className="form-error">{error}</span>}
-          {notes.map((n) => (
-            <span key={n}>{n}</span>
-          ))}
-        </div>
-        {info.source ? (
-          <button type="button" className="btn sm" disabled={busy} onClick={update}>
-            {busy ? `${step}…` : "Update"}
-          </button>
-        ) : (
-          <span className="val">Not set up</span>
-        )}
+    <div className="row">
+      <div className="txt">
+        <b>Software update</b>
+        {error && <span className="form-error">{error}</span>}
+        {notes.map((n) => (
+          <span key={n}>{n}</span>
+        ))}
       </div>
-    </Group>
+      <span className="val">
+        {info.current?.sha
+          ? `${short(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
+          : "Unknown"}
+      </span>
+      {info.source ? (
+        <button type="button" className="btn sm" disabled={busy} onClick={update}>
+          {busy ? `${step}…` : "Update"}
+        </button>
+      ) : (
+        <span className="val">Not set up</span>
+      )}
+    </div>
   );
 }

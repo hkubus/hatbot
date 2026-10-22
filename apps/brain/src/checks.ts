@@ -29,7 +29,7 @@ const LOW_DISK_BYTES = 5 * 1024 ** 3;
 const BIG_WAL_BYTES = 512 * 1024 ** 2;
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
 const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields", "gates"];
-const NEW_TOPIC = "Pick a random one in Settings → Connections.";
+const NEW_TOPIC = "Pick a random one in Settings → Notifications → ntfy server.";
 const ONLY_YOU = "Allow only your ntfy user to read the topic.";
 
 export type ChecksDeps = {
@@ -231,7 +231,7 @@ export class Checks {
   private async modelCall() {
     if (this.d.settings.get().paused) return skip("Paused.");
     if (this.d.apiKeySet?.() === false)
-      return fail("There's no API key. Add one in Settings → Connections.");
+      return fail("There's no API key. Add one in Settings → Integrations → Anthropic API key.");
     try {
       await oneShot(
         this.d,
@@ -297,7 +297,7 @@ export class Checks {
     const ntfy = this.d.ntfy;
     if (!ntfy?.configured)
       return warn(
-        "No ntfy server is set up (Settings → Connections), so approvals and results only show in the app.",
+        "No ntfy server is set up (Settings → Notifications → ntfy server), so approvals and results only show in the app.",
       );
     if (!ntfy.topic) return fail(`There's no ntfy topic, so nothing is sent. ${NEW_TOPIC}`);
     await ntfy.health();

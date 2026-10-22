@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { installDom } from "./dom";
 
 const dom = installDom();
-const { signOut } = await import("../src/pages/Account");
+const { signOut } = await import("../src/pages/Devices");
 
 test("signing out a browser that's signed out already isn't an error", async () => {
   dom.answer(() => {

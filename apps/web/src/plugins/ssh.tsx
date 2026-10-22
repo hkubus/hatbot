@@ -4,6 +4,7 @@ import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { Switch } from "../switch";
+import { Disclosure } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Host = {
@@ -129,14 +130,18 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
               <span className="label">Ask before every change</span>
               <Switch on={h.careful} onChange={(careful) => set(i, { careful })} />
             </div>
-            <div className="form-row">
-              <span className="label">Proxmox host: run commands in its containers</span>
-              <Switch on={h.proxmox} onChange={(proxmox) => set(i, { proxmox })} />
-            </div>
-            <div className="form-row">
-              <span className="label">Trust what it prints: only you write its logs and files</span>
-              <Switch on={h.trustOutput} onChange={(trustOutput) => set(i, { trustOutput })} />
-            </div>
+            <Disclosure label="More" open={h.proxmox || h.trustOutput}>
+              <div className="form-row">
+                <span className="label">Proxmox host: run commands in its containers</span>
+                <Switch on={h.proxmox} onChange={(proxmox) => set(i, { proxmox })} />
+              </div>
+              <div className="form-row">
+                <span className="label">
+                  Trust what it prints: only you write its logs and files
+                </span>
+                <Switch on={h.trustOutput} onChange={(trustOutput) => set(i, { trustOutput })} />
+              </div>
+            </Disclosure>
             <div className="form-row">
               <span className="label mono">{keys[h.name] ?? "No key pinned yet"}</span>
               <span className="host-actions">

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Icon } from "./icons";
 import { Link } from "./link";
 import { navigate } from "./router";
@@ -111,6 +111,28 @@ export function LinkRow({
       {children}
       <Icon name="chevron" className="chev" />
     </Link>
+  );
+}
+
+/** Every "More": rare settings behind one click. */
+export function Disclosure({
+  label,
+  open: openAtFirst = false,
+  children,
+}: {
+  label: ReactNode;
+  open?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(openAtFirst);
+  return (
+    <div className={`disclosure ${open ? "open" : ""}`}>
+      <button type="button" className="fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name="chevron" />
+        <span className="fold-text">{label}</span>
+      </button>
+      {open && children}
+    </div>
   );
 }
 

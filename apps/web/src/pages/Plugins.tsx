@@ -8,7 +8,7 @@ import { NoForm } from "../form";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, Group, LinkRow } from "../ui";
+import { BackHead, Disclosure, Group, LinkRow } from "../ui";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",
@@ -18,7 +18,7 @@ const STATE: Record<PluginInfo["state"], string> = {
   error: "Error",
 };
 
-export function PluginsGroup() {
+export function PluginsPage() {
   const [ids, setIds] = useState<string[] | null>(null);
   const [error, setError] = useState("");
   const plugins = useStore((s) => s.plugins);
@@ -27,29 +27,35 @@ export function PluginsGroup() {
     loadPlugins().then(setIds, (err) => setError(errorText(err)));
   }, []);
   useEffect(load, [load]);
-  if (!error && !ids?.length) return null;
   return (
-    <Group title="Plugins">
-      {error && (
-        <div className="row">
-          <div className="txt">
-            <span className="form-error">{error}</span>
-          </div>
-          <button type="button" className="btn sm" onClick={load}>
-            Retry
-          </button>
-        </div>
-      )}
-      {(ids ?? []).map((id) => {
-        const p = plugins[id];
-        if (!p) return null;
-        return (
-          <LinkRow key={id} to={`/settings/plugins/${id}`} label={p.name}>
-            <span className="val">{STATE[p.state]}</span>
-          </LinkRow>
-        );
-      })}
-    </Group>
+    <section className="view">
+      <div className="page narrow">
+        <BackHead to="/settings" label="Settings" />
+        {(error || !!ids?.length) && (
+          <Group>
+            {error && (
+              <div className="row">
+                <div className="txt">
+                  <span className="form-error">{error}</span>
+                </div>
+                <button type="button" className="btn sm" onClick={load}>
+                  Retry
+                </button>
+              </div>
+            )}
+            {(ids ?? []).map((id) => {
+              const p = plugins[id];
+              if (!p) return null;
+              return (
+                <LinkRow key={id} to={`/settings/plugins/${id}`} label={p.name}>
+                  <span className="val">{STATE[p.state]}</span>
+                </LinkRow>
+              );
+            })}
+          </Group>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -84,7 +90,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         error={error}
         missing={loaded ? "This plugin doesn't exist." : ""}
         retry={load}
-        back={{ label: "Settings", to: "/settings" }}
+        back={{ label: "Plugins", to: "/settings/plugins" }}
       />
     );
 
@@ -112,7 +118,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
   return (
     <section className="view">
       <div className="page narrow">
-        <BackHead to="/settings" label="Settings">
+        <BackHead to="/settings/plugins" label="Plugins">
           {p.testable && p.state === "ready" && (
             <button type="button" className="btn sm" disabled={testing.busy} onClick={test}>
               {testing.busy ? "Testing…" : "Test"}
@@ -144,16 +150,18 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         )}
 
         {p.tools.length > 0 && (
-          <Group title="Tools">
-            {p.tools.map((t) => (
-              <div className="row" key={t.name}>
-                <div className="txt">
-                  <b className="mono">{t.name}</b>
+          <Disclosure label={p.tools.length === 1 ? "1 tool" : `${p.tools.length} tools`}>
+            <div className="group-box">
+              {p.tools.map((t) => (
+                <div className="row" key={t.name}>
+                  <div className="txt">
+                    <b className="mono">{t.name}</b>
+                  </div>
+                  <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
                 </div>
-                <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
-              </div>
-            ))}
-          </Group>
+              ))}
+            </div>
+          </Disclosure>
         )}
       </div>
     </section>
@@ -195,53 +203,54 @@ function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
 
   return (
     <form className="panel form" onSubmit={submit}>
-      <h3 className="section-title">Connection</h3>
-      {p.env.map((v) => (
-        <div key={v.name}>
-          <span className="label">
-            <span className="mono">{v.name}</span>
-            {v.optional && " (optional)"} ·{" "}
-            {v.from ? SOURCE[v.from] : v.optional ? "Not set" : "Missing"}
-          </span>
-          <div className="form-row">
-            <input
-              className="field mono"
-              aria-label={v.name}
-              type={v.secret ? "password" : "text"}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={v.secret && v.set ? "Unchanged" : (v.hint ?? "")}
-              value={values[v.name] ?? ""}
-              onChange={(e) => setValues({ ...values, [v.name]: e.target.value })}
-            />
-            {v.from === "app" && (
-              <button
-                type="button"
-                className="btn sm ghost"
-                disabled={busy}
-                onClick={() => forget(v)}
-              >
-                Use the host's
-              </button>
-            )}
+      <Disclosure label="Environment" open={!p.env.every((v) => v.from === "host")}>
+        {p.env.map((v) => (
+          <div key={v.name}>
+            <span className="label">
+              <span className="mono">{v.name}</span>
+              {v.optional && " (optional)"} ·{" "}
+              {v.from ? SOURCE[v.from] : v.optional ? "Not set" : "Missing"}
+            </span>
+            <div className="form-row">
+              <input
+                className="field mono"
+                aria-label={v.name}
+                type={v.secret ? "password" : "text"}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={v.secret && v.set ? "Unchanged" : (v.hint ?? "")}
+                value={values[v.name] ?? ""}
+                onChange={(e) => setValues({ ...values, [v.name]: e.target.value })}
+              />
+              {v.from === "app" && (
+                <button
+                  type="button"
+                  className="btn sm ghost"
+                  disabled={busy}
+                  onClick={() => forget(v)}
+                >
+                  Use the host's
+                </button>
+              )}
+            </div>
           </div>
+        ))}
+        {bad && (
+          <div className="form-error">
+            A value from the host's env file can only be replaced here.
+          </div>
+        )}
+        {error && <div className="form-error">{error}</div>}
+        <div className="form-actions">
+          <button
+            type="submit"
+            className="btn accent"
+            disabled={busy || bad || !Object.keys(changes).length}
+          >
+            Save
+          </button>
         </div>
-      ))}
-      {bad && (
-        <div className="form-error">
-          A value from the host's env file can only be replaced here.
-        </div>
-      )}
-      {error && <div className="form-error">{error}</div>}
-      <div className="form-actions">
-        <button
-          type="submit"
-          className="btn accent"
-          disabled={busy || bad || !Object.keys(changes).length}
-        >
-          Save
-        </button>
-      </div>
+      </Disclosure>
     </form>
   );
 }

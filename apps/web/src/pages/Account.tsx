@@ -1,47 +1,27 @@
-import type { Session, SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import type { SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
+import { type FormEvent, useEffect, useState } from "react";
 import { useAction } from "../action";
-import { ApiError, api, errorText } from "../api";
-import { ask } from "../confirm";
-import { deviceName } from "../device";
-import { day } from "../format";
-import { LoadError } from "../load";
+import { api } from "../api";
 import type { Toast } from "../toast";
-import { BackHead, Group, Row } from "../ui";
+import { BackHead } from "../ui";
 import { AddToAuthenticator, OtpInput } from "./Login";
 
 const changed = (what: string, ended: number) =>
   ended ? `${what}. Every other browser and app is signed out.` : what;
 
-const since = (iso: string) => `Since ${day(iso)}`;
-
-/** One signed out already, from another tab or by expiring, is no error. */
-export async function signOut(id: number): Promise<string | null> {
-  try {
-    await api(`/auth/sessions/${id}`, { method: "DELETE" });
-    return null;
-  } catch (err) {
-    return err instanceof ApiError && err.status === 404 ? null : errorText(err);
-  }
-}
-
 export function Account({ toast }: { toast: Toast }) {
-  // A change signs out the other sessions, so the list loads again.
-  const [version, setVersion] = useState(0);
-  const reload = useCallback(() => setVersion((v) => v + 1), []);
   return (
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
-        <PasswordForm toast={toast} onChanged={reload} />
-        <AuthenticatorForm toast={toast} onChanged={reload} />
-        <Sessions toast={toast} version={version} />
+        <PasswordForm toast={toast} />
+        <AuthenticatorForm toast={toast} />
       </div>
     </section>
   );
 }
 
-function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => void }) {
+function PasswordForm({ toast }: { toast: Toast }) {
   const [password, setPassword] = useState("");
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
@@ -59,7 +39,6 @@ function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => voi
       setNext("");
       setAgain("");
       toast(changed("Password changed", r.ended));
-      onChanged();
     });
     setTotp("");
   };
@@ -113,7 +92,7 @@ function PasswordForm({ toast, onChanged }: { toast: Toast; onChanged: () => voi
   );
 }
 
-function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () => void }) {
+function AuthenticatorForm({ toast }: { toast: Toast }) {
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [next, setNext] = useState<SetupStartResponse | null>(null);
@@ -143,7 +122,6 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
       const r = await api<SignedOutOthers>("/auth/totp", { body: { totp: code } });
       setNext(null);
       toast(changed("Authenticator changed", r.ended));
-      onChanged();
     });
     setCode("");
   };
@@ -202,63 +180,5 @@ function AuthenticatorForm({ toast, onChanged }: { toast: Toast; onChanged: () =
         </button>
       </div>
     </form>
-  );
-}
-
-function Sessions({ toast, version }: { toast: Toast; version: number }) {
-  const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [loadError, setLoadError] = useState("");
-
-  const load = useCallback(() => {
-    setLoadError("");
-    api<Session[]>("/auth/sessions").then(setSessions, (err) => setLoadError(errorText(err)));
-  }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: loads again after a change signs others out
-  useEffect(load, [load, version]);
-
-  const end = async (s: Session) => {
-    const error = await signOut(s.id);
-    if (error) toast(error, "error");
-    load();
-  };
-
-  const endOthers = async () => {
-    if (
-      !(await ask({
-        text: "Sign out every other browser and app? Apps will need to sign in again.",
-        ok: "Sign out",
-      }))
-    )
-      return;
-    try {
-      const r = await api<SignedOutOthers>("/auth/sign-out-others", { body: {} });
-      if (r.ended) toast("Signed out everywhere else");
-      else toast("Nowhere else was signed in", "info");
-    } catch (err) {
-      toast(errorText(err), "error");
-    }
-    load();
-  };
-
-  if (loadError) return <LoadError error={loadError} retry={load} />;
-  if (!sessions) return null;
-  return (
-    <Group title="Signed in">
-      {sessions.map((s) => (
-        <Row key={s.id} label={deviceName(s.userAgent)}>
-          <span className="val">{s.current ? "This browser" : since(s.createdAt)}</span>
-          {!s.current && (
-            <button type="button" className="btn sm danger-text" onClick={() => end(s)}>
-              Sign out
-            </button>
-          )}
-        </Row>
-      ))}
-      <Row label="Every other browser and app">
-        <button type="button" className="btn sm danger-text" onClick={endOthers}>
-          Sign out
-        </button>
-      </Row>
-    </Group>
   );
 }

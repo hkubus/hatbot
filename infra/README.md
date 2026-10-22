@@ -70,7 +70,7 @@ What's different from Proxmox:
 - **The same goes for the boxes guest.** Its output chain lets only the agent's user out, to the internet only; the boxes and their builds get nothing at all.
 - **Keep them on a private network**, or a VPN (WireGuard, Tailscale): VNC and the agents speak plain TCP, so `ssh-setup.sh` refuses a public `DESKTOP_IP` or `BOXES_IP`.
 - **A LAN DNS resolver** stays reachable from the desktop and the boxes guest, on port 53 only. To keep them off the LAN entirely, point them at public resolvers and run `ssh-setup.sh` again.
-- **No Proxmox token, snapshots or backups.** Settings → Desktop has no rollback; back up the brain's `/var/lib/hatbot` and `/archive`, and the boxes guest's `/var/lib/private/hatbox-data` (what the boxes save), yourself. The Proxmox plugin still works with a token you write to `/etc/hatbot/proxmox.env` by hand (see `host-setup.sh`, step 4).
+- **No Proxmox token, snapshots or backups.** Settings → System → Advanced has no desktop rollback; back up the brain's `/var/lib/hatbot` and `/archive`, and the boxes guest's `/var/lib/private/hatbox-data` (what the boxes save), yourself. The Proxmox plugin still works with a token you write to `/etc/hatbot/proxmox.env` by hand (see `host-setup.sh`, step 4).
 
 Commands below written `pct exec <brain> -- …` are `ssh <brain> …` here.
 
@@ -91,13 +91,13 @@ The first run asks for:
 
  Then it prints a setup code. Open `https://<your hatbot host>/setup` and enter the code to set your password and TOTP. The code changes whenever the brain restarts before setup is done. To read the current one, run `pct exec <brain> -- journalctl -u hatbot-brain | grep 'setup code'`.
 
-To change the password or the authenticator, use **Settings → Password and sign-ins**; either change signs out every other browser and app. If you've lost them, `./reset-login.sh` forgets both, signs out everything, restarts the brain and prints a new setup code.
+To change the password or the authenticator, use **Settings → Account → Password and authenticator**; either change signs out every other browser and app. If you've lost them, `./reset-login.sh` forgets both, signs out everything, restarts the brain and prints a new setup code.
 
 Each deploy is a new release in `/var/lib/hatbot/releases` inside the brain, and `/var/lib/hatbot/app` links to the live one. Before switching, the brain stops and its database is copied into the new release (`hatbot.sqlite.before`). If the new release fails its health check, the previous one goes back live with that copy of the database, so a migration it can't read is undone. The last 3 are kept. To change the URL or proxy later, run with `HATBOT_PUBLIC_URL=… HATBOT_TRUSTED_PROXIES=… ./deploy.sh …`; for ntfy, set `NTFY_URL=…`; for updates, `HATBOT_GIT_URL=…`.
 
 ## Update from Settings
 
-After that, **Settings → Updates → Update** pulls the branch and deploys it: the brain first, then desktop-agent and the boxes agent, each with the same health check and rollback as `deploy.sh`. If the brain goes back to its old version, the guests aren't touched. The page reloads on the new version.
+After that, **Settings → System → Software update → Update** pulls the branch and deploys it: the brain first, then desktop-agent and the boxes agent, each with the same health check and rollback as `deploy.sh`. If the brain goes back to its old version, the guests aren't touched. The page reloads on the new version.
 
 - The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
 - desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up. The boxes agent does the same (`hatbox-agent-update.path`); the boxes' units and firewall come only with `deploy.sh`.
@@ -124,13 +124,13 @@ Proxmox's API can't run commands inside containers, so Hatbot does it over SSH t
 cd /root/infra && ./pct-exec-setup.sh
 ```
 
-It adds a `hatbot` Unix user that logs in with the brain's key, installs `/usr/local/sbin/hatbot-pct-exec` (one command in one running container, as root there; Hatbot's own containers are refused) and a sudo rule for that program alone. Then add the host in **Settings → Plugins → SSH** (user `hatbot`) and switch on **Proxmox host**. Background tasks get `ssh_pct_exec(host, guest, command)`; destructive commands ask first, and a "careful" host asks for everything.
+It adds a `hatbot` Unix user that logs in with the brain's key, installs `/usr/local/sbin/hatbot-pct-exec` (one command in one running container, as root there; Hatbot's own containers are refused) and a sudo rule for that program alone. Then add the host in **Settings → Integrations → Plugins → SSH** (user `hatbot`) and switch on **Proxmox host** (under **More**). Background tasks get `ssh_pct_exec(host, guest, command)`; destructive commands ask first, and a "careful" host asks for everything.
 
 This makes Hatbot root inside your other containers. Leave it out if you'd rather keep Hatbot to starting and stopping them.
 
 ## Plugins
 
-Integrations are plugins you switch on in the web app, under **Settings → Plugins**. Each plugin's page has fields for the addresses and tokens it needs; save them and the plugin restarts with them. Tokens are kept in `/var/lib/hatbot/secrets.json` on the brain (mode 600) and never shown again, only whether they're set.
+Integrations are plugins you switch on in the web app, under **Settings → Integrations → Plugins**. Each plugin's page has fields for the addresses and tokens it needs; save them and the plugin restarts with them. Tokens are kept in `/var/lib/hatbot/secrets.json` on the brain (mode 600) and never shown again, only whether they're set.
 
 Env files in `/etc/hatbot/` on the brain still work, for ones written before or by a script; a value set on the page wins until **Use the host's**. A new env file needs a redeploy of the brain before its unit loads it.
 

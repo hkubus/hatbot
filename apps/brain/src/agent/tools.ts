@@ -1767,7 +1767,7 @@ export const TOOLS = [
   def({
     name: "trigger_list",
     description:
-      "List the webhooks and Uptime Kuma alert hooks that start background tasks, with what each run does. The owner creates them in Schedules & Triggers.",
+      "List the webhooks and Uptime Kuma alert hooks that start background tasks, with what each run does. The owner creates them in Automations.",
     schema: z.object({}),
     run: async (_, { triggers, bot, bots }) =>
       triggers
@@ -1801,7 +1801,7 @@ export const TOOLS = [
       const { triggers, tainted } = ctx;
       // A trigger's runs trust its instructions; untrusted content mustn't get to write them.
       if (patch.prompt !== undefined && tainted?.())
-        return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Schedules & Triggers.";
+        return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Automations.";
       const note = await stoppingTrigger(ctx, signal, id, patch);
       const t = triggers?.update(id, patch);
       return t ? `Updated trigger #${t.id} "${t.name}".${note}` : `No trigger #${id}.`;

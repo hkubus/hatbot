@@ -478,7 +478,7 @@ export class Boxes {
     const spent = d.spend.byPurpose(1).find((p) => p.purpose === "boxes")?.costUsd ?? 0;
     if (spent + this.asking + most > limits.boxesUsd)
       throw new BoxError(
-        `Boxes have used today's $${limits.boxesUsd} for asking Haiku. It's in Settings, under Spending limits.`,
+        `Boxes have used today's $${limits.boxesUsd} for asking Haiku. It's in Settings, under Spending → More limits.`,
         429,
       );
     this.asking += most;

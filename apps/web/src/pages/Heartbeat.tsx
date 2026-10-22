@@ -77,7 +77,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
   return (
     <section className="view">
       <div className="page narrow">
-        <BackHead to="/settings" label="Settings">
+        <BackHead to="/schedules" label="Automations">
           {/* It looks with what's saved: off while you have unsaved instructions. */}
           <button
             type="button"
@@ -86,19 +86,19 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
             title={unsaved ? "Save your changes first" : undefined}
             onClick={lookNow}
           >
-            Look now
+            Check now
           </button>
         </BackHead>
         <div className="panel form">
           <div className="form-row">
-            <span className="label">On</span>
+            <span className="label">Heartbeat</span>
             <Switch on={hb.enabled} onChange={(enabled) => save({ enabled })} />
           </div>
           <div className="form-row">
-            <span className="label">Look</span>
+            <span className="label">Check every</span>
             <select
               className="field"
-              aria-label="Look"
+              aria-label="Check every"
               value={hb.everyMinutes}
               onChange={(e) => save({ everyMinutes: Number(e.target.value) })}
             >
