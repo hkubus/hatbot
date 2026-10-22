@@ -41,7 +41,7 @@ export function Checks() {
             {[...report.results]
               .sort((a, b) => rank(a.state) - rank(b.state))
               .map((r) => (
-                <Row key={r.id} label={r.name} sub={<span>{r.detail}</span>}>
+                <Row key={r.id} label={`${r.name}: ${r.detail}`}>
                   <span className={CHIP[r.state].className}>{CHIP[r.state].label}</span>
                 </Row>
               ))}

@@ -246,7 +246,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
     if (
       !stored ||
       !(await ask({
-        text: `Delete "${stored.name}"? The tasks it started stay in Tasks.`,
+        text: `Delete ${stored.name}? The tasks it started stay in Tasks.`,
         ok: "Delete",
       }))
     )

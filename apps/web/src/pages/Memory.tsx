@@ -245,7 +245,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         const now = err.data as { sha: string; content: string };
         return setConflict({ sha: now.sha, content: now.content });
       }
-      toast(errorText(err, "Couldn't save"), "error");
+      toast(errorText(err, "Couldn't save."), "error");
     }
   };
   // Your edit goes; the file as it's now saved comes in.
@@ -296,12 +296,12 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       setSel({ kind: "file", path: "INDEX.md" });
       bumpMemory();
     } catch (err) {
-      toast(errorText(err, "Couldn't delete"), "error");
+      toast(errorText(err, "Couldn't delete."), "error");
     }
   };
 
   const revert = async (c: Commit) => {
-    if (!(await ask({ text: `Revert "${c.message}"?`, ok: "Revert" }))) return;
+    if (!(await ask({ text: `Revert ${c.message}?`, ok: "Revert" }))) return;
     try {
       const r = await api<{ sha: string | null }>(`/memory/revert/${c.sha}`, { body: {} });
       toast(
@@ -310,7 +310,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       );
       bumpMemory();
     } catch (err) {
-      toast(errorText(err, "Couldn't revert"), "error");
+      toast(errorText(err, "Couldn't revert."), "error");
     }
   };
 
@@ -349,7 +349,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
       await startTeach(name);
       navigate("/live");
     } catch (err) {
-      toast(errorText(err, "Couldn't start recording"), "error");
+      toast(errorText(err, "Couldn't start recording."), "error");
     }
   };
   const answer = async (p: Proposal, how: "apply" | "dismiss") => {
@@ -500,7 +500,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
                   </button>
                 )}
                 {exists && sel.path !== "INDEX.md" && (
-                  <button type="button" className="btn sm ghost danger-text" onClick={remove}>
+                  <button type="button" className="btn sm danger-text" onClick={remove}>
                     Delete
                   </button>
                 )}

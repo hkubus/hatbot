@@ -344,7 +344,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const showLive = screen && active && (watch || request?.taskId === id);
 
   const cancel = async () => {
-    if (!(await ask({ text: `Cancel "${task.title}"?`, ok: "Cancel task", cancel: "Keep it" })))
+    if (!(await ask({ text: `Cancel ${task.title}?`, ok: "Cancel task", cancel: "Keep it" })))
       return;
     await run(() => cancelTask(id));
   };

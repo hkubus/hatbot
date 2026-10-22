@@ -53,7 +53,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
     });
 
   const discard = async () => {
-    if (await ask({ text: "Throw this draft away?", ok: "Throw away" }))
+    if (await ask({ text: "Discard this draft?", ok: "Discard" }))
       void run(async () => {
         await discardTeach(id);
         release();
@@ -77,7 +77,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
             />
             <span className="path">.md</span>
             <span className="spacer" />
-            <button type="button" className="btn sm ghost danger-text" onClick={discard}>
+            <button type="button" className="btn sm danger-text" onClick={discard}>
               Discard
             </button>
             <button
@@ -126,7 +126,7 @@ export function SkillDraft({ id, toast }: { id: number; toast: (t: string) => vo
           {error && <div className="form-error">{error}</div>}
           {(session.status === "failed" || session.status === "drafting") && (
             <div className="form-actions">
-              <button type="button" className="btn sm ghost danger-text" onClick={discard}>
+              <button type="button" className="btn sm danger-text" onClick={discard}>
                 Discard
               </button>
               {session.status === "failed" && session.steps > 0 && (

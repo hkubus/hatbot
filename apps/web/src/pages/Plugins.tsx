@@ -208,8 +208,7 @@ function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
           <div key={v.name}>
             <span className="label">
               <span className="mono">{v.name}</span>
-              {v.optional && " (optional)"} ·{" "}
-              {v.from ? SOURCE[v.from] : v.optional ? "Not set" : "Missing"}
+              {v.optional ? " (optional)" : !v.from && " (missing)"}
             </span>
             <div className="form-row">
               <input
@@ -218,7 +217,7 @@ function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
                 type={v.secret ? "password" : "text"}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={v.secret && v.set ? "Unchanged" : (v.hint ?? "")}
+                placeholder={v.secret && v.from ? SOURCE[v.from] : (v.hint ?? "")}
                 value={values[v.name] ?? ""}
                 onChange={(e) => setValues({ ...values, [v.name]: e.target.value })}
               />
@@ -295,7 +294,12 @@ function NamedSecrets({
       {names.map((n) => (
         <div className="form-row" key={n}>
           <span className="mono">{n}</span>
-          <button type="button" className="btn sm ghost" disabled={busy} onClick={() => remove(n)}>
+          <button
+            type="button"
+            className="btn sm danger-text"
+            disabled={busy}
+            onClick={() => remove(n)}
+          >
             Remove
           </button>
         </div>

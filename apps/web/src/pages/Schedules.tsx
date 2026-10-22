@@ -262,7 +262,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
   const remove = async () => {
     if (
       !stored ||
-      !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
+      !(await ask({ text: `Delete ${stored.name}? Its past runs stay in Tasks.`, ok: "Delete" }))
     )
       return;
     await run(async () => {
@@ -334,7 +334,7 @@ function ScheduleEdit({ id }: { id: number | null }) {
                 onChange={(e) => set({ cron: e.target.value })}
               />
               {cron && !cronOk(cron) ? (
-                <span className="form-error hint">Not a valid cron</span>
+                <span className="form-error hint">That isn't a valid cron schedule.</span>
               ) : (
                 <span className="muted hint">
                   {cron && described !== cron ? described : "minute hour day month weekday"}
@@ -528,7 +528,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
   const remove = async () => {
     if (
       !stored ||
-      !(await ask({ text: `Delete "${stored.name}"? Its past runs stay in Tasks.`, ok: "Delete" }))
+      !(await ask({ text: `Delete ${stored.name}? Its past runs stay in Tasks.`, ok: "Delete" }))
     )
       return;
     await run(async () => {

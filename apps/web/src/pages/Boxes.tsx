@@ -260,11 +260,11 @@ function BoxSecrets({
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
               />
-              <button type="submit" className="btn sm accent" disabled={busy || !value.trim()}>
-                Save
-              </button>
               <button type="button" className="btn sm ghost" onClick={() => edit(null)}>
                 Cancel
+              </button>
+              <button type="submit" className="btn sm accent" disabled={busy || !value.trim()}>
+                Save
               </button>
             </form>
           ) : (
@@ -275,7 +275,7 @@ function BoxSecrets({
               {s.set && (
                 <button
                   type="button"
-                  className="btn sm ghost"
+                  className="btn sm danger-text"
                   disabled={busy}
                   onClick={() => remove(s.name)}
                 >

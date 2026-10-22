@@ -78,9 +78,7 @@ export function Devices({ toast }: { toast: Toast }) {
   };
 
   const revoke = async (t: ApiToken) => {
-    if (
-      !(await ask({ text: `Revoke "${t.name}"? Apps using it will be signed out.`, ok: "Revoke" }))
-    )
+    if (!(await ask({ text: `Revoke ${t.name}? Apps using it will be signed out.`, ok: "Revoke" })))
       return;
     await tokenEdit.run(async () => {
       await api(`/tokens/${t.id}`, { method: "DELETE" });
