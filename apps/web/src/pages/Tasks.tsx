@@ -375,7 +375,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
           )}
           {full && !active && !task.parentId && !screen && again === null && (
             <button type="button" className="btn sm" onClick={() => setAgain(full.goal)}>
-              <Icon name="undo" />
+              <Icon name="retry" />
               Run again
             </button>
           )}

@@ -5,6 +5,7 @@ import { api, errorText } from "../api";
 import { BotPicker } from "../automations";
 import { useLeaveGuard } from "../confirm";
 import { plainText, stamp } from "../format";
+import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
 import { useStore } from "../store";
@@ -86,6 +87,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
             title={unsaved ? "Save your changes first" : undefined}
             onClick={lookNow}
           >
+            <Icon name="play" />
             Check now
           </button>
         </BackHead>

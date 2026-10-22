@@ -2,6 +2,7 @@ import type { CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
+import { Icon } from "../icons";
 import { BackHead, Group, Row } from "../ui";
 
 const CHIP: Record<CheckState, { label: string; className: string }> = {
@@ -31,6 +32,7 @@ export function Checks() {
       <div className="page narrow">
         <BackHead to="/settings" label="Settings">
           <button type="button" className="btn sm" disabled={running} onClick={check}>
+            <Icon name={report ? "retry" : "play"} />
             {running ? "Checking…" : report ? "Check again" : "Check everything"}
           </button>
         </BackHead>

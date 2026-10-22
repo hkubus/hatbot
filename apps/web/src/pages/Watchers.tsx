@@ -16,6 +16,7 @@ import { BotPicker, Runs, useListed } from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { NoForm, useStoredForm } from "../form";
 import { stamp } from "../format";
+import { Icon } from "../icons";
 import { navigate } from "../router";
 import { loadPlugins, putWatcher, trustWatcher, useStore } from "../store";
 import { Switch } from "../switch";
@@ -271,6 +272,7 @@ export function WatcherEdit({ id }: { id: number | null }) {
                 title={edited ? "Save your changes first" : undefined}
                 onClick={checkNow}
               >
+                <Icon name="play" />
                 {checking.busy ? "Checking…" : "Check now"}
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>

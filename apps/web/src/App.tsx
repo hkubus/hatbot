@@ -54,7 +54,7 @@ const TodoPage = lazy(() => import("./pages/Todo").then((m) => ({ default: m.Tod
 const VIEWS = [
   { path: "/", title: "Chat", icon: "chat", phone: true },
   { path: "/tasks", title: "Tasks", icon: "tasks", phone: true },
-  { path: "/todo", title: "To-do", icon: "check", phone: false },
+  { path: "/todo", title: "To-do", icon: "todo", phone: false },
   { path: "/boxes", title: "Boxes", icon: "box", phone: false },
   { path: "/search", title: "Search", icon: "search", phone: false },
   { path: "/live", title: "Live", icon: "monitor", phone: true },

@@ -406,7 +406,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
           {pending.length > 0 && (
             <>
               <div className="folder">
-                <Icon name="zap" />
+                <Icon name="inbox" />
                 To look over
               </div>
               {pending.map((p) => (

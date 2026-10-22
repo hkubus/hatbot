@@ -155,7 +155,7 @@ function Meta({
               );
             }}
           >
-            <Icon name="undo" />
+            <Icon name="retry" />
           </button>
         )}
         {open && (

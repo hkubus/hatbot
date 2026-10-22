@@ -540,6 +540,7 @@ function TriggerEdit({ id, kind: newKind }: { id: number | null; kind: Trigger["
           {stored && (
             <>
               <button type="button" className="btn sm" onClick={rotate}>
+                <Icon name="key" />
                 New secret
               </button>
               <button type="button" className="btn sm danger-text" onClick={remove}>

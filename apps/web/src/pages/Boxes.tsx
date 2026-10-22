@@ -169,6 +169,7 @@ export function BoxPage({ id }: { id: number }) {
           )}
           {version !== detail.version && (
             <button type="button" className="btn sm" disabled={busy} onClick={restore}>
+              <Icon name="undo" />
               Restore
             </button>
           )}
