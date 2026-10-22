@@ -19,7 +19,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn local(message: &str) -> ApiError {
+    pub(crate) fn local(message: &str) -> ApiError {
         ApiError {
             status: 0,
             message: message.into(),
@@ -245,7 +245,7 @@ impl Api {
     }
 }
 
-const UNREADABLE: &str = "Hatbot sent something this app doesn't understand.";
+pub(crate) const UNREADABLE: &str = "Hatbot sent something this app doesn't understand.";
 
 fn decode<T: DeserializeOwned>(data: &[u8]) -> Result<T> {
     serde_json::from_slice(data).map_err(|_| ApiError::local(UNREADABLE))

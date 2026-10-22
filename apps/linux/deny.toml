@@ -1,5 +1,5 @@
-# Every crate must be permissive. GTK, libadwaita, GLib, libsoup and libsecret are LGPL, but
-# they're system libraries the app links dynamically and never ships; their Rust bindings are MIT.
+# Every crate must be permissive. GTK, libadwaita, GLib, libsoup, libsecret and WebKitGTK are LGPL,
+# but they're system libraries the app links dynamically and never ships; their Rust bindings are MIT.
 [licenses]
 allow = [
   "MIT",
