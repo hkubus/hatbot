@@ -2,6 +2,7 @@ import type { SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
 import { type FormEvent, useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api } from "../api";
+import { useLeaveGuard } from "../confirm";
 import type { Toast } from "../toast";
 import { BackHead } from "../ui";
 import { AddToAuthenticator, OtpInput } from "./Login";
@@ -27,6 +28,7 @@ function PasswordForm({ toast }: { toast: Toast }) {
   const [again, setAgain] = useState("");
   const [totp, setTotp] = useState("");
   const { busy, error, setError, run } = useAction();
+  useLeaveGuard(!!(password || next || again));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -99,6 +101,8 @@ function AuthenticatorForm({ toast }: { toast: Toast }) {
   const [qr, setQr] = useState("");
   const [code, setCode] = useState("");
   const { busy, error, setError, run } = useAction();
+  // Halfway through setting up a new one, leaving would leave it unfinished.
+  useLeaveGuard(!!password || !!next);
 
   useEffect(() => {
     if (!next) return setQr("");

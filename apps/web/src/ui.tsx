@@ -34,21 +34,30 @@ export function BackHead({
   );
 }
 
+/** `children` go on the left, e.g. an Add button. */
 export function SaveBar({
   error,
   disabled,
   onSave,
   label = "Save",
+  children,
 }: {
   error: string;
   disabled: boolean;
   onSave: () => void;
   label?: string;
+  children?: ReactNode;
 }) {
   return (
     <>
       {error && <div className="form-error">{error}</div>}
       <div className="form-actions">
+        {children !== undefined && (
+          <>
+            {children}
+            <span className="spacer" />
+          </>
+        )}
         <button type="button" className="btn accent" disabled={disabled} onClick={onSave}>
           {label}
         </button>

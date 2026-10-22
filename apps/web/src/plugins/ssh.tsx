@@ -4,7 +4,7 @@ import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { Switch } from "../switch";
-import { Disclosure } from "../ui";
+import { Disclosure, SaveBar } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Host = {
@@ -161,20 +161,11 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
             </div>
           </div>
         ))}
-        {error && <div className="form-error">{error}</div>}
-        <div className="form-row">
+        <SaveBar error={error} disabled={busy || !changed || !complete} onSave={submit}>
           <button type="button" className="btn sm" onClick={() => setHosts([...hosts, blank()])}>
             Add host
           </button>
-          <button
-            type="button"
-            className="btn accent"
-            disabled={busy || !changed || !complete}
-            onClick={submit}
-          >
-            Save
-          </button>
-        </div>
+        </SaveBar>
       </div>
     </>
   );

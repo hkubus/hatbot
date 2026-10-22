@@ -4,7 +4,7 @@ import type { ConnectionSource, Connections as ConnectionsInfo } from "@hatbot/s
 import { type FormEvent, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { ask } from "../confirm";
+import { ask, useLeaveGuard } from "../confirm";
 import { Link } from "../link";
 import { LoadError, useLoad } from "../load";
 import type { Toast } from "../toast";
@@ -98,6 +98,7 @@ function ApiKeyForm({
   const [key, setKey] = useState("");
   const { busy, error, run } = useAction();
   const hosts = useHosts("API key", "/connections/anthropic", onSaved, toast);
+  useLeaveGuard(!!key);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -160,6 +161,7 @@ function NtfyForm({
   const { busy, error, run } = useAction();
   const hosts = useHosts("ntfy server", "/connections/ntfy", onSaved, toast);
   const changed = url !== info.url || topic !== info.topic || token !== "";
+  useLeaveGuard(changed);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();

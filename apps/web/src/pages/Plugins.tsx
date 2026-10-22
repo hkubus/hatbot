@@ -3,7 +3,7 @@ import type { PluginEnvInfo, PluginInfo } from "@hatbot/shared";
 import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { ask } from "../confirm";
+import { ask, useLeaveGuard } from "../confirm";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
@@ -159,6 +159,7 @@ function EnvForm({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
   // Emptying one set here forgets it; one the host set can't be emptied from here.
   const forgets = Object.entries(changes).filter(([, value]) => !value);
   const bad = forgets.some(([name]) => p.env.find((v) => v.name === name)?.from !== "app");
+  useLeaveGuard(Object.keys(changes).length > 0);
 
   const send = (values: Record<string, string | null>) =>
     run(async () => {
@@ -243,6 +244,7 @@ function NamedSecrets({
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const { busy, error, run } = useAction();
+  useLeaveGuard(!!name.trim() || !!value);
   const add = (e: FormEvent) => {
     e.preventDefault();
     run(async () => {

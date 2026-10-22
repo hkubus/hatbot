@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
 import { Switch } from "../switch";
-import { Disclosure, Seg, Select } from "../ui";
+import { Disclosure, SaveBar, Seg, Select } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
@@ -332,8 +332,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
           </div>
         );
       })}
-      {error && <div className="form-error">{error}</div>}
-      <div className="form-row">
+      <SaveBar error={error} disabled={busy || !changed} onSave={submit}>
         <button
           type="button"
           className="btn sm"
@@ -341,10 +340,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
         >
           Add server
         </button>
-        <button type="button" className="btn accent" disabled={busy || !changed} onClick={submit}>
-          Save
-        </button>
-      </div>
+      </SaveBar>
     </>
   );
 }

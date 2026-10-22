@@ -8,7 +8,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api } from "../api";
-import { ask } from "../confirm";
+import { ask, useLeaveGuard } from "../confirm";
 import { modelName, plainText, shortStamp, time, timeOrDay, usd } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
@@ -311,6 +311,8 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const { busy, error, run } = useAction();
   /** The goal being edited to run it again; null when that form is closed. */
   const [again, setAgain] = useState<string | null>(null);
+  const goal = task && isFullTask(task) ? task.goal : undefined;
+  const release = useLeaveGuard(again !== null && again !== goal);
   // A research task attaches its report as it ends: fetched again then, to link it.
   const ended = !!task && !isActive(task);
   const wasRunning = useRef(false);
@@ -353,6 +355,7 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
         body: { goal: again === full?.goal ? undefined : again },
       });
       setAgain(null);
+      release();
       navigate(`/tasks/${t.id}`);
     });
 
