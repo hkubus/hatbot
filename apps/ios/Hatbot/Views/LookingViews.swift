@@ -107,48 +107,6 @@ private struct Snippet: View {
 
 // MARK: Watchers
 
-struct WatchersView: View {
-  @Environment(AppStore.self) private var store
-  @State private var error: String?
-
-  /// As loaded, then kept up to date by the event stream.
-  private var watchers: [Watcher]? {
-    store.watchersLoaded ? store.watchers.values.sorted { $0.id < $1.id } : nil
-  }
-
-  var body: some View {
-    List {
-      if let error { Text(error).foregroundStyle(.red) }
-      if let watchers, watchers.isEmpty {
-        Text("No watchers. Ask Hatbot in the chat to watch a page or a value.").foregroundStyle(.secondary)
-      }
-      ForEach(watchers ?? []) { w in
-        NavigationLink(value: Route.watcher(w.id)) {
-          VStack(alignment: .leading, spacing: 3) {
-            Text(w.name).foregroundStyle(w.enabled ? .primary : .secondary)
-            Text(line(w)).font(.footnote).foregroundStyle(w.lastError == nil ? Color.secondary : .red)
-          }
-        }
-      }
-    }
-    .overlay { if watchers == nil && error == nil { ProgressView() } }
-    .navigationTitle("Watchers")
-    .navigationBarTitleDisplayMode(.inline)
-    .refreshable { await load() }
-    .task { await load() }
-  }
-
-  private func line(_ w: Watcher) -> String {
-    if !w.enabled { return "Off" }
-    if let e = w.lastError { return e }
-    return "\(w.condition.description), \(Format.every(w.everyMinutes).lowercased())"
-  }
-
-  private func load() async {
-    await attempt($error) { try await store.loadWatchers() }
-  }
-}
-
 /// Watchers are made and changed in the chat or on the web.
 struct WatcherDetailView: View {
   let id: Int
@@ -273,24 +231,10 @@ struct ChecksView: View {
   @State private var report: CheckReport?
   @State private var running = false
   @State private var error: String?
-  @State private var approvalId: Int?
-  @State private var sending = false
 
   var body: some View {
     List {
       if let error { Text(error).foregroundStyle(.red) }
-      Section("From your phone") {
-        HStack {
-          VStack(alignment: .leading, spacing: 3) {
-            Text("Test approval")
-            if let a = approvalId.flatMap({ store.approvals[$0] }) {
-              Text(answer(a)).font(.footnote).foregroundStyle(.secondary)
-            }
-          }
-          Spacer()
-          Button("Send") { Task { await sendApproval() } }.disabled(sending)
-        }
-      }
       if let report {
         Section {
           ForEach(report.results) { r in
@@ -321,12 +265,37 @@ struct ChecksView: View {
       }
     }
     .task {
-      await attempt($error) {
-        let info = try await store.loadChecks()
-        report = info.report
-        approvalId = info.approval?.id
-      }
+      await attempt($error) { report = try await store.loadChecks().report }
     }
+  }
+
+  private func run() async {
+    running = true
+    await attempt($error) { report = try await store.runChecks() }
+    running = false
+  }
+}
+
+struct TestApprovalRow: View {
+  @Environment(AppStore.self) private var store
+  @State private var approvalId: Int?
+  @State private var sending = false
+  @State private var error: String?
+
+  var body: some View {
+    HStack {
+      VStack(alignment: .leading, spacing: 3) {
+        Text("Test approval")
+        if let error {
+          Text(error).font(.footnote).foregroundStyle(.red)
+        } else if let a = approvalId.flatMap({ store.approvals[$0] }) {
+          Text(answer(a)).font(.footnote).foregroundStyle(.secondary)
+        }
+      }
+      Spacer()
+      Button("Send") { Task { await sendApproval() } }.disabled(sending)
+    }
+    .task { approvalId = try? await store.loadChecks().approval?.id }
   }
 
   private func answer(_ a: Approval) -> String {
@@ -347,12 +316,6 @@ struct ChecksView: View {
     sending = true
     await attempt($error) { approvalId = try await store.sendTestApproval().id }
     sending = false
-  }
-
-  private func run() async {
-    running = true
-    await attempt($error) { report = try await store.runChecks() }
-    running = false
   }
 }
 
@@ -393,14 +356,14 @@ struct HeartbeatView: View {
       if let error { Text(error).foregroundStyle(.red) }
       if let s = Binding($settings) {
         Section {
-          Toggle("On", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
-          Picker("How often", selection: s.everyMinutes) {
+          Toggle("Heartbeat", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
+          Picker("Check every", selection: s.everyMinutes) {
             ForEach(AppSettings.Heartbeat.everyChoices(with: s.wrappedValue.everyMinutes), id: \.self) { m in
               Text(Format.every(m)).tag(m)
             }
           }
           .onChange(of: s.wrappedValue.everyMinutes) { save() }
-          Picker("Bot", selection: s.botId) {
+          Picker("Runs as", selection: s.botId) {
             // With the one set now when it isn't among them: deleted, or not loaded yet.
             ForEach(store.botIds.including(s.wrappedValue.botId), id: \.self) { id in Text(store.botName(id)).tag(id) }
           }
@@ -423,7 +386,7 @@ struct HeartbeatView: View {
         } else {
           Text("Not yet.").foregroundStyle(.secondary)
         }
-        Button(looking ? "Looking…" : "Look now") {
+        Button(looking ? "Checking…" : "Check now") {
           Task {
             looking = true
             defer { looking = false }
@@ -433,7 +396,7 @@ struct HeartbeatView: View {
         .disabled(looking)
       }
       if let recent = info?.recent, !recent.isEmpty {
-        Section("Before") {
+        Section("Recent finds") {
           ForEach(recent, id: \.at) { run in
             LabeledContent(run.at.stampText) {
               Text(Self.line(run)).multilineTextAlignment(.trailing)

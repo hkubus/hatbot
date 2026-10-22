@@ -465,6 +465,9 @@ struct BotTemplate: Decodable, Identifiable, Equatable, Sendable {
 struct PluginName: Decodable, Identifiable, Equatable, Sendable {
   let id: String
   var name: String
+  var enabled: Bool?
+  /// "off", "starting", "ready", "needs_setup" or "error".
+  var state: String?
 }
 
 enum Mention {

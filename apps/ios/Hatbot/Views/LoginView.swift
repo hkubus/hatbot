@@ -9,7 +9,7 @@ struct LoginView: View {
   @State private var error: String?
   @FocusState private var field: Field?
 
-  /// What the token is called in Signed-in devices: "iPhone (Hatbot iOS) 15 Oct 2026".
+  /// What the token is called in Devices and tokens: "iPhone (Hatbot iOS) 15 Oct 2026".
   static var deviceName: String {
     "\(UIDevice.current.model) (Hatbot iOS) \(Date().formatted(.dateTime.day().month(.abbreviated).year()))"
   }

@@ -7,7 +7,8 @@ API with a bearer token. Notifications still come from the ntfy app.
   store, Markdown blocks, cron in words. `Package.swift` builds it on its own so it compiles and
   tests anywhere Swift runs.
 - `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, To-do, Boxes, Live, Memory and Settings;
-  Schedules & Triggers, Watchers, Check everything and the Heartbeat open from Settings. Siri and
+  Automations (the built-in jobs, the Heartbeat, schedules, watchers and triggers), Spend and Check
+  everything open from Settings. Siri and
   Shortcuts actions are in `Hatbot/App/Intents.swift`.
 - `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
 - `Widgets`: the home-screen widget (today's spend and what needs you) and the Pause all control.
@@ -51,7 +52,7 @@ SwiftUI isn't there on Linux: `swiftc -parse Hatbot/Views/*.swift` checks the vi
 ## Sign in
 
 Enter the brain's address (`hatbot.example.com`), your password and a TOTP code. The app gets its
-own API token, named after the device; it shows in Settings → Account → Devices and tokens on the web, and signing out
+own API token, named after the device; it shows in Settings → Account → Devices and tokens, and signing out
 of the app deletes it.
 
 The address must be https, on the LAN too: the token goes with every request, and a phone joins

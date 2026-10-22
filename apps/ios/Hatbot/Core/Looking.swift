@@ -187,6 +187,13 @@ struct HeartbeatInfo: Codable, Equatable, Sendable {
   var recent: [Run]?
 }
 
+/// The Self plugin's schedule that asks for a code improvement now and then.
+struct CodeSuggestions: Decodable, Equatable, Sendable {
+  /// "off", "weekly" or "monthly"; "other" when its schedule was changed by hand, to `cron`.
+  var every: String
+  var cron: String?
+}
+
 extension AppSettings.Heartbeat {
   /// How often it can look, from the Every picker, with the one set now in its place.
   static func everyChoices(with current: Int) -> [Int] {

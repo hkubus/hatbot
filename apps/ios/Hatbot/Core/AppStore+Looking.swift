@@ -67,6 +67,20 @@ extension AppStore {
     try await api.post("/heartbeat/run", body: Empty())
   }
 
+  /// Nil when the Self plugin isn't set up.
+  func loadCodeSuggestions() async -> CodeSuggestions? {
+    let r: ActionResult<CodeSuggestions>? = try? await api.post("/plugins/self/actions/suggestions", body: Empty())
+    return r?.result
+  }
+
+  func setCodeSuggestions(_ every: String) async throws -> CodeSuggestions {
+    struct Body: Encodable { let every: String }
+    let r: ActionResult<CodeSuggestions> = try await api.post("/plugins/self/actions/suggest", body: Body(every: every))
+    return r.result
+  }
+
+  private struct ActionResult<T: Decodable & Sendable>: Decodable, Sendable { let result: T }
+
   func sendReport() async throws -> String {
     struct Sent: Decodable { let text: String }
     let r: Sent = try await api.post("/report/send", body: Empty())
