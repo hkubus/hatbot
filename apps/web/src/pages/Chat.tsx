@@ -1094,7 +1094,7 @@ export function Chat({ id }: { id: number }) {
             {waiting.rest > 0 && (
               <button
                 type="button"
-                className="tray-more"
+                className="text-link tray-more"
                 onClick={() =>
                   navigate(waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks")
                 }

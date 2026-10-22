@@ -518,7 +518,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             )}
           </div>
           {sel.kind === "file" && conflict && (
-            <div className="skill-trouble">
+            <div className="banner attn">
               <span>Changed while you were editing.</span>
               <span className="spacer" />
               <button type="button" className="btn sm" onClick={takeTheirs}>
@@ -530,7 +530,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
             </div>
           )}
           {sel.kind === "file" && skill && troubled > 0 && (
-            <div className="skill-trouble">
+            <div className="banner">
               <span>
                 {troubled} of its {skill.runs} task{skill.runs === 1 ? "" : "s"} since it last
                 changed {troubled === 1 ? "" : "each "}failed or needed you.

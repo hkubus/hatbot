@@ -87,7 +87,7 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
         {limit !== undefined && showLimit && (
           <>
             <line className="refline" x1={L} x2={W - R} y1={y(limit)} y2={y(limit)} />
-            <text x={W - R} y={y(limit) - 5} textAnchor="end" style={{ fill: "var(--text-2)" }}>
+            <text className="label" x={W - R} y={y(limit) - 5} textAnchor="end">
               Daily limit {usd(limit)}
             </text>
           </>
@@ -119,7 +119,7 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
             x={L + i * band + band / 2}
             y={y(points[i]?.usd ?? 0) - 6}
             textAnchor="middle"
-            style={{ fill: "var(--text-2)", fontWeight: 600 }}
+            className="label peak"
           >
             {usd(points[i]?.usd ?? 0)}
           </text>
@@ -134,7 +134,7 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
         )}
       </svg>
       {hover && points[hover.i] && (
-        <div className="tooltip show" style={{ left: hover.x, top: hover.y }}>
+        <div className="chart-tip above" style={{ left: hover.x, top: hover.y }}>
           <b>{points[hover.i]?.title}</b>
           {points[hover.i]?.detail}
         </div>
@@ -162,7 +162,7 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
       {mode === "chart" ? (
         points.length > 0 && <BarChart points={points} limit={limit} label={title} />
       ) : (
-        <div style={{ maxHeight: 260, overflow: "auto" }}>
+        <div className="chart-table">
           <table className="table">
             <tbody>
               {[...points].reverse().map((p) => (
