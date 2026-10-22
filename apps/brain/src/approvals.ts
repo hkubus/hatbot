@@ -1,4 +1,3 @@
-// Approvals (PLAN.md §6.2): a task asks, you decide in the web app or from an ntfy notification.
 import { createHmac } from "node:crypto";
 import {
   type Approval,
@@ -14,11 +13,7 @@ import type { EventBus } from "./events";
 import type { Notifier } from "./notify";
 
 const TTL_MS = 24 * 3600_000;
-/**
- * Kinds a notification's Approve button may decide, from a locked phone (PLAN.md §6.2). The rest
- * (money, accounts, who can get in, mandates, budget raises, suspected injections) are approved in
- * the app; a notification offers them "Open in Hatbot" and Deny.
- */
+/** Kinds a notification may approve from a locked phone; the rest are approved in the app. */
 const NOTIFY_APPROVES: ApprovalKind[] = ["send", "submit_personal_data", "delete", "other"];
 export const approvableFromNotification = (kind: ApprovalKind) => NOTIFY_APPROVES.includes(kind);
 
@@ -86,7 +81,6 @@ export function canonical(value: unknown): string {
 
 export type NewApproval = {
   taskId: number | null;
-  /** The bot asking; Hatbot by default. */
   botId?: string;
   /** The chat waiting for it, when no task is. */
   conversationId?: number | null;
@@ -102,7 +96,6 @@ export type NewApproval = {
   scopes?: ApprovalScope[];
 };
 
-/** A plugin call that would ask, to look up against what you allowed beyond once. */
 export type Granted = {
   botId: string;
   tool: string;
@@ -124,12 +117,11 @@ export class Approvals {
     private notifier: Notifier,
     private publicUrl: string,
     private clock: () => number = Date.now,
-    /** For the bot's name on notifications. */
     private bots?: Bots,
   ) {
     this.key = secretKey(db, "approval_key");
     // Nothing waits on approvals from before a restart: their tasks were stopped. A negotiation's
-    // mandate or hold waits for no task: it takes the answer whenever it comes (PLAN.md §16.1).
+    // mandate or hold waits for no task: it takes the answer whenever it comes.
     db.query(
       `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind != 'mandate'
        AND id NOT IN (SELECT approval_id FROM negotiations WHERE approval_id IS NOT NULL)`,
@@ -211,7 +203,6 @@ export class Approvals {
     return approval;
   }
 
-  /** Resolves when the approval is decided, expires or is cancelled. */
   wait(id: number, signal: AbortSignal): Promise<Outcome> {
     const current = this.get(id);
     if (current && current.status !== "pending") return Promise.resolve(current.status);
@@ -248,10 +239,7 @@ export class Approvals {
     return approval;
   }
 
-  /**
-   * Your decision, with what you told the task, and how far an approval goes (`scope`, one it
-   * offers). Null if the approval isn't pending any more, or it's one a notification can't approve.
-   */
+  /** Null if the approval isn't pending any more, or it's one a notification can't approve. */
   decide(
     id: number,
     decision: "approve" | "deny",
@@ -300,7 +288,6 @@ export class Approvals {
     return `You allowed ${q.tool}${q.target ? ` on ${q.target}` : ""} for the rest of this ${q.taskId !== undefined ? "task" : "conversation"}.`;
   }
 
-  /** The calls you always allow, newest first. */
   rules(): ApprovalRule[] {
     return this.db
       .query<{ id: number; bot_id: string; tool: string; summary: string; created_at: string }, []>(
@@ -316,7 +303,6 @@ export class Approvals {
       }));
   }
 
-  /** Stops always allowing a call; false if there was no such rule. */
   removeRule(id: number): boolean {
     return this.db.query("DELETE FROM approval_rules WHERE id = ?").run(id).changes > 0;
   }
@@ -334,7 +320,6 @@ export class Approvals {
     for (const { id } of ids) this.resolve(id, "cancelled");
   }
 
-  /** Expires approvals nobody answered within 24 h; the brain calls it every minute. */
   expireDue() {
     const due = this.db
       .query<{ id: number }, [string]>(

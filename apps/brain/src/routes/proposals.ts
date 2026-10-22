@@ -23,7 +23,6 @@ export const proposalRoutes = new Hono<AppEnv>()
   .post("/proposals/:id/apply", async (c) => c.json(await c.var.proposals.apply(id(c))))
   .post("/proposals/:id/dismiss", (c) => c.json(c.var.proposals.dismiss(id(c))))
   .get("/skills", async (c) => c.json(await c.var.proposals.skillStatus()))
-  // A fix for a skill whose tasks failed or needed you, in the background like a tidy-up.
   .post("/skills/:name/fix", async (c) => {
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
     await c.var.proposals.startFix(c.req.param("name"));

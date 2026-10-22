@@ -1,5 +1,4 @@
-// Slow database jobs on a connection of their own, so the brain keeps answering while they run:
-// SQLite's quick check, and the nightly snapshot.
+// Slow database jobs on a connection of their own, so the brain keeps answering while they run.
 import { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 
@@ -10,7 +9,6 @@ export type DbJob =
   | { op: "snapshot"; path: string; target: string };
 export type DbJobResult = { ok: true; result: string } | { ok: false; error: string };
 
-/** Runs a job on `db`, or on its own connection to `path`. */
 export function runJob(job: DbJob, db?: Database): string {
   const mode = job.op === "quick_check" ? { readonly: true } : { readwrite: true };
   const conn = db ?? new Database(job.path, mode);

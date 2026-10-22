@@ -35,7 +35,6 @@ test("an upgrade keeps a database in use: its chat, tasks and links, its search,
 
   migrate(db);
 
-  // One chat, with its summary; Hatbot's replies and tasks are its.
   expect(db.query("SELECT summary FROM conversations WHERE id = 1").get()).toEqual({
     summary: "Earlier: backups.",
   });
@@ -46,7 +45,6 @@ test("an upgrade keeps a database in use: its chat, tasks and links, its search,
   expect(db.query("SELECT bot_id FROM tasks WHERE id = 1").get()).toEqual({ bot_id: "hatbot" });
   // An ended task's result is in the place of the reply that started it.
   expect(db.query("SELECT text FROM messages WHERE id = 2").get()).toEqual({ text: "All fine." });
-  // Tasks rebuilt with their links, and foreign keys back on.
   expect(db.query("SELECT parent_id FROM tasks WHERE id = 2").get()).toEqual({ parent_id: 1 });
   expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(db.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });

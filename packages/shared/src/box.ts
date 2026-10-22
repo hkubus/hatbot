@@ -1,4 +1,4 @@
-// Boxes (PLAN.md §21): small web apps a bot makes for you, opened from the chat and kept.
+// Boxes: small web apps a bot makes for you, opened from the chat and kept.
 import { z } from "zod";
 import { type BoxFile, MAX_BOX_SECRET, SECRET_NAME } from "./hatbox";
 
@@ -6,7 +6,6 @@ export type Box = {
   id: number;
   /** The bot that made it; only it changes the box. */
   botId: string;
-  /** The chat it was made in. */
   conversationId: number | null;
   title: string;
   /** The version that opens. */
@@ -28,10 +27,7 @@ export type BoxSecret = { name: string; set: boolean };
 
 export type BoxDetail = Box & { versions: BoxVersion[]; secrets: BoxSecret[] };
 
-/**
- * A version's page, for its Code view. A box with files (PLAN.md §21.6) has them too, and its `html` is
- * the page built from them.
- */
+/** A version's page, for its Code view. A box with files has them too, and its `html` is built from them. */
 export type BoxPage = BoxVersion & { html: string; files?: BoxFile[] };
 
 /** A box's page, in characters. */
@@ -40,7 +36,7 @@ export const MAX_BOX_HTML = 1_000_000;
 export const MAX_BOX_VALUE = 1024 * 1024;
 export const MAX_BOX_STORE = 5 * 1024 * 1024;
 export const MAX_BOX_KEY = 200;
-/** What hatbox.ask sends Haiku, in characters, and the most it may answer, in tokens (X4). */
+/** What hatbox.ask sends Haiku, in characters, and the most it may answer, in tokens. */
 export const MAX_BOX_ASK = 50_000;
 export const MAX_BOX_ASK_SYSTEM = 10_000;
 export const MAX_BOX_ASK_TOKENS = 8000;
@@ -60,7 +56,7 @@ export const SetBoxSecrets = z.object({
   values: z.record(z.string().regex(SECRET_NAME), z.string().min(1).max(MAX_BOX_SECRET).nullable()),
 });
 
-/** A call from a box's page, as the app passes it on (PLAN.md §21.2). */
+/** A call from a box's page, as the app passes it on. */
 export const BoxCall = z.discriminatedUnion("op", [
   z.object({ op: z.literal("get"), key: z.string().max(MAX_BOX_KEY) }),
   z.object({ op: z.literal("set"), key: z.string().min(1).max(MAX_BOX_KEY), value: z.unknown() }),
@@ -78,7 +74,7 @@ export const BoxCall = z.discriminatedUnion("op", [
     body: z.string().max(7_200_000).optional(),
     base64: z.boolean().optional(),
   }),
-  // X4: Haiku with no tools, a note in the box's chat, and a feed's latest result.
+  // Haiku with no tools, a note in the box's chat, and a feed's latest result.
   z.object({
     op: z.literal("ask"),
     prompt: z.string().trim().min(1).max(MAX_BOX_ASK),

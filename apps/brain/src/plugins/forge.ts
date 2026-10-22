@@ -1,7 +1,5 @@
-// What the GitHub and Forgejo plugins share: names that are safe to put in an API path, which files
-// run in CI, and the write tools that work the same on both. A "." or ".." part would step out of the
-// repository's endpoints once the URL is resolved, and a branch git wouldn't take could land
-// somewhere else ("main/" on main).
+// A "." or ".." part in a name would step out of the repository's endpoints once the URL is resolved,
+// and a branch git wouldn't take could land somewhere else ("main/" on main).
 import { join, posix } from "node:path";
 import { z } from "zod";
 import type { DesktopAgent } from "../desktop/client";
@@ -29,13 +27,12 @@ export const Repo = (example: string) =>
     .refine((r) => !dotParts(r), "owner/name")
     .describe(`The repository as owner/name, e.g. "${example}"`);
 
-/** A path in a repository, without "." or ".." parts. */
 export const Path = z
   .string()
   .max(500)
   .refine((p) => !dotParts(p), 'a path inside the repository, without "." or ".." parts');
 
-/** Whether git takes this as a ref name (git check-ref-format). */
+/** git check-ref-format's rules. */
 export function validRef(name: string): boolean {
   if (!name || name.length > 200 || name === "@" || name.startsWith("-")) return false;
   if (name.startsWith("/") || name.endsWith("/") || name.endsWith(".")) return false;
@@ -45,10 +42,8 @@ export function validRef(name: string): boolean {
   return name.split("/").every((p) => !p.startsWith(".") && !p.endsWith(".lock"));
 }
 
-/** A branch, tag or commit. */
 export const Ref = z.string().max(200).refine(validRef, "a branch, tag or commit");
 
-/** A branch by its short name, e.g. main or hatbot/fix-ci. */
 export const Branch = z
   .string()
   .max(200)
@@ -57,12 +52,12 @@ export const Branch = z
     "a branch name, e.g. main or hatbot/fix-ci",
   );
 
-/** Branch names compared the way a forge might: case doesn't make another branch of main. */
+/** Case doesn't make another branch of main on a forge. */
 export const sameBranch = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 /**
- * Files CI runs with the repository's secrets: workflows, and the actions they use (in the actions
- * folder, or any action.yml). Git and the forges clean paths before writing, so check them that way.
+ * Files CI runs with the repository's secrets. Git and the forges clean paths before writing, so check
+ * them that way.
  */
 export function runsInCi(path: string, dirs = ["github"]): boolean {
   const clean = posix.normalize(`/${path}`).toLowerCase();
@@ -79,11 +74,6 @@ export const repoPath = (repo: string) => {
 export const contentsPath = (repo: string, path: string) =>
   `${repoPath(repo)}/contents/${path.split("/").filter(Boolean).map(encodeURIComponent).join("/")}`;
 
-/**
- * The write tools both forges have the same way: comment, open an issue or a pull request, close or
- * reopen, and merge. Merging is asked for differently (`merge`: the HTTP method, and the body for a
- * merge method), and only GitHub opens drafts.
- */
 export function forgeTools(
   id: string,
   {
@@ -181,31 +171,21 @@ export function forgeTools(
   ];
 }
 
-/** How many changed files a push lists. */
 const LISTED = 50;
 
-/**
- * A repository checked out into the desktop's sandbox, and what changed there pushed to a branch: Own
- * code's way (PLAN.md §18), for any repository the bot account can push to. The brain fetches and
- * pushes; the sandbox never gets the token.
- */
+/** The brain fetches and pushes; the sandbox never gets the token. */
 export function checkoutTools(
   id: string,
   d: {
     Repo: z.ZodType<string>;
     api: <T>(method: string, path: string, body?: unknown) => Promise<T>;
     desktop: DesktopAgent;
-    /** The plugin's data folder, where the bare clones go. */
     dir: string;
-    /** Where git finds the repositories, e.g. https://github.com. */
     gitBase: string;
-    /** The Authorization header git sends there. */
     auth: () => Promise<string>;
-    /** Who the commits are by: the bot account. */
     who: () => Promise<{ name: string; email: string }>;
-    /** Default branches as the plugin knows them, for policy; checking out a repository adds its own. */
+    /** For policy; checking out a repository adds its own. */
     defaults: Map<string, string>;
-    /** The forge's CI folders, for runsInCi. */
     ci: string[];
   },
 ): PluginTool[] {

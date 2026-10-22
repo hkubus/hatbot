@@ -1,5 +1,4 @@
-// Skills (PLAN.md §7.2): reusable procedures in skills/<name>.md, from teach-by-showing or written after tasks.
-// The files are the truth; the skills_index table and INDEX.md's Skills section follow them.
+// The skill files are the truth; the skills_index table and INDEX.md's Skills section follow them.
 import { SKILL_NAME } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
@@ -48,7 +47,6 @@ export function withSkillsSection(index: string, skills: SkillInfo[]): string {
     .trim()}\n`;
 }
 
-/** The Skills section's lines, to tell whether two indexes list the same skills. */
 function sectionOf(index: string): string {
   const lines = index.split("\n");
   const { start, end } = sectionAt(lines);
@@ -69,7 +67,6 @@ export class Skills {
     private clock: () => number = Date.now,
   ) {}
 
-  /** Keeps the index current as memory changes. */
   watch(events: EventBus) {
     events.on((e) => {
       if (e.type === "memory.committed")
@@ -77,7 +74,6 @@ export class Skills {
     });
   }
 
-  /** The skills in skills/, as `read` finds the files. */
   private async scan(read: (path: string) => Promise<string | null>): Promise<SkillInfo[]> {
     const found: SkillInfo[] = [];
     for (const f of await this.memory.tree()) {
@@ -89,7 +85,6 @@ export class Skills {
     return found.sort(byName);
   }
 
-  /** The skills index, for task prompts. */
   list(): SkillInfo[] {
     return this.db
       .query<SkillInfo, []>("SELECT name, description FROM skills_index ORDER BY name")
@@ -97,9 +92,8 @@ export class Skills {
   }
 
   /**
-   * Reads skills/ into the index, and into INDEX.md's Skills section when that lists something else
-   * (a skill written or deleted as a plain file, a tidy-up). Run at start and after memory commits
-   * (Hatbot and you edit files too).
+   * Also rewrites INDEX.md's Skills section when that lists something else (a skill written or deleted
+   * as a plain file, a tidy-up).
    */
   async refresh(): Promise<SkillInfo[]> {
     let found: SkillInfo[] = [];
@@ -127,10 +121,7 @@ export class Skills {
     return found;
   }
 
-  /**
-   * Writes a skill and lists it in INDEX.md, in one commit. With `before`, only if the skill is still
-   * that (null: it doesn't exist); otherwise MemoryConflict.
-   */
+  /** With `before`, only if the skill is still that (null: it doesn't exist); otherwise MemoryConflict. */
   async save(
     name: string,
     content: string,
@@ -161,7 +152,6 @@ export class Skills {
     return sha;
   }
 
-  /** The skills list for a task prompt, or "" when there are none. */
   prompt(): string {
     const skills = this.list();
     if (!skills.length) return "";

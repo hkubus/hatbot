@@ -1,6 +1,4 @@
-// Memory (PLAN.md §24.2 L5, MemoryView.swift on iOS): the files by folder, with proposals to look
-// over and skills that went wrong; a file to read, edit and delete, with a bar for someone else's
-// save in between; history, a commit's diff and Revert; and a proposal to apply or dismiss.
+// As MemoryView.swift on iOS.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -20,7 +18,6 @@ use super::markdown::Markdown;
 use super::route;
 use super::shell::Banners;
 
-/// How long asking for a tidy-up or a fix waits for it to come.
 const ASK_WAIT: Duration = Duration::from_secs(180);
 
 pub struct Memory {
@@ -334,7 +331,6 @@ impl Root {
         });
     }
 
-    /// The proposal asked for, once it comes.
     fn open_asked(&self) {
         let id = {
             let asking = self.asking.borrow();
@@ -370,7 +366,6 @@ fn open_proposal(store: &Store, id: i64) {
     route::push(p.page.clone(), Box::new(p));
 }
 
-/// A memory file: read, edit, history, delete.
 pub struct FilePage {
     pub page: adw::NavigationPage,
     _inner: Rc<File>,
@@ -799,7 +794,6 @@ impl File {
     }
 }
 
-/// The changes to one file, or to all of memory.
 pub struct HistoryPage {
     pub page: adw::NavigationPage,
     _inner: Rc<History>,
@@ -898,7 +892,6 @@ impl History {
     }
 }
 
-/// A commit's diff, with Revert.
 pub struct CommitPage {
     pub page: adw::NavigationPage,
     _inner: Rc<Commit>,
@@ -1036,7 +1029,6 @@ impl Commit {
     }
 }
 
-/// A proposal's changes, to apply or dismiss.
 pub struct ProposalPage {
     pub page: adw::NavigationPage,
     _inner: Rc<ProposalView>,
@@ -1232,7 +1224,6 @@ impl ProposalView {
     }
 }
 
-/// Diff lines in a fixed-width face, added ones green and removed ones red, scrolling sideways.
 pub fn diff_view(lines: &[DiffLine]) -> gtk::Widget {
     let buffer = gtk::TextBuffer::new(None);
     let tags = buffer.tag_table();

@@ -1,4 +1,4 @@
-// The API types the app uses, mirrored from packages/shared (PLAN.md §8), as iOS's Models.swift does.
+// Mirrored from packages/shared, as iOS's Models.swift does.
 // Decoding is lenient: an event or enum value a newer brain adds decodes as `Unknown`, not an error.
 use serde::{Deserialize, Serialize};
 
@@ -403,7 +403,6 @@ pub enum TriggerKind {
     Unknown,
 }
 
-/// Something outside Hatbot that starts a task: a webhook, or Uptime Kuma's alerts.
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Trigger {
@@ -489,7 +488,6 @@ pub struct ProposalChange {
     pub after: Option<String>,
 }
 
-/// A change to memory waiting for you to look over (PLAN.md §15).
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Proposal {
@@ -578,7 +576,6 @@ pub struct Todo {
     pub at: Option<String>,
     #[serde(default)]
     pub done_on: Option<String>,
-    /// The task working on it.
     #[serde(default)]
     pub task_id: Option<i64>,
 }
@@ -656,7 +653,6 @@ pub struct SpendWindow {
     pub tokens: i64,
 }
 
-/// A device signed in with a token.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {
@@ -774,7 +770,7 @@ pub struct SkillStatus {
     pub takeovers: Vec<i64>,
 }
 
-/// A small web app a bot made for you (PLAN.md §21; packages/shared/src/box.ts).
+/// A small web app a bot made for you (packages/shared/src/box.ts).
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppBox {
@@ -1051,7 +1047,6 @@ pub enum Event {
 }
 
 impl Event {
-    /// An event from the stream; one this app can't read is `Unknown`.
     pub fn parse(text: &str) -> Event {
         serde_json::from_str(text).unwrap_or(Event::Unknown)
     }

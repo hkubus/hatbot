@@ -1,7 +1,5 @@
-// A box made or changed by Claude Code (box_claude, PLAN.md §21): a task under the reply that asked for
-// it. Claude Code writes the box's files in a folder of the sandbox, with no tool that runs anything;
-// the brain builds what it leaves there as box_create would, hands what's wrong back to it, and saves
-// the box under the reply. The bot hears how it went as it hears of any task it started.
+// Claude Code writes the box's files in a sandbox folder with no tool that runs anything; the brain
+// builds what it leaves there as box_create would.
 import type { Box, Task } from "@hatbot/shared";
 import { MAX_BOX_HTML } from "@hatbot/shared";
 import {
@@ -27,16 +25,13 @@ import { PluginError } from "../plugins/plugin";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
 
-/** What box_claude asked for: a new box, or a change to `box`. */
 export type BoxJob = { request: string; box?: number; title?: string };
 
-/** The box as saved, with an approval's note; `same` when Claude Code left it as it was. */
 type Saved = { box: Box; note: string; same: boolean };
 
-/** Times what's wrong with the box goes back to Claude Code before the task fails. */
 const RETRIES = 2;
 
-/** Its tools: files only. The box runs on the boxes guest, never here. */
+/** Files only: the box runs on the boxes guest, never here. */
 const TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"];
 
 const system = (guest: boolean) =>
@@ -71,12 +66,10 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
   const key = `task-${id}`;
   tasks.setStatus(id, "running");
 
-  /** What the task has read that it doesn't trust, now. */
   const taintedBy = () => {
     const t = tasks.get(id);
     return t?.tainted ? t.taintedBy || "What started it" : null;
   };
-  /** A change that would ask, as a task's does: Haiku's review, then you. */
   const approve: ToolContext["approve"] = async ({ why, always, ...call }, sig) => {
     const verdict = { action: "ask" as const, why, tainted: true, always };
     const by = taintedBy();
@@ -134,7 +127,6 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
     const by = box && boxes.taintedBy(box.id);
     if (box && by) tasks.taint(id, `Box #${box.id} "${box.title}", written after reading: ${by}`);
 
-    // Its folder, with the box's files as they are.
     const seeded = await sandbox.exec(`rm -rf -- '${dir}' && mkdir -p -- '${dir}'`, 30);
     if (seeded.exitCode !== 0) throw new PluginError(`Couldn't make ${dir} in the sandbox.`);
     const current = box && boxes.page(box.id);
@@ -194,7 +186,6 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
       await work(`The box isn't saved yet. ${made}\n\nFix that, then sum up again.`);
     }
 
-    /** The box saved from what Claude Code left, with an approval's note; or what's wrong, for it. */
     async function saved(): Promise<Saved | string> {
       const found = await sandbox.exec(listing(dir), 60);
       let list: [string, number][];
@@ -263,7 +254,6 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
       return shown(saved, b.note);
     }
 
-    /** Shows the box under the reply; one left as it was (`b` null) too. */
     function shown(b: Box | null, note: string): Saved | string {
       const now = b ?? (box && boxes?.get(box.id));
       if (!now) return `${dir} is empty.`;
@@ -287,7 +277,6 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
   }
 }
 
-/** The reply the task shows under. */
 const replyOf = (tasks: Tasks, id: number) =>
   tasks.d.db
     .query<{ id: number }, [number]>(

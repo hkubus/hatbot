@@ -8,12 +8,10 @@ import { guessableTopic } from "../notify";
 import { SettingsPatch } from "../settings";
 import { json, query } from "./util";
 
-/** How many days of spend to show. */
 export const spendDays = query(
   z.object({ days: z.coerce.number().int().min(1).max(366).default(30) }),
 );
 
-/** The kill switch (PLAN.md §6.5): from Settings, or a notification's Pause all. */
 export function pauseAll(
   v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events" | "boxes">,
 ) {
@@ -50,7 +48,7 @@ export const adminRoutes = new Hono<AppEnv>()
     c.var.events.emit({ type: "settings.updated", settings });
     return c.json(settings);
   })
-  // The API key and ntfy server (PLAN.md §6.4): set here, they replace the host's until removed.
+  // The API key and ntfy server: set here, they replace the host's until removed.
   .get("/connections", (c) => c.json(c.var.secrets.view()))
   .put("/connections/anthropic", json(SetApiKey), async (c) => {
     try {
@@ -79,7 +77,7 @@ export const adminRoutes = new Hono<AppEnv>()
     c.var.secrets.setNtfy(null);
     return c.json(c.var.secrets.view());
   })
-  // Kill switch (PLAN.md §6.5). Resume is a separate, deliberate call.
+  // Resume is a separate, deliberate call.
   .post("/pause-all", (c) => {
     pauseAll(c.var);
     return c.json({ paused: true });

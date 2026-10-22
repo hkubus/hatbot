@@ -1,6 +1,4 @@
-// Under the chat: the error line, the files, the "@" and "/" suggestions, the field and Send. Enter
-// sends and Shift+Enter makes a new line. Each chat keeps its own draft and files while you're away,
-// and its incognito conversation another.
+// Each chat keeps its own draft and files while you're away, and its incognito conversation another.
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -82,7 +80,6 @@ pub struct Composer {
     sending: Cell<bool>,
     next_file: Cell<u64>,
     on_sent: Box<dyn Fn()>,
-    /// Itself, for the async work it starts.
     this: RefCell<std::rc::Weak<Composer>>,
 }
 

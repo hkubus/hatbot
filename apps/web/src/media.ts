@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
 
-/** Whether a media query matches, following it as it changes. */
 export function useMedia(query: string): boolean {
   return useSyncExternalStore(
     (l) => {
@@ -12,5 +11,4 @@ export function useMedia(query: string): boolean {
   );
 }
 
-/** A touch screen with no hover: a phone or tablet. */
 export const touchScreen = () => matchMedia("(hover: none)").matches;

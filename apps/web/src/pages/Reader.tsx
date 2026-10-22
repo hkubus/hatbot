@@ -45,7 +45,6 @@ const isGone = (err: unknown) =>
   err instanceof ApiError &&
   (err.status === 404 || (err.status === 400 && err.message.startsWith("not found")));
 
-/** The name the brain gives an attachment, from its content-disposition. */
 function fileName(res: Response): string {
   const cd = res.headers.get("content-disposition") ?? "";
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(cd)?.[1];

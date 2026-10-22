@@ -40,9 +40,7 @@ await brain.skills.refresh();
 const pluginsStarted = plugins
   .startAll()
   .catch((err) => console.error("plugins failed to start", err));
-// A restart ends an incognito conversation.
 await chats.endIncognito();
-// Tasks the restart stopped, told where they were started.
 tasks.recover();
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();

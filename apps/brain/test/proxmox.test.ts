@@ -4,7 +4,6 @@ import { Proxmox, pinnedRequest } from "../src/proxmox";
 import { signIn, testApp } from "./helpers";
 import { fakeApi, fixtures, PVE_FINGERPRINT } from "./plugin-helpers";
 
-// A stand-in for pveproxy with a self-signed certificate.
 const pve = fakeApi(
   (_req, url) => {
     const path = url.pathname;
@@ -59,11 +58,9 @@ test("Settings lists the desktop's snapshots, newest first, and rolls back to on
 
   const rollback = (name: string) => t.call("POST", "/desktop/rollback", { name }, { cookie });
   expect((await rollback("nightly_20261008")).status).toBe(200);
-  // It starts the desktop again and waits for Proxmox's task.
   expect(pve.seen.find((s) => s.method === "POST")?.body).toBe("start=1");
   expect(pve.seen.at(-1)?.path).toContain("/tasks/UPID");
   expect(t.tasks.lane.holderId).toBeNull();
-  // A name that isn't a snapshot's never reaches Proxmox's paths.
   const before = pve.seen.length;
   expect((await rollback("../../etc")).status).toBe(400);
   expect(pve.seen.length).toBe(before);
@@ -85,11 +82,9 @@ test("rolling back is refused while you or a task use the desktop", async () => 
 });
 
 test("only the pinned certificate, or a trusted CA's for the host's name, gets the token", async () => {
-  // A wrong pin fails before anything is sent, and says what it saw.
   const wrong = PVE_FINGERPRINT.replace("D7", "D8");
   await expect(new Proxmox(env(wrong)).desktopSnapshots()).rejects.toThrow(PVE_FINGERPRINT);
   expect(pve.seen).toEqual([]);
-  // Without a pin it isn't set up at all.
   expect(new Proxmox({ ...env(), PROXMOX_TLS_FINGERPRINT: "" }).configured).toBe(false);
 
   const api = {

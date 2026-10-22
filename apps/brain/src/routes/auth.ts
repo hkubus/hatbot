@@ -112,7 +112,6 @@ export const authRoutes = new Hono<AppEnv>()
   })
 
   .post("/auth/logout", requireAuth, (c) => {
-    // An app signs out with its bearer token, which ends that token.
     const principal = c.var.principal;
     if (principal.kind === "token") c.var.auth.deleteToken(principal.id);
     const cookie = getCookie(c, SESSION_COOKIE);
@@ -123,8 +122,8 @@ export const authRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
-  // Your account (Settings → Password and sign-ins). A change to the password or the authenticator
-  // signs out every other browser and app: whoever learnt the old one may have signed in with it.
+  // A change to the password or the authenticator signs out every other browser and app: whoever
+  // learnt the old one may have signed in with it.
   .post("/auth/password", requireAuth, json(ChangePassword), async (c) => {
     const { auth } = c.var;
     const tried = attempt(c);

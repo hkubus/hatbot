@@ -1,7 +1,5 @@
-// Charts in replies: a ```chart fenced block holding this JSON (packages/shared/src/chart.ts, Chart.swift
-// on iOS). Line and bar keep their values in `x` and `series`; scatter, range, matrix and timeline each
-// in their own fields. One that doesn't check out stays a code block. A line, bar or scatter block can
-// name an attachment for its values instead (ChartFile).
+// A ```chart block's JSON (packages/shared/src/chart.ts, Chart.swift on iOS). One that doesn't
+// check out stays a code block.
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value, json};
 
@@ -33,7 +31,6 @@ pub enum Kind {
     Timeline(Timeline),
 }
 
-/// Line and bar: one value per x for each series.
 #[derive(Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct Series {
     /// "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front.
@@ -189,7 +186,6 @@ fn is_label(s: Option<&str>) -> bool {
 }
 
 impl ChartSpec {
-    /// The spec in a chart block, or None if it isn't one.
     pub fn parse(source: &str) -> Option<ChartSpec> {
         let json: Value = serde_json::from_str(source).ok()?;
         Self::from_value(json)
@@ -204,7 +200,6 @@ impl ChartSpec {
         spec.checks_out().then_some(spec)
     }
 
-    /// The shared spec's limits and rules, for the kind it is.
     fn checks_out(&self) -> bool {
         if !fits(self.title.as_deref(), 120) {
             return false;
@@ -557,7 +552,6 @@ pub struct ChartFile {
 }
 
 impl ChartFile {
-    /// The file chart in a chart block, or None if it isn't one.
     pub fn parse(source: &str) -> Option<ChartFile> {
         let Value::Object(mut keys) = serde_json::from_str(source).ok()? else {
             return None;
@@ -589,7 +583,6 @@ impl ChartFile {
         }
     }
 
-    /// Where the brain answers with the values.
     pub fn path(&self) -> String {
         format!("/attachments/{}/chart?type={}", self.id, self.kind)
     }

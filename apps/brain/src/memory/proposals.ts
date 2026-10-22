@@ -1,6 +1,3 @@
-// Proposals: changes to memory written by the model for you to look over as a diff, then apply or
-// dismiss. A tidy-up of the whole memory (weekly, or when you ask), fixes to skills that keep failing
-// or needing you, and writes to skills and indexes from work that had read untrusted content.
 import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
 import type { Proposal, SkillStatus } from "@hatbot/shared";
 import { z } from "zod";
@@ -69,7 +66,7 @@ const Change = z.object({
   content: z.string().default(""),
   delete: z.boolean().default(false),
 });
-/** The answer's shape: Opus 5.5 can't be made to call a tool, so it answers in this JSON. */
+/** Opus 5.5 can't be made to call a tool, so it answers in this JSON. */
 const Answer = z.object({
   title: z.string().default(""),
   reason: z.string().default(""),
@@ -98,7 +95,6 @@ ${ANSWER}`;
 export class Proposals {
   private clock: () => number;
   private tidying = false;
-  /** Skills whose fix is being written. */
   private fixing = new Set<string>();
 
   constructor(private d: ProposalsDeps) {
@@ -123,7 +119,6 @@ export class Proposals {
     return r ? toProposal(r) : null;
   }
 
-  /** Proposes a tidy-up at the weekly report's time, when that's on. */
   tick() {
     const s = this.d.settings.get();
     if (s.paused || !s.memoryTidy || this.tidying) return;
@@ -135,10 +130,6 @@ export class Proposals {
     void this.tidy().catch((err) => this.failed("The weekly tidy-up of memory failed", err));
   }
 
-  /**
-   * A tidy-up you asked for, in the background: it arrives as a proposal.updated event. You're told
-   * through a notification if it fails or finds nothing to change.
-   */
   startTidy() {
     if (this.tidying) throw new ProposalError("A tidy-up is already being written.", 409);
     void this.tidy().then(
@@ -149,7 +140,6 @@ export class Proposals {
     );
   }
 
-  /** A fix for a skill, in the background, as startTidy. Throws at once if there's nothing to fix. */
   async startFix(name: string) {
     if (this.fixing.has(name)) throw new ProposalError("A fix is already being written.", 409);
     const ids = await this.troubled(name);
@@ -180,7 +170,7 @@ export class Proposals {
     });
   }
 
-  /** Asks the model for a tidy-up of memory. null: it found nothing to change. */
+  /** null: it found nothing to change. */
   async tidy(): Promise<Proposal | null> {
     if (this.tidying) throw new ProposalError("A tidy-up is already being written.", 409);
     this.tidying = true;
@@ -212,7 +202,6 @@ export class Proposals {
     }
   }
 
-  /** The latest tasks following a skill that failed or needed you; throws if there are none. */
   private async troubled(name: string): Promise<number[]> {
     const status = (await this.skillStatus()).find((s) => s.name === name);
     if (!status) throw new ProposalError(`No skill called ${name}.`, 404);
@@ -224,7 +213,6 @@ export class Proposals {
     return ids;
   }
 
-  /** Asks the model for a fix to a skill, from the tasks that failed or needed you. */
   async fixSkill(name: string, troubled?: number[]): Promise<Proposal | null> {
     const ids = troubled ?? (await this.troubled(name));
     const content = await this.d.memory.read(skillPath(name));
@@ -251,9 +239,8 @@ export class Proposals {
   }
 
   /**
-   * A write to a skill or an INDEX.md, which every later chat and task reads and trusts, from work
-   * that had read untrusted content (`by`): held for you (PLAN.md §6.1). Content null deletes the
-   * file. null: it wouldn't change anything.
+   * Every later chat and task trusts skills and INDEX.md files, so a write to one from work that read
+   * untrusted content (`by`) waits for you. Content null deletes the file.
    */
   async hold(path: string, content: string | null, what: string, by: string) {
     const p = await this.store(
@@ -267,7 +254,7 @@ export class Proposals {
     return p;
   }
 
-  /** Writes it as you, in one commit. A file changed since it was proposed makes it stale. */
+  /** A file changed since it was proposed makes it stale. */
   async apply(id: number): Promise<{ proposal: Proposal; sha: string | null }> {
     const p = this.get(id);
     if (!p) throw new ProposalError("No such proposal.", 404);
@@ -319,7 +306,6 @@ export class Proposals {
     return this.resolve(id, "dismissed");
   }
 
-  /** Each skill with the tasks following it that failed or needed you since its file last changed. */
   async skillStatus(): Promise<SkillStatus[]> {
     const changed = new Map<string, string>();
     for (const c of await this.d.memory.log(500))

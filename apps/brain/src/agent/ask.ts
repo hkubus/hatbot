@@ -1,5 +1,5 @@
-// ask_owner (PLAN.md §20): questions for the owner, with answers to tap. In the chat they end the reply
-// and the owner's next message answers them; a background task waits for the answers.
+// In the chat, ask_owner's questions end the reply and the owner's next message answers them; a
+// background task waits for the answers.
 import { MAX_CHOICE_CHARS, MAX_CHOICES, MAX_QUESTIONS_AT_ONCE } from "@hatbot/shared";
 import { z } from "zod";
 
@@ -44,7 +44,6 @@ export const TASK_ASK_DESCRIPTION = `Ask the owner what only they can decide, an
 export const ownerAnswer = (answer: string) =>
   `The owner answered:\n<owner_answer>\n${answer}\n</owner_answer>`;
 
-/** The questions as the reply ends with them: one as it is, several as a numbered list. */
 export const askedText = (questions: { question: string }[]) =>
   questions.length === 1
     ? (questions[0]?.question ?? "")

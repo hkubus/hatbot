@@ -1,24 +1,19 @@
-// What you're writing in each chat. The text is kept in localStorage, so it outlasts a reload; files
-// stay in memory while the app is open, uploads carrying on while you're in another chat.
+// Text is kept in localStorage so it outlasts a reload; files stay in memory, uploads carrying on
+// while you're in another chat.
 import type { Attachment } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 import { errorText, upload } from "./api";
 
-/** Types the page shows as pictures; the rest are links. */
 export const PICTURES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-/** The brain keeps files up to this size. */
 const MAX_FILE = 25 * 1024 * 1024;
 
-/** A file in the composer: uploading, uploaded, or failed. */
 export type DraftFile = {
   key: number;
   name: string;
   preview?: string;
   attachment?: Attachment;
   error?: string;
-  /** How much of it has gone up, from 0 to 1, while it uploads. */
   sent?: number;
-  /** Stops its upload when it's taken off. */
   abort?: AbortController;
 };
 
@@ -73,7 +68,6 @@ export function useDraftFiles(chat: string): DraftFile[] {
 }
 
 let fileKey = 0;
-/** Adds files to a chat's draft and uploads them; one too big is shown failed rather than sent. */
 export function attachFiles(chat: string, list: FileList | File[]) {
   for (const file of Array.from(list).slice(0, 10)) {
     const key = ++fileKey;
@@ -100,7 +94,6 @@ export function attachFiles(chat: string, list: FileList | File[]) {
   }
 }
 
-/** Forgets every chat's draft, for signing out: its text, and files still uploading or waiting. */
 export function clearDrafts() {
   memoryText.clear();
   try {
@@ -118,7 +111,6 @@ export function clearDrafts() {
   for (const l of listeners) l();
 }
 
-/** Takes a file off a chat's draft, stopping its upload if it's still going. */
 export function removeFile(chat: string, key: number) {
   setDraftFiles(chat, (f) => {
     const d = f.find((x) => x.key === key);

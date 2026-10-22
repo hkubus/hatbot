@@ -1,5 +1,4 @@
-// Schedules & Triggers: the list of both, and a schedule's page, which also adds one (PLAN.md §24.2
-// L5, SchedulesView.swift on iOS). Triggers are set up on the web; their page is trigger.rs.
+// As SchedulesView.swift on iOS. Triggers are set up on the web; their page is trigger.rs.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -181,7 +180,6 @@ fn link_row(title: &str, subtitle: &str, off: bool, link: Link) -> adw::ActionRo
     row
 }
 
-/// A schedule's page, or a new schedule's when `id` is None.
 pub struct SchedulePage {
     pub page: adw::NavigationPage,
     _inner: Rc<Page>,

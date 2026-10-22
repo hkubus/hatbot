@@ -6,7 +6,6 @@ export class Held {
   private down = new Map<string, LiveInput>();
   private at = { x: 0, y: 0 };
 
-  /** Notes what an input sent to the desktop holds down or lets go. */
   note(m: LiveInput) {
     if (m.t !== "key") this.at = { x: m.x, y: m.y };
     if (m.t !== "key" && m.t !== "button") return;

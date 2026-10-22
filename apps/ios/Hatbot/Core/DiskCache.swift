@@ -1,5 +1,3 @@
-// What the app last saw, kept on disk: the bots and chats, and the latest page of each chat. A cold
-// launch shows them straight away, and the brain's answers replace them as they come.
 import Foundation
 
 struct DiskCache: Sendable {
@@ -12,14 +10,12 @@ struct DiskCache: Sendable {
   /// Files opened from the chat, saved for Quick Look under their own names; signing out deletes them.
   static let openedFiles = FileManager.default.temporaryDirectory.appendingPathComponent("attachments", isDirectory: true)
 
-  /// The bots and chats, and which chat was open.
   struct Chats: Codable, Equatable, Sendable {
     var bots: [Bot]
     var conversations: [Conversation]
     var conversationId: Int
   }
 
-  /// A chat's latest page.
   struct Page: Codable, Equatable, Sendable {
     var messages: [ThreadMessage]
     var episodes: [Episode]
@@ -36,13 +32,12 @@ struct DiskCache: Sendable {
 
   func save(_ page: Page, for conversationId: Int) { write(page, "page-\(conversationId).json") }
 
-  /// A chat that was deleted.
   func forget(_ conversationId: Int) {
     let url = dir.appendingPathComponent("page-\(conversationId).json")
     Self.queue.async { try? FileManager.default.removeItem(at: url) }
   }
 
-  /// Signing out leaves nothing behind. Done once the writes before it are.
+  /// Done once the writes before it are.
   func clear() {
     let dir = dir
     Self.queue.sync { try? FileManager.default.removeItem(at: dir) }
@@ -54,7 +49,6 @@ struct DiskCache: Sendable {
     return try? JSONDecoder().decode(T.self, from: data)
   }
 
-  /// Encoded here, written off the main thread.
   private func write<T: Encodable>(_ value: T, _ name: String) {
     guard let data = try? JSONEncoder().encode(value) else { return }
     let dir = dir
@@ -65,7 +59,6 @@ struct DiskCache: Sendable {
   }
 }
 
-/// Memory's files and the to-do list, so their pages show at once on launch and refresh when opened.
 extension DiskCache {
   func memoryTree() -> [MemoryFile]? { load("memory-tree.json") }
 
@@ -76,7 +69,6 @@ extension DiskCache {
   func save(_ todos: TodoList) { write(todos, "todo.json") }
 }
 
-/// The Tasks screen's first pages, as cards, and files kept from before a page had its tasks.
 extension DiskCache {
   /// `list`: "active" or "done".
   func tasks(_ list: String) -> [AgentTask]? { load("tasks-\(list).json") }

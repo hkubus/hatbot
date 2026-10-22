@@ -20,7 +20,6 @@ export const watcherRoutes = new Hono<AppEnv>()
     knownBot(c, c.req.valid("json").botId);
     return c.json(await c.var.watchers.create(c.req.valid("json"), "owner"), 201);
   })
-  // What a check would find now: the form's Try button.
   .post("/watchers/preview", json(Preview), async (c) => {
     const { source, botId } = c.req.valid("json");
     knownBot(c, botId);

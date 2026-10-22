@@ -73,7 +73,6 @@ test("a message sent again with the same client id, its answer lost, is posted a
     ["user", "hello"],
     ["assistant", "Once."],
   ]);
-  // Another id is another message.
   await send("tab-1-b");
   await t.thread.idle();
   expect(texts()).toHaveLength(4);
@@ -139,7 +138,6 @@ test("a conversation goes on within 30 minutes; idle past that, it gets a recap 
   await t.thread.sweep();
   expect(model.creates.length).toBe(0);
   t.advance(31 * 60_000);
-  // Two sweeps at once summarize it once.
   await Promise.all([t.thread.sweep(), t.thread.sweep()]);
   expect(model.creates.length).toBe(1);
   expect(t.thread.episodes([episodeId])[0]?.recap).toBe(
@@ -238,7 +236,6 @@ test("each request marks where the last one ended, after the same system and too
   // The third: on the tool results the second request ended with.
   expect(marks(2)).toEqual([[2, true, hour]]);
   expect(model.requests[2]?.messages[2]?.role).toBe("user");
-  // The stored turns don't keep it.
   const stored = t.db.query<{ content: string }, []>("SELECT content FROM episode_turns").all();
   expect(stored.some((r) => r.content.includes("cache_control"))).toBe(false);
 
@@ -398,7 +395,6 @@ test("search_history finds older conversations by any of the words, in any form,
     expect(result).toContain(
       '<message from=\\"Owner\\" at=\\"9 Oct 2026, 14:00\\">I renamed the backups share to vault</message>',
     );
-    // Not the conversation you're in.
     expect(result).not.toContain("what did I name");
 
     // Its dates are local days: half past midnight on 17 October in Warsaw.
@@ -482,7 +478,6 @@ test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", 
   expect(lastUserText(model.requests[2])).toContain(
     JSON.stringify(`<opus_answer>\n${code}\n</opus_answer>`).slice(1, -1),
   );
-  // The second ask never reached Opus.
   expect(model.requests.map((r) => r.model)).toEqual([
     "claude-haiku-5-5",
     "claude-opus-5-5",
@@ -554,7 +549,6 @@ test("/new starts a conversation that carries nothing over, and folds the last o
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
   t.advance(60_000);
   await t.thread.post("/new").done;
-  // A second /new is the same new conversation.
   await t.thread.post("/new").done;
   await t.thread.post("second").done;
 
@@ -757,7 +751,6 @@ test("incognito sees no history, can't write or start work, and leaves nothing w
   expect(t.events.filter((e) => e.type === "memory.committed")).toEqual([]);
   expect(t.tasks.list()).toEqual([]);
 
-  // None of it is in the thread, unread, or the search index.
   expect(t.thread.list().map((m) => m.text)).toEqual(["my wireguard port is 51820", "Got it."]);
   const secret = t.thread.list(undefined, 50, true);
   expect(secret.length).toBe(8);
@@ -773,10 +766,8 @@ test("incognito sees no history, can't write or start work, and leaves nothing w
   const count = (sql: string) => t.db.query<{ n: number }, []>(sql).get()?.n;
   expect(count("SELECT count(*) AS n FROM episodes WHERE incognito = 1")).toBe(0);
   expect(count("SELECT count(*) AS n FROM episode_turns WHERE episode_id != 1")).toBe(0);
-  // What it cost is still counted.
   expect(count("SELECT count(*) AS n FROM spend_ledger WHERE episode_id IS NULL")).toBe(3);
 
-  // The kept conversation carries on where it was.
   await t.thread.post("back").done;
   expect(model.requests[4]?.messages.length).toBe(3);
 });

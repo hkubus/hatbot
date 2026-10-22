@@ -27,9 +27,7 @@ const CHECK_TIMEOUT_MS = 30_000;
 const LOW_DISK_BYTES = 5 * 1024 ** 3;
 /** A write-ahead log this big means checkpoints aren't keeping up: something holds a read open. */
 const BIG_WAL_BYTES = 512 * 1024 ** 2;
-/** Nightly snapshots: one older than this means they've stopped. */
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
-/** Features the brain uses that an older desktop-agent doesn't have. */
 const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields", "gates"];
 const NEW_TOPIC = "Pick a random one in Settings → Connections.";
 const ONLY_YOU = "Allow only your ntfy user to read the topic.";
@@ -49,20 +47,15 @@ export type ChecksDeps = {
   /** Made as it's set now: Settings can change it. */
   proxmox: () => Proxmox;
   updates: Updates;
-  /** Your ntfy server; null when it isn't set up. */
   ntfy: Pick<
     NtfyNotifier,
     "configured" | "topic" | "hasToken" | "health" | "readableByAnyone"
   > | null;
-  /** For a reverse proxy that isn't in HATBOT_TRUSTED_PROXIES. */
   auth?: Pick<AuthService, "untrustedProxy">;
-  /** The dead-man ping; absent in tests that don't need it. */
   ping?: Pick<DeadManPing, "configured" | "lastPing">;
-  /** False when there's no API key, in Settings or on the host. */
   apiKeySet?: () => boolean;
   /** The brain's time zone; the desktop's should match it. */
   timeZone?: string;
-  /** For tests. */
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   clock?: () => number;
 };
@@ -95,7 +88,7 @@ export class Checks {
     };
   }
 
-  /** Runs every check at once; a second call while one runs gets the same report. */
+  /** A second call while one runs gets the same report. */
   run(): Promise<CheckReport> {
     this.running ??= this.runAll().finally(() => {
       this.running = null;
@@ -539,7 +532,6 @@ export class Checks {
     return ok(pending.length ? `${pending.length} waiting for you.` : "None waiting.");
   }
 
-  /** The test approval tryApproval sent last. */
   private approvalId(): number | null {
     const v = getSetting(this.d.db, "checks:approval");
     return v === null ? null : (JSON.parse(v) as number);

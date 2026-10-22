@@ -15,7 +15,6 @@ use soup::prelude::*;
 
 pub const TOKEN: &str = "hbt_test";
 
-/// A request the brain got.
 #[derive(Debug, Clone)]
 pub struct Req {
     pub method: String,
@@ -189,7 +188,6 @@ impl Brain {
             .collect()
     }
 
-    /// An event to every open stream.
     pub fn send(&self, event: Value) {
         for conn in self.0.streams.borrow().iter() {
             if conn.state() == soup::WebsocketState::Open {
@@ -207,7 +205,6 @@ impl Brain {
             .count()
     }
 
-    /// What came in on the live view's socket so far.
     pub fn live_inputs(&self) -> Vec<Value> {
         self.0.live_inputs.borrow().clone()
     }
@@ -257,7 +254,6 @@ pub fn approval(id: i64, status: &str) -> Value {
     })
 }
 
-/// A task as the brain sends it.
 pub fn task(id: i64, status: &str) -> Value {
     json!({
         "id": id, "botId": "hatbot", "conversationId": null, "title": format!("Task {id}"), "goal": "Water the plants",

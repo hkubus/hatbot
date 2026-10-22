@@ -38,7 +38,6 @@ test("a live viewer that fell behind gets the newest frame once it catches up", 
   );
   for (let i = 1; i <= 3; i++) relay.push(new Uint8Array([i]).buffer);
   expect(sent).toEqual([]);
-  // Still behind: it looks again later.
   retry?.();
   expect(sent).toEqual([]);
   buffered = 0;

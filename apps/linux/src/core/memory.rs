@@ -1,5 +1,4 @@
-// Memory's files by folder, paths for new ones, and diffs: git's, and between a proposal's before and
-// after (Memory.swift and LineDiff in Looking.swift on iOS, diff.ts on the web).
+// As Memory.swift and LineDiff in Looking.swift on iOS, and diff.ts on the web.
 use std::collections::BTreeMap;
 
 use super::models::MemoryFile;
@@ -101,7 +100,6 @@ const CONTEXT: usize = 2;
 /// Past this many edits the middle shows as all removed, then all added: Myers' cost grows with it.
 const MOST_EDITS: usize = 2_000;
 
-/// What changed between two versions of a file, line by line, with a little context.
 pub fn line_diff(before: Option<&str>, after: Option<&str>) -> Vec<DiffLine> {
     fn lines(s: Option<&str>) -> Vec<&str> {
         match s {

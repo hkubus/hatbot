@@ -1,5 +1,5 @@
-// Markdown as Hatbot shows it: replies in chat, task summaries and the reader. Raw HTML is never
-// rendered (react-markdown's default), other sites open in a new tab, and only the app's own pictures load.
+// Raw HTML is never rendered (react-markdown's default), other sites open in a new tab, and only
+// the app's own pictures load.
 import { API_PREFIX } from "@hatbot/shared";
 import { createContext, memo, useContext, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
@@ -10,7 +10,6 @@ import { Icon } from "./icons";
 import { Link } from "./link";
 import { splitBlocks } from "./md-blocks";
 
-/** Copies `text`; `copied` is true for a moment after. */
 export function useCopy(): [boolean, (text: string) => void] {
   const [copied, setCopied] = useState(false);
   const copy = async (text: string) => {
@@ -21,7 +20,6 @@ export function useCopy(): [boolean, (text: string) => void] {
   return [copied, copy];
 }
 
-/** A code block, with Copy in its corner. */
 function CodeBlock({ code, children }: { code: string; children: React.ReactNode }) {
   const [copied, copy] = useCopy();
   return (
@@ -48,7 +46,6 @@ const Streaming = createContext(false);
 export type Node = { type: string; value?: string; children?: Node[] };
 export const textOf = (n: Node): string => n.value ?? (n.children ?? []).map(textOf).join("");
 
-/** Where a link goes in the app itself: its path, or null for other sites and the API's files. */
 export function appPath(href: string, origin = location.origin): string | null {
   let url: URL;
   try {
@@ -69,7 +66,6 @@ const ownPicture = (src: string, origin = location.origin) => {
   }
 };
 
-// Other sites open in a new tab, and the app's own pages in this one.
 export const MD_COMPONENTS: Components = {
   a: ({ node: _, href, ...props }) => {
     if (href?.startsWith("#")) return <a {...props} href={href} />;
@@ -111,7 +107,6 @@ export const MD_COMPONENTS: Components = {
 
 export const REMARK = [remarkGfm];
 
-/** A file that opens in the reader rather than downloading. */
 export const isMarkdownFile = (a: { name: string; mediaType: string }) =>
   a.mediaType === "text/markdown" || /\.md$/i.test(a.name);
 

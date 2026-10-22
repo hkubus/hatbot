@@ -1,7 +1,6 @@
-// Teach-by-showing's record mode (PLAN.md §1): your live-view input as a short log of steps.
 import type { LiveInput } from "@hatbot/shared/desktop";
 
-/** One recorded step; `t` is milliseconds since the recording started. */
+/** `t` is milliseconds since the recording started. */
 export type RecStep =
   | { t: number; kind: "move"; x: number; y: number }
   | {
@@ -14,16 +13,11 @@ export type RecStep =
       screen?: string;
     }
   | { t: number; kind: "wheel"; dx: number; dy: number; x: number; y: number }
-  /**
-   * `hidden`: a character with a modifier, typed into a field that takes a secret or couldn't be checked;
-   * not recorded.
-   */
   | { t: number; kind: "key"; key: string; screen?: string; hidden?: "secret" | "unknown" }
-  /** Typing. `hidden`: not recorded, because the field takes a secret or couldn't be checked. */
+  /** `hidden`: not recorded, because the field takes a secret or couldn't be checked. */
   | { t: number; kind: "text"; text: string; hidden?: "secret" | "unknown"; chars: number }
   | { t: number; kind: "page"; url: string | null; title: string | null };
 
-/** The focused field: whether it takes a secret, and the address of the page it's in. */
 export type FieldCheck = { secret: boolean; url?: string | null };
 
 /** What the field check throws when the keyboard isn't on a page: the address bar, another window. */
@@ -41,15 +35,13 @@ export type RecorderHooks = {
    * holds something, or the page couldn't say.
    */
   screen: () => Promise<{ bytes: Uint8Array; url?: string | null } | null>;
-  /** Keeps a screenshot; its archive path. */
   save: (label: string, bytes: Uint8Array) => Promise<string | null>;
 };
 
 /** Long enough for a chore; a recording left running stops growing here. */
 export const MAX_STEPS = 3000;
-/** Screenshots per recording. */
 export const MAX_SCREENS = 200;
-/** How often the address on screen is asked for: a new one is seen up to this late, and the asking. */
+/** A new address on screen is seen up to this late. */
 export const PAGE_POLL_MS = 1500;
 
 // A Map: a key named "constructor" or "__proto__" isn't a modifier.
@@ -61,10 +53,8 @@ const MODIFIERS = new Map([
 
 type TextStep = Extract<RecStep, { kind: "text" }>;
 type KeyStep = Extract<RecStep, { kind: "key" }>;
-/** Characters with a modifier in a row, and how to hide them, by how many, once their field is checked. */
 type Combos = { steps: KeyStep[]; hide?: (n: number) => KeyStep["hidden"] };
 
-/** Hides a run as its field check decided, for as many as it has now; a hidden step stays hidden. */
 function hideRun(run: Combos) {
   const hidden = run.hide?.(run.steps.length);
   if (hidden) for (const s of run.steps) s.hidden = hidden;
@@ -77,13 +67,12 @@ type Typed = {
   t: number;
   /** The address it went to, origin and path: the field's own, else the one known on screen then. */
   pages: Set<string>;
-  /** Address changes seen before it, a new query too. */
   visit: number;
   /** Its own address is still to come: the next one seen soon after may be where it went. */
   open: boolean;
 };
 
-/** An address as a page: origin and path, so a new query or fragment is the same page. */
+/** Origin and path, so a new query or fragment is the same page. */
 function pageKey(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
@@ -123,7 +112,6 @@ export class Recorder {
   private combos: Combos | null = null;
   /** All typing so far, with its field checks: a screenshot waits for them. */
   private typed: Typed[] = [];
-  /** The address on screen, whole and as a page, and how many times it has changed. */
   private url: string | null = null;
   private here: string | null = null;
   private visit = 0;
@@ -204,7 +192,6 @@ export class Recorder {
       },
       (err) => {
         const offPage = err instanceof OffPage;
-        // Typed off the page, it isn't on it.
         if (offPage) {
           typed.pages.clear();
           typed.open = false;
@@ -311,7 +298,6 @@ export class Recorder {
         if (!m.down || m.key === "Shift" || m.key === "Dead") return;
         const printable = [...m.key].length === 1;
         if (printable && this.typesText(m.key)) return this.type(m.key);
-        // A correction while typing edits the text rather than becoming a step.
         if (m.key === "Backspace" && !this.held.size && this.typing?.chars) {
           this.typing.text = [...this.typing.text].slice(0, -1).join("");
           this.typing.chars--;
@@ -329,7 +315,6 @@ export class Recorder {
     }
   }
 
-  /** The URL and title of the visible tab, recorded when they change. */
   page(url: string | null, title: string | null) {
     const last = this.steps.findLast((s) => s.kind === "page");
     if (last?.kind === "page" && last.url === url && last.title === title) return;
@@ -354,7 +339,6 @@ export class Recorder {
     this.push({ t: this.now(), kind: "page", url, title });
   }
 
-  /** Waits for the field checks and screenshots, then returns the steps with hidden text dropped. */
   async finish(): Promise<RecStep[]> {
     this.endTyping();
     for (let n = 0; n < this.pending.length; ) {
@@ -383,8 +367,8 @@ const NOT_RECORDED = {
 };
 
 /**
- * The steps as lines for the model. A button press and release in the same spot is a click; moves are
- * kept only when nothing follows at their end point (a hover). Screenshots are numbered as they appear.
+ * A button press and release in the same spot is a click; moves are kept only when nothing follows at
+ * their end point (a hover).
  */
 export function describeSteps(steps: RecStep[]): { lines: string[]; screens: string[] } {
   const lines: string[] = [];

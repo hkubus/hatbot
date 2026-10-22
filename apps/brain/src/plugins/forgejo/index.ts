@@ -1,6 +1,4 @@
-// Forgejo (PLAN.md §5.5): read repos, issues, pull requests, files and CI, and comment, open issues and
-// pull requests, and commit files, as Hatbot's own bot account. What it can reach is up to Forgejo:
-// add the bot as a collaborator to the repos it should work on.
+// What it can reach is up to Forgejo: add the bot as a collaborator to the repos it should work on.
 import { z } from "zod";
 import { basicAuth } from "../checkout";
 import {
@@ -93,10 +91,8 @@ export const forgejoPlugin = definePlugin({
       }
     };
     /**
-     * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
-     * repository the bot account can see, which holds what was merged there. A stranger's repository,
-     * a fork or a pull mirror (upstream's code), or one whose default branch isn't known yet, counts
-     * too.
+     * Only the default branch holds just what was merged there. A fork or pull mirror (upstream's code),
+     * or a repository whose default branch isn't known yet, counts as untrusted too.
      */
     const offDefault = (repo: string, ref?: string) => {
       const main = defaults.get(repo);

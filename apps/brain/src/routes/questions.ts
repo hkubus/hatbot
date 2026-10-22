@@ -4,9 +4,8 @@ import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { json } from "./util";
 
-// Background tasks' questions to you (PLAN.md §20): the ones waiting, and your answer.
 export const questionRoutes = new Hono<AppEnv>()
-  // An ntfy button: no session, the signed choice is the authority, as for approvals (PLAN.md §6.2).
+  // An ntfy button: no session, the signed choice is the authority, as for approvals.
   .post("/questions/:id/token-answer", json(TokenAnswer), (c) => {
     const { choice, exp, sig } = c.req.valid("json");
     const answered = c.var.questions.answerByToken(Number(c.req.param("id")), choice, exp, sig);

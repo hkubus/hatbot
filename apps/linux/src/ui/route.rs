@@ -62,7 +62,6 @@ pub fn set_reveal(reveal: impl Fn(MessageLink) + 'static) {
     REVEAL.with(|r| r.replace(Some(Rc::new(reveal))));
 }
 
-/// A message in its chat, as a search result opens it.
 pub fn reveal(link: MessageLink) {
     if let Some(reveal) = REVEAL.with(|r| r.borrow().clone()) {
         reveal(link);
@@ -73,7 +72,6 @@ pub fn set_chat(chat: impl Fn(i64) + 'static) {
     CHAT.with(|c| c.replace(Some(Rc::new(chat))));
 }
 
-/// A chat, as picking it in the sidebar opens it.
 pub fn chat(id: i64) {
     if let Some(chat) = CHAT.with(|c| c.borrow().clone()) {
         chat(id);

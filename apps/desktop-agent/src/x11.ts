@@ -84,7 +84,6 @@ async function grab(args: string[], deadlineMs = DEADLINE_MS): Promise<Uint8Arra
   return out;
 }
 
-/** Whether one frame can be grabbed, for GET /health?deep=1. */
 export const displayUp = () =>
   grab(["-video_size", "1x1", "-i", display, "-frames:v", "1", "-f", "rawvideo", "-"], 3000).then(
     () => true,
@@ -180,7 +179,6 @@ const num = (v: unknown, name: string, min: number, max: number): number => {
   return Math.min(max, Math.max(min, v));
 };
 
-/** Each click's X button and how many times it's pressed. */
 const CLICKS = {
   left_click: [1, 1],
   right_click: [3, 1],
@@ -195,7 +193,6 @@ export const LIVE_FPS_WATCHING = 5;
 /** Longer text than this is typed fast, in chunks this long; the brain's timeout for `type` assumes it. */
 const HUMAN_TYPING_CHARS = 200;
 
-/** xdotool steps that move the pointer to `to` along a person-like path from where it is. */
 async function glide([x, y]: [number, number]): Promise<string[]> {
   const out = await xdotool("getmouselocation", "--shell");
   const from = {
@@ -370,7 +367,6 @@ export class LiveCapture {
     };
   }
 
-  /** Smoother while the owner has control, lighter while they only watch. */
   setFps(fps: number) {
     if (fps === this.fps) return;
     this.fps = fps;

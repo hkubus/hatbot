@@ -1,4 +1,3 @@
-// Settings → Password and sign-ins: a new password or authenticator, and where you're signed in.
 import type { Session, SetupStartResponse, SignedOutOthers } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
@@ -16,10 +15,7 @@ const changed = (what: string, ended: number) =>
 
 const since = (iso: string) => `Since ${day(iso)}`;
 
-/**
- * Signs a browser out; what went wrong, or null. One signed out already, from another tab or by
- * expiring, is no error: the list shows it once it loads again.
- */
+/** One signed out already, from another tab or by expiring, is no error. */
 export async function signOut(id: number): Promise<string | null> {
   try {
     await api(`/auth/sessions/${id}`, { method: "DELETE" });

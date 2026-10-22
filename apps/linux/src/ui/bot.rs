@@ -1,5 +1,4 @@
-// A bot's page and a group's (BotView and GroupView on iOS): a new one, or one to change or delete.
-// They open from the sidebar's New bot and New group, and from a chat's About button.
+// A bot's page and a group's (BotView and GroupView on iOS).
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -93,7 +92,6 @@ struct BotEditor {
     busy: Cell<bool>,
 }
 
-/// A row holding a widget inside a group's card.
 fn card_row(child: &impl IsA<gtk::Widget>) -> gtk::ListBoxRow {
     gtk::ListBoxRow::builder()
         .activatable(false)
@@ -466,7 +464,6 @@ impl BotEditor {
             .to_string()
     }
 
-    /// A template's bot in the form, or a clean form for none.
     fn fill(&self, key: &str) {
         self.picked.replace(key.to_string());
         let t = self
@@ -526,7 +523,6 @@ impl BotEditor {
         out
     }
 
-    /// Templates for a new bot, and the plugins to pick from.
     fn load(self: &Rc<Self>) {
         let (weak, store, new) = (
             Rc::downgrade(self),
@@ -681,7 +677,6 @@ impl BotEditor {
     }
 }
 
-/// Back from a page that's done.
 fn pop(page: &adw::NavigationPage) {
     if let Some(nav) = page
         .ancestor(adw::NavigationView::static_type())
@@ -825,7 +820,6 @@ impl GroupEditor {
             .cloned()
     }
 
-    /// A switch for each bot; rebuilt when the bots change.
     fn show_bots(self: &Rc<Self>) {
         let st = self.store.state();
         let ids: Vec<String> = st.bot_ids.clone();

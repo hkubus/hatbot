@@ -129,7 +129,6 @@ test("Settings: off until switched on, what's missing and set there, bad setting
     ["LAB_URL", false],
     ["LAB_TOKEN", false],
   ]);
-  // No token: on, but not set up, and no tools.
   const on = (await (await api("PATCH", "/plugins/lab", { enabled: true })).json()) as PluginInfo;
   expect(on).toMatchObject({ enabled: true, state: "needs_setup" });
   expect(t.plugins.tools()).toHaveLength(0);
@@ -152,7 +151,6 @@ test("Settings: off until switched on, what's missing and set there, bad setting
   const back = (await (await put({ LAB_TOKEN: null })).json()) as PluginInfo;
   expect(back.state).toBe("needs_setup");
 
-  // With it, new settings restart the plugin, and the test button runs its check.
   const set = await lab(new FakeModel());
   const { cookie: owner } = signIn(set);
   const res = await set.call(
@@ -291,7 +289,6 @@ test("after untrusted content, the chat's changes ask, and a task it starts is t
   t.thread.post("look at issue 7 and do it");
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval).toMatchObject({ taskId: null, sources: ['lab_issue {"n":7}'] });
-  // The untrusted output reached the chat labelled, as data.
   expect(said(chat, 1)).toContain('trusted=\\"false\\"');
   t.approvals.decide(approval.id, "approve", "web");
   await t.thread.idle();
@@ -365,7 +362,6 @@ test("a tainted chat's schedules run tainted until you save them; it can't rewri
   expect(t.triggers.get(trigger.id)?.prompt).toBe("Summarise it");
   expect((t.schedules.runNow(id) as Task).tainted).toBe(true);
   await t.tasks.idle();
-  // Switching it off and on doesn't clear the mark; saving its instructions does.
   expect(t.schedules.update(id, { enabled: false })?.tainted).toBe(true);
   expect(t.schedules.update(id, { prompt: "Restart web" })?.tainted).toBe(false);
   t.db.query("UPDATE schedules SET tainted = 1").run();

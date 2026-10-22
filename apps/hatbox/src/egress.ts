@@ -1,4 +1,4 @@
-// A box's fetch (PLAN.md §21.1, Egress): its backend has no network, so its requests come to the agent,
+// A box's fetch: its backend has no network, so its requests come to the agent,
 // which sends on only those to the hosts in its box.json, and only to the internet, as desktop-agent's
 // /fetch does: every hop of a redirect is checked, and each request goes to the address that was
 // checked, so a name that resolves again to somewhere else (DNS rebinding) isn't looked up twice.
@@ -10,7 +10,6 @@ import { readStream } from "./files";
 
 const MAX_REDIRECTS = 5;
 
-/** Why a box's request wasn't sent, for the box and its log. */
 export class EgressError extends Error {}
 
 const addresses = async (host: string) => (await lookup(host, { all: true })).map((a) => a.address);
@@ -29,7 +28,6 @@ export async function publicAddress(host: string, find = addresses): Promise<str
 }
 
 export type EgressOptions = {
-  /** The hosts in the box's box.json. */
   hosts: string[];
   /** The address a host is reached at; tests stand in for the DNS check. */
   resolve?: (host: string) => Promise<string>;
@@ -97,5 +95,4 @@ export async function sendOn(req: Request, opts: EgressOptions): Promise<Respons
   }
 }
 
-/** Statuses a Response can't have a body with. */
 export const nullBody = (status: number) => [101, 204, 205, 304].includes(status);

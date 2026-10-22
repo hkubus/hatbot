@@ -1,4 +1,4 @@
-// negotiate_send's policy (PLAN.md §16.3), one rule at a time: a case it must hold and a near miss that
+// negotiate_send's policy, one rule at a time: a case it must hold and a near miss that
 // must go. The check fails closed, so the near misses are what keep it usable.
 import { describe, expect, test } from "bun:test";
 import type { Negotiation } from "@hatbot/shared";
@@ -58,11 +58,9 @@ const selling = (over: Partial<Negotiation> = {}) =>
     mandate: { ...negotiation().mandate, opening: 1300, target: 1150, limit: 1000 },
     ...over,
   });
-/** A mandate with these delivery terms. */
 const delivering = (delivery: string) =>
   negotiation({ mandate: { ...negotiation().mandate, delivery } });
 const pickupToo = delivering("OLX delivery, or pickup in Warsaw");
-/** A mandate that allows every kind of contact detail. */
 const allowsAll = negotiation({
   mandate: { ...negotiation().mandate, allow: ["phone", "email", "address", "apps"] },
 });
@@ -343,7 +341,6 @@ describe("agreeing agrees to the other side's price, so that's what's checked", 
       "1000 zł + wysyłka",
     ])
       expect(yes("Zgoda, 1300 zł.", 1300, sellerSaid(seller))).toBe("ask");
-    // An emoji on its own is fine.
     expect(yes("Świetnie, biorę za 1300 zł.", 1300, sellerSaid("Mogę zejść do 1300 zł 👍"))).toBe(
       "allow",
     );

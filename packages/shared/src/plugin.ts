@@ -1,4 +1,3 @@
-// Plugins (PLAN.md §4.5): what Settings shows and changes.
 import { z } from "zod";
 
 export type PluginState = "off" | "starting" | "ready" | "needs_setup" | "error";
@@ -18,7 +17,6 @@ export type PluginInfo = {
   /** Its settings, in the plugin's own shape. */
   config: unknown;
   tools: { name: string; access: "read" | "write"; description: string }[];
-  /** It has a Test button. */
   testable: boolean;
 };
 
@@ -32,7 +30,6 @@ export type PluginEnvInfo = {
   set: boolean;
   /** Set in Settings, or in the host's env file. */
   from: "app" | "host" | null;
-  /** Its value, when it isn't secret. */
   value: string | null;
 };
 

@@ -1,5 +1,5 @@
 // A stand-in for Scout's MCP server over stdio, for the negotiation tests. It has the tools Scout has
-// today; with SCOUT_FULL=1, also the price reference and comparables it doesn't have yet (PLAN.md §16.4).
+// today; with SCOUT_FULL=1, also the price reference and comparables it doesn't have yet.
 // Calls are appended to SCOUT_LOG, one JSON line each.
 import { appendFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

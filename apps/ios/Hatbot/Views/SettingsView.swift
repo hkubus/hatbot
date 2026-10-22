@@ -1,5 +1,3 @@
-// Settings: spend against the limits, Schedules & Triggers, watchers, Check everything, the heartbeat
-// and weekly report, chat effort, what notifications open, Pause all (PLAN.md §6.5), and signing out.
 import SwiftUI
 
 struct SettingsView: View {

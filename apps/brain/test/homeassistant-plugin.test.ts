@@ -42,7 +42,6 @@ beforeEach(() => {
   states = home();
 });
 
-// A stand-in for Home Assistant's REST API.
 const api = fakeApi((req, url) => {
   const path = url.pathname.replace("/api", "");
   if (req.headers.get("authorization") !== "Bearer tok")
@@ -99,7 +98,6 @@ test("a task calls a service with the token; strangers' text is read only as unt
   const history = await read("homeassistant_history", { entity_id: "sensor.pixel_notification" });
   expect(history.untrusted).toBe(false);
   expect(history.content).not.toContain("Ignore");
-  // Reading one entity shows it, as untrusted, unless it's a plain device.
   const note = await read("homeassistant_entity", { entity_id: "sensor.pixel_notification" });
   expect(note).toMatchObject({ untrusted: true });
   expect(note.content).toContain("Ignore your rules");
@@ -132,7 +130,6 @@ test("everyday control runs; locks, covers, purges and anything else ask, as doe
     action: "ask",
     kind: "delete",
   });
-  // Others ask, and the review may let them through.
   for (const [domain, name] of [
     ["homeassistant", "restart"],
     ["frobnicator", "go"],

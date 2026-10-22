@@ -1,5 +1,4 @@
-// One message in the chat, as on iOS (PLAN.md §10.2): your bubble on the right, a bot's on the left
-// with its task, schedule, box, sources, choices and files; a command's outcome as a quiet line.
+// One message in the chat, as on iOS.
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,7 +18,6 @@ use super::route;
 #[derive(Clone)]
 pub struct Actions {
     pub store: Store,
-    /// Shows a message in its chat.
     pub reveal: Rc<dyn Fn(MessageLink)>,
 }
 
@@ -38,7 +36,6 @@ pub struct Look {
     pub schedule_gone: bool,
     pub app_box: Option<AppBox>,
     pub box_gone: bool,
-    /// Who a hand-off is from.
     pub from: String,
     pub link_label: Option<String>,
 }
@@ -131,7 +128,6 @@ pub fn sender(m: &ThreadMessage) -> Option<String> {
     })
 }
 
-/// A streaming reply's parts that change as it's written.
 pub struct Live {
     md: Markdown,
     dots: gtk::Widget,
@@ -302,7 +298,6 @@ fn bot(look: &Look, act: &Actions) -> Row {
     }
 }
 
-/// The kind's own part: a task, a schedule, a box's note, a hand-off, or the reply.
 fn content(look: &Look, act: &Actions, bubble: &gtk::Box) -> Option<Live> {
     let m = &look.m;
     match m.kind {
@@ -372,7 +367,6 @@ fn content(look: &Look, act: &Actions, bubble: &gtk::Box) -> Option<Live> {
     }
 }
 
-/// A background task as a message: what it's doing, then how it ended.
 fn task_card(look: &Look, t: &Task, bubble: &gtk::Box) {
     let title = format!("<b>{}</b>", escape(&t.title));
     let (text, result) = match t.status {
@@ -462,7 +456,6 @@ fn reply(look: &Look, act: &Actions, bubble: &gtk::Box) -> Option<Live> {
     live
 }
 
-/// A task under the reply that started it: working dots, then how it ended.
 fn task_result(look: &Look, t: &Task, bubble: &gtk::Box) {
     if t.status.is_active() {
         bubble.append(&dots());
@@ -506,7 +499,6 @@ fn box_result(b: &AppBox) -> gtk::Widget {
     line.upcast()
 }
 
-/// The pages a reply cites, in a line of links.
 fn sources(list: &[Source]) -> gtk::Widget {
     let links: Vec<String> = list
         .iter()
@@ -656,7 +648,6 @@ pub fn note(text: &str) -> gtk::Label {
         .build()
 }
 
-/// Three dots that pulse while it works.
 pub fn dots() -> gtk::Widget {
     let line = gtk::Box::builder()
         .spacing(4)
@@ -687,7 +678,6 @@ fn copy_item(text: String) -> Item {
     }
 }
 
-/// What Copy copies, and what Open opens.
 fn menu_items(look: &Look, act: &Actions) -> Vec<Item> {
     let m = &look.m;
     let mut items = vec![];

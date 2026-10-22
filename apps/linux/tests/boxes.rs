@@ -1,4 +1,3 @@
-// L6: boxes (PLAN.md §24.2).
 mod common;
 
 use common::*;

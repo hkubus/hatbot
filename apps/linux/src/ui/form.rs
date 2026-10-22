@@ -1,5 +1,3 @@
-// What the forms share: the confirmation, the long text field, pickers, rows that open a page and
-// notes under a group.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -21,7 +19,6 @@ pub fn confirm(
     dialog.present(Some(from));
 }
 
-/// A few lines of text to write in, with a hint while it's empty.
 pub struct TextArea {
     pub root: gtk::Overlay,
     pub view: gtk::TextView,
@@ -84,7 +81,6 @@ pub fn bot_row(store: &Store, selected: &str) -> Option<(adw::ComboRow, Vec<Stri
     Some((row, st.bot_ids.clone()))
 }
 
-/// A line under a group's rows that says how they work.
 pub fn note(text: &str) -> gtk::Label {
     gtk::Label::builder()
         .label(text)
@@ -95,7 +91,6 @@ pub fn note(text: &str) -> gtk::Label {
         .build()
 }
 
-/// Where a page's errors show, at its top.
 pub fn error_label() -> gtk::Label {
     gtk::Label::builder()
         .visible(false)
@@ -105,7 +100,6 @@ pub fn error_label() -> gtk::Label {
         .build()
 }
 
-/// A row that opens a page.
 pub fn nav_row(title: &str, open: impl Fn() + 'static) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(title)
@@ -145,7 +139,6 @@ impl Choice {
         c
     }
 
-    /// The value picked.
     pub fn value(&self) -> String {
         self.values
             .borrow()

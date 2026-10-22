@@ -1,5 +1,4 @@
-// Haiku screens untrusted text for prompt injection (PLAN.md §6.1, defence in depth): a desktop task's
-// pages, and what the chat and background tasks read from the web and from plugins.
+// Haiku screens untrusted text for prompt injection, as defence in depth.
 import { createHash } from "node:crypto";
 import { BudgetError, type Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
@@ -21,10 +20,8 @@ const VERDICT = {
   additionalProperties: false,
 };
 
-/** About what a fetched page can be; past it, the text is cut. */
 const MAX_SCREENED_CHARS = 150_000;
 
-/** What's read: text, or a PDF (base64), which Haiku reads as a document. */
 export type Readable = string | { pdf: string };
 
 export async function screenPage(
@@ -36,8 +33,7 @@ export async function screenPage(
 ): Promise<Screening> {
   const pdf = typeof page.text === "string" ? null : page.text.pdf;
   if (typeof page.text === "string" && !page.text.trim()) return { suspected: false, excerpt: "" };
-  // JSON-encoded and labelled with its source, so the page can't pose as the prompt. A PDF goes as a
-  // document before its label.
+  // JSON-encoded and labelled with its source, so the page can't pose as the prompt.
   const label = `<page_json>\n${tagJson({ url: page.url, title: page.title, text: pdf === null ? (page.text as string).slice(0, MAX_SCREENED_CHARS) : "(the PDF document above)" })}\n</page_json>`;
   // Tried twice: a verdict cut short or garbled may come right the second time. Past a limit, once.
   for (let attempt = 1; ; attempt++) {
@@ -85,18 +81,11 @@ export async function screenPage(
   }
 }
 
-/**
- * Verdicts by the text's hash, for every chat and task the model client serves, so text read again
- * isn't screened again.
- */
+/** Shared by every chat and task the model client serves, so text read again isn't screened again. */
 const known = new WeakMap<ModelClient, Map<string, Screening>>();
 const MAX_KNOWN = 1000;
 
-/**
- * Screens the untrusted text a chat reply or a background task reads, in the background while it goes
- * on (PLAN.md §6.1). `settled` waits for the verdicts: a change waits for them before it's reviewed.
- * `suspect` hears of each text Haiku suspects, or couldn't check. `reserve`: alert and heartbeat work.
- */
+/** Screens in the background while the work goes on; a change waits for `settled` before it's reviewed. */
 export class Screener {
   private pending = new Set<Promise<void>>();
 
@@ -107,7 +96,6 @@ export class Screener {
     private opts: { reserve?: boolean } = {},
   ) {}
 
-  /** `source` says where `text` came from, e.g. "Read https://…" or a tool call. */
   add(source: string, text: Readable) {
     if (typeof text === "string" ? !text.trim() : !text.pdf) return;
     const key = createHash("sha256")
@@ -138,12 +126,10 @@ export class Screener {
     this.pending.add(done);
   }
 
-  /** Whether no verdict is pending. */
   get idle() {
     return this.pending.size === 0;
   }
 
-  /** Waits for every verdict so far. */
   async settled() {
     while (this.pending.size) await Promise.all([...this.pending]);
   }

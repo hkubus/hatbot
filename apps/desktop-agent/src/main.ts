@@ -1,4 +1,4 @@
-// desktop-agent: runs on the desktop, takes orders only from the brain (PLAN.md §4.2).
+// desktop-agent: runs on the desktop, takes orders only from the brain.
 import { timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -119,10 +119,6 @@ async function deepHealth(): Promise<AgentStatus> {
 const image = (bytes: Uint8Array) =>
   new Response(bytes, { headers: { "content-type": "image/webp", "cache-control": "no-store" } });
 
-/**
- * Passes a request on to one of the desktop's own services (`what`) on its Unix socket, its body
- * streamed through, and the answer back.
- */
 async function relay(req: Request, socket: string, path: string, ms: number, what: string) {
   let res: Response;
   try {

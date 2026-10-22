@@ -1,6 +1,4 @@
-// Siri and Shortcuts (App Intents): ask Hatbot, or another bot or group, and hear the answer, give
-// Hatbot a task, add a to-do, or send it text and files. They run in the app, as you, through the chats, and only on
-// an unlocked phone: whoever holds a locked one isn't necessarily you.
+// Intents run only on an unlocked phone: whoever holds a locked one isn't necessarily you.
 import AppIntents
 import Foundation
 import UniformTypeIdentifiers
@@ -17,7 +15,6 @@ private struct Post: Encodable {
   var attachmentIds: [Int] = []
 }
 
-/// A chat to ask in: a bot's own, or a group.
 struct ChatEntity: AppEntity {
   static let typeDisplayRepresentation: TypeDisplayRepresentation = "Chat"
   static let defaultQuery = ChatQuery()
@@ -37,7 +34,7 @@ struct ChatQuery: EntityQuery {
     try await Self.all()
   }
 
-  /// Your chats, named as in the app. A brain from before bots has none.
+  /// A brain from before bots has none.
   static func all() async throws -> [ChatEntity] {
     let api = try signedIn()
     let bots: [Bot] = try await api.get("/bots")
@@ -143,7 +140,6 @@ struct SendToHatbotIntent: AppIntent {
       var data = f.data
       var name = f.filename
       var mediaType = f.type?.preferredMIMEType ?? "application/octet-stream"
-      // Photos go up as JPEG, like from the composer.
       if f.type?.conforms(to: .image) == true, let photo = PickedFile.photo(f.data, index: i + 1) {
         (data, name, mediaType) = (photo.data, photo.name, "image/jpeg")
       }

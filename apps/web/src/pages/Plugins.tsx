@@ -1,6 +1,4 @@
-// Plugins in Settings (PLAN.md §4.5): the list, and a page per plugin with its switch, what it reads
-// from the environment (set here in place of the host's env files), settings and Test button. Secrets
-// are only ever sent, never shown.
+// Secrets are only ever sent, never shown.
 import type { PluginEnvInfo, PluginInfo } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";

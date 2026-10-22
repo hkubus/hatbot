@@ -411,7 +411,6 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   );
 }
 
-/** The exact calls you chose to always allow, each with Remove (PLAN.md §6.2). */
 function AllowedRows() {
   const [rules, setRules] = useState<ApprovalRule[]>([]);
   const [error, setError] = useState("");
@@ -451,7 +450,6 @@ type Snapshot = { name: string; description: string; createdAt: string | null };
 
 const snapLabel = (s: Snapshot) => (s.createdAt ? stamp(s.createdAt) : s.name);
 
-/** Rolls the desktop back to a nightly snapshot through the Proxmox API (PLAN.md §8). */
 function RollbackRow({ toast }: { toast: Toast }) {
   const [snaps, setSnaps] = useState<Snapshot[] | null>(null);
   const [error, setError] = useState("");
@@ -521,7 +519,6 @@ function RollbackRow({ toast }: { toast: Toast }) {
 
 const short = (sha?: string) => sha?.slice(0, 7) ?? "";
 
-/** Pulls from git and redeploys the desktop and the brain (infra/hatbot-update.sh). */
 function UpdateGroup({ toast }: { toast: Toast }) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState("");

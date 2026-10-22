@@ -1,14 +1,13 @@
-// A Settings row whose field saves when you leave it. It shows the saved value, and a value that
-// can't be saved is never silently kept on screen: it says why and the saved value comes back.
+// A value that can't be saved is never silently kept on screen: it says why and the saved value
+// comes back.
 import { type InputHTMLAttributes, type ReactNode, useEffect, useRef, useState } from "react";
 import { errorText } from "./api";
 
 export type Parsed<T> = { value: T } | { error: string };
 
-/** A spending limit as typed, or why it can't be saved. The alert reserve may be $0. */
+/** The alert reserve may be $0. */
 export function parseLimit(text: string, reserve = false): Parsed<number> {
   const t = text.trim().replace(/^\$\s*/, "");
-  // In cents, as it's shown.
   const n = Math.round(Number(t) * 100) / 100;
   if (!t || !Number.isFinite(n))
     return { error: reserve ? "Give an amount, $0 or more." : "Give an amount." };
@@ -17,7 +16,6 @@ export function parseLimit(text: string, reserve = false): Parsed<number> {
   return { value: n };
 }
 
-/** A name as typed, or why it can't be saved. */
 export const parseName = (text: string): Parsed<string> =>
   text.trim() ? { value: text.trim() } : { error: "Your name can't be empty." };
 

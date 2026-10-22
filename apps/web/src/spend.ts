@@ -1,4 +1,3 @@
-// The Spend page's sums: its charts' axis, and today's total folded into the last 30 days.
 import type { SpendDay } from "@hatbot/shared";
 import { usd } from "./format";
 
@@ -9,10 +8,7 @@ function niceStep(max: number) {
   return ([1, 2, 5, 10].find((m) => m * pow >= raw) ?? 10) * pow;
 }
 
-/**
- * The y axis for a chart of dollars: from 0 to just above the highest value, in steps of at least a
- * cent. `limit` is drawn only when it falls inside that range, so it doesn't squash ordinary days.
- */
+/** `limit` is drawn only when it falls inside the range, so it doesn't squash ordinary days. */
 export function spendAxis(values: number[], limit?: number) {
   const top = Math.max(...values, 0.05);
   const step = niceStep(top);
@@ -25,7 +21,6 @@ export function spendAxis(values: number[], limit?: number) {
   return { max, ticks, tick, showLimit };
 }
 
-/** The days with today's total from a one-day read: in place of the same day, or after the last. */
 export function withToday(days: SpendDay[], today: SpendDay[]): SpendDay[] {
   const t = today[0];
   const last = days.at(-1);

@@ -18,7 +18,6 @@ die() {
   exit 1
 }
 
-# ---------- Reaching the guests ----------
 # The brain, the desktop and the boxes guest are containers on this Proxmox host (host-setup.sh), reached
 # with pct and named by VMID, or Debian machines (ssh-setup.sh), reached over SSH and named by user@host.
 # HATBOT_TRANSPORT in host.env says which; installs from before it are Proxmox ones.
@@ -55,7 +54,6 @@ load_state() {
   esac
 }
 
-# guest_label GUEST -> how messages name it.
 guest_label() {
   if [[ ${HATBOT_TRANSPORT:-pct} == ssh ]]; then printf '%s\n' "$1"; else printf 'CT %s\n' "$1"; fi
 }

@@ -1,9 +1,7 @@
-// Live client state: the thread, tasks, approvals, the desktop, pause state and spend, fed by
-// the event stream. Same shape as apps/web/src/store.ts.
+// Same shape as apps/web/src/store.ts.
 import Foundation
 import Observation
 
-/// A reply as it's written: its text, latest progress note and what it has used so far.
 @MainActor
 @Observable
 final class LiveReply {
@@ -19,11 +17,9 @@ final class LiveReply {
 final class AppStore {
   static let page = 50
 
-  /// The incognito conversation is showing instead of the thread. Kept while the app runs, not across
-  /// launches: the brain deletes the conversation after 30 idle minutes anyway.
+  /// Not kept across launches: the brain deletes the incognito conversation after 30 idle minutes anyway.
   private(set) var incognito = false
   var messages: [ThreadMessage] = []
-  /// The conversations the loaded messages belong to, for their recaps.
   var episodes: [Int: Episode] = [:]
   /// The replies being written, each in its own object: a delta then redraws only its bubble, not the chat.
   /// Watched, so a bubble takes up a new one even when its message doesn't change, as on a second rewrite.
@@ -34,14 +30,10 @@ final class AppStore {
   var hasEarlier = false
   /// The open chat's messages are known, loaded or kept from last time: until then, none isn't an empty chat.
   private(set) var threadKnown = false
-  /// Why the open chat's latest messages couldn't be loaded, until a load works; the chat says so, with
-  /// a way to try again.
   private(set) var threadError: Error?
   @ObservationIgnored private var loadingEarlier = false
-  /// An earlier page is going in above.
   private(set) var prepending = false
   @ObservationIgnored private var settling: Task<Void, Never>?
-  /// Hatbot's messages sent or edited since you last saw them.
   var unread: [Int] = []
   var paused = false
   var todayUsd: Double?
@@ -51,14 +43,10 @@ final class AppStore {
   var unreachable = false
   @ObservationIgnored private var unreachableCheck: Task<Void, Never>?
   var tasks: [Int: AgentTask] = [:]
-  /// Steps of the tasks that have been opened or shown in the chat.
   var steps: [Int: [TaskStep]] = [:]
-  /// Files attached to the tasks that have been opened, such as a research report's copy.
   var taskFiles: [Int: [Attachment]] = [:]
-  /// Latest progress note per running task.
   var taskProgress: [Int: String] = [:]
   var approvals: [Int: Approval] = [:]
-  /// Background tasks' questions to you.
   var questions: [Int: Question] = [:]
   var desktop: DesktopState?
   var schedules: [Int: Schedule] = [:]
@@ -70,16 +58,12 @@ final class AppStore {
   var memoryVersion = 0
   /// Memory's files as loaded, or as kept from last time until they are; Memory and Spotlight share them.
   var memoryFiles: [MemoryFile]?
-  /// `memoryFiles` came from the brain since launch.
   @ObservationIgnored private(set) var memoryFilesLoaded = false
-  /// The to-do list as loaded or changed, or as kept from last time until it is.
   var todos: TodoList?
-  /// Proposed memory changes, as loaded and as proposal.updated tells.
   var proposals: [Int: Proposal] = [:]
   /// Bumped by settings.updated and heartbeat.updated, so open views refetch.
   var settingsVersion = 0
   var heartbeatVersion = 0
-  /// Watchers as loaded and as watcher.updated tells; `watchersLoaded` once the list has come.
   var watchers: [Int: Watcher] = [:]
   var watchersLoaded = false
   /// Deleted while the app was open, so an open watcher says it's gone.
@@ -89,7 +73,6 @@ final class AppStore {
   var boxesLoaded = false
   /// Deleted, here or elsewhere: an open box says so, and the chat stops showing it.
   var deletedBoxes = Set<Int>()
-  /// A short note to show briefly, like a memory commit.
   var toast: String? {
     didSet { if toast != nil { toastId += 1 } }
   }
@@ -99,14 +82,12 @@ final class AppStore {
   private(set) var conversationId = 1
   /// Your bots, deleted ones too once seen: old messages still name them.
   var bots: [String: Bot] = [:]
-  /// Bots that aren't deleted, Hatbot first.
   var botIds: [String] = []
-  /// Your chats: each bot's own, then groups. Empty on brains from before bots.
+  /// Empty on brains from before bots.
   var conversations: [Conversation] = []
   @ObservationIgnored private var refreshing = false
   /// News came while the chats were loading: load them once more after.
   @ObservationIgnored private var refreshAgain = false
-  /// How long the chats wait for the rest of a burst of news before they load.
   @ObservationIgnored var refreshDelay: Duration = .milliseconds(300)
   /// What the chat list said of each chat when its page was last fetched ahead or found current on disk.
   @ObservationIgnored private var prefetched: [Int: (last: String?, unread: Int)] = [:]
@@ -114,10 +95,8 @@ final class AppStore {
   @ObservationIgnored private var visited = Set<Int>()
   @ObservationIgnored private var prefetching = false
   @ObservationIgnored private var prefetchAgain = false
-  /// Seen messages not yet told to the brain, sent together.
   @ObservationIgnored private var seenQueue: [Int] = []
   @ObservationIgnored private var seenFlush: Task<Void, Never>?
-  /// Tasks the chat shows that we don't have yet, loaded together.
   @ObservationIgnored private var wantedTasks: [Int] = []
   /// Tasks shown from disk, loaded again once the stream opens.
   @ObservationIgnored private var staleTasks = Set<Int>()
@@ -130,7 +109,6 @@ final class AppStore {
   /// Messages in an incognito conversation: they're never unread.
   @ObservationIgnored private var incognitoIds = Set<Int>()
 
-  /// Where what was last seen is kept; nil keeps nothing.
   @ObservationIgnored let cache: DiskCache?
   /// Signed out: a load still on its way mustn't write the cache back.
   @ObservationIgnored private var closed = false
@@ -141,7 +119,6 @@ final class AppStore {
     restore()
   }
 
-  /// What the app saw last time, until the brain answers.
   private func restore() {
     guard let cache, let chats = cache.chats() else { return }
     for b in chats.bots { bots[b.id] = b }
@@ -165,7 +142,6 @@ final class AppStore {
     }
   }
 
-  /// Keeps the open chat's latest page, and the bots and chats, for next time. Never incognito.
   func persist() {
     guard !closed, let cache else { return }
     if !conversations.isEmpty {
@@ -185,7 +161,6 @@ final class AppStore {
       for: conversationId)
   }
 
-  /// Approvals and questions waiting for you, plus a takeover request.
   var needsYou: Int {
     approvals.values.filter { $0.status == .pending }.count + pendingQuestions.count
       + (desktop?.request == nil ? 0 : 1)
@@ -201,8 +176,6 @@ final class AppStore {
 
   // MARK: Event stream
 
-  /// Starts the event stream. One already running tries again now rather than when its backoff says, or,
-  /// open, checks it still gets through.
   func connect() {
     if stream == nil { stream = makeStream() }
     if stream?.running == true { stream?.retryNow() } else { stream?.start() }
@@ -249,7 +222,6 @@ final class AppStore {
     return socket
   }
 
-  /// The stream is open: its first event has come.
   func streamOpened(reconnected: Bool) {
     connected = true
     unreachableCheck?.cancel()
@@ -260,7 +232,6 @@ final class AppStore {
       // The first open too: what came between the chat's first load and the stream's start, or all of
       // it when that load failed.
       try? await loadThread()
-      // What changed while the app was away.
       if reconnected && boxesLoaded { _ = try? await loadBoxes() }
     }
   }
@@ -405,10 +376,8 @@ final class AppStore {
     }
   }
 
-  /// The reply being written, for its bubble.
   func reply(_ id: Int) -> LiveReply? { replies[id] }
 
-  /// A message's text as it is now: a streaming reply's is in its live reply.
   func text(_ m: ThreadMessage) -> String {
     m.status == .streaming ? replies[m.id]?.text ?? m.text : m.text
   }
@@ -430,7 +399,6 @@ final class AppStore {
     }
     switch event {
     case let .messageCreated(m):
-      // Only the conversation that's showing.
       guard m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId else { return }
       if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(text: m.text) }
       upsert(m)
@@ -603,8 +571,6 @@ final class AppStore {
     for event in missed.removeValue(forKey: load) ?? [] { follow(event) }
   }
 
-  /// Loads the open chat's latest page; if it can't, the chat says why, with a way to try again. Whether
-  /// it loaded.
   @discardableResult
   func reloadThread() async -> Bool {
     let wasIncognito = incognito
@@ -619,7 +585,7 @@ final class AppStore {
     }
   }
 
-  /// Into incognito, or out of it, which deletes its conversation.
+  /// Leaving incognito deletes its conversation.
   func setIncognito(_ on: Bool) async {
     guard on != incognito else { return }
     incognito = on
@@ -631,8 +597,7 @@ final class AppStore {
     await reloadThread()
   }
 
-  /// Shows another chat. Leaving one in incognito deletes its conversation. Whether its latest messages
-  /// loaded; if not, the chat shows what was kept of it and says why.
+  /// Leaving one in incognito deletes its conversation.
   @discardableResult
   func openConversation(_ id: Int) async -> Bool {
     guard id != conversationId else { return true }
@@ -673,10 +638,8 @@ final class AppStore {
     prefetch()
   }
 
-  /// Keeps on disk the latest page of the chats where something came since they were kept, other than
-  /// the one that's showing, so switching to one shows its messages at once. Called whenever the chat
-  /// list loads, so it fetches a chat only when the list says it has news: a newer last message, or
-  /// more unread. One chat at a time, and one pass at a time.
+  /// Keeps on disk the latest page of chats the list says have news (a newer last message, or more
+  /// unread), so switching to one shows it at once. One chat at a time, and one pass at a time.
   func prefetch() {
     guard cache != nil, !closed else { return }
     guard !prefetching else {
@@ -697,7 +660,6 @@ final class AppStore {
     }
   }
 
-  /// Whether what's kept of a chat may be behind what the list says of it.
   private func stale(_ c: Conversation) -> Bool {
     guard let last = c.lastMessageAt else { return false }
     if let seen = prefetched[c.id] { return last != seen.last || c.unread > seen.unread }
@@ -706,7 +668,6 @@ final class AppStore {
     return kept < last
   }
 
-  /// A chat's latest page, onto disk only, never incognito; whether it's there.
   private func prefetch(_ id: Int) async -> Bool {
     visited.remove(id)
     let path = "/conversations/\(id)"
@@ -758,7 +719,6 @@ final class AppStore {
     return bots[id]?.name ?? (id == Bot.hatbot ? "Hatbot" : id)
   }
 
-  /// A group's title, or its bot's name.
   func chatName(_ c: Conversation?) -> String {
     guard let c else { return "Hatbot" }
     if c.kind == .group { return c.title ?? c.botIds.map(botName).joined(separator: ", ") }
@@ -767,7 +727,7 @@ final class AppStore {
 
   var currentChat: Conversation? { conversations.first { $0.id == conversationId } }
 
-  /// A bot's name, role, model and plugins. nil model, effort or plugins: as in Settings, every plugin.
+  /// nil model, effort or plugins: as in Settings, every plugin.
   struct BotChange: Encodable, Sendable {
     var name: String?
     var instructions: String
@@ -820,7 +780,6 @@ final class AppStore {
     await loadBots()
   }
 
-  /// A group chat's name and bots.
   struct GroupChange: Encodable, Sendable {
     var title: String
     var botIds: [String]
@@ -846,7 +805,6 @@ final class AppStore {
     if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
   }
 
-  /// The plugins a bot may be given.
   func loadPluginNames() async throws -> [PluginName] {
     try await api.get("/plugins")
   }
@@ -874,7 +832,6 @@ final class AppStore {
     try? await loadEpisodes(older)
   }
 
-  /// Loads earlier pages until message `id` is in the chat, for a search hit; whether it is.
   func reveal(_ id: Int) async -> Bool {
     if messages.isEmpty { try? await loadThread() }
     for _ in 0..<40 {
@@ -906,7 +863,7 @@ final class AppStore {
     let _: Empty = try await api.delete("\(chatPath)/episodes/\(id)")
   }
 
-  /// Fetches the conversations of `list` we don't have yet. A brain from before folds answers 404.
+  /// A brain from before folds answers 404.
   private func loadEpisodes(_ list: [ThreadMessage]) async throws {
     let ids = Set(list.compactMap(\.episodeId)).filter { episodes[$0] == nil }.sorted()
     guard !ids.isEmpty else { return }
@@ -929,14 +886,13 @@ final class AppStore {
     for load in missed.keys { missed[load]?.append(.messageCreated(m)) }
   }
 
-  /// Uploads a file for your next message.
   func upload(_ data: Data, name: String, mediaType: String) async throws -> Attachment {
     try await api.upload("/attachments", data: data, name: name, mediaType: mediaType)
   }
 
   // MARK: Tasks and approvals
 
-  /// A task with its steps. `since`: only the steps after the ones we have; a brain from before sends all.
+  /// `since`: only the steps after the ones we have; a brain from before sends all.
   func loadTask(_ id: Int, since: Bool = false) async throws {
     let after = since ? steps[id]?.last?.id : nil
     let res: TaskWithSteps = try await api.get("/tasks/\(id)" + (after.map { "?afterStep=\($0)" } ?? ""))
@@ -951,7 +907,6 @@ final class AppStore {
     taskFiles[id] = res.attachments ?? []
   }
 
-  /// These tasks as cards, onto what's here.
   @discardableResult
   private func loadCards(_ ids: [Int]) async throws -> [AgentTask] {
     let list: [AgentTask] = try await api.get(
@@ -982,7 +937,7 @@ final class AppStore {
     }
   }
 
-  /// Loads a task the first time something shows it. The rows that appear together come in one request.
+  /// The rows that appear together come in one request.
   func ensureTask(_ id: Int) {
     if tasks[id] != nil { return }
     guard requested.insert("t\(id)").inserted else { return }
@@ -1009,7 +964,6 @@ final class AppStore {
     }
   }
 
-  /// A task with its steps, for the live view.
   func ensureSteps(_ id: Int) {
     if steps[id] != nil { return }
     guard requested.insert("st\(id)").inserted else { return }
@@ -1042,7 +996,6 @@ final class AppStore {
     }
   }
 
-  /// Loads a box the first time a chat shows it.
   func ensureBox(_ id: Int) {
     if boxes[id] != nil || deletedBoxes.contains(id) { return }
     guard requested.insert("x\(id)").inserted else { return }
@@ -1068,14 +1021,13 @@ final class AppStore {
     return list.map(\.id)
   }
 
-  /// A list's first page as it was last time, until it loads; nil if none was kept.
   func cachedTasks(_ filter: TaskFilter) -> [Int]? {
     guard let list = cache?.tasks(filter.rawValue) else { return nil }
     restore(list)
     return list.map(\.id)
   }
 
-  /// What's live, from a brain whose stream doesn't open with it. All at once: none of these waits on another.
+  /// For a brain whose stream doesn't open with a snapshot. All at once: none of these waits on another.
   func loadLive() async throws {
     let api = self.api
     async let chats: Void = loadBots()
@@ -1092,7 +1044,7 @@ final class AppStore {
     _ = await (chats, taskLoads)
   }
 
-  /// Pending approvals and the desktop; anything we thought pending but the brain doesn't list was decided meanwhile.
+  /// Anything we thought pending but the brain doesn't list was decided meanwhile.
   private func take(
     approvals pending: [Approval], questions asked: [Question]?, desktop state: DesktopState?, unread list: [Int]?
   ) {
@@ -1155,7 +1107,6 @@ final class AppStore {
 
   // MARK: Schedules and triggers
 
-  /// Every schedule and trigger, for their list.
   func loadSchedules() async throws {
     async let s: [Schedule] = api.get("/schedules")
     async let t: [Trigger] = api.get("/triggers")
@@ -1196,7 +1147,6 @@ final class AppStore {
     return s
   }
 
-  /// Runs it now; returns the task.
   func runSchedule(_ id: Int) async throws -> AgentTask {
     let task: AgentTask = try await api.post("/schedules/\(id)/run", body: Empty())
     tasks[task.id] = task
@@ -1240,12 +1190,10 @@ final class AppStore {
 
   // MARK: Memory
 
-  /// Shows what was kept of Memory's files until they load.
   func showKeptMemory() {
     if memoryFiles == nil { memoryFiles = cache?.memoryTree() }
   }
 
-  /// Loads Memory's files into `memoryFiles`, and keeps them.
   @discardableResult
   func memoryTree() async throws -> [MemoryFile] {
     let files: [MemoryFile] = try await api.get("/memory/tree")
@@ -1255,18 +1203,15 @@ final class AppStore {
     return files
   }
 
-  /// Shows what was kept of the to-do list until it loads.
   func showKeptTodos() {
     if todos == nil { todos = cache?.todos() }
   }
 
-  /// The list as the brain sent it, shown and kept.
   func keep(_ list: TodoList) {
     todos = list
     if !closed { cache?.save(list) }
   }
 
-  /// A memory file, and which version of it this is.
   struct MemoryFileContent: Decodable, Sendable {
     let content: String
     /// What to save on top of; missing on brains from before conflict checks.
@@ -1364,7 +1309,6 @@ final class AppStore {
     var todoHour: Int?
   }
 
-  /// All the settings, as saved.
   func saveSettings(_ change: SettingsChange) async throws -> AppSettings {
     try await api.put("/settings", body: change)
   }

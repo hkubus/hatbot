@@ -1,7 +1,3 @@
-// Home Assistant: look at the house's devices and sensors, their history, and control them through
-// HA's REST API with a long-lived access token. Everyday device control just runs; anything that
-// changes Home Assistant itself asks first, and whatever lets someone in (locks, alarms, covers, and
-// the entities you mark, such as a gate on a switch) always waits for you.
 import { z } from "zod";
 import {
   allow,
@@ -22,11 +18,8 @@ const EntityId = z
   .describe('An entity id, e.g. "light.kitchen"');
 const Domain = z.string().regex(/^[a-z0-9_]+$/, "a lowercase domain");
 
-/** How many entities homeassistant_states lists before it cuts. */
 const MAX_ENTITIES = 300;
-/** How much of an entity's attributes homeassistant_entity shows. */
 const MAX_ATTRIBUTES = 4000;
-/** State changes per entity homeassistant_history shows: the latest ones. */
 const MAX_CHANGES = 200;
 
 type State = {
@@ -38,9 +31,8 @@ type State = {
 };
 
 /**
- * Domains whose states and attributes are the device's own, with no text from outside in them. The
- * rest can carry what strangers wrote: a phone's last notification, a mail's subject, an update's
- * release notes, a to-do item, what's playing.
+ * Domains with no text from outside in their states and attributes. The rest can carry what strangers
+ * wrote: a phone's last notification, a mail's subject, an update's release notes.
  */
 const TRUSTED_DOMAINS = new Set(
   (
@@ -63,12 +55,8 @@ const PLAIN_WORDS = new Set(
     "disconnected"
   ).split(" "),
 );
-/** What lists show instead of a state that is free text from outside. */
 const TEXT_STATE = "[text]";
-/**
- * A state to show where output is trusted: free text from outside is left out. An enum sensor's
- * own options are fine.
- */
+/** Where output is trusted, free text from outside is left out. An enum sensor's own options are fine. */
 const shownState = (entityId: string, state: string, options?: unknown) =>
   TRUSTED_DOMAINS.has(domainOf(entityId)) ||
   NUMBER.test(state) ||
@@ -77,16 +65,10 @@ const shownState = (entityId: string, state: string, options?: unknown) =>
   (Array.isArray(options) && options.includes(state))
     ? state
     : TEXT_STATE;
-/**
- * Domains whose names often come from outside: what a phone calls itself on the wifi, what a
- * speaker announces, a shared calendar's or list's name. Trusted output leaves their names out.
- */
+/** Domains whose names often come from outside, e.g. what a phone calls itself on the wifi. */
 const NAMED_OUTSIDE = new Set(["device_tracker", "media_player", "calendar", "todo"]);
 
-/**
- * Everyday device control: runs without asking. Not notify: it can message anyone. A switch or a
- * button that opens a gate is one of the owner's access entities, which always ask.
- */
+/** Runs without asking. Not notify: it can message anyone. */
 const EVERYDAY = new Set(
   (
     "light switch fan media_player climate scene button number select vacuum humidifier " +
@@ -94,7 +76,6 @@ const EVERYDAY = new Set(
   ).split(" "),
 );
 
-/** Domains that ask, and why, in a sentence. */
 const CAREFUL: Record<string, string> = {
   lock: "Unlocking or locking changes who can get in.",
   alarm_control_panel: "Arming or disarming the alarm changes who can get in unnoticed.",
@@ -109,15 +90,9 @@ const CAREFUL: Record<string, string> = {
   rest_command: "It sends a request to another service.",
 };
 
-/**
- * Who can get in: these always ask, whatever Haiku's review says, and as "access", which a locked
- * phone's notification can't approve.
- */
+/** These always ask, as "access", which a locked phone's notification can't approve. */
 const ACCESS = new Set(["lock", "alarm_control_panel", "cover"]);
-/**
- * Covers that only shade a window: no way in (2026-10-20, the owner's choice). Doors, garages,
- * gates, windows and covers with no class still let someone in.
- */
+/** Covers that only shade a window: no way in (the owner's choice). Covers with no class still count. */
 const SHADES = new Set(["blind", "curtain", "shade", "shutter", "awning"]);
 const askAccess = (why: string) => askAlways(why, "access");
 const careful = (domain: string) =>
@@ -132,7 +107,7 @@ const listOf = (ids: string | string[] | undefined) =>
   ids === undefined ? [] : Array.isArray(ids) ? ids : [ids];
 /** An id as Home Assistant reads it: it lowercases ids, and "ALL", before acting on them. */
 const idOf = (id: string) => id.trim().toLowerCase();
-/** Entity ids as Home Assistant reads them: one, a list, or a comma-separated string. */
+/** One, a list, or a comma-separated string, as Home Assistant reads them. */
 const idsOf = (ids: unknown): string[] =>
   (Array.isArray(ids) ? ids : ids === undefined || ids === null ? [] : [ids])
     .flatMap((x) => String(x).split(","))
@@ -140,11 +115,7 @@ const idsOf = (ids: unknown): string[] =>
     .filter(Boolean);
 
 const Config = z.object({
-  /**
-   * Entities that let someone in besides locks, alarms and covers, e.g. a gate on a switch, a garage
-   * button, or a script or an integration's scene that opens a door: every change to them, and to a
-   * scene or group that holds one, waits for the owner.
-   */
+  /** Entities that let someone in besides locks, alarms and covers, e.g. a gate on a switch. */
   access: z.array(z.string().trim().toLowerCase().regex(ENTITY_ID, "domain.object_id")).default([]),
 });
 
@@ -179,9 +150,7 @@ export const homeassistantPlugin = definePlugin({
       return `${s.entity_id}: ${state}${unit ? ` ${unit}` : ""}${name ? ` (${name})` : ""}`;
     };
 
-    /** Entities the owner marked as letting someone in. */
     const marked = new Set(config.access);
-    /** Each cover's device class, from the last look at every state. */
     const coverClass = new Map<string, string>();
     const shade = (id: string) =>
       domainOf(id) === "cover" && !marked.has(id) && SHADES.has(coverClass.get(id) ?? "");
@@ -190,11 +159,7 @@ export const homeassistantPlugin = definePlugin({
       marked.has(id)
         ? `The owner asked to approve every change to ${id}.`
         : (CAREFUL[domainOf(id)] ?? "");
-    /**
-     * What each scene and group holds (old-style group.* and the light, switch or cover group
-     * helpers), from the last look at every state; a policy can't wait to ask. A scene from an
-     * integration has no list: what it sets isn't known.
-     */
+    /** From the last look at every state: a policy can't wait to ask. A scene from an integration has no list. */
     const members = new Map<string, string[]>();
     const opaque = new Set<string>();
     let learned = false;
@@ -214,7 +179,6 @@ export const homeassistantPlugin = definePlugin({
         else if (domainOf(id) === "scene") opaque.add(id);
       }
     };
-    /** The ids and everything they hold, through groups in groups. */
     const expand = (ids: string[]) => {
       const out = new Set<string>();
       const walk = (id: string) => {
@@ -226,7 +190,6 @@ export const homeassistantPlugin = definePlugin({
       return [...out];
     };
     let looked = 0;
-    /** Looks at every state in the background, at most once a minute. */
     const relearn = () => {
       if (Date.now() - looked < 60_000) return;
       looked = Date.now();
@@ -235,7 +198,6 @@ export const homeassistantPlugin = definePlugin({
         .catch(() => {});
     };
     relearn();
-    /** The entities a call names, wherever it names them. */
     const targetsOf = (entityId: unknown, data: Record<string, unknown> | undefined) => {
       const target = (data?.target ?? {}) as Record<string, unknown>;
       return [

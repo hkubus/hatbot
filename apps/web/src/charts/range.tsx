@@ -1,11 +1,8 @@
-// A bar from low to high for each row, its ends labelled, on one value axis; the mark, if any, a
-// dot inside the bar.
 import { chartValue, niceTicks, type RangeChart } from "@hatbot/shared";
 import { CHAR_W, clamp, color, cutTo, Plot, TipRow, usePlot } from "./frame";
 
 const THICK = 14;
 const ROW_H = 24;
-/** On a phone each row's name goes above its bar, so the bars get the width. */
 const NARROW = 440;
 const NAMED_ROW_H = 40;
 const AXIS_H = 22;

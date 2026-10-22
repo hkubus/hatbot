@@ -1,4 +1,4 @@
-// Negotiation (PLAN.md §16), N1: the appraisal against a stand-in Scout, the tools in the chat, and the
+// Negotiation: the appraisal against a stand-in Scout, the tools in the chat, and the
 // exact-text send gate against a stand-in desktop.
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
@@ -127,7 +127,6 @@ function openNegotiation(t: TestApp, over: Partial<Negotiation> = {}): Negotiati
   return t.negotiations.get(n.id) as Negotiation;
 }
 
-/** Puts the negotiation back to waiting for its mandate, and asks the owner for it. */
 function askMandate(t: TestApp, n: Negotiation): Approval {
   t.negotiations.update(n.id, { status: "awaiting_mandate" });
   return t.negotiations.askMandate(t.negotiations.get(n.id) as Negotiation);
@@ -227,7 +226,6 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   t.thread.post("Haggle for OLX:1001, up to 1400");
   await t.thread.idle();
 
-  // Scout's answers are untrusted.
   expect(results(chat, 1)).toContain('trusted=\\"false\\"');
   // The chat doesn't wait: the mandate waits among what needs you, and nothing goes before it's approved.
   const approval = t.approvals.list(true)[0] as Approval;
@@ -364,7 +362,6 @@ test("a note that gives the mandate more room is asked about again, then reaches
   const again = await waitFor(() => t.approvals.list(true)[0]);
   expect(again.kind).toBe("mandate");
   expect(again.reason).toContain("1,400 zł → 1,450 zł");
-  // Nothing opened meanwhile.
   expect(t.negotiations.get(n.id)?.status).toBe("awaiting_mandate");
   expect(t.tasks.list()).toEqual([]);
   t.approvals.decide(again.id, "approve", "web");
@@ -686,7 +683,6 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   await runPluginTool(close, lost, call());
   expect(t.negotiations.get(n.id)?.status).toBe("open");
 
-  // Carry on: sends go again.
   t.approvals.decide(hold.id, "approve", "web");
   expect(verdictFor(send, input, call(), true).action).toBe("allow");
   // Another one, denied: the negotiation ends.
@@ -720,7 +716,6 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "SN: AB12 CD34 EF56 GH78",
   ])
     expect([text, scamSignals(text, [])]).toEqual([text, []]);
-  // Contact details the mandate allows.
   expect(scamSignals("Odbiór osobisty, ul. Długa 10", ["address"])).toEqual([]);
   // A number shaped like an account whose check digits don't add up is no account.
   expect(scamSignals("Konto 61109010140000071219812875", []).join()).not.toContain("bank account");

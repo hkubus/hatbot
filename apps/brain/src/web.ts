@@ -1,4 +1,3 @@
-// Serves the built web app (apps/web/dist) on the same origin as the API.
 import { existsSync, type Stats, statSync } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { pickEncoding } from "./compress";
@@ -51,7 +50,6 @@ export function webHandler(dir: string): (req: Request) => Response {
         },
       });
     }
-    // Client-side routes fall back to the app.
     return send(req, index, statSync(index), "no-cache");
   };
 }
@@ -64,7 +62,6 @@ function statOf(file: string): Stats | null {
   }
 }
 
-/** The file, compressed when the build left a fresh copy; a 304 when the browser has it already. */
 function send(req: Request, file: string, stat: Stats, cache: string): Response {
   const etag = `W/"${stat.size.toString(36)}-${Math.trunc(stat.mtimeMs).toString(36)}"`;
   const headers: Record<string, string> = {

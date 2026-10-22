@@ -12,7 +12,6 @@ import { readStream } from "./shell";
 export { privateAddress };
 
 const MAX_REDIRECTS = 5;
-/** Pages a watcher fetches are cut here. */
 export const MAX_FETCH_CHARS = 2 * 1024 * 1024;
 const MAX_FETCH_BYTES = 4 * MAX_FETCH_CHARS;
 /** A desktop Chrome's: some sites turn away a script's, or headless Chromium's. */
@@ -33,7 +32,6 @@ export class FetchError extends Error {
   }
 }
 
-/** `target` as a URL, when it's an http or https one. */
 export function webUrl(target: string): URL {
   let url: URL;
   try {
@@ -67,7 +65,6 @@ export async function resolveHost(host: string, own: string[]): Promise<string> 
 }
 
 export type FetchOptions = {
-  /** The desktop's own addresses. */
   own?: string[];
   /** The address a host is fetched from, or a FetchError saying why not; tests replace the DNS check. */
   resolve?: (host: string) => Promise<string>;

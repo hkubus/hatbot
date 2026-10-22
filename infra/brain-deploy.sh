@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: install a release of the app inside hatbot-brain (PLAN.md §9.4). deploy.sh pushes and runs it.
+# Hatbot: install a release of the app inside hatbot-brain. deploy.sh pushes and runs it.
 #   $1  archive made with `git archive HEAD`
 # Releases live in /var/lib/hatbot/releases; /var/lib/hatbot/app links to the live one.
 

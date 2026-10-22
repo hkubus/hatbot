@@ -1,5 +1,4 @@
-// The live desktop: its frames as they come, Take Over and Hand Back, and while you have control
-// your mouse, wheel and keys go to it (PLAN.md §24.2 L4). It streams only while it's on screen.
+// It streams only while it's on screen.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -434,7 +433,6 @@ impl Inner {
         self.render_task();
     }
 
-    /// The task using the desktop, what it's doing and its latest steps.
     fn render_task(&self) {
         let st = self.store.state();
         let id = self.task_id.or_else(|| {

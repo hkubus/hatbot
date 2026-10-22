@@ -37,7 +37,6 @@ test("a bot has its own id, chat and memory folder, and its tasks run as it", as
   expect(res.status).toBe(201);
   expect(((await res.json()) as Bot).id).toBe("chef");
   expect((await post({ name: "chef" })).status).toBe(400);
-  // Polish letters become plain ones.
   expect(((await (await post({ name: "Łowca okazji" })).json()) as Bot).id).toBe("lowca-okazji");
   expect((await t.call("DELETE", "/bots/hatbot", undefined, { cookie })).status).toBe(400);
 
@@ -51,7 +50,6 @@ test("a bot has its own id, chat and memory folder, and its tasks run as it", as
   expect(sent.status).toBe(202);
   await t.chats.idle();
   expect(systemOf(model.requests[0])).toContain("You plan the week's meals.");
-  // Its own folder only.
   expect(await t.memory.exists("bots/hatbot-2/x.md")).toBe(false);
   expect(await t.memory.read("bots/chef/recipes.md")).toBe("# Soup\n");
   expect((await t.memory.log(1, "bots/chef/recipes.md"))[0]?.author).toBe("Chef");

@@ -1,5 +1,5 @@
-// Settings → Connections: the Anthropic API key and the ntfy server. Set here, they replace the host's
-// (deploy.sh's) until removed. The key and the token are only ever sent, never shown.
+// Set here, the API key and ntfy server replace the host's (deploy.sh's) until removed. The key and
+// the token are only ever sent, never shown.
 import type { ConnectionSource, Connections as ConnectionsInfo } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";

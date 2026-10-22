@@ -1,6 +1,4 @@
-// Hatbot on the home screen and in Control Center: today's spend and what needs you (small and
-// medium), and a Pause all switch. They read the brain as you, through the App Group, like the share
-// extension; iOS refreshes the widget about every 15 minutes, and the app asks it to when things change.
+// iOS refreshes the widget about every 15 minutes; the app asks it to when things change.
 import AppIntents
 import SwiftUI
 import WidgetKit
@@ -108,7 +106,6 @@ struct StatusView: View {
   }
 }
 
-/// Pause all in Control Center, on the Lock Screen or the Action button.
 @available(iOS 18.0, *)
 struct PauseControl: ControlWidget {
   var body: some ControlWidgetConfiguration {

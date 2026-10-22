@@ -1,5 +1,5 @@
 // The heartbeat: every few minutes, a look at what went wrong without the model. Only something new
-// goes to Haiku, which tells you, starts a task, or lets it be (PLAN.md §16).
+// goes to Haiku, which tells you, starts a task, or lets it be.
 import { HATBOT_ID, type HeartbeatInfo, type HeartbeatRun } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import { type ModelClient, oneShot } from "./agent/model";
@@ -18,7 +18,6 @@ export const HEARTBEAT_MODEL = "claude-haiku-5-5";
 /** Room for thinking, so it can't crowd out the answer. */
 const TRIAGE_MAX_TOKENS = 4000;
 const STATE_KEY = "heartbeat:state";
-/** Looks that found something, kept for Settings. */
 const KEEP_RUNS = 20;
 
 /**
@@ -27,7 +26,6 @@ const KEEP_RUNS = 20;
  */
 const OWN = /^(desktop$|plugin:|spend:|approval:)/;
 
-/** Failed runs in a row of one schedule, trigger or watcher that are worth a word. */
 const REPEATS = 3;
 
 export type Signal = {
@@ -99,7 +97,6 @@ export class Heartbeat {
     return { ...s.last, recent: s.recent };
   }
 
-  /** Runs when it's due, and returns that look; the brain calls it every few seconds. */
   tick(): Promise<HeartbeatInfo> | undefined {
     const s = this.d.settings.get();
     if (s.paused || !s.heartbeat.enabled || this.running) return;
@@ -108,7 +105,6 @@ export class Heartbeat {
     return this.run();
   }
 
-  /** A look now: Settings' Run now, and tests. */
   async run(): Promise<HeartbeatInfo> {
     if (this.running) return this.info();
     this.running = true;
@@ -163,7 +159,6 @@ export class Heartbeat {
     this.save({ lastRunAt: now, seen, last, recent });
   }
 
-  /** What's wrong, without the model. */
   async gather(since: string): Promise<Signal[]> {
     const db = this.d.db;
     const out: Signal[] = [];
@@ -253,7 +248,6 @@ export class Heartbeat {
     return task ? "known" : null;
   }
 
-  /** Hatbot's own findings and the rest, each triaged on its own, as one look. */
   private async triaged(fresh: Signal[], now: string): Promise<Last> {
     const looks: Last[] = [];
     for (const group of [

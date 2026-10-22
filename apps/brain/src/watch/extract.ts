@@ -1,14 +1,10 @@
-// Picks a watcher's value out of a page or a tool's output, without the model.
 import type { WatchCondition, WatchSource } from "@hatbot/shared";
 import { UserError } from "../errors";
 import type { PatternJob } from "./pattern";
 
-/** A check that didn't find a value; the message is for the owner and the model. */
 export class WatchError extends UserError {}
 
-/** Values are compared and stored at most this long. */
 const MAX_VALUE_CHARS = 4000;
-/** A pattern looks at most at this much text, for at most this long. */
 const MAX_PATTERN_CHARS = 200_000;
 const PATTERN_MS = 5000;
 const SKIPPED = "head, script, style, noscript, template, svg";
@@ -17,7 +13,7 @@ const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 const looksHtml = (body: string, contentType: string) =>
   contentType.includes("html") || /^\s*<(!doctype|html|head|body|div)/i.test(body);
 
-/** The text of each element `selector` matches, outermost matches only. */
+/** Outermost matches only. */
 async function selectText(html: string, selector: string): Promise<string[]> {
   const parts: string[][] = [];
   let depth = 0;
@@ -44,7 +40,6 @@ async function selectText(html: string, selector: string): Promise<string[]> {
   return parts.map((p) => collapse(p.join(""))).filter(Boolean);
 }
 
-/** The page's visible text, roughly: no head, scripts or styles. */
 async function pageText(html: string): Promise<string> {
   const out: string[] = [];
   let skip = 0;
@@ -102,10 +97,7 @@ function atPath(data: unknown, path: string): unknown {
   return v;
 }
 
-/**
- * The pattern's first group or its whole match, null for none. It runs on a worker that is stopped
- * after `ms`, since a pattern can backtrack for hours on the wrong text.
- */
+// Runs on a worker that is stopped after `ms`, since a pattern can backtrack for hours.
 function firstMatch(pattern: string, text: string, ms: number): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const w = new Worker(new URL("./pattern.ts", import.meta.url).href);
@@ -129,7 +121,6 @@ function firstMatch(pattern: string, text: string, ms: number): Promise<string |
   });
 }
 
-/** Picks the value out of what was fetched or returned. */
 export async function pick(
   body: string,
   contentType: string,
@@ -183,7 +174,7 @@ const MONEY =
 const MONEY_AFTER = new RegExp(`^\\s?(?:${MONEY})(?![\\p{L}])`, "iu");
 const MONEY_BEFORE = new RegExp(`(?<![\\p{L}])(?:${MONEY})\\s?$`, "iu");
 
-/** The number in one written form; `money` reads "1.299" as 1299, as a price would mean it. */
+/** `money` reads "1.299" as 1299, as a price would mean it. */
 function parseNumber(written: string, money: boolean): number {
   let s = written.replace(/[ \u00a0\u202f\u2009']/g, "").replace("−", "-");
   const lastDot = s.lastIndexOf(".");
@@ -208,10 +199,8 @@ function parseNumber(written: string, money: boolean): number {
 }
 
 /**
- * The price or number in a value: the first one next to a currency if there is one, else the first
- * that isn't a percentage ("-20%"), else the first percentage ("15%"). A negative one next to a
- * currency is a discount, not the price. "1 299,99 zł" is 1299.99, "1.299 zł" is 1299, "€1.299,00" is
- * 1299, "$1,299.00" is 1299, "-3.5 °C" is -3.5. NaN when there's none.
+ * The first number next to a currency, else the first that isn't a percentage, else the first
+ * percentage. NaN when there's none.
  */
 export function numberIn(value: string): number {
   let first: number | null = null;
@@ -235,7 +224,6 @@ export function numberIn(value: string): number {
   return first ?? percent ?? Number.NaN;
 }
 
-/** Whether a value is in the condition: contains the text, or is below or above the number. */
 function holds(c: WatchCondition, value: string): boolean {
   switch (c.when) {
     case "changed":

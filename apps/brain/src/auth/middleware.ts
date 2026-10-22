@@ -16,8 +16,8 @@ export function setSessionCookie(c: Context<AppEnv>, token: string) {
 }
 
 /**
- * Who's asking. `renew: false` leaves a session's expiry where it is: a WebSocket upgrade answers with
- * its own 101 and can't carry the cookie, so the next request moves both on.
+ * `renew: false` leaves a session's expiry where it is: a WebSocket upgrade answers with its own 101
+ * and can't carry the cookie, so the next request moves both on.
  */
 export function principalOf(c: Context<AppEnv>, opts: { renew?: boolean } = {}): Principal | null {
   const { auth } = c.var;
@@ -31,7 +31,7 @@ export function principalOf(c: Context<AppEnv>, opts: { renew?: boolean } = {}):
   return { kind: session.kind, id: session.id };
 }
 
-/** Requires a session cookie or a bearer token. Cookie-authenticated writes must come from the public origin. */
+/** Cookie-authenticated writes must come from the public origin. */
 export const requireAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
   const principal = principalOf(c);
   if (!principal) return c.json({ error: "You're not signed in." }, 401);

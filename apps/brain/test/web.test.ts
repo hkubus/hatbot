@@ -136,7 +136,6 @@ test("a task holds its news while the web tools' code is still running", async (
   const work = new FakeModel([
     {
       content: [
-        // Code still running: no result yet.
         {
           type: "server_tool_use",
           id: "srvtoolu_w",
@@ -242,6 +241,5 @@ test("a reply keeps the pages it cites, searched or fetched", async () => {
   expect(t.thread.list().at(-1)?.sources).toEqual(sources);
   const done = t.events.find((e) => e.type === "message.done") as { sources?: unknown };
   expect(done.sources).toEqual(sources);
-  // A reply that cites nothing has none.
   expect(t.thread.list()[0]).not.toHaveProperty("sources");
 });

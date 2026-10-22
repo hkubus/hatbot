@@ -1,4 +1,3 @@
-// Search for the app: chats (full text), tasks, memory files, and schedules, triggers and watchers.
 import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { LISTED_CHAT } from "./agent/chats";
 import type { Db } from "./db";

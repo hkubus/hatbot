@@ -1,5 +1,4 @@
-// Boxes (PLAN.md §21): the small web apps your bots made, and one as large as the window allows, its
-// page sandboxed on an opaque origin, with what it saves going through the app to the brain.
+// Each box's page is sandboxed on an opaque origin; what it saves goes through the app to the brain.
 import type { Box, BoxAnswer, BoxDetail, BoxSecret, BoxPage as BoxSource } from "@hatbot/shared";
 import { useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
@@ -65,7 +64,6 @@ export function BoxPage({ id }: { id: number }) {
   const [attempt, setAttempt] = useState(0);
   /** The version showing; null for the current one, which follows the bot's changes. */
   const [picked, setPicked] = useState<number | null>(null);
-  /** Instead of the page: its source, or its secrets. */
   const [view, setView] = useState<"page" | "code" | "secrets">("page");
   const { busy, error, run } = useAction();
   // What was read last: the box.updated it puts in the store needn't read it again.
@@ -181,10 +179,7 @@ export function BoxPage({ id }: { id: number }) {
   );
 }
 
-/**
- * The secrets the box's backend reads, as its box.json names them (PLAN.md §21.6): you set them here,
- * only its backend gets them, and they're never shown again, here or to the bot.
- */
+/** Only its backend gets them, and they're never shown again, here or to the bot. */
 function BoxSecrets({
   id,
   secrets,
@@ -266,7 +261,6 @@ function BoxSecrets({
   );
 }
 
-/** A version's page, as its source, read-only: a box with files shows them, one after another. */
 function BoxCode({ id, version }: { id: number; version: number }) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -295,9 +289,8 @@ const SANDBOX =
   "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads";
 
 /**
- * The box's page at the signed address the brain gives (PLAN.md §21.1), and the other end of
- * hatbox.store: the app answers its frame's page and nothing else, and stops once the frame has left
- * that page, which then doesn't show under Hatbot's toolbar either.
+ * The other end of hatbox.store: the app answers its frame's page and nothing else, and stops once
+ * the frame has left that page, which then doesn't show under Hatbot's toolbar either.
  */
 function BoxFrame({ id, version, title }: { id: number; version: number; title: string }) {
   const theme = useTheme();

@@ -1,4 +1,3 @@
-// SSH's settings: the brain's public key to install, the hosts Hatbot may reach, and their pinned keys.
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";

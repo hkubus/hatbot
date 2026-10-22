@@ -115,7 +115,6 @@ function remote(repo: string) {
   };
 }
 
-// A stand-in for GitHub's API.
 const gh = fakeApi((req, url, _body, raw) => {
   const path = url.pathname;
   const r = "/repos/hkubus/hatbot";
@@ -163,7 +162,6 @@ const gh = fakeApi((req, url, _body, raw) => {
   return missing(422, "Validation Failed");
 });
 
-// A stand-in for Forgejo's API.
 const fj = fakeApi((req, url, _body, raw) => {
   const path = url.pathname.replace("/api/v1", "");
   const r = "/repos/kubus/hatbot";
@@ -184,9 +182,7 @@ const fj = fakeApi((req, url, _body, raw) => {
   return missing(404, "The target couldn't be found.");
 });
 
-/** A scripted call of a tool. */
 const use = (name: string, input: unknown) => ({ content: [toolUse(name, input)] });
-/** What the plugin sent to `path` with POST, as JSON. */
 const posted = (seen: Seen[], path: string) =>
   JSON.parse(seen.find((s) => s.method === "POST" && s.path.endsWith(path))?.body ?? "null");
 
@@ -211,7 +207,6 @@ const forges = [
     api: gh,
     env: () => ({ GITHUB_API_URL: `${gh.url}/`, GITHUB_TOKEN: "tok" }),
     owner: "hkubus",
-    /** Who git signs in as. */
     gitUser: "x-access-token",
     workflows: [
       ".github/workflows/ci.yml",

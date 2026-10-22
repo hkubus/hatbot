@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: check the M0 setup (PLAN.md §11, M0 "done when").
+# Hatbot: check the setup.
 # Run where you ran host-setup.sh (as root on the Proxmox host) or ssh-setup.sh. Changes nothing.
 # Exit code 1 if any check fails.
 
@@ -150,7 +150,6 @@ if [[ -n $DESKTOP ]]; then
   expect "brain reaches the desktop's VNC (RFB handshake on $DESKTOP_IP:5901)" vnc_answers
   expect "Xvnc and the XFCE session are active" \
     on_desktop systemctl is-active --quiet hatbot-xvnc hatbot-session
-  # desktop-agent starts Chromium.
   if on_desktop test -e /etc/systemd/system/hatbot-desktop-agent.service </dev/null; then
     expect "Chromium is running (sandbox works in the container)" \
       on_desktop pgrep -u desk -f chrome-profile

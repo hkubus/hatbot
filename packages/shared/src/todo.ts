@@ -1,4 +1,4 @@
-// The to-do list: todo.md in memory, markdown checkboxes with optional tags (PLAN.md §19).
+// The to-do list: todo.md in memory, markdown checkboxes with optional tags.
 //   - [ ] Renew the OVH domain due:2026-10-25
 //   - [ ] Call the plumber due:2026-10-21 14:00
 //   - [x] Replace the UPS battery done:2026-10-18
@@ -11,7 +11,6 @@ export type Todo = {
   /** Its line in the file, from 0. */
   line: number;
   done: boolean;
-  /** What's to do, without its tags. */
   text: string;
   /** YYYY-MM-DD, the owner's local date. */
   due: string | null;
@@ -64,7 +63,6 @@ export function parseTodos(md: string): Todo[] {
   return out;
 }
 
-/** "due:2026-10-25", or "due:2026-10-25 14:00". */
 export const dueTag = (date: string, at?: string | null) => `due:${date}${at ? ` ${at}` : ""}`;
 
 /** "Renew the domain (due 2026-10-25)", as the model and reminders show an item. */
@@ -102,7 +100,6 @@ export function todoAt(md: string, text: string, line?: number): Todo | null {
   return same.find((t) => t.line === line) ?? (same.length === 1 ? (same[0] as Todo) : null);
 }
 
-/** The list with `t` ticked off on `date`. */
 export function withDone(md: string, t: Todo, date: string): string {
   const lines = md.split("\n");
   const l = lines[t.line] ?? "";

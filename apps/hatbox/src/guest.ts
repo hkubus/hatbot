@@ -1,4 +1,4 @@
-// What the agent does with boxes (PLAN.md §21.6): keeps the files the brain sends until they're built,
+// What the agent does with boxes: keeps the files the brain sends until they're built,
 // builds them, runs each backend as its own unit on its first request and stops it after 15 idle
 // minutes, relays requests to it, sends its fetches on (egress.ts), hands it its secrets, and keeps its
 // log. Secrets are only ever in memory, here and in the backend's environment.
@@ -45,7 +45,6 @@ import { EgressError, nullBody, sendOn } from "./egress";
 import { clip, readStream, readWritten } from "./files";
 import type { Units } from "./units";
 
-/** A backend nobody has asked anything for this long is stopped. */
 export const IDLE_MS = 15 * 60_000;
 const START_MS = 15_000;
 const ANSWER_MS = 60_000;
@@ -94,7 +93,6 @@ export class Guest {
 
   private dir = (...parts: (string | number)[]) => join(this.o.state, ...parts.map(String));
 
-  /** The version of box `id`'s backend that's built, or null. */
   version(id: number): number | null {
     try {
       return Number(readFileSync(this.dir("boxes", id, "version"), "utf8")) || null;
@@ -111,7 +109,6 @@ export class Guest {
     });
   }
 
-  /** The box.json the running backend was built with. */
   config(id: number): BoxConfig {
     try {
       return boxConfig(readFileSync(this.dir("boxes", id, "app", BOX_CONFIG), "utf8"));
@@ -245,7 +242,6 @@ export class Guest {
     return this.relay(id, path, { method: req.method, headers, body: body?.bytes });
   }
 
-  /** Runs the backend's scheduled(): why it failed, or what it asked to tell you. */
   async scheduled(id: number, version: number, secrets: string): Promise<BoxRun> {
     this.current(id, version, secrets);
     const res = await this.relay(id, "/", {
@@ -350,7 +346,6 @@ export class Guest {
   private async launch(id: number) {
     const digest = this.digest(id);
     const dir = join(this.o.run, String(id));
-    // Made afresh, without what the backend left in it last time.
     this.clear(dir);
     mkdirSync(dir, { recursive: true });
     // The backend's own user makes its socket here. Sticky, so it can't replace the agent's, and a link
@@ -379,7 +374,6 @@ export class Guest {
     this.running.set(id, { egress, used: this.clock(), digest });
   }
 
-  /** Resolves once something accepts connections on `socket`. */
   private async listening(socket: string) {
     const end = Date.now() + START_MS;
     for (;;) {
@@ -416,7 +410,6 @@ export class Guest {
     }
   }
 
-  /** A line from the agent in the box's log, or from the brain through it. */
   note(id: number, line: string) {
     appendFileSync(
       this.dir("logs", `${id}.log`),
@@ -434,7 +427,6 @@ export class Guest {
     chmodSync(path, 0o666);
   }
 
-  /** The end of what the backend printed. */
   logs(id: number, max = 30_000): string {
     try {
       const text = readFileSync(this.dir("logs", `${id}.log`), "utf8");
@@ -451,7 +443,6 @@ export class Guest {
     await this.o.units.stop(id);
   }
 
-  /** Stops every backend nobody has used for 15 minutes. */
   async sweep() {
     const now = this.clock();
     for (const [id, r] of this.running) if (now - r.used >= IDLE_MS) await this.stop(id);
@@ -462,7 +453,6 @@ export class Guest {
     for (const { id } of this.list()) await this.stop(id).catch(() => {});
   }
 
-  /** The box and everything of it here: its backend's data, its code, its secrets and its log. */
   async remove(id: number) {
     this.secrets.delete(id);
     await this.stop(id);

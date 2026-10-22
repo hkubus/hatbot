@@ -36,7 +36,6 @@ test("the chat asks with answers to tap: the reply ends there, and the next mess
     choices: [["Friday", "Saturday"], []],
   });
 
-  // The answers are the owner's message; the call's result goes with it.
   await t.thread.post("1. Saturday\n2. The dog's friendly").done;
   const last = model.requests[2]?.messages.at(-1);
   expect(JSON.stringify(last?.content)).toMatch(/Asked\..*Saturday/);
@@ -68,7 +67,6 @@ test("a task waits for every answer, from the app or the notification, carries o
 
   const [renew, auto] = (await pending(2)) as Question[];
   expect(t.tasks.get(task.id)?.status).toBe("waiting_answer");
-  // The notification's buttons answer with their own choice, and only for their own question.
   const [yes, no] = (t.notifier.sent.at(-2)?.actions ?? []) as { url: string; body: string }[];
   expect(yes?.url).toBe(`https://hatbot.test/api/v1/questions/${renew?.id}/token-answer`);
   const token = (b?: { body: string }) => JSON.parse(b?.body ?? "") as { choice: number };
@@ -78,7 +76,6 @@ test("a task waits for every answer, from the app or the notification, carries o
   expect((await tap(auto, token(yes))).status).toBe(403);
   expect((await tap(renew, token(no))).status).toBe(200);
   expect((await tap(renew, token(yes))).status).toBe(409);
-  // It waits for every answer.
   expect(t.tasks.get(task.id)?.status).toBe("waiting_answer");
   expect((await answer(auto as Question, "Yes")).status).toBe(200);
 

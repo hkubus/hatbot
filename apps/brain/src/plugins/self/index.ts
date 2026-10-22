@@ -1,9 +1,5 @@
-// Own code (PLAN.md §18): Hatbot's own repository on Forgejo. self_checkout puts the default branch, or
-// one of its own pull requests, into the desktop's sandbox, self_run reads, changes and tests it there,
-// and self_propose turns what changed into a branch and a pull request that the owner reviews and
-// merges; self_update pushes it onto the pull request that was checked out. The brain never runs that
-// code: it keeps a bare clone, applies the sandbox's diff to an index with git, which runs nothing, and
-// pushes.
+// The brain never runs this code: it keeps a bare clone, applies the sandbox's diff to an index with
+// git, which runs nothing, and pushes.
 import { join } from "node:path";
 import { z } from "zod";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
@@ -25,12 +21,8 @@ import { Branch, Num, Repo, repoPath, validRef } from "../forge";
 import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const WORK = "hatbot-self/work";
-/** How much of a pull request's conversation self_checkout shows. */
 const MAX_CONVERSATION = 30_000;
-/**
- * Paths that run as root on the brain once merged and updated, run in CI, or bring in other code. The
- * pull request names them, so the owner reads them closely.
- */
+/** Paths that run as root on the brain, run in CI, or bring in other code: the pull request names them. */
 const CAREFUL = [
   /^infra\//,
   /^\.(forgejo|gitea|github)\//,
@@ -74,7 +66,7 @@ type Review = {
 export const selfPlugin = (d: {
   desktop: DesktopAgent;
   dir: string;
-  /** Where the suggestions schedule goes; made after the plugins. */
+  /** Made after the plugins. */
   schedules: () => Pick<Schedules, "get" | "create" | "update" | "delete">;
 }) =>
   definePlugin({
@@ -138,7 +130,6 @@ export const selfPlugin = (d: {
         const list = await api<Pull[]>("GET", `${repoPath(repo)}/pulls?state=open&limit=50`);
         return list.filter((pr) => mine(pr, login));
       };
-      /** An open pull request Hatbot may push to: its own, on its own hatbot/ branch. */
       const ownPull = async (number: number) => {
         const pr = await api<Pull>("GET", `${repoPath(repo)}/pulls/${number}`);
         if (pr.state !== "open" || pr.merged) throw new PluginError(`#${number} isn't open.`);
@@ -148,7 +139,6 @@ export const selfPlugin = (d: {
           );
         return pr;
       };
-      /** A pull request's description, comments and reviews with their line comments, oldest first. */
       const conversation = async (pr: Pull) => {
         const p = repoPath(repo);
         const [comments, reviews] = await Promise.all([
@@ -192,7 +182,6 @@ export const selfPlugin = (d: {
       const serial = serially();
       const sandbox = (signal: AbortSignal) => d.desktop.withSignal?.(signal) ?? d.desktop;
 
-      /** commitAndPush as the bot account, one at a time, and which files to read closely. */
       const push = (o: {
         from: string;
         patch: Uint8Array;
@@ -210,7 +199,6 @@ export const selfPlugin = (d: {
           return { ...pushed, careful };
         });
 
-      /** What ends a pull request or its comment: where it came from, its size, what to read closely. */
       const footer = (
         verb: string,
         from: string,
@@ -233,7 +221,7 @@ export const selfPlugin = (d: {
           ? `\nIt touches ${careful.join(", ")}, which ${where} asks the owner to read closely.`
           : "";
 
-      /** The suggestions schedule, by id and creation time: a deleted schedule's id can come back. */
+      /** By id and creation time: a deleted schedule's id can come back. */
       const suggestions = () => {
         const [id, created] = (getSetting(db, SUGGEST_KEY) ?? "").split(" ");
         const s = d.schedules().get(Number(id));
@@ -427,7 +415,6 @@ export const selfPlugin = (d: {
           return `Signed in as ${login}; ${repo}'s default branch is ${branch}.`;
         },
         actions: {
-          /** How often the suggestions schedule runs: off, weekly, monthly, or its own cron. */
           suggestions: async () => {
             const s = suggestions();
             if (!s?.enabled || !s.cron) return { every: "off" };

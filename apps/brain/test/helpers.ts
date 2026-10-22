@@ -141,7 +141,6 @@ export async function testApp(
     agent,
     hatbox,
     notifier: sent,
-    /** Hatbot's own chat. */
     thread: s.chats.hatbot(),
     updateDir,
     events: seen,
@@ -182,15 +181,12 @@ export async function waitFor<T>(fn: () => T | undefined | null | false, ms = 20
   }
 }
 
-/** A bot with no role or settings of its own. */
 export const bot = (t: TestApp, name: string) =>
   t.bots.create({ name, instructions: "", chatModel: null, chatEffort: null, plugins: null });
 
-/** What a request's last turn said, as JSON. */
 export const lastUserText = (req: { messages: { content: unknown }[] } | undefined) =>
   JSON.stringify(req?.messages.at(-1)?.content);
 
-/** The names of the tools a request offered. */
 export const toolNames = (req: { tools?: unknown[] } | undefined) =>
   (req?.tools ?? []).flatMap((x) => (x && typeof x === "object" && "name" in x ? [x.name] : []));
 

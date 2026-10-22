@@ -1,7 +1,4 @@
-// The dead-man ping: once a minute the brain tells a monitor outside it that it's alive, so a brain
-// that's down is noticed (Check everything and the heartbeat both run inside it). The URL is an Uptime
-// Kuma Push monitor's, or any service that takes ?status=up|down&msg=…; it's a secret, since whoever
-// holds it can fake "up".
+// The URL is a secret: whoever holds it can fake "up".
 import type { Db } from "./db";
 
 const INTERVAL_MS = 60_000;
@@ -12,13 +9,11 @@ export type PingResult = {
   /** What the brain said: down when its database didn't answer. */
   status: "up" | "down";
   msg: string;
-  /** Null when the monitor took it; otherwise why it didn't. */
   error: string | null;
 };
 
 export type PingDeps = {
   db: Db;
-  /** HATBOT_PING_URL; empty when it isn't set up. */
   url?: string | undefined;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   clock?: () => number;
@@ -42,12 +37,11 @@ export class DeadManPing {
     return Boolean(this.url);
   }
 
-  /** The last ping, or null before the first. */
   lastPing(): PingResult | null {
     return this.last;
   }
 
-  /** Called from the brain's 10 s loop; pings at most once a minute. Paused or not: paused is alive. */
+  /** Pings even while paused: paused is alive. */
   tick() {
     if (!this.url || this.sending || this.clock() - this.sentAt < INTERVAL_MS) return;
     void this.send();

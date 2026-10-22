@@ -1,4 +1,4 @@
-// Boxes with files and a backend (PLAN.md §21.6): built on the boxes guest, reached through the app.
+// Boxes with files and a backend: built on the boxes guest, reached through the app.
 import { expect, test } from "bun:test";
 import type { BoxPage } from "@hatbot/shared";
 import type { BoxResponse } from "@hatbot/shared/hatbox";
@@ -120,7 +120,6 @@ test("in a chat that read untrusted content, hosts a backend couldn't reach befo
       ],
     },
     { content: [toolUse("box_create", { title: "Prices", files: files() })] },
-    // No new host: no asking.
     {
       content: [
         toolUse("box_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
@@ -308,7 +307,6 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
   expect(t.hatbox.builds).toHaveLength(builds);
   expect(model.creates.some((p) => p.system === REVIEW_PROMPT)).toBe(false);
 
-  // Removed here, it's gone from the guest too.
   await setSecrets({ WEATHER_KEY: null });
   expect(t.hatbox.secretsOf.has(1)).toBe(false);
 });

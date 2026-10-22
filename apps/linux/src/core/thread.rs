@@ -38,7 +38,6 @@ pub fn merge(
     )
 }
 
-/// A run of messages from one conversation.
 pub struct Group {
     pub episode_id: Option<i64>,
     pub messages: Vec<ThreadMessage>,

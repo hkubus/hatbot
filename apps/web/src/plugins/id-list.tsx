@@ -1,5 +1,3 @@
-// A plugin's settings that are one list of ids, typed into one field: Proxmox's guests and Home
-// Assistant's entities where every change asks first.
 import { useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";
@@ -17,11 +15,9 @@ export function IdListSettings<K extends string, T extends string | number>({
   valid,
   invalid,
 }: PluginSettingsProps<Record<K, T[]>> & {
-  /** The config's list. */
   field: K;
   label: string;
   placeholder: string;
-  /** One id, as typed. */
   parse: (text: string) => T;
   valid: (id: T) => boolean;
   /** What an id looks like, shown while one doesn't. */

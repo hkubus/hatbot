@@ -21,7 +21,6 @@ export const PVE_FINGERPRINT =
   "D7:6A:C1:55:98:6E:33:E6:73:98:B6:92:28:50:A5:F7:F0:69:D9:96:AD:CC:64:25:0D:DA:0F:BC:7A:4C:40:D0";
 export const fixtures = join(import.meta.dir, "fixtures");
 
-/** A temporary directory, removed after the run. */
 export function tempDir(prefix = "hatbot-test-") {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);
@@ -49,7 +48,6 @@ export function realSandbox(t: TestApp) {
   return box;
 }
 
-/** The plugin tool named `name` that `t` offers now. */
 export function toolOf(t: TestApp, name: string): PluginTool {
   const found = t.plugins.tools().find((x) => x.name === name);
   if (!found) throw new Error(`no tool ${name}`);
@@ -95,7 +93,6 @@ export function stopPluginsAfterEach() {
   });
 }
 
-/** A scripted reply that ends a task. */
 export const finish = (summary = "Done.") => ({
   content: [toolUse("finish_task", { outcome: "done", summary, notify: false })],
 });
@@ -110,7 +107,6 @@ export const scheduled = (t: TestApp, goal = "Do it") =>
     runKey: `s:${Math.random()}`,
   }) as Task;
 
-/** Waits for a task to end. */
 export const ended = (t: TestApp, id: number) =>
   waitFor(() => {
     const task = t.tasks.get(id);

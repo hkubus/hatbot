@@ -1,5 +1,3 @@
-// Splits Hatbot's Markdown into blocks; the views render inline formatting with AttributedString.
-// Covers what replies use: headings, paragraphs, lists, quotes, fenced code, charts, tables and rules.
 // An unclosed fence (a reply still streaming) runs to the end.
 import Foundation
 
@@ -41,7 +39,6 @@ enum Markdown {
     return c
   }()
 
-  /// `parse`, remembered.
   static func cached(_ source: String) -> [MDBlock] {
     let key = NSString(string: source)
     if let hit = cache.object(forKey: key) { return hit.value }
@@ -86,7 +83,6 @@ enum Markdown {
   nonisolated(unsafe) private static let emphasis = try! NSRegularExpression(
     pattern: #"(?<![\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])"#)
 
-  /// A line without links' addresses or emphasis and code marks.
   static func inline(_ text: String) -> String {
     var s = replace(link, in: text, with: "$1")
     s = replace(marks, in: s, with: "")

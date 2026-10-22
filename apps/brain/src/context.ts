@@ -32,7 +32,7 @@ export type Deps = {
   config: Config;
   db: Db;
   auth: AuthService;
-  /** Failed logins: per client address, and across all addresses (TOTP is only 6 digits). */
+  /** Global too, because TOTP is only 6 digits. */
   loginLimits: { perIp: FailureLimiter; global: FailureLimiter };
   events: EventBus;
   settings: SettingsStore;
@@ -47,7 +47,7 @@ export type Deps = {
   desktop: Desktop;
   archive: Archive;
   attachments: Attachments;
-  /** Made as it's set now: Settings can change it. */
+  /** A function because Settings can change it. */
   proxmox: () => Proxmox;
   updates: Updates;
   schedules: Schedules;

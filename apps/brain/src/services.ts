@@ -1,6 +1,5 @@
-// The brain's services and their API, built the same way for the brain itself (main.ts) and for tests
-// (test/helpers.ts). Only the outside world is passed in: the models, the clock, the desktop, where
-// notifications go and the other network-facing clients.
+// Built the same way for the brain (main.ts) and for tests (test/helpers.ts): only the outside world
+// is passed in.
 import { join } from "node:path";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
@@ -54,16 +53,11 @@ export type Outside = {
   config: Config;
   db: Db;
   clock?: () => number;
-  /** Answers the chat. */
   model: ModelClient;
-  /** Answers tasks, Teach, screening and the other calls in the background; the brain's is `model`. */
   taskModel: ModelClient;
   agent: DesktopAgent;
-  /** The boxes guest (PLAN.md §21.6); none when left out. */
   hatbox?: HatboxAgent;
-  /** Where notifications go. */
   notifications: Notifier;
-  /** Your ntfy server, for Check everything; null when there's none to check. */
   ntfy: ChecksDeps["ntfy"];
   /** Tests' own; the brain's is made from the environment and Settings, afresh each time. */
   proxmox?: Proxmox;
@@ -72,13 +66,13 @@ export type Outside = {
   pluginEnv?: Record<string, string | undefined>;
   passwordCost?: PasswordCost;
   pingUrl?: string;
-  /** The API key and ntfy server set in Settings; the brain's own reads data/secrets.json. */
+  /** The brain's own reads data/secrets.json. */
   secrets?: Secrets;
-  /** Check everything's own requests, for tests. */
+  /** For tests. */
   fetch?: ChecksDeps["fetch"];
 };
 
-/** Every service, wired, and the API over them. Plugins aren't started: the caller starts them. */
+/** Plugins aren't started: the caller starts them. */
 export async function createServices(o: Outside) {
   const { config, db, agent } = o;
   const clock = o.clock ?? Date.now;

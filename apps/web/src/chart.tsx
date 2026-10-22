@@ -1,5 +1,3 @@
-// A ```chart block in a reply, drawn as SVG (a table for a matrix) in Hatbot's colours, each kind
-// in charts/ with a readout that follows the pointer and the arrow keys.
 import type { ChartData, ChartFile, ChartSpec } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { api, errorText } from "./api";
@@ -12,7 +10,6 @@ import { withData } from "./chartspec";
 
 export { useWidth } from "./charts/frame";
 
-/** Same footprint as the chart, while its block is still streaming in. */
 export function ChartPending() {
   return <div className="reply-chart pending" style={{ height: HEIGHT }} />;
 }
@@ -32,7 +29,7 @@ export function Chart({ spec }: { spec: ChartSpec }) {
   }
 }
 
-/** Each file chart's values, once fetched: a file never changes. */
+/** Cached for good: a file never changes. */
 const fetched = new Map<string, Promise<ChartData>>();
 
 function values(id: number, type: ChartFile["type"]): Promise<ChartData> {
@@ -46,7 +43,6 @@ function values(id: number, type: ChartFile["type"]): Promise<ChartData> {
   return p;
 }
 
-/** A chart that draws from a file, which the brain reads and thins to fit (chart-data.ts). */
 export function FileChart({ file }: { file: ChartFile }) {
   const [shown, setShown] = useState<{ spec: ChartSpec | null; error?: string } | null>(null);
   const source = JSON.stringify(file);

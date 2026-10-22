@@ -5,12 +5,10 @@ import { HATBOT } from "../src/memory/store";
 import { text } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
-/** Answers each proposal request with the JSON `reply` gives, as the model would. */
 function answers(t: TestApp, reply: (p: Omit<StreamParams, "stream">) => string) {
   t.taskModel.route = (p) => (p.output_config?.format ? { content: [text(reply(p))] } : undefined);
 }
 
-/** Starts a tidy-up and waits for the proposal it writes. */
 async function tidy(t: TestApp, cookie: string): Promise<Proposal> {
   const before = t.proposals.list()[0]?.id ?? 0;
   expect((await t.call("POST", "/proposals/tidy", undefined, { cookie })).status).toBe(202);
@@ -60,7 +58,6 @@ test("a tidy-up holds what it may cost while asked, can't reach skills, and is a
   const applied = await t.call("POST", `/proposals/${p.id}/apply`, undefined, { cookie });
   expect(applied.status).toBe(200);
   expect(await t.memory.exists("network.md")).toBe(false);
-  // Search follows it.
   expect(await found()).toEqual(["home.md"]);
   const [last] = await t.memory.log(1);
   expect(last?.author).toBe("You");

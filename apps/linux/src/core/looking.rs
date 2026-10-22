@@ -1,5 +1,4 @@
-// Settings' choices and looking after things (Looking.swift, Format.swift and LookingViews.swift on
-// iOS): intervals, watchers' conditions, the heartbeat's runs and limits typed in dollars.
+// As Looking.swift, Format.swift and LookingViews.swift on iOS.
 use serde_json::{Map, Value, json};
 
 use super::format;
@@ -106,7 +105,6 @@ pub fn renders(w: &Watcher) -> bool {
     w.source.get("render").and_then(|v| v.as_bool()) == Some(true)
 }
 
-/// A watcher's line in the list.
 pub fn watcher_line(w: &Watcher) -> String {
     if !w.enabled {
         return "Off".into();
@@ -152,7 +150,6 @@ pub fn heartbeat_line(run: &HeartbeatRun) -> String {
     line
 }
 
-/// How the test approval was answered.
 pub fn answer(a: &Approval) -> String {
     let mut text = match a.status {
         ApprovalStatus::Pending => return "Waiting for your answer".into(),

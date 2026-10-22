@@ -1,4 +1,3 @@
-// Triggers (PLAN.md §4.1, §8): signed webhooks and Uptime Kuma alerts start background tasks.
 import { createHmac, randomBytes } from "node:crypto";
 import {
   API_PREFIX,
@@ -15,21 +14,17 @@ import type { Notifier } from "./notify";
 import type { SettingsStore } from "./settings";
 import type { Tasks } from "./tasks/service";
 
-/** How far a signed timestamp may be from now. */
 const MAX_SKEW_S = 300;
-/** Signatures and delivery ids seen this recently are replays. */
 const REPLAY_WINDOW_MS = 30 * 24 * 3600_000;
-/** Headers with a delivery id: a forge retrying one sends it again with the same id. */
+/** A forge retrying a delivery sends it again with the same id. */
 const DELIVERY_HEADERS = ["x-github-delivery", "x-gitea-delivery", "x-forgejo-delivery"];
-/** What a run gets to see of a payload. */
 const MAX_PAYLOAD_CHARS = 20_000;
-/** A Kuma monitor's check interval when its alert doesn't say, and the range we believe. */
 const KUMA_INTERVAL_S = { fallback: 60, min: 20, max: 900 };
 /** Time for the check after the wait to run and its "up" to reach us. */
 const KUMA_SLACK_MS = 30_000;
 /** A monitor down again this soon after its last alert task ended goes on that task's timeline. */
 const ALERT_COOLDOWN_MS = 3600_000;
-/** Tasks one trigger may start in 24 hours, so a flapping monitor or a busy forge can't run up a bill. */
+/** A day's tasks per trigger, so a flapping monitor or a busy forge can't run up a bill. */
 const MAX_TASKS_PER_DAY = 24;
 
 type Row = {
@@ -54,13 +49,9 @@ export type Received =
   | { status: "started"; task: Task }
   | {
       status: "skipped";
-      /**
-       * recent: on the timeline of the monitor's last task, and a down starts a task once the hour is
-       * over if the monitor is still down; limit: the trigger's tasks for the day.
-       */
+      /** recent: went on the timeline of the monitor's last task. */
       reason: "paused" | "running" | "disabled" | "duplicate" | "ignored" | "recent" | "limit";
     }
-  /** A down alert waiting for the monitor's next checks before it starts a task. */
   | { status: "waiting"; until: string }
   | { status: "test" };
 
@@ -73,7 +64,6 @@ type KumaBody = {
     url?: string;
     hostname?: string;
     type?: string;
-    /** Seconds between checks. */
     interval?: number;
   } | null;
   msg?: string;
@@ -177,7 +167,6 @@ export class Triggers {
     return this.changed(id);
   }
 
-  /** A new secret; the old one stops working. */
   rotate(id: number): TriggerWithSecret | null {
     const secret = newSecret();
     if (!this.db.query("UPDATE triggers SET secret = ? WHERE id = ?").run(secret, id).changes)
@@ -237,8 +226,8 @@ export class Triggers {
   }
 
   /**
-   * A verified generic webhook: starts its run with the body as the payload. Only a delivery that
-   * started one is remembered as seen, so one skipped while paused or off can be delivered again.
+   * Only a delivery that started a task is remembered as seen, so one skipped while paused or off can be
+   * delivered again.
    */
   receiveWebhook(id: number, body: string, replay: boolean, keys: string[] = []): Received {
     const t = this.get(id);
@@ -269,12 +258,6 @@ export class Triggers {
     return { status: "started", task };
   }
 
-  /**
-   * An Uptime Kuma event. "Down" starts an alert task per monitor, or first waits for the monitor's next
-   * checks if the trigger says so, and drops the alert when it comes back up in time. More alerts while
-   * the task runs, and the monitor coming back up, go on that task's timeline. Kuma's test message only
-   * marks the trigger as heard from.
-   */
   receiveKuma(id: number, body: KumaBody): Received {
     const t = this.get(id);
     if (!t) return { status: "skipped", reason: "disabled" };
@@ -295,7 +278,6 @@ export class Triggers {
     const runKey = `kuma:${t.id}:${monitor.id ?? name}`;
     const active = this.tasks.activeFor(runKey);
     const message = hb.msg || body.msg || "";
-    // More news while a task looks into it: on its timeline, and told to the task.
     const update = (taskId: number, what: string) => {
       // On its timeline the message is what the task has read, before it gets to its inbox.
       if (message && !kumaSaid(message)) this.tasks.taint(taskId, alertMessageSource(name));
@@ -348,7 +330,6 @@ export class Triggers {
       const each = Math.min(KUMA_INTERVAL_S.max, Math.max(KUMA_INTERVAL_S.min, interval));
       wait = t.confirmChecks * each * 1000 + KUMA_SLACK_MS;
     }
-    // A wait that's over is this alert's now.
     if (waiting) this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey);
     return this.startAlert(t, runKey, name, alert, wait);
   }
@@ -363,7 +344,6 @@ export class Triggers {
       .run(runKey, t.id, until, name, alert);
   }
 
-  /** Starts the alerts whose wait is over: their monitor didn't come back up. The brain calls it often. */
   tick() {
     this.prune();
     const due = this.db
@@ -383,10 +363,9 @@ export class Triggers {
   }
 
   /**
-   * A monitor's news soon after its last alert task ended: on that task's timeline, rather than a new
-   * task each time a flapping monitor goes down. Kuma says nothing more while a monitor stays down, so
-   * a down waits for the hour to be over and then starts a task, unless the monitor came back up; you're
-   * told once. Null when there's no such task.
+   * News soon after the monitor's last alert task ended goes on that task's timeline, rather than a new
+   * task each time a flapping monitor goes down. Kuma says nothing more while a monitor stays down, so a
+   * down waits for the hour to be over and then starts a task, unless the monitor came back up.
    */
   private again(
     runKey: string,
@@ -422,7 +401,6 @@ export class Triggers {
     return { status: "skipped", reason: "recent" };
   }
 
-  /** Whether the trigger started its most tasks for a day already. */
   private limited(t: Trigger): Received | null {
     return this.startedToday(t.id) >= MAX_TASKS_PER_DAY
       ? { status: "skipped", reason: "limit" }
@@ -440,7 +418,7 @@ export class Triggers {
     );
   }
 
-  /** After the task that reached the day's limit: told once, since later events start nothing. */
+  /** Told once, since later events start nothing. */
   private started(t: Trigger) {
     if (this.startedToday(t.id) !== MAX_TASKS_PER_DAY) return;
     void this.notifier.send({
@@ -451,7 +429,6 @@ export class Triggers {
     });
   }
 
-  /** A monitor that's down: a task for it, unless it was looked into this hour or waits `wait` ms first. */
   private startAlert(
     t: Trigger,
     runKey: string,
@@ -517,7 +494,7 @@ export class Triggers {
     this.changed(id);
   }
 
-  /** Whether a delivery ran within the window. Kept in the database, so a restart doesn't forget. */
+  /** Kept in the database, so a restart doesn't forget. */
   private seen(key: string): boolean {
     this.prune();
     const cutoff = new Date(this.clock() - REPLAY_WINDOW_MS).toISOString();
@@ -526,7 +503,7 @@ export class Triggers {
     );
   }
 
-  /** A delivery that ran. A replay doesn't get here, so one seen before is from before the window. */
+  /** A replay doesn't get here, so one seen before is from before the window. */
   private remember(key: string) {
     this.db
       .query(
@@ -535,7 +512,6 @@ export class Triggers {
       .run(key, this.now());
   }
 
-  /** Deliveries older than the window go, once a day. */
   private prune() {
     if (this.clock() - this.prunedAt < 24 * 3600_000) return;
     this.prunedAt = this.clock();
@@ -552,7 +528,7 @@ export class Triggers {
 
 const newSecret = () => randomBytes(24).toString("base64url");
 
-/** HTTP's own reason phrases, as Kuma writes a status: "502 - Bad Gateway". */
+/** As Kuma writes a status: "502 - Bad Gateway". */
 const REASONS =
   "OK|Created|Accepted|No Content|Moved Permanently|Found|See Other|Not Modified|Temporary Redirect|Permanent Redirect|Bad Request|Unauthorized|Forbidden|Not Found|Method Not Allowed|Request Timeout|Too Many Requests|Internal Server Error|Not Implemented|Bad Gateway|Service Unavailable|Gateway Timeout";
 /**
@@ -571,10 +547,8 @@ const KUMA_OWN = [
 export const kumaSaid = (message: string) => KUMA_OWN.some((re) => re.test(message.trim()));
 
 /**
- * An Uptime Kuma alert in two parts: what Kuma itself says (the monitor, its type and address, the
- * status and the time, and a message in one of its own formats), which is trusted, and any other
- * message, which often quotes the monitored service's own response, so anyone who can reach the
- * service can write it (PLAN.md §6.1). Null for anything that isn't an alert.
+ * What Kuma itself says is trusted. Any other message often quotes the monitored service's response,
+ * so anyone who can reach the service can write it.
  */
 export function alertParts(payload: string): { alert: string; message: string } | null {
   try {
@@ -589,10 +563,8 @@ export function alertParts(payload: string): { alert: string; message: string } 
   }
 }
 
-/** What a task read when it read an alert's message. */
 export const alertMessageSource = (monitor: string) => `The message in the alert for "${monitor}"`;
 
-/** JSON indented for reading; anything else as it came. Cut to what a run gets to see. */
 function pretty(body: string): string {
   let text = body;
   try {

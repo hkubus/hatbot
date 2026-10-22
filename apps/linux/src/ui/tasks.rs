@@ -1,5 +1,3 @@
-// Tasks: what needs you first (the desktop asking for you, approvals, questions), then the active or
-// the finished tasks, newest first. Finished ones come a page at a time.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 

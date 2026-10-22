@@ -5,7 +5,6 @@ import { principalOf } from "../auth/middleware";
 import { briefBot } from "../bots";
 import type { AppEnv } from "../context";
 
-/** Streamed text that comes faster than this goes out together. */
 const BATCH_MS = 50;
 
 type Text = Extract<HatbotEvent, { type: "message.delta" | "message.progress" | "task.progress" }>;
@@ -50,9 +49,8 @@ export function batchText(send: (e: HatbotEvent) => void) {
   };
 }
 
-// One socket per client for live events (PLAN.md §8), opening with a snapshot of what's live. Browsers
-// authenticate with the session cookie, which needs an Origin check (cross-site WebSocket hijacking);
-// apps send a bearer token.
+// Browsers authenticate with the session cookie, which needs an Origin check (cross-site WebSocket
+// hijacking); apps send a bearer token.
 export const streamRoutes = new Hono<AppEnv>().get(
   "/stream",
   async (c, next) => {
@@ -76,8 +74,7 @@ export const streamRoutes = new Hono<AppEnv>().get(
         forget = auth.onEnd(principal, () => ws.close(1008, "Signed out"));
         // Compressed where the client takes it (main.ts): JSON shrinks to a fraction.
         const send = (e: unknown) => ws.send(JSON.stringify(e), { compress: true });
-        // What an app would otherwise ask for one request each as it connects. Read and sent before
-        // listening, all in this turn, so no event falls between the two.
+        // Read and sent before listening, all in this turn, so no event falls between the two.
         const paused = settings.get().paused;
         send({
           type: "snapshot",

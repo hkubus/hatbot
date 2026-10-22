@@ -1,5 +1,4 @@
-// Own code's settings: how often Hatbot looks over its code and suggests one improvement as a pull
-// request. It's one schedule, which the brain makes, changes or deletes; off by default.
+// One schedule, which the brain makes, changes or deletes; off by default.
 import { describeCron } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { useAction } from "../action";

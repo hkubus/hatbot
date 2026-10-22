@@ -1,11 +1,8 @@
-/** A line that opens or closes a fenced code block. */
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /**
- * A streaming reply cut into the blocks it has finished and the one still growing: at blank lines
- * outside code fences, where the next line starts at the margin. Each finished block is parsed once,
- * and only the last again as text streams in; once the reply is done it's parsed whole, so anything
- * the cuts split (a loose list, a footnote) comes right.
+ * Each finished block is parsed once; once the reply is done it's parsed whole, so anything the
+ * cuts split (a loose list, a footnote) comes right.
  */
 export function splitBlocks(text: string): string[] {
   const lines = text.split("\n");

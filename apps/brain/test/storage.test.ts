@@ -27,7 +27,6 @@ test("the nightly copy is consistent, leaves incognito out, and only the last 7 
   expect(copy.query("SELECT text FROM messages").values().flat()).toEqual(["kept"]);
   expect(copy.query("SELECT count(*) FROM episodes").values()[0]?.[0]).toBe(0);
   copy.close();
-  // The live database is untouched.
   expect(db.query("SELECT count(*) FROM messages").values()[0]?.[0]).toBe(2);
 
   for (let i = 0; i < 8; i++) {

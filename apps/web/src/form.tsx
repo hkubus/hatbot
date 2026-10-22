@@ -1,4 +1,3 @@
-// Edit pages: a form filled from what's stored, and what to show when there's nothing to fill it from.
 import { useEffect, useState } from "react";
 import { LoadError } from "./load";
 import { BackHead } from "./ui";
@@ -7,17 +6,12 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 type Filled<F> = {
   form?: F;
-  /** What the form was last filled with: it's dirty while it differs. */
+  /** It's dirty while the form differs from this. */
   base?: F;
-  /** The stored values it was last filled from. */
   seen?: F;
 };
 
-/**
- * The form once the stored values are `seed`, or null to leave it: filled the first time, then
- * from a newer stored value only while you have no unsaved edits, or once it's caught up with them
- * (your save came back). An update arriving while you type doesn't reset what you've written.
- */
+/** An update arriving while you type doesn't reset what you've written. */
 export function refill<F>({ form, base, seen }: Filled<F>, seed: F | undefined): F | null {
   if (seed === undefined) return null;
   if (form === undefined) return seed;
@@ -25,18 +19,12 @@ export function refill<F>({ form, base, seen }: Filled<F>, seed: F | undefined):
   return same(form, base) || same(form, seed) ? seed : null;
 }
 
-/**
- * The form once a save of `sent` came back as `result`: clean at `result`, unless you went on typing
- * while it was on its way. Then what you typed stays, unsaved.
- */
+/** What you typed while the save was on its way stays, unsaved. */
 export function afterSave<F>(s: Filled<F>, sent: F, result: F): Filled<F> {
   return { form: same(s.form, sent) ? result : s.form, base: result, seen: result };
 }
 
-/**
- * `list` with `id` switched on or off, kept in one order (the saved list's, then `all`'s), so
- * switching one off and on again leaves the form as it was.
- */
+/** Kept in one order (the saved list's, then `all`'s), so switching one off and on again is a no-op. */
 export function toggled(
   list: string[],
   id: string,
@@ -49,11 +37,6 @@ export function toggled(
   );
 }
 
-/**
- * A form, `dirty` while it differs from what it was last filled with. `seed` is the stored item as
- * the form holds it (undefined until it's loaded); `fill` fills it from something else, e.g. a
- * template.
- */
 export function useStoredForm<F>(seed: F | undefined) {
   const [state, setState] = useState<Filled<F>>(() => ({ form: seed, base: seed, seen: seed }));
   const { form, base } = state;
@@ -66,18 +49,15 @@ export function useStoredForm<F>(seed: F | undefined) {
   }, [key, dirty]);
   return {
     form,
-    /** What it was last filled with, or saved as. */
     base,
     dirty,
     set: (patch: Partial<F>) =>
       setState((s) => (s.form ? { ...s, form: { ...s.form, ...patch } } : s)),
     fill: (f: F) => setState((s) => ({ ...s, form: f, base: f })),
-    /** Your save of `sent` came back as `result`. */
     saved: (sent: F, result: F) => setState((s) => afterSave(s, sent, result)),
   };
 }
 
-/** A page with nothing to show yet: why, with Back, and Retry when loading failed. */
 export function NoForm({
   error,
   missing,
@@ -85,7 +65,6 @@ export function NoForm({
   back,
 }: {
   error: string;
-  /** Set once it turns out not to exist, e.g. "This bot doesn't exist." */
   missing: string;
   retry: () => void;
   back: { label: string; to: string };

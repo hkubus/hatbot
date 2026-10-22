@@ -1,4 +1,4 @@
-// Each bot's own Chromium profile (PLAN.md §14): its logins and cookies stay its own. hatbot-chromium.service
+// Each bot's own Chromium profile, so its logins and cookies stay its own. hatbot-chromium.service
 // runs Chromium on the profile named in the state directory, and comes back on it when Chromium closes.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

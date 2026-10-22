@@ -1,5 +1,5 @@
-// Which addresses are the internet, for the agents that fetch for the brain: desktop-agent's /fetch and
-// the boxes guest's egress (PLAN.md §6.4, §21.6). No zod: the agents ship without it.
+// Which addresses are the internet, for desktop-agent's /fetch and the boxes guest's egress.
+// No zod: the agents ship without it.
 import { BlockList, isIP } from "node:net";
 
 /** Two lists: BlockList would match an IPv4 address against an IPv6 rule as ::ffff:a.b.c.d. */

@@ -1,6 +1,6 @@
-// The review of a change that would otherwise ask you to approve it (PLAN.md §6.1): if it isn't
-// destructive or dangerous, and nothing untrusted could have put it there, it goes ahead. Haiku looks
-// first, and Opus looks again before a no reaches you.
+// The review of a change that would otherwise ask you to approve it: if it isn't destructive or
+// dangerous, and nothing untrusted could have put it there, it goes ahead. Haiku looks first, and Opus
+// looks again before a no reaches you.
 import type { ApprovalKind, ApprovalScope } from "@hatbot/shared";
 import type { Verdict } from "../plugins/plugin";
 import type { Spend } from "../spend";
@@ -8,7 +8,6 @@ import { type ModelClient, oneShot } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
 import { tagJson, tagText } from "./untrusted";
 
-/** In turn: Opus only when Haiku won't pass it, or gave no verdict. */
 const REVIEWERS = [
   { by: "Haiku", model: "claude-haiku-5-5" },
   { by: "Opus", model: "claude-opus-5-5" },
@@ -23,7 +22,6 @@ const VERDICT = {
   additionalProperties: false,
 };
 
-/** These always ask: money, accounts, who can get in, spending more, and suspected injection. */
 const ALWAYS_ASK: ApprovalKind[] = [
   "payment",
   "purchase",
@@ -33,28 +31,18 @@ const ALWAYS_ASK: ApprovalKind[] = [
   "injection_warning",
 ];
 
-/**
- * Whether the review may let this through: not money or accounts, not one you said to always ask
- * about, and not while something the chat or task read is suspected of being a prompt injection.
- */
 export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
   !suspected && !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
 
-/**
- * How far you may approve a change the review may answer for: this exact call always, and where
- * only untrusted content asks, the tool on the same thing for the rest of the work (PLAN.md §6.2).
- */
+/** Where only untrusted content asks, you may also approve the tool for the rest of the work. */
 export const scopesFor = (verdict: Extract<Verdict, { action: "ask" }>): ApprovalScope[] =>
   verdict.tainted ? ["session", "always"] : ["always"];
 
-/** The review's answer, and which model gave it. */
 export type Review = { safe: boolean; why: string; by: (typeof REVIEWERS)[number]["by"] };
 
 /**
- * Asks whether a change is safe to make without you: nothing destructive or dangerous, and nothing
- * untrusted content could have put there. Whether it's needed isn't the review's call. Neither model
- * sees untrusted content, only its sources. Unless one finds it safe it asks, with the last reason
- * given. `reserve`: alert and heartbeat work, which may spend what's kept for alerts.
+ * Whether it's needed isn't the review's call. Neither model sees untrusted content, only its sources.
+ * `reserve`: alert and heartbeat work, which may spend what's kept for alerts.
  */
 export async function safeToRun(
   d: { model: ModelClient; spend: Spend },
@@ -74,7 +62,6 @@ export async function safeToRun(
   let review: Review = { safe: false, why: "", by: "Haiku" };
   for (const { by, model } of REVIEWERS) {
     try {
-      // Past a limit it throws, and the change asks you instead.
       const out = await oneShot(
         d,
         {

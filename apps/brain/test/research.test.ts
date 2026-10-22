@@ -49,7 +49,6 @@ const PRICE = {
   title: "Synology DS925+ | x-kom",
 };
 
-/** A page read with web_fetch, as plain text. */
 const fetched = (url: string, data: string, id: string): Block[] => [
   { type: "server_tool_use", id, name: "web_fetch", input: { url } } as Block,
   {
@@ -169,8 +168,6 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   expect(helperRequests).toHaveLength(2);
   expect(toolNames(helperRequests[0])).toEqual(["report_findings", "web_search", "web_fetch"]);
 
-  // The findings, numbered by source. The price helper didn't read the maker's page, so its quote
-  // from it is unconfirmed.
   const findings = resultsIn(work.requests.at(-1));
   expect(findings).toContain(
     '[1] "DS925+ specifications" https://www.synology.com/ds925+/spec "2025-04"',
@@ -479,7 +476,6 @@ test("a brief or a desktop task may name only links the task already has, tracki
   expect(resultsIn(leads[4])).toContain(
     "These aren't: https://stock-check.example/v?addr=ul-Dluga-5. Tell the desktop task",
   );
-  // Only the allowed briefs reached a helper, and no desktop task started.
   expect(briefs).toEqual([
     "Check https://example.com and https://shop.example/goal-link/, then report.",
     "Read https://www.morele.net/ds925 again.",
@@ -564,7 +560,6 @@ test("research near its spending limit is told to finish, and a denied raise kee
     INVESTIGATE,
     // About $2.06 of the $2.50, at Haiku's long-prompt price: past 80%.
     { content: [toolUse("memory_list", {})], usage: { input_tokens: 4_125_000 } },
-    // Past the limit.
     { content: [toolUse("memory_list", {})], usage: { input_tokens: 1_200_000 } },
   ]);
   helpers(work);

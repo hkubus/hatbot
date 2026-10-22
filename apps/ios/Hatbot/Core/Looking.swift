@@ -1,9 +1,5 @@
-// What looks after things on its own, mirroring packages/shared/src: watchers (watch.ts), Check
-// everything (checks.ts), the heartbeat and weekly report, and proposed memory changes.
 import Foundation
 
-/// Looks at a page or a plugin's value on a timer, without the model, and wakes a bot only when it
-/// changes the way you asked.
 struct Watcher: Codable, Identifiable, Equatable, Sendable {
   struct Source: Codable, Equatable, Sendable {
     enum Kind: String, LenientEnum {
@@ -20,7 +16,6 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
     var path: String?
     var pattern: String?
 
-    /// The address, or the tool's name.
     var text: String { (kind == .page ? url : tool) ?? "" }
   }
 
@@ -34,7 +29,6 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
     var text: String?
     var value: Double?
 
-    /// "Changes", "Contains “In stock”", "Below 1000".
     var description: String {
       switch when {
       case .changed: "Changes"
@@ -112,7 +106,6 @@ struct CheckReport: Codable, Equatable, Sendable {
 
 struct ChecksInfo: Decodable, Sendable {
   var report: CheckReport?
-  /// The last test approval; missing on brains from before it.
   var approval: Approval?
 }
 
@@ -173,14 +166,12 @@ struct SkillStatus: Codable, Identifiable, Equatable, Sendable {
   var troubled: Bool { !failed.isEmpty || !takeovers.isEmpty }
 }
 
-/// The heartbeat's last look.
 struct HeartbeatInfo: Codable, Equatable, Sendable {
   enum Action: String, LenientEnum {
     case nothing, notify, task
     static let fallback = Action.nothing
   }
 
-  /// One look of the ones before.
   struct Run: Codable, Equatable, Sendable {
     var at: String
     var found: [String]
@@ -192,7 +183,7 @@ struct HeartbeatInfo: Codable, Equatable, Sendable {
   var action: Action?
   var note: String
   var taskId: Int?
-  /// The last few looks, newest first; missing on brains from before.
+  /// The last few looks, newest first.
   var recent: [Run]?
 }
 
@@ -281,7 +272,6 @@ enum LineDiff {
       d += 1
     }
     guard let found else { return nil }
-    // Back from the end, step by step.
     var all: [DiffLine] = []
     var x = n
     var y = m

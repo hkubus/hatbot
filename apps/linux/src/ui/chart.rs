@@ -1,6 +1,4 @@
-// A ```chart block in a reply, drawn in Hatbot's colours as on iOS (ChartView.swift) and the web:
-// lines, columns (grouped or stacked), horizontal bars, scatter plots, ranges and timelines, and a
-// matrix as a grid of shaded cells. Point at it for the values there.
+// A ```chart block in a reply, drawn as on iOS (ChartView.swift) and the web.
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -28,7 +26,6 @@ pub fn set_api(api: Api) {
     ANSWERS.with(|a| a.borrow_mut().clear());
 }
 
-/// About a chart's height, while its block is still streaming in.
 const PENDING_HEIGHT: i32 = 170;
 
 /// A chart block's widget: the chart, a file chart loading, or a placeholder while the block streams
@@ -50,7 +47,6 @@ fn pending() -> gtk::Widget {
     p.upcast()
 }
 
-/// The chart with its title, and for a matrix what its shades mean.
 pub fn view(spec: &ChartSpec) -> gtk::Widget {
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
     if let Some(title) = spec.title.as_deref().filter(|t| !t.is_empty()) {
@@ -285,7 +281,6 @@ fn cut(text: &str, max: usize) -> String {
 
 const LEGEND: f32 = 22.0;
 
-/// What drawing needs: the widget's text and colours, the snapshot, and where the pointer is.
 struct Ink {
     widget: gtk::Widget,
     snap: Option<gtk::Snapshot>,
@@ -460,7 +455,6 @@ impl Ink {
         alpha(&self.fg, 0.35)
     }
 
-    /// The legend: each series' key and name, in a row at the top.
     fn legend(&self, names: &[String], key: Key) {
         let mut x = 0.0;
         for (i, name) in names.iter().enumerate() {
@@ -478,7 +472,6 @@ impl Ink {
         }
     }
 
-    /// The box the pointer's values show in: value first, then what it is.
     fn readout(&self, markup: &str, anchor: f32, top: f32) {
         let l = self.markup(markup);
         let (w, h) = Ink::size(&l);
@@ -582,7 +575,6 @@ fn draw(ink: &Ink, spec: &ChartSpec) {
 const PLOT: f32 = 150.0;
 const AXIS: f32 = 24.0;
 
-/// A value axis's ticks and their labels' widest.
 fn ticks(
     ink: &Ink,
     lo: f64,
@@ -609,7 +601,6 @@ fn shown_labels(labels: &[pango::Layout], plot: f32) -> Vec<usize> {
     (0..n).filter(|i| i % step == 0).collect()
 }
 
-/// The values at one x: value first, then the series.
 fn series_readout(ink: &Ink, s: &Series, i: usize, bar: bool) -> String {
     let names = s.names();
     let single = s.series.len() == 1;
@@ -712,7 +703,6 @@ fn bar_range(segs: &[Segment]) -> (f64, f64) {
     (lo, hi)
 }
 
-/// Lines, and columns side by side or stacked.
 fn columns(ink: &Ink, s: &Series, bar: bool) {
     let n = s.x.len();
     let single = s.series.len() == 1;
@@ -890,7 +880,6 @@ fn row_label(ink: &Ink, text: &str, max: f32) -> pango::Layout {
     l
 }
 
-/// Horizontal bars: one row per x, its bars side by side, the value at each tip.
 fn rows(ink: &Ink, s: &Series) {
     let single = s.series.len() == 1;
     let top = if single { 0.0 } else { LEGEND };
@@ -977,7 +966,6 @@ fn rows(ink: &Ink, s: &Series) {
     }
 }
 
-/// Points on two measured axes. A few points are named beside them; pointing reads out the nearest.
 fn scatter(ink: &Ink, s: &Scatter) {
     let single = s.series.len() == 1;
     let names = s.names();
@@ -1136,7 +1124,6 @@ fn scatter(ink: &Ink, s: &Scatter) {
     }
 }
 
-/// A span from low to high for each row, its mark a dot inside; point at a row for its numbers.
 fn ranges(ink: &Ink, r: &Ranges) {
     let unit = r.unit.as_deref();
     let mark_name = r
@@ -1236,8 +1223,6 @@ fn ranges(ink: &Ink, r: &Ranges) {
     }
 }
 
-/// Options against criteria, the value in every cell, each column shaded in one hue from its worst
-/// (light) to its best (dark).
 struct MatrixGrid<'a> {
     m: &'a Matrix,
     heads: Vec<pango::Layout>,
@@ -1378,8 +1363,6 @@ impl<'a> MatrixGrid<'a> {
     }
 }
 
-/// Dated events along one axis, a row per lane: dots for dates, bars for spans, each named where its
-/// name has room; point for the one nearest.
 fn timeline(ink: &Ink, t: &Timeline) {
     let lanes = t.lanes();
     // Events all in no lane are one row, with no lane names.

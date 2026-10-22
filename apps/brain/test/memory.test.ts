@@ -34,7 +34,6 @@ test("a change that fails puts the files back as they were", async () => {
   expect(await mem.exists("fresh.md")).toBe(false);
   expect(await mem.read("prefs.md")).toBe("coffee\n");
 
-  // Edited by hand, then every commit fails.
   writeFileSync(join(dir, "prefs.md"), "green tea\n");
   const hook = join(dir, ".git", "hooks", "pre-commit");
   writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
@@ -45,7 +44,6 @@ test("a change that fails puts the files back as they were", async () => {
   writeFileSync(join(dir, "prefs.md"), "coffee\n");
   await expect(mem.revert(sha, YOU)).rejects.toThrow();
   expect(await mem.read("prefs.md")).toBe("coffee\n");
-  // Nothing is left behind for the next commit.
   expect(await mem.uncommitted()).toEqual([]);
   rmSync(hook);
   await mem.write("other.md", "other", YOU, "other");

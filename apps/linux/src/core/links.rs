@@ -9,7 +9,6 @@ pub enum Link {
     Schedule(i64),
     Trigger(i64),
     Box(i64),
-    /// The chat, to write in.
     New,
     Live,
     Tasks,

@@ -1,4 +1,3 @@
-// Memory (PLAN.md §7.2): the files by folder, a file to read and edit, the history with diffs and revert.
 import SwiftUI
 
 struct MemoryView: View {
@@ -114,7 +113,6 @@ struct MemoryView: View {
     return parts.joined(separator: ", ")
   }
 
-  /// A tidy-up of all of memory ("") or a fix to one skill, opened when it arrives.
   private func propose(_ asking: String, _ work: () async throws -> ProposalStarted) async {
     before = Set(store.proposals.keys)
     self.asking = asking
@@ -133,7 +131,6 @@ struct MemoryView: View {
     self.asking = nil
   }
 
-  /// The proposal asked for came in: open it.
   private func arrived() {
     guard let asking else { return }
     let p = store.pendingProposals.first { p in
@@ -148,11 +145,9 @@ struct MemoryView: View {
   private func fix(_ name: String) { Task { await propose(name) { try await store.proposeSkillFix(name) } } }
 }
 
-/// A memory file: rendered to read, plain text to edit. Your saves are commits in your name.
 struct MemoryFileView: View {
   let path: String
   var isNew = false
-  /// Opens in the editor once it's read.
   var edit = false
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
@@ -322,7 +317,6 @@ struct MemoryFileView: View {
   }
 }
 
-/// Commits to the memory repo, all of them or one file's.
 struct MemoryHistoryView: View {
   let path: String?
   @Environment(AppStore.self) private var store
@@ -353,7 +347,6 @@ struct MemoryHistoryView: View {
   }
 }
 
-/// One commit's diff, with Revert.
 struct CommitView: View {
   let commit: MemoryCommit
   @Environment(AppStore.self) private var store

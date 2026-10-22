@@ -1,6 +1,6 @@
 # Working on Hatbot
 
-`PLAN.md` lists what's still to do and what's left out on purpose; don't build what it leaves out unless the owner asks. What's built is in the code. The full design as built is `git show 89745c8:PLAN.md`, which the code's `PLAN.md §N` comments refer to. `infra/README.md` says how to install and deploy.
+`PLAN.md` lists what's still to do and what's left out on purpose; don't build what it leaves out unless the owner asks. What's built is in the code. The full design as built is `git show 89745c8:PLAN.md`. `infra/README.md` says how to install and deploy.
 
 - **Run:** `export PATH=$HOME/.bun/bin:$PATH` (`bun` isn't on PATH). Then `bun test`, `bun run check` (Biome) and `bun run typecheck`, all three before every commit. The Update test's jq stand-in runs on `bun`, so it fails without that PATH where jq isn't installed.
 - **Tests:** one test per rule (allow and refuse) and per real past bug, plus one end-to-end test per feature; no tests of wording, mappers or constants. No sleeps: advance `testApp()`'s clock, await what a tick returns, or `waitFor` a condition. `testApp()` hashes passwords at argon2id's lowest cost (`AuthService`'s third argument); the brain itself never passes one.
@@ -9,7 +9,7 @@
 - **Commits:** one commit per finished piece, on `main`, in the style of the history ("Plugins: …", "MCP plugin: …"). Commit locally; push only when the owner asks. End commit messages with the `Co-Authored-By` line your harness gives you.
 - **Stopping the dev brain:** use `fuser -k <port>/tcp`. `pkill -f "bun src/main.ts"` kills your own shell.
 - **Forgejo** (`git.gaycats.ovh`) sometimes hangs or resets connections. Retry later; the GitHub mirror runs CI.
-- **Code style:** match the surrounding code, but write fewer comments than it has. Comment only a *why* the code can't show, in a line or two; no comments that restate the code, and no `PLAN.md §N` citations in new ones. User-facing text is plain, short English.
+- **Code style:** match the surrounding code, but write fewer comments than it has. Comment only a *why* the code can't show, in a line or two; no comments that restate the code. User-facing text is plain, short English.
 - **Models:** Claude only: Haiku 5.5 and Opus 5.5, no Sonnet or Fable. Check model IDs and tool versions against the live docs when you touch them. Never edit a conversation's history client-side (on the 5.5 models it breaks cached reasoning and is rejected); long tasks rely on server-side context editing and compaction.
 - **Plugins:** `apps/brain/src/plugins/<id>/`, one `definePlugin({...})` each, with zod settings whose fields all have defaults; its settings form is `apps/web/src/plugins/<id>.tsx`. They ship with Hatbot and are never loaded at runtime; third-party code comes in through MCP. Tools are named `<id>_…` and are a read or a write. A write's `policy(input, task)` allows, asks or refuses, and the core raises the approval: plugins never build approvals themselves.
 - **Untrusted content:** anything that could come from outside (web pages, forge text, command output, MCP output, attachments, what boxes give back) is marked untrusted and taints the task or conversation that reads it. Decide which a new source is when you add it. The brain never builds or runs code it didn't ship: boxes build on the boxes guest, and code work runs in the desktop's sandbox.

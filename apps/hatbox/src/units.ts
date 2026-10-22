@@ -1,4 +1,4 @@
-// Starting and stopping boxes' backends and running their builds (PLAN.md §21.6). On the guest they're
+// Starting and stopping boxes' backends and running their builds. On the guest they're
 // systemd units, hatbox@<id> and hatbox-build@<id>, which a polkit rule lets the agent's user start and
 // stop and nothing else. Where there's no systemd (tests, trying it on a laptop) they're plain processes,
 // with none of the units' fences.
@@ -7,7 +7,6 @@ import { join } from "node:path";
 import type { Subprocess } from "bun";
 
 export interface Units {
-  /** Starts box `id`'s backend, which then listens on its socket. */
   start(id: number): Promise<void>;
   stop(id: number): Promise<void>;
   /** Runs a build in box `id`'s build folder, its output in build.log there; true when it worked. */

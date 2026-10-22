@@ -1,7 +1,5 @@
-/* Hatbot web — design tokens (PLAN.md §10.2) and components. */
-
-/* Inter for UI chrome, Noto Sans for reading text (chat, card bodies). Each is split by script, so a
-   page downloads only the scripts it shows; imported from here so Vite fingerprints them. */
+/* Split by script, so a page downloads only the scripts it shows; imported here so Vite
+   fingerprints them. */
 @font-face {
   font-family: "Inter";
   src: url("./fonts/Inter-latin.woff2") format("woff2");
@@ -75,7 +73,6 @@
   --font-text: "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Each colour is light-dark(light, dark): color-scheme below picks the theme. */
   --bg: light-dark(#f5f5f7, #161617);
   --surface: light-dark(#ffffff, #1e1e20);
   --surface-2: light-dark(#f2f2f4, #2a2a2d);
@@ -112,7 +109,7 @@
   --grid: light-dark(rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0.07));
   /* The off switch's edge: its track is barely darker than a white card. */
   --switch-line: light-dark(#8e8e93, transparent);
-  /* Chart series, in this order; checked for colour-blind separation on the bot bubble. */
+  /* Chart series, in this order; checked for colour-blind separation. */
   --series-1: var(--chart);
   --series-2: light-dark(#2a78d6, #3987e5);
   --series-3: light-dark(#138a60, #199e70);
@@ -128,7 +125,6 @@
   --bot-gray: #8e8e93;
   --spring: cubic-bezier(0.32, 0.72, 0, 1);
 
-  /* data-theme=system follows the OS. */
   color-scheme: light dark;
 }
 html[data-theme="light"] {
@@ -203,7 +199,6 @@ svg.i {
   display: none !important;
 }
 
-/* ---------- App shell: sidebar | main ---------- */
 .app {
   --sb-w: 232px;
   display: grid;
@@ -211,7 +206,6 @@ svg.i {
   height: var(--app-h, 100dvh);
 }
 
-/* Sidebar — translucent, macOS source list */
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -314,7 +308,6 @@ svg.i {
   background: var(--danger);
 }
 
-/* Main column */
 .main {
   display: flex;
   flex-direction: column;
@@ -373,7 +366,6 @@ svg.i {
   overflow: auto;
 }
 
-/* Buttons */
 .btn {
   height: 28px;
   padding: 0 12px;
@@ -447,7 +439,6 @@ svg.i {
   font-size: 12px;
 }
 
-/* Chips */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -486,7 +477,6 @@ svg.i {
   color: var(--danger-text);
 }
 
-/* Segmented control */
 .seg {
   display: inline-flex;
   padding: 2px;
@@ -509,7 +499,6 @@ svg.i {
   color: var(--text);
 }
 
-/* Switch */
 .switch {
   position: relative;
   width: 38px;
@@ -542,7 +531,6 @@ svg.i {
   transform: translateX(16px);
 }
 
-/* ---------- Chat ---------- */
 .chat-scroll {
   padding: 18px 20px 8px;
 }
@@ -560,7 +548,6 @@ svg.i {
   color: var(--muted);
   padding: 6px 0 0;
 }
-/* A finished conversation, folded up under its recap. */
 .fold-row {
   display: flex;
   align-items: center;
@@ -622,7 +609,6 @@ svg.i {
   gap: 4px;
   justify-items: start;
 }
-/* Hatbot's messages: an accent line on the left while unread, fading once seen. */
 .msg:not(.user) {
   margin-left: -12px;
   padding-left: 10px;
@@ -674,7 +660,6 @@ svg.i {
   justify-items: end;
 }
 
-/* ---------- Phone layout ---------- */
 @media (max-width: 899px) {
   .tabbar .badge.unread {
     background: var(--accent);
@@ -682,7 +667,6 @@ svg.i {
   }
 }
 
-/* ---------- Added for the live app ---------- */
 .msg.user .bubble {
   font-family: var(--font-text);
   max-width: min(78%, 560px);
@@ -720,7 +704,6 @@ svg.i {
   }
 }
 
-/* Cards */
 .card,
 .group-box {
   background: var(--surface);
@@ -786,7 +769,6 @@ svg.i {
   font-size: 12.5px;
 }
 
-/* Composer */
 .composer-wrap {
   flex: none;
   padding: 8px 20px 14px;
@@ -858,7 +840,6 @@ svg.i {
   color: var(--text-2);
 }
 
-/* ---------- Lists (Tasks, Schedules, Settings) ---------- */
 .page {
   max-width: 980px;
   margin: 0 auto;
@@ -955,7 +936,6 @@ svg.i {
 .row .txt .form-error {
   color: var(--danger-text);
 }
-/* A long value is cut short; it never pushes the name out. */
 .row .val {
   min-width: 0;
   max-width: 60%;
@@ -995,7 +975,6 @@ svg.i {
   text-align: right;
 }
 
-/* ---------- Memory ---------- */
 .memory {
   display: grid;
   grid-template-columns: 230px minmax(0, 1fr);
@@ -1105,13 +1084,11 @@ svg.i {
 .history .load-earlier {
   justify-self: center;
 }
-/* The file gets the height; its history is below it. */
 .memory .editor > .editor-text,
 .memory .editor > .load-error {
   flex: 1 0 auto;
   min-height: max(220px, 65%);
 }
-/* The folder is a heading on a wide screen, and part of the chip on a phone. */
 .tree .tree-dir {
   display: none;
 }
@@ -1123,7 +1100,6 @@ svg.i {
   }
 }
 
-/* ---------- Spend ---------- */
 .kpis {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1251,7 +1227,6 @@ svg.i {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- Login ---------- */
 .login {
   position: fixed;
   inset: 0;
@@ -1322,13 +1297,11 @@ a.btn:hover {
 .login-card .copyable .btn {
   height: 24px;
 }
-/* The secret wraps between its groups of four. */
 .copyable code.secret {
   word-break: normal;
   text-align: left;
 }
 
-/* ---------- Toasts ---------- */
 .toasts {
   position: fixed;
   bottom: 22px;
@@ -1359,12 +1332,10 @@ a.btn:hover {
   color: var(--danger-text);
 }
 
-/* ---------- Tab bar (phone) ---------- */
 .tabbar {
   display: none;
 }
 
-/* ---------- Phone layout ---------- */
 @media (max-width: 899px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
@@ -1489,7 +1460,6 @@ a.btn:hover {
   }
 }
 
-/* ---------- Added for the live app ---------- */
 .msg .md {
   font-family: var(--font-text);
   font-size: 13.5px;
@@ -1564,7 +1534,6 @@ a.btn:hover {
   border-top: 1px solid var(--line-strong);
 }
 
-/* Code blocks: Copy in the corner, on hover (always there on touch screens), with room kept for it. */
 .md .code-block {
   position: relative;
   min-width: 0;
@@ -1591,13 +1560,11 @@ a.btn:hover {
   .code-copy {
     opacity: 1;
   }
-  /* There all the time: the code starts below it. */
   .md .code-block pre {
     padding: 30px 12px 10px;
   }
 }
 
-/* Charts in replies (chart.tsx). */
 .reply-chart {
   width: 560px;
   max-width: 100%;
@@ -1644,7 +1611,6 @@ a.btn:hover {
 }
 .chart-plot {
   position: relative;
-  /* A wide matrix scrolls inside its box rather than widening the reply. */
   min-width: 0;
 }
 .reply-chart svg {
@@ -1683,7 +1649,6 @@ a.btn:hover {
   fill: var(--text-2);
   dominant-baseline: middle;
 }
-/* A scatter's axis names, a timeline's lanes. */
 .reply-chart .tick.name,
 .reply-chart .tick.lane {
   fill: var(--text-2);
@@ -1737,7 +1702,6 @@ a.btn:hover {
 .chart-tip-row.total {
   padding-left: 18px;
 }
-/* A matrix: a table whose cells are shaded per column (charts/matrix.tsx). */
 .reply-chart .chart-matrix {
   overflow-x: auto;
   /* Room for the focus ring inside the scrolling box. */
@@ -1836,7 +1800,6 @@ a.btn:hover {
   flex: 1;
   width: 100%;
 }
-/* A skill draft: the editor on its own. */
 .view > .editor {
   height: 100%;
 }
@@ -1875,7 +1838,6 @@ a.btn:hover {
   flex: none;
 }
 
-/* ---------- Tasks, approvals and the live view ---------- */
 .app.insp {
   grid-template-columns: var(--sb-w) minmax(0, 1fr) clamp(420px, 32vw, 640px);
 }
@@ -1915,7 +1877,6 @@ a.btn:hover {
 .page .live {
   gap: 14px;
 }
-/* The Live page: the desktop (1280 × 800) as large as the window's width and height allow. */
 .page.live-page {
   max-width: none;
 }
@@ -1935,7 +1896,6 @@ a.btn:hover {
   outline-offset: 2px;
   transition: outline-color 0.2s;
 }
-/* The desktop isn't answering: the same shape, so its note shows. */
 .screen:not(:has(canvas)) {
   aspect-ratio: 16 / 10;
 }
@@ -2146,7 +2106,6 @@ a.btn:hover {
   font-size: 13px;
   line-height: 1.45;
 }
-/* What it would do, often a command: every character as it is. */
 .approval-text .approval-what {
   font-family: var(--mono);
   font-size: 12.5px;
@@ -2179,7 +2138,6 @@ a.btn:hover {
 .show-phone {
   display: none;
 }
-/* The on-screen keyboard button is for touch screens. */
 @media (pointer: fine) {
   .keys-btn {
     display: none;
@@ -2221,7 +2179,6 @@ a.btn:hover {
   }
 }
 
-/* ---------- Schedules & Triggers ---------- */
 .row-main {
   flex: 1;
   min-width: 0;
@@ -2270,13 +2227,10 @@ button.text-link:hover {
   justify-content: space-between;
   gap: 10px;
 }
-/* A button beside a field keeps its one line; the field gives way. */
 .form-row > .btn {
   flex-shrink: 0;
   white-space: nowrap;
 }
-/* To-do: a new item's text gets the room, its date what it needs. On a phone the text has its own
-   line and the date and button share the next. */
 .todo-add {
   display: flex;
   flex-wrap: wrap;
@@ -2365,7 +2319,6 @@ pre.payload {
   word-break: break-word;
 }
 
-/* Message actions: time, then Copy and Open on hover (a tap on touch screens). */
 .msg .meta {
   display: flex;
   align-items: center;
@@ -2426,7 +2379,6 @@ pre.payload {
   font-family: var(--font-text);
   font-size: 13px;
 }
-/* A card whose task or schedule hasn't loaded: its one line. */
 .msg .card-pending {
   font-family: var(--font-text);
   font-size: 13px;
@@ -2435,7 +2387,6 @@ pre.payload {
   text-overflow: ellipsis;
 }
 
-/* ---------- Plugins ---------- */
 .host-edit {
   display: grid;
   gap: 8px;
@@ -2457,7 +2408,6 @@ pre.payload {
   }
 }
 
-/* An approval waiting for you: a card on its task's page, and in the chat's tray (tasks.tsx). */
 .approval {
   display: grid;
   gap: 8px;
@@ -2482,7 +2432,6 @@ pre.payload {
   background: var(--surface-2);
 }
 
-/* Approvals waiting for you, above the composer: never more than a modest part of the screen. */
 .approval-tray {
   max-width: 760px;
   max-height: min(30vh, 260px);
@@ -2491,7 +2440,6 @@ pre.payload {
   display: grid;
   gap: 8px;
 }
-/* Plain, not a card: a line above each one. */
 .approval-tray .approval {
   padding: 10px 4px 2px;
   border-top: 0.5px solid var(--line-strong);
@@ -2499,7 +2447,6 @@ pre.payload {
 .approval-tray .shot {
   max-width: 280px;
 }
-/* Approvals waiting in other chats: one line that goes there. */
 .tray-more {
   justify-self: start;
   padding: 2px 4px;
@@ -2516,8 +2463,6 @@ pre.payload {
   color: var(--text);
 }
 
-/* Files on messages and in the composer. */
-/* A task's question: prose, unlike an approval's command; your own answer beside Send, on phones too. */
 .question-what {
   font-weight: 600;
 }
@@ -2532,7 +2477,6 @@ pre.payload {
 .answer-row > .btn {
   flex-shrink: 0;
 }
-/* A question's answers, under the reply that asks it. */
 .choices {
   display: flex;
   flex-wrap: wrap;
@@ -2653,7 +2597,6 @@ pre.payload {
   opacity: 0.55;
   overflow: hidden;
 }
-/* How much of it has gone up. */
 .composer-file .upload-bar {
   position: absolute;
   left: 0;
@@ -2690,7 +2633,6 @@ pre.payload {
   color: inherit;
 }
 
-/* Commands: what "/…" in the composer could mean. */
 .command-menu {
   max-width: 760px;
   margin: 0 auto 6px;
@@ -2729,14 +2671,12 @@ pre.payload {
 .command-menu .desc {
   margin-left: auto;
 }
-/* In a group, who wrote the run of messages below. */
 .msg-sender {
   margin: 10px 0 -4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
 }
-/* What came of a command: a quiet line, not a message. */
 .msg-note {
   align-self: center;
   max-width: 100%;
@@ -2746,11 +2686,9 @@ pre.payload {
   overflow-wrap: anywhere;
 }
 
-/* Chats in the sidebar, above the other views. */
 .nav-views {
   margin-top: 14px;
 }
-/* A bot's page: its icon and colour. */
 .bot-field {
   margin: 0;
   padding: 0;
@@ -2794,7 +2732,6 @@ pre.payload {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* On a phone the chat's name switches chats. */
 .chat-switch {
   display: none;
   align-items: center;
@@ -2830,7 +2767,6 @@ pre.payload {
   border-radius: 12px;
   background: var(--surface);
 }
-/* The sidebar's list, sized for a finger. */
 .chat-menu .nav-item {
   height: 40px;
   font-size: 15px;
@@ -2851,7 +2787,6 @@ pre.payload {
 .panel.form .form-row select.field {
   width: auto;
 }
-/* Phones: a label above its field, not squeezed beside one at 16px. A switch stays beside its label. */
 @media (max-width: 899px) {
   .form-row:not(:has(.switch)) {
     flex-direction: column;
@@ -2863,7 +2798,6 @@ pre.payload {
     align-self: stretch;
     width: 100%;
   }
-  /* A settings row with a menu or a text field: its label on a line of its own, the fields below. */
   .row:has(> select, > input[type="text"]) {
     flex-wrap: wrap;
     row-gap: 6px;
@@ -2877,7 +2811,6 @@ pre.payload {
   }
 }
 
-/* Search */
 @media (max-width: 899px) {
   .toolbar .tb-btn.show-phone {
     display: inline-flex;
@@ -2918,7 +2851,6 @@ mark {
   animation: msg-found 2.4s ease-out;
   border-radius: 10px;
 }
-/* A tint that fades, not a ring. */
 @keyframes msg-found {
   0%,
   40% {
@@ -2929,7 +2861,6 @@ mark {
   }
 }
 
-/* Memory proposals */
 .proposal-reason {
   margin: 0 0 14px;
   font-size: 13.5px;
@@ -2955,7 +2886,6 @@ mark {
   border-bottom: 0.5px solid var(--line);
 }
 
-/* The brain or the network is down before anything has loaded. */
 .unreachable {
   position: fixed;
   inset: 0;
@@ -2991,7 +2921,6 @@ mark {
   font-size: 13px;
 }
 
-/* The app's dialog: asks before deleting or discarding, or for a line of text. */
 dialog.ask {
   width: min(380px, calc(100vw - 32px));
   padding: 0;
@@ -3027,7 +2956,6 @@ dialog.ask .field {
   height: 30px;
 }
 
-/* Rows that are links: the whole row is the link's target. */
 .row-link,
 .link-row a {
   color: inherit;
@@ -3037,7 +2965,6 @@ dialog.ask .field {
 .row-link:hover {
   background: rgba(127, 127, 127, 0.06);
 }
-/* A whole row isn't underlined like a link in text. */
 .row-link:hover,
 a.row-main:hover {
   text-decoration: none;
@@ -3058,8 +2985,6 @@ a.row-main:hover {
   outline-offset: -2px;
 }
 
-/* Back to the latest messages, when you've scrolled well up: at the column's right edge, above the
-   composer, clear of most of the text. */
 .composer-wrap {
   position: relative;
 }
@@ -3081,19 +3006,15 @@ a.row-main:hover {
   color: var(--text);
 }
 
-/* Files dragged over the chat: they'll go into the composer. */
 .view.dropping {
   background: var(--accent-soft);
 }
 
-/* A negotiation's messages: time, then who wrote what. */
 .tl-step.no-icon {
   grid-template-columns: 42px minmax(0, 1fr);
 }
 
-/* The reader: a Markdown file, like a research report, at a width that's easy to read. */
 .page.reader {
-  /* No wider than the screen, whatever a table or chart inside would like. */
   grid-template-columns: minmax(0, 1fr);
 }
 .reader-head {
@@ -3225,7 +3146,6 @@ a.row-main:hover {
   }
 }
 
-/* Boxes: one under the reply that made it, and its page as large as the window allows. */
 .box-line {
   display: flex;
   align-items: center;

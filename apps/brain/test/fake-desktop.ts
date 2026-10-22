@@ -29,7 +29,6 @@ export class FakeDesktop implements DesktopAgent {
   /** Called after each action and browser call, e.g. to change `element` as a page would. */
   afterAction: ((name: string, input: Record<string, unknown>) => void) | null = null;
   commands: string[] = [];
-  /** The bots whose browser profile was asked for, in order. */
   profiles: string[] = [];
   shell: (command: string) => ShellResult = (c) => ({
     exitCode: 0,
@@ -76,7 +75,6 @@ export class FakeDesktop implements DesktopAgent {
     this.commands.push(command);
     return this.shell(command);
   }
-  /** The shell's files, by path. */
   files = new Map<string, Uint8Array>();
   async putFile(path: string, bytes: Uint8Array) {
     if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
@@ -87,9 +85,7 @@ export class FakeDesktop implements DesktopAgent {
     if (!f) throw new DesktopError(`There's no file at ${path}.`, 404);
     return f;
   }
-  /** Long commands started, in order. */
   jobs: ShellJob[] = [];
-  /** Ids of the jobs stopped. */
   stopped: string[] = [];
   /**
    * What a job prints to standard output, once it ends: when this returns. One that throws ends with
@@ -123,7 +119,6 @@ export class FakeDesktop implements DesktopAgent {
     if (s) s.running = false;
     this.running.delete(id);
   }
-  /** Finished browser downloads, by id. */
   downloads = new Map<string, { name: string; bytes: Uint8Array }>();
   async getDownload(id: string) {
     const d = this.downloads.get(id);
@@ -143,7 +138,6 @@ export class FakeDesktop implements DesktopAgent {
     if (call.name === "read_page") return { kind: "text", text: '- button "Send" [ref_1]' };
     return { kind: "none" };
   }
-  /** Pages by address, for watchers. */
   pages = new Map<string, string | Partial<FetchResult>>();
   fetched: string[] = [];
   async fetch(url: string): Promise<FetchResult> {
@@ -163,7 +157,6 @@ export class FakeDesktop implements DesktopAgent {
   /** Pages as they are once their scripts ran, by address. */
   rendered = new Map<string, string>();
   renders: string[] = [];
-  /** What the renderer's check throws; null when it works. */
   renderError: DesktopError | null = null;
   async render(url: string) {
     this.renders.push(url);
@@ -174,7 +167,6 @@ export class FakeDesktop implements DesktopAgent {
   async renderCheck() {
     if (this.renderError) throw this.renderError;
   }
-  /** Boxes it was asked to draw, and what it gives back. */
   looks: BoxLook[] = [];
   look: BoxLookResult = { png: "", width: 390, height: 844, errors: [] };
   async lookAtBox(look: BoxLook) {

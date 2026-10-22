@@ -1,5 +1,5 @@
-// A hand-off (ask_bot, PLAN.md §14.7): the asking bot's request goes to the other bot's own chat, which
-// answers it as it would you. That answer, once any task it started has ended, is what the asker hears.
+// ask_bot: the asking bot's request goes to the other bot's own chat, which answers it as it would
+// you. That answer, once any task it started has ended, is what the asker hears.
 import { ACTIVE_TASK_STATUSES as ACTIVE, type Task } from "@hatbot/shared";
 import { endOf } from "./loop";
 import type { Tasks } from "./service";
@@ -45,7 +45,6 @@ export async function runHandoff(tasks: Tasks, id: number, signal: AbortSignal):
     sub = under();
     const m = thread.message(said.id);
     const name = bots.nameOf(task.botId);
-    // What its chat had read comes back with the answer.
     const { tainted, suspected } = await thread.endHandoff(said.id);
     if (tainted) tasks.taint(id, `${name}'s chat had read: ${tainted}`);
     else if (sub?.tainted) tasks.taint(id, `Task #${sub.id} by ${name}`);
@@ -79,7 +78,6 @@ export async function runHandoff(tasks: Tasks, id: number, signal: AbortSignal):
   }
 }
 
-/** `p`, or a rejection once `signal` aborts. */
 function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason);

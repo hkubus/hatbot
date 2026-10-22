@@ -1,4 +1,3 @@
-// L6: bots and groups (PLAN.md §24.2).
 mod common;
 
 use common::*;

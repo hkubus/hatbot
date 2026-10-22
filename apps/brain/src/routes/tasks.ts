@@ -20,12 +20,10 @@ export const taskRoutes = new Hono<AppEnv>()
         scheduleId: z.coerce.number().int().optional(),
         triggerId: z.coerce.number().int().optional(),
         watcherId: z.coerce.number().int().optional(),
-        // Pages: newest first, then before= the last id, until a page is short.
         before: z.coerce.number().int().optional(),
         limit: z.coerce.number().int().min(1).max(200).default(50),
         botId: z.string().max(40).optional(),
         origin: z.string().max(40).optional(),
-        // A chat's task cards in one go: ids=3,5,8.
         ids: z
           .string()
           .regex(/^\d+(,\d+){0,199}$/)
@@ -42,7 +40,6 @@ export const taskRoutes = new Hono<AppEnv>()
       return c.json(view === "card" ? c.var.tasks.cards(opts) : c.var.tasks.list(opts));
     },
   )
-  // afterStep: the steps since the last one the app has, for a task it shows live.
   .get(
     "/tasks/:id",
     query(z.object({ afterStep: z.coerce.number().int().min(0).optional() })),
@@ -57,7 +54,6 @@ export const taskRoutes = new Hono<AppEnv>()
       });
     },
   )
-  // Runs an ended task again, with its goal as you edited it.
   .post("/tasks/:id/rerun", json(Rerun), (c) => {
     const old = c.var.tasks.get(id(c));
     if (!old) return c.json({ error: "That's gone." }, 404);
@@ -91,7 +87,7 @@ export const taskRoutes = new Hono<AppEnv>()
   });
 
 export const approvalRoutes = new Hono<AppEnv>()
-  // An ntfy button: no session, the signed token is the authority (PLAN.md §6.2).
+  // An ntfy button: no session, the signed token is the authority.
   .post("/approvals/:id/token-decision", json(TokenDecision), (c) => {
     const approvalId = id(c);
     const { decision, exp, sig } = c.req.valid("json");

@@ -16,7 +16,6 @@ export type CheckReport = {
   startedAt: string;
   finishedAt: string;
   results: CheckResult[];
-  /** The numbers behind the "storage" result. */
   storage?: StorageInfo;
 };
 
@@ -31,14 +30,12 @@ export type StorageInfo = {
   filesBytes: number;
   /** The nightly copies of the database. */
   snapshotsBytes: number;
-  /** All of the above, now. */
   totalBytes: number;
   /** How much the total grew over the last 7 days; null until there's a week of samples. */
   growth7dBytes: number | null;
 };
 
 export type ChecksInfo = {
-  /** The last run, or null before the first. */
   report: CheckReport | null;
   /** The latest test approval, sent to try approving from the phone's lock screen. */
   approval: Approval | null;

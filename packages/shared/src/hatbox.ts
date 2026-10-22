@@ -1,10 +1,8 @@
-// Boxes with files and a backend (PLAN.md §21.6): what a box's files may be, its box.json, and what the
-// brain and the boxes guest's agent (apps/hatbox) say to each other. No zod: the agent ships without it.
+// What a box's files may be, its box.json, and what the brain and the boxes guest's agent
+// (apps/hatbox) say to each other. No zod: the agent ships without it.
 
-/** One of a box's files: where it is in the box, and its text. */
 export type BoxFile = { path: string; content: string };
 
-/** What a box's box.json says. */
 export type BoxConfig = {
   /** The hosts its backend may reach, through the agent; nothing else. */
   hosts: string[];
@@ -16,7 +14,6 @@ export type BoxConfig = {
   secrets: string[];
 };
 
-/** The page, which every box with files has. */
 export const BOX_PAGE = "index.html";
 /** The backend: `export default { fetch(req), scheduled?() }`. A box with it is a server box. */
 export const BOX_SERVER = "server.ts";
@@ -32,7 +29,6 @@ export const MAX_BOX_SECRETS = 5;
 export const MAX_BOX_SECRET = 4096;
 /** What a backend's scheduled() may tell you, in characters. */
 export const MAX_BOX_NOTIFY = 1000;
-/** A secret's name, shaped like an environment variable's. */
 export const SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 /** Names the runner and Bun read themselves, which a secret mustn't replace. */
 const RESERVED_SECRET = /^(HATBOX_|BUN_|NODE_)|^(PATH|HOME|TMPDIR|TZ|LANG)$/;
@@ -55,7 +51,6 @@ const PACKAGE = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 // A version or a simple range only: no paths, URLs, git or aliases, which could install from elsewhere.
 const RANGE = /^(latest|\*|[\^~]?(\d+|x|\*)(\.(\d+|x|\*)){0,2}(-[0-9A-Za-z.-]+)?)$/;
 
-/** Why `path` can't be one of a box's files, or null if it can. */
 export function badPath(path: string): string | null {
   const parts = path.split("/");
   if (path.length > 100 || parts.length > 4 || !parts.every((p) => SEGMENT.test(p)))
@@ -67,7 +62,6 @@ export function badPath(path: string): string | null {
   return null;
 }
 
-/** Why `name` can't be a box's secret, or null if it can. */
 export function badSecretName(name: string): string | null {
   if (!SECRET_NAME.test(name))
     return `"${name}" can't be a secret's name: use capitals, digits and "_", like WEATHER_KEY.`;
@@ -120,7 +114,6 @@ export function boxConfig(text: string | undefined): BoxConfig {
   };
 }
 
-/** Why these can't be a box's files, or null if they can. */
 export function badFiles(files: BoxFile[]): string | null {
   if (!files.length || files.length > MAX_BOX_FILES)
     return `A box has 1 to ${MAX_BOX_FILES} files.`;

@@ -1,6 +1,4 @@
-// GitHub (PLAN.md §5.5): read repos, issues, pull requests, files and CI, and comment, open issues and
-// pull requests, and commit files, as Hatbot's own bot account. The same shape as the Forgejo plugin;
-// what it can reach is up to the token: a fine-grained token of the bot account, or the bot added as a
+// What it can reach is up to the token: a fine-grained token of the bot account, or the bot added as a
 // collaborator to the repos it should work on.
 import { posix } from "node:path";
 import { z } from "zod";
@@ -54,15 +52,13 @@ type Content = {
 };
 /** mode: 100644 a file, 100755 an executable, 120000 a link, 040000 a folder, 160000 a submodule. */
 type TreeEntry = { path: string; mode: string; type: "blob" | "tree" | "commit"; sha: string };
-/** The folder a path is in, "" for the top. */
 const parentOf = (path: string) => (path.includes("/") ? posix.dirname(path) : "");
 
-/** Pages of 100 read at most when listing issues, which come mixed with pull requests. */
+/** Pages of 100: issues come mixed with pull requests. */
 const ISSUE_PAGES = 3;
 
-/** About how much of a CI log the model gets, in characters. */
 const LOG_CHARS = 20_000;
-/** How much of it may come after the first error; the rest is what led up to it. */
+/** How much of the log may come after the first error; the rest is what led up to it. */
 const LOG_AFTER = 4_000;
 // Each line starts with a timestamp, and tools print colour codes: room taken without saying anything.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the escape character is what it matches.
@@ -72,10 +68,7 @@ const clean = (s: string) => s.replace(NOISE, "");
 const fromLine = (s: string) => s.slice(s.indexOf("\n") + 1);
 const toLine = (s: string) => (s.lastIndexOf("\n") > 0 ? s.slice(0, s.lastIndexOf("\n")) : s);
 
-/**
- * The part of a job's log that says what went wrong: what led up to its first ##[error] and a little
- * after, or else its end. Only a window is kept as it streams in, since a log can be huge.
- */
+/** Only a window is kept as it streams in, since a log can be huge. */
 async function logExcerpt(body: ReadableStream<Uint8Array>): Promise<string> {
   // Raw lines lose their noise later, so keep more than LOG_CHARS of them.
   const keep = 3 * LOG_CHARS;
@@ -175,9 +168,8 @@ export const githubPlugin = definePlugin({
       return list;
     };
     /**
-     * Whether what's read at this ref may hold anyone's text: anything but the default branch of a
-     * repository the bot account can see, which holds what was merged there. A stranger's repository,
-     * a fork or a mirror (upstream's code), or one whose default branch isn't known yet, counts too.
+     * Only the default branch holds just what was merged there. A fork or mirror (upstream's code), or a
+     * repository whose default branch isn't known yet, counts as untrusted too.
      */
     const offDefault = (repo: string, ref?: string) => {
       const main = defaults.get(repo);

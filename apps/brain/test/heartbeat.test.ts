@@ -23,7 +23,6 @@ function signals(list: () => Signal[], id = "kuma") {
 }
 
 async function on(t: TestApp) {
-  // The desktop answers.
   await t.desktop.refresh();
   t.settings.update({
     heartbeat: { ...t.settings.get().heartbeat, enabled: true, everyMinutes: 30 },
@@ -230,7 +229,6 @@ test("the triage's spend check is what its request may cost, which it holds whil
   // Both looks, at the spend and at the monitor, are the model's.
   expect((await t.heartbeat.run()).note).toBe("Looked.\nLooked.");
   expect(meanwhile).toHaveLength(2);
-  // Let go once it's done.
   expect(() => t.spend.check(0.004)).not.toThrow();
 });
 

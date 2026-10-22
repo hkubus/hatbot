@@ -1,5 +1,4 @@
-// The window: sign-in until there's a token, then the shell. A 401 from the brain, or signing out,
-// goes back to sign-in.
+// A 401 from the brain, or signing out, goes back to sign-in.
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
@@ -137,7 +136,6 @@ impl Window {
         self.signed_in.borrow().as_ref().map(|s| s.store.clone())
     }
 
-    /// The token saved for the saved address, if there is one.
     fn restore(self: &Rc<Self>) {
         let Some(server) = vault::saved_server() else {
             self.show_signin(None);

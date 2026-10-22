@@ -65,7 +65,6 @@ const SYMBOLS: Record<string, string> = {
 
 export class KeyError extends Error {}
 
-/** The modifier a name is (ctrl, shift, alt or super), if it's one. */
 export const modifier = (name: string) => {
   const k = readKey(name);
   return k && "mod" in k ? k.mod : undefined;

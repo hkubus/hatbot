@@ -1,4 +1,4 @@
-// Negotiation (PLAN.md §16): haggling with a seller on a marketplace, inside a mandate you approved.
+// Haggling with a seller on a marketplace, inside a mandate you approved.
 
 /** Contact details a message may carry when the mandate allows them; otherwise it asks. */
 export const MANDATE_CONTACTS = ["phone", "email", "address", "apps"] as const;
@@ -7,9 +7,7 @@ export type MandateContact = (typeof MANDATE_CONTACTS)[number];
 /** What Hatbot may do on its own in one negotiation. Amounts are in `currency`. */
 export type Mandate = {
   currency: string;
-  /** The first offer. */
   opening: number;
-  /** What it aims for. */
   target: number;
   /** Buying: the most it pays (the ceiling). Selling: the least it takes (the floor). */
   limit: number;
@@ -17,7 +15,6 @@ export type Mandate = {
   delivery: string;
   /** After this, nothing more is sent without asking. */
   expiresAt: string;
-  /** Contact details its messages may carry. */
   allow: MandateContact[];
 };
 
@@ -94,14 +91,12 @@ export type Negotiation = {
   asking: number | null;
   mandate: Mandate;
   appraisal: Appraisal | null;
-  /** The conversation with the seller, once there is one. */
   conversationUrl: string | null;
   claims: Claims;
   status: NegotiationStatus;
   agreedPrice: number | null;
   /** Its mandate approval: pending while it waits, then the decision and your note. */
   approvalId: number | null;
-  /** The chat it was started from. */
   conversationId: number | null;
   nextFollowUpAt: string | null;
   lastMessage: NegotiationMessage | null;
@@ -110,8 +105,6 @@ export type Negotiation = {
   closedAt: string | null;
 };
 
-/** GET /negotiations/:id. */
 export type NegotiationDetail = { negotiation: Negotiation; messages: NegotiationMessage[] };
 
-/** Still being talked about: not closed. */
 export const OPEN_NEGOTIATION_STATUSES: NegotiationStatus[] = ["awaiting_mandate", "open"];

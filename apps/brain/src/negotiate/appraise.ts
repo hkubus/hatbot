@@ -1,34 +1,27 @@
-// negotiate_appraise (PLAN.md §16.3): what a listing is worth, from Scout's data, as an opening offer, a
-// target and a walk-away price. Scout's tools are called by name through the MCP plugin, as watchers call
-// plugin tools; only ones set to Chat (read) are used, so nothing here asks.
+// Scout's tools are called by name through the MCP plugin, as watchers call plugin tools; only ones set
+// to Chat (read) are used, so nothing here asks.
 import type { Appraisal, AppraisalSource } from "@hatbot/shared";
 import { PluginError, type PluginTool } from "../plugins/plugin";
 import { zl } from "./policy";
 
-/** What Scout says about one listing. */
 export type ListingFacts = {
   key: string;
   marketplace: string;
   title: string;
   url: string;
   asking: number | null;
-  /** The asking price's currency: Scout's, or PLN when it doesn't say. */
   currency: string;
-  /** Scout's typical price for the watch it was found by, if any. */
   typical: number | null;
   watchId: string | null;
   negotiable: boolean | null;
-  /** When it was posted, or first seen. */
   listedAt: string | null;
-  /** Its price over time, oldest first. */
   history: { price: number; at: string }[];
 };
 
-/** A Scout tool among a bot's tools, by name suffix: mcp_<server>_scout_listing_detail. */
+/** By name suffix: mcp_<server>_scout_listing_detail. */
 export const scoutTool = (tools: PluginTool[], name: string) =>
   tools.find((t) => t.name === name || t.name.endsWith(`_${name}`));
 
-/** `<Marketplace>:<listingId>`, as Scout gives it. */
 export function parseKey(key: string): { marketplace: string; id: string } | null {
   const i = key.indexOf(":");
   if (i < 1 || i === key.length - 1) return null;
@@ -40,13 +33,12 @@ const num = (v: unknown): number | null =>
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-/** A currency as a code: "zł" is PLN, and PLN when Scout doesn't say. */
 const currencyOf = (c: string | null) => {
   const code = (c ?? "PLN").trim().toUpperCase();
   return code === "ZŁ" || code === "ZL" ? "PLN" : code;
 };
 
-/** Calls a Scout tool and reads its JSON. It must only read: set to Chat in Settings. */
+/** It must only read: set to Chat in Settings. */
 async function call(
   t: PluginTool,
   input: Record<string, unknown>,
@@ -66,7 +58,6 @@ async function call(
   }
 }
 
-/** scout_listing_detail, as the facts an appraisal and a negotiation need. */
 export async function listingFacts(
   tools: PluginTool[],
   key: string,
@@ -103,17 +94,12 @@ export async function listingFacts(
   };
 }
 
-/** Rounded the way people write prices: to 5 under 200, to 10 under 2,000, to 50 above. */
 export function roundPrice(x: number, dir: "down" | "near" = "near"): number {
   const step = x < 200 ? 5 : x < 2000 ? 10 : 50;
   const f = dir === "down" ? Math.floor : Math.round;
   return Math.max(step, f(x / step) * step);
 }
 
-/**
- * Appraises a listing for buying. It prefers Scout's price reference and comparables; until Scout has
- * them, the watch's analytics and the listing's own detail.
- */
 export async function appraise(
   tools: PluginTool[],
   key: string,
@@ -247,7 +233,6 @@ export async function appraise(
   };
 }
 
-/** The appraisal as the model reads it. */
 export function appraisalText(l: ListingFacts, a: Appraisal): string {
   const lines = [
     `${l.title} (${l.key}) ${l.url}`,

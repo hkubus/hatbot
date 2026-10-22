@@ -1,6 +1,5 @@
-// The web's own check of a chart block, the same rules as ChartSpec in @hatbot/shared but by hand:
-// it's the only zod the web would run, and zod is a seventh of the bundle. test/chartspec.test.ts
-// keeps the two in step.
+// By hand rather than zod: zod is a seventh of the bundle. test/chartspec.test.ts keeps this in
+// step with ChartSpec in @hatbot/shared.
 import {
   CHART_MAX_COLUMNS,
   CHART_MAX_EVENTS,
@@ -41,7 +40,6 @@ function pick<T>(o: Obj, keys: string[], rest: Obj): T {
   return { ...out, ...rest } as T;
 }
 
-/** The spec in a chart block, or null if it isn't one (still streaming, or malformed). */
 export function parseChart(source: string): ChartSpec | null {
   let o: unknown;
   try {
@@ -68,7 +66,6 @@ export function parseChart(source: string): ChartSpec | null {
   }
 }
 
-/** The file chart in a chart block, or null if it isn't one. */
 export function parseChartFile(source: string): ChartFile | null {
   let o: unknown;
   try {
@@ -90,7 +87,6 @@ export function parseChartFile(source: string): ChartFile | null {
   return pick(o, ["type", "title", "xName", "xUnit", "yName", "yUnit", "data"], {});
 }
 
-/** A file chart with its values, as the brain gave them, checked like any chart. */
 export function withData(file: ChartFile, values: ChartData): ChartSpec | null {
   const { data: _, ...block } = file;
   const { x } = values as { x?: unknown };

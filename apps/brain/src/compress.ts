@@ -1,4 +1,3 @@
-// Compressed answers: JSON is mostly chat text, which brotli shrinks to about a third.
 import { promisify } from "node:util";
 import { brotliCompress, constants, gzip } from "node:zlib";
 import type { MiddlewareHandler } from "hono";
@@ -11,7 +10,6 @@ const gzipAsync = promisify(gzip);
 /** Smaller than this fits in a packet or two either way. */
 const MIN_BYTES = 1024;
 
-/** Brotli where the client takes it, else gzip, else nothing. */
 export function pickEncoding(header: string | null | undefined): Encoding | null {
   if (!header) return null;
   const weights = new Map<string, number>();
@@ -26,8 +24,8 @@ export function pickEncoding(header: string | null | undefined): Encoding | null
 }
 
 /**
- * Compresses JSON answers. Off the event loop: Bun's zlib runs on its thread pool. Brotli at 5 is
- * about 50 MB/s here and within a few per cent of its best on chat text.
+ * Off the event loop: Bun's zlib runs on its thread pool. Brotli at 5 is about 50 MB/s here and
+ * within a few per cent of its best on chat text.
  */
 export const compressJson: MiddlewareHandler = async (c, next) => {
   await next();

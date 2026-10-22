@@ -1,5 +1,4 @@
-// Liquid Glass on iOS 26 and later, with the closest older look on iOS 18–25. Glass is for
-// controls and bars that float over content; messages and screenshots stay solid.
+// Glass is for controls and bars that float over content; messages and screenshots stay solid.
 import SwiftUI
 
 extension View {
@@ -14,7 +13,6 @@ extension View {
     }
   }
 
-  /// A glass button; `prominent` fills it with the tint.
   @ViewBuilder
   func glassButton(prominent: Bool = false) -> some View {
     if #available(iOS 26, *) {
@@ -36,7 +34,6 @@ extension View {
     }
   }
 
-  /// Groups glass shapes so they blend and morph together on iOS 26.
   @ViewBuilder
   func glassGroup(spacing: CGFloat? = nil) -> some View {
     if #available(iOS 26, *) {

@@ -145,7 +145,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const [chatMenu, setChatMenu] = useState(false);
   const chatMenuEl = useRef<HTMLDivElement>(null);
   const chatSwitch = useRef<HTMLButtonElement>(null);
-  // The phone's chat switcher closes on a tap anywhere else, and on Escape (below).
   useEffect(() => {
     if (!chatMenu) return;
     const onDown = (e: PointerEvent) => {
@@ -170,7 +169,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const openedFrom = useRef<View>(VIEWS[0]);
   const view = reading && !params.get("path") ? openedFrom.current : viewOf(path);
   if (!reading) openedFrom.current = view;
-  /** The view whose page shows: none while reading. */
   const page = reading ? "" : view.path;
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
   const wide = useMedia("(min-width: 900px)");
@@ -182,8 +180,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const botPage = /^\/bots\/([a-z0-9-]+)$/.exec(path)?.[1];
   const groupPage = /^\/groups\/(new|\d+)$/.exec(path)?.[1];
   const chatId = path === "/" ? HATBOT_CHAT : Number(/^\/chat\/(\d+)$/.exec(path)?.[1] ?? 0);
-  // A bot's or group's page is titled with its name and keeps its chat lit in the sidebar; a
-  // negotiation's with its listing, and a box's with its title.
   const pageChat = useStore((s) =>
     botPage
       ? s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === botPage)
@@ -218,7 +214,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     loadApproval(approvalId).then(
       async (a) => {
         if (a.taskId) return navigate(`/tasks/${a.taskId}`, true);
-        // A mandate: on its negotiation's page.
         if (a.kind === "mandate") await loadNegotiations().catch(() => {});
         const n = negotiationOf(getState(), a.id);
         navigate(n ? `/negotiations/${n.id}` : "/", true);
@@ -252,7 +247,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     };
   }, []);
 
-  // What's waiting shows in the tab's title, and on the app's icon where the system has badges.
   useEffect(() => {
     const n = unread + pending;
     document.title = n ? `(${n}) Hatbot` : "Hatbot";
@@ -262,7 +256,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     };
     void (n ? nav.setAppBadge?.(n) : nav.clearAppBadge?.())?.catch(() => {});
   }, [unread, pending]);
-  // Signed out: nothing is waiting for you any more.
   useEffect(
     () => () => {
       (navigator as Navigator & { clearAppBadge?: () => Promise<void> })
@@ -510,10 +503,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
-/**
- * Pause all, however it was set (here, on another device, or from ntfy), on every page: schedules and
- * watchers still look on while it skips them.
- */
+/** While paused, schedules and watchers still look on; their runs are skipped. */
 export function PausedBanner() {
   const paused = useStore((s) => s.paused);
   const [busy, setBusy] = useState(false);
@@ -538,13 +528,11 @@ export function PausedBanner() {
   );
 }
 
-/** Your chats, then New bot and New group: in the sidebar, and in the phone's chat switcher. */
 function ChatNav({
   current,
   path,
   onPick,
 }: {
-  /** The chat that's lit. */
   current: number;
   path: string;
   onPick?: () => void;
@@ -584,7 +572,6 @@ function ChatNav({
   );
 }
 
-/** A bot's own chat goes by its icon; a group by the group icon. */
 function ChatIcon({ chat }: { chat: Conversation }) {
   const bot = useStore((s) => (chat.kind === "direct" ? s.bots[chat.botIds[0] ?? ""] : undefined));
   if (bot) return <BotMark bot={bot} />;

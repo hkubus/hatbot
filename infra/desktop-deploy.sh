@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: install desktop-agent inside hatbot-desktop (PLAN.md §4.2). deploy.sh pushes and runs it,
+# Hatbot: install desktop-agent inside hatbot-desktop. deploy.sh pushes and runs it,
 # and it installs itself as /usr/local/sbin/hatbot-desktop-agent-deploy for updates from the brain:
 # desktop-agent drops an archive in its state directory, and hatbot-desktop-agent-update.path runs this.
 #   $1          archive of apps/desktop-agent, with packages/shared in node_modules/@hatbot/shared
@@ -246,7 +246,7 @@ OOMScoreAdjust=500
 WantedBy=multi-user.target
 EOF
 
-# Chromium, on the profile desktop-agent last asked for (PLAN.md §14): Hatbot's is chrome-profile, each
+# Chromium, on the profile desktop-agent last asked for: Hatbot's is chrome-profile, each
 # other bot's chrome-profiles/<id>. desktop-agent closes it to switch; it comes straight back. Chromium
 # needs a non-default profile dir for remote debugging; CDP stays on localhost for desktop-agent.
 cat >/usr/local/bin/hatbot-chromium <<'EOF'

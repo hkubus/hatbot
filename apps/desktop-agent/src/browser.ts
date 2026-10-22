@@ -300,7 +300,6 @@ export class Browser {
   private reported = new Set<string>();
   private changes: BrowserStateChange[] = [];
   private downloads = new Map<string, { id: string; url: string }>();
-  /** Finished downloads by id: the file's name and where Chromium saved it. */
   private saved = new Map<string, { name: string; path: string }>();
   private names = new Map<string, string>();
   private nextDownload = 1;
@@ -323,7 +322,6 @@ export class Browser {
     this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
   }
 
-  /** Whether Chromium's DevTools answers. */
   async devToolsUp(timeoutMs = 2000): Promise<boolean> {
     try {
       const res = await fetch(`${this.endpoint}/json/version`, {
@@ -348,7 +346,6 @@ export class Browser {
     this.active = null;
   }
 
-  /** A finished download's file, by the id the model saw. */
   download(id: string): { name: string; path: string } | null {
     return this.saved.get(id) ?? null;
   }
@@ -614,7 +611,6 @@ export class Browser {
     }
   }
 
-  /** Runs one of page.ts's scripts in an execution context of a session. */
   private async evaluate<T>(session: string, contextId: number, script: string, arg: unknown) {
     const r = await this.cdp.send<{
       result: { value?: T };
@@ -1230,7 +1226,6 @@ export class Browser {
     return Promise.all(others.map((t) => this.run<T>(t, script, arg).catch(() => null)));
   }
 
-  /** The open tabs, and what changed since the last report. */
   async state(): Promise<BrowserState> {
     await this.sync();
     const pages = this.pages();

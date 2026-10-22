@@ -1,5 +1,4 @@
-// The Spend page's numbers (SpendView and Spend.swift on iOS, Spend.tsx on the web) and the charts
-// made of them.
+// As SpendView and Spend.swift on iOS, and Spend.tsx on the web.
 use serde::Deserialize;
 
 use super::chart::{ChartSpec, Kind, Line, MAX_ROWS, Series, month_name};

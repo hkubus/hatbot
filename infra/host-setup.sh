@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: one-time Proxmox host setup (PLAN.md §9.2).
+# Hatbot: one-time Proxmox host setup.
 #
 # Run as root on the Proxmox host, from a copy of the repo's infra/ folder:
 #   ./host-setup.sh --dry-run   show every change, change nothing
@@ -23,10 +23,9 @@ STATE=/etc/hatbot/host.env
 [[ ${HATBOT_TRANSPORT:-pct} == pct ]] || die "$STATE is from ssh-setup.sh; this machine's Hatbot isn't on Proxmox"
 HATBOT_TRANSPORT=pct
 
-# ---------- Settings ----------
 BRAIN_ID=${BRAIN_ID:-}
 DESKTOP_ID=${DESKTOP_ID:-}
-BOXES_ID=${BOXES_ID:-}                      # none: no boxes guest, so boxes are only pages (PLAN.md §21)
+BOXES_ID=${BOXES_ID:-}                      # none: no boxes guest, so boxes are only pages
 BRAIN_IP=${BRAIN_IP:-}                      # default: <LAN prefix>.<VMID + 100>
 DESKTOP_IP=${DESKTOP_IP:-}                  # same rule
 BOXES_IP=${BOXES_IP:-}                      # same rule
@@ -68,7 +67,6 @@ for arg in "$@"; do
   esac
 done
 
-# ---------- Helpers ----------
 run() {
   printf '   %s+' "$dim"
   printf ' %q' "$@"
@@ -140,7 +138,6 @@ save_state() {
 
 ((DRY_RUN)) && printf '%sDry run: nothing will be changed.%s\n' "$yel" "$rst"
 
-# ---------- 1. Preflight (read-only) ----------
 step "1/8 Preflight"
 [[ $EUID -eq 0 ]] || die "run as root on the Proxmox host"
 command -v pveversion >/dev/null || die "pveversion not found; this is not a Proxmox VE host"
@@ -319,7 +316,6 @@ EOF
 confirm "Continue?" || die "stopped"
 save_state
 
-# ---------- 2. Containers ----------
 step "2/8 Containers"
 if pveum pool list --output-format json | json_values poolid | grep -qx "$POOL"; then
   ok "pool $POOL exists"
@@ -377,7 +373,6 @@ else
     --onboot 1 --startup order=20 --timezone host --pool "$POOL" --tags hatbot
 fi
 
-# ---------- 3. Guest firewall ----------
 step "3/8 Guest firewall"
 if ! command -v nft >/dev/null; then
   confirm "Install the nftables package (only the nft command; nftables.service stays disabled)?" || die "nft is required"
@@ -534,7 +529,6 @@ if ((!DRY_RUN)); then
   ok "the containers have network and DNS"
 fi
 
-# ---------- 4. Proxmox API access ----------
 step "4/8 Proxmox API access ($TOKEN_ID)"
 if pveum user list --output-format json | json_values userid | grep -qx "$PVE_USER"; then
   ok "user $PVE_USER exists"
@@ -549,7 +543,7 @@ set_role() {
     run pveum role add "$1" --privs "$2"
   fi
 }
-# Read and power control on every guest. No config, allocate or destroy rights anywhere (PLAN.md §9.3).
+# Read and power control on every guest. No config, allocate or destroy rights anywhere.
 set_role HatbotOps "VM.Audit,VM.PowerMgmt,Sys.Audit,Datastore.Audit"
 # Snapshots only on Hatbot's own guests, granted through the pool.
 set_role HatbotSnapshots "VM.Audit,VM.Snapshot,VM.Snapshot.Rollback"
@@ -592,7 +586,6 @@ fi
 run pveum acl modify / --tokens "$TOKEN_ID" --roles HatbotOps
 run pveum acl modify "/pool/$POOL" --tokens "$TOKEN_ID" --roles HatbotSnapshots
 
-# ---------- 5. Brain <-> guest secrets ----------
 step "5/8 Brain ↔ guest secrets"
 if guest_has_file "$BRAIN_ID" /etc/hatbot/desktop.env && guest_has_file "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env; then
   ok "both sides have them"
@@ -630,7 +623,6 @@ EOF
   unset hatbox_token
 fi
 
-# ---------- 6. Provision inside the containers ----------
 step "6/8 Provision the containers"
 provision() { # provision CTID SCRIPT ENV...
   local id=$1 script=$2
@@ -648,7 +640,6 @@ provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=
 [[ -z $BOXES ]] ||
   provision "$BOXES" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
 
-# ---------- 7. Nightly snapshots ----------
 step "7/8 Nightly snapshots"
 if ((!SNAP_OK)); then
   warn "skipped: $SSD_STORE ($SSD_TYPE) can't snapshot containers"
@@ -715,7 +706,6 @@ EOF
   [[ -z $BOXES ]] || run systemctl enable --now hatbot-boxes-snapshot.timer
 fi
 
-# ---------- 8. Backups ----------
 step "8/8 Backups (PBS)"
 guests=("$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"})
 what="both containers"
@@ -746,7 +736,6 @@ else
   fi
 fi
 
-# ---------- Done ----------
 step "Done"
 boxes_done=none
 [[ -z $BOXES ]] || boxes_done="CT $BOXES   $BOXES_IP (internet only, for its agent)"

@@ -187,7 +187,6 @@ fn table(head: &[String], rows: &[Vec<String>]) -> gtk::Widget {
         .upcast()
 }
 
-/// Copies `text`, as "Copy" in a message's menu does.
 pub fn copy(text: &str) {
     if let Some(display) = gdk::Display::default() {
         display.clipboard().set_text(text);

@@ -1,6 +1,5 @@
-// Templates for a new bot (PLAN.md §14.6): a name, look, role, model and plugins to start from, all of
-// which can be changed before the bot is made. The web reads them from here; the iOS app from
-// GET /bot-templates, so a new template reaches it without an app update.
+// Templates for a new bot, all changeable before it's made. The web reads them from here; the iOS app
+// from GET /bot-templates, so a new template reaches it without an app update.
 import type { Bot } from "./index";
 
 /**
@@ -67,7 +66,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     instructions: HAGGLER,
     chatModel: null,
     chatEffort: null,
-    // Scout (PLAN.md §16).
+    // Scout.
     plugins: ["mcp"],
   },
   {

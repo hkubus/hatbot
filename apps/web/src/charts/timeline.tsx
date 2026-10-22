@@ -1,6 +1,3 @@
-// Dated events along one time axis: a dot for a date, a bar for a span, each named beside itself.
-// Lanes are rows under their own name; inside a lane, events whose names would collide take the
-// next track down.
 import { dateRange, type TimelineChart } from "@hatbot/shared";
 import { CHAR_W, clamp, color, cutTo, Plot, TipRow, tipBeside, usePlot } from "./frame";
 
@@ -90,7 +87,6 @@ export function TimelinePlot({ spec }: { spec: TimelineChart }) {
   const ticks = timeTicks(lo, hi, plotW, 64);
   const x = (t: number) => pad + ((t - lo) / (hi - lo)) * plotW;
 
-  // Where each event's mark and name go, and which track of its lane it takes.
   const placed = events.map((e) => {
     const [x0, x1] = e.span
       ? [x(e.t0), Math.max(x(e.t1), x(e.t0) + THICK)]
@@ -112,7 +108,6 @@ export function TimelinePlot({ spec }: { spec: TimelineChart }) {
     return { ...e, x0, x1, text, side, lx, box, track: 0 };
   });
   const lanes = laneNames.map((name) => {
-    // How far right each track is taken.
     const ends: number[] = [];
     const free = (k: number, from: number) => (ends[k] ?? Number.NEGATIVE_INFINITY) + 8 <= from;
     for (const e of placed) {

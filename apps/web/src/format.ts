@@ -1,5 +1,3 @@
-// Money, model names, times and Markdown made plain, the same on every page.
-
 /** Dollars to the cent; a cost under half a cent shows as "<$0.01", not "$0.00". */
 export const usd = (v: number) => (v > 0 && v < 0.005 ? "<$0.01" : `$${v.toFixed(2)}`);
 
@@ -32,10 +30,7 @@ export const stamp = (iso: string) =>
     minute: "2-digit",
   });
 
-/**
- * "Opus 5.5" for claude-opus-5-5, "Opus 4.8" for a fallback's claude-opus-4-8, worked out from the
- * id so a new model has a name too; an id of another shape stays as it is.
- */
+/** Worked out from the id so a new model has a name too. */
 export function modelName(id: string): string {
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);
   if (!m) return id;
@@ -43,10 +38,7 @@ export function modelName(id: string): string {
   return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
 }
 
-/**
- * Markdown as one line of plain text, for snippets, finds and notes: links and images keep their
- * words, and marks like **, # and - go. Search's match marks pass through.
- */
+/** Search's match marks pass through. */
 export function plainText(md: string): string {
   return (
     md

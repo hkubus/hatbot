@@ -1,5 +1,5 @@
-// The negotiate tools (PLAN.md §16.3). They're core tools shaped as plugin tools, so the chat and tasks
-// gate them the way they gate any plugin's: read ones run, and writes go through their policy.
+// Core tools shaped as plugin tools, so the chat and tasks gate them the way they gate any plugin's:
+// read ones run, and writes go through their policy.
 import type { Bot, Negotiation, Stated } from "@hatbot/shared";
 import { z } from "zod";
 import { askAlways, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
@@ -18,7 +18,6 @@ const ListingKey = z
   .describe('The listing\'s key as Scout gives it (marketplaceListingKey), e.g. "OLX:123456789"');
 const Id = z.number().int().positive().describe("The negotiation's number");
 
-/** A negotiation in a line, for lists. */
 export function negotiationLine(n: Negotiation): string {
   const money = (x: number) => zl(x, n.mandate.currency);
   const price = n.agreedPrice !== null ? `, agreed at ${money(n.agreedPrice)}` : "";
@@ -28,7 +27,6 @@ export function negotiationLine(n: Negotiation): string {
   return `#${n.id} ${n.status}${price}: ${n.title} (${n.listingKey}), asking ${n.asking !== null ? money(n.asking) : "?"}; want #${n.wantId} "${n.want}"${last}`;
 }
 
-/** A negotiation with its mandate, claims and messages, for the model. */
 function negotiationText(neg: Negotiations, n: Negotiation): string {
   const m = n.mandate;
   const money = (x: number) => zl(x, m.currency);
@@ -59,7 +57,6 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
   return `${head.join("\n")}\n\nMessages:\n${messages.length ? messages.join("\n") : "(none yet)"}`;
 }
 
-/** What negotiate_send claims about our side, as the record keeps it. */
 const StatedInput = z
   .object({
     max: z.number().positive().optional().describe("The most you tell the seller you'd pay"),
@@ -102,9 +99,7 @@ export function negotiateTools(
   where: { conversationId: number | null },
 ): PluginTool[] {
   const now = () => new Date(neg.clock());
-  /** Appraisals made in this turn or task, so negotiate_start doesn't ask Scout again. */
   const appraised = new Map<string, Awaited<ReturnType<typeof appraise>>>();
-  /** A send's verdict: blocked while the negotiation is held, else as its mandate and pace say. */
   const sendVerdict = (n: Negotiation, input: SendInput) => {
     const held = neg.held(n);
     return held ? block(held) : sendPolicy(n, input, neg.facts(n));
@@ -144,11 +139,9 @@ export function negotiateTools(
       access: "write",
       commands: () => 0,
       describe: (i) => {
-        // The listing's currency, when it was appraised in this turn; until then, only the numbers.
         const money = (x: number) => zl(x, appraised.get(i.listing)?.appraisal.currency);
         return `Negotiate for ${i.listing}: open at ${money(i.mandate.opening)}, aim for ${money(i.mandate.target)}, at most ${money(i.mandate.limit)}`;
       },
-      // It only makes a record and asks the owner to approve its mandate.
       policy: () => covered("It only makes a record; you approve its mandate"),
       run: async (i, call) => {
         const r =
@@ -238,7 +231,7 @@ export function negotiateTools(
       describe: (i) =>
         `Message the seller in negotiation #${i.negotiation}${i.offer !== undefined ? ` (${i.agree ? "agree to" : "offer"} ${zl(i.offer, neg.get(i.negotiation)?.mandate.currency)})` : ""}: "${collapse(i.text)}"`,
       target: (i) => `negotiation:${i.negotiation}`,
-      // In code, not by Haiku (PLAN.md §16.1): the mandate stands in for the approval.
+      // In code, not by Haiku: the mandate stands in for the approval.
       policy: (i) => {
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);

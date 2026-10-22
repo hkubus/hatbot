@@ -1,8 +1,5 @@
-// A box's build (PLAN.md §21.1), run by hatbox-build@<id>: a throwaway unit of its own user, with no
-// network, that sees only this folder. Macros and plugins run code at build time, which is why it isn't
-// the agent or the brain that builds. From src/, where the agent put the files and installed the
-// packages, it writes page.html, the page inlined into one file, and server.js, the backend in one
-// script. What it prints is the build's output, which the model reads.
+// A box's build, run by hatbox-build@<id>: a throwaway unit of its own user, with no network, that
+// sees only this folder: macros and plugins run code at build time.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 

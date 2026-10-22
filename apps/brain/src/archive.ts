@@ -1,4 +1,3 @@
-// The archive on the HDD mount (PLAN.md §7.3): screenshots, kept forever.
 import { mkdir, rm, statfs } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
@@ -8,19 +7,16 @@ export class Archive {
     private clock: () => number = Date.now,
   ) {}
 
-  /** The folder for `kind` ("screens" or "files") from the day of `t`. */
   private dayDir(kind: string, t: number) {
     const d = new Date(t);
     const pad = (n: number) => String(n).padStart(2, "0");
     return join(kind, String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate()));
   }
 
-  /** Where `owner`'s screenshots from the day of `t` go. */
   private screenDir(owner: number | string, t: number) {
     return join(this.dayDir("screens", t), String(owner));
   }
 
-  /** Writes `rel` under the archive, making its folder; returns `rel`. */
   private async save(rel: string, bytes: Uint8Array): Promise<string> {
     const abs = join(this.dir, rel);
     await mkdir(join(abs, ".."), { recursive: true });
@@ -28,12 +24,10 @@ export class Archive {
     return rel;
   }
 
-  /** Saves a screenshot as `name`.webp in the day's folder for `owner` (a task id, or e.g. "teach-3"). */
   saveScreen(owner: number | string, name: string, bytes: Uint8Array): Promise<string> {
     return this.save(join(this.screenDir(owner, this.clock()), `${name}.webp`), bytes);
   }
 
-  /** Deletes `owner`'s screenshots saved between `from` and `to` (at most a month of days). */
   async removeScreens(owner: string, from: number, to: number) {
     const end = Math.min(to, from + 31 * 86_400_000);
     const dirs = new Set<string>();
@@ -43,7 +37,6 @@ export class Archive {
     for (const dir of dirs) await rm(join(this.dir, dir), { recursive: true, force: true });
   }
 
-  /** Saves a chat attachment in the day's folder as `<id>-<name>`. */
   saveFile(id: number, name: string, bytes: Uint8Array): Promise<string> {
     const safe = name.replace(/[^\w.-]+/g, "_").slice(-100) || "file";
     return this.save(join(this.dayDir("files", this.clock()), `${id}-${safe}`), bytes);
@@ -57,13 +50,11 @@ export class Archive {
     return Bun.file(abs);
   }
 
-  /** Deletes a file; one that's already gone is fine. */
   async remove(rel: string) {
     const f = this.file(rel);
     if (f?.name) await rm(f.name, { force: true });
   }
 
-  /** Writes and removes a file, for the self-check; the free space left, in bytes. */
   async probe(): Promise<number> {
     await mkdir(this.dir, { recursive: true });
     const path = join(this.dir, ".check");

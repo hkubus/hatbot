@@ -1,5 +1,4 @@
-// A trigger's page: its name and instructions, switches that save as you flip them, its address and a
-// new secret (SchedulesView.swift on iOS). Triggers are made on the web.
+// As SchedulesView.swift on iOS. Triggers are made on the web.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -240,7 +239,6 @@ impl Page {
                 p.sync_save();
             }
         });
-        // Switches and pickers save as soon as they change.
         let weak = Rc::downgrade(self);
         self.on.connect_active_notify(move |r| {
             if let Some(p) = weak.upgrade() {

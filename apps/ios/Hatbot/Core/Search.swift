@@ -1,4 +1,4 @@
-// Search across chats, tasks, memory, and what runs on its own (packages/shared/src/search.ts).
+// Mirrors packages/shared/src/search.ts.
 import Foundation
 
 struct SearchResults: Decodable, Sendable {
@@ -43,7 +43,6 @@ enum Search {
   static let matchStart: Character = "\u{02}"
   static let matchEnd: Character = "\u{03}"
 
-  /// A snippet in runs of plain and matched text.
   static func parts(_ snippet: String) -> [(text: String, match: Bool)] {
     var out: [(text: String, match: Bool)] = []
     var run = ""

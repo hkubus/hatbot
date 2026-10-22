@@ -1,4 +1,3 @@
-// Client-side routes: pushState plus a popstate event, read with useRoute().
 import { useSyncExternalStore } from "react";
 
 const subscribe = (l: () => void) => {
@@ -17,7 +16,6 @@ export function setLeaveGuard(guard: () => Promise<boolean>) {
 }
 let shown = snapshot();
 let ours = false;
-/** Going again where Back or Forward went, once you've said leave. */
 let passing = false;
 // Back and Forward have already moved the address when we hear of them: put it back while the page
 // asks. Registered before anything renders, so it runs before the routes read the address.

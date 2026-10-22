@@ -7,7 +7,6 @@ test("the API key and ntfy set in Settings are tried, kept out of what the app r
   const { cookie } = signIn(t);
   const key = "sk-ant-api03-0123456789abcdefWXYZ";
 
-  // A key the API turns down isn't kept.
   const bad = await t.call("PUT", "/connections/anthropic", { key: `${key}bad` }, { cookie });
   expect(bad.status).toBe(400);
   expect(t.secrets.view().anthropic).toMatchObject({ from: "host", ending: "HOST" });

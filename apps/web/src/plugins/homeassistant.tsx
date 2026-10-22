@@ -1,6 +1,5 @@
-// Home Assistant's settings: entities that let someone in besides locks, alarms and door covers, such as
-// a gate on a switch, or a script or an integration's scene that opens one. Every change to them
-// always asks first.
+// Entities that let someone in besides locks, alarms and door covers, such as a gate on a switch, or
+// a script or an integration's scene that opens one. Every change to them asks first.
 import type { PluginSettingsProps } from ".";
 import { IdListSettings } from "./id-list";
 

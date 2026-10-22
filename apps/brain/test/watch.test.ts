@@ -44,7 +44,6 @@ test("a watcher without a prompt tells you in the chat and by notification, then
   const w = (await res.json()) as Watcher;
   expect(w.lastValue).toBe("Sold out");
 
-  // Not due yet.
   t.watchers.tick();
   await t.watchers.idle();
   expect(t.agent.fetched).toHaveLength(1);
@@ -59,7 +58,6 @@ test("a watcher without a prompt tells you in the chat and by notification, then
   // The model isn't called for any of it.
   expect(t.taskModel.requests).toHaveLength(0);
 
-  // Still in stock: no second notification.
   t.advance(30 * 60_000);
   t.watchers.tick();
   await t.watchers.idle();
@@ -115,7 +113,6 @@ test("a watcher that counts more than 12 times in a day is switched off, and you
   const w = (await (
     await api("POST", "/watchers", { name: "News", source: { kind: "page", url }, everyMinutes: 5 })
   ).json()) as Watcher;
-  // A page that changes on every look.
   for (let i = 1; i <= 14; i++) {
     t.agent.pages.set(url, page(`<p>Updated ${i * 5} minutes ago</p>`));
     t.advance(5 * 60_000);

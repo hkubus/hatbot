@@ -1,5 +1,4 @@
-// The to-do list (PLAN.md §24.2 L6, TodoView on iOS): todo.md's open items, ticked off here or worked
-// on by a task, and what was done this week. Items are changed in the chat or in Memory.
+// As TodoView on iOS. Items are changed in the chat or in Memory.
 use std::cell::RefCell;
 use std::rc::Rc;
 

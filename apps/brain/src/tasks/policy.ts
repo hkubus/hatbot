@@ -1,11 +1,10 @@
-// Spots consequential clicks and Enter presses on the desktop (PLAN.md §6.1, screen actions).
+// Spots consequential clicks and Enter presses on the desktop.
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 
 /**
- * Lower case, accents dropped and ł read as l, so "ZAPŁAĆ", "Zapłać" and "Zaplac" match alike; letters
- * that only look different read plainly ("Ｐａｙ" is "pay"), and invisible format characters (a
- * zero-width space inside "Kup") dropped.
+ * Folds case, accents, ł, look-alike letters ("Ｐａｙ") and invisible format characters (a zero-width
+ * space inside "Kup"), so "ZAPŁAĆ" and "Zaplac" match alike.
  */
 export const fold = (s: string) =>
   s
@@ -21,9 +20,7 @@ const START = "(?<![\\p{L}\\p{N}])";
 const END = "(?![\\p{L}\\p{N}])";
 const words = (list: string[]) => new RegExp(`${START}(?:${list.join("|")})`, "iu");
 
-/** Buying, paying, ordering, bidding and accepting or making an offer, folded. */
 const BUY = [
-  // English, whole words.
   `(?:pay|payment|buy|purchase|order|checkout|check out|bid|place bid|donate)${END}`,
   `(?:make|send|submit) (?:an |a )?offer${END}|accept (?:the |this )?offer${END}`,
   `(?:proceed|continue|go) to (?:payment|checkout)${END}`,
@@ -38,15 +35,13 @@ const BUY = [
   `zamow(?:ic)?${END}|zamawiam|zloz(?:yc)?${END}`,
   "(?:za)?akceptuj\\p{L}* (?:ofert|cen|propozycj)|przyjmij ofert|przyjmuj\\p{L}* ofert",
   "zaproponuj|licytuj",
-  // Czech: koupit, zaplatit (above), platba, objednat, objednávku, nabídnout.
   `koupit|platb|objedn(?:at|ej|ejte|avam)${END}|objednavk[au]${END}`,
   "dokoncit (?:nakup|objednavk)|prij(?:mout|mete|mi) nabid|nabidn|(?:ucinit|udelat|podat) nabid",
 ];
 
 /**
- * Buying and paying (above), sending, booking, publishing and account changes, in English, Polish and
- * Czech, folded. Polish and Czech words bend, so most are stems; a stem that would catch a common
- * harmless word ("Kontynuuj zakupy", "Moje zamówienia", "Wysłane") stops short of it.
+ * Polish and Czech words bend, so most are stems; a stem that would catch a common harmless word
+ * ("Kontynuuj zakupy", "Moje zamówienia", "Wysłane") stops short of it.
  */
 const STRONG = words([
   ...BUY,
@@ -57,7 +52,6 @@ const STRONG = words([
   `podbij|wyroznij|wystaw(?!ion|ian)|wysl(?:ij|ac|e)${END}|wysylam${END}|odesl(?:ij|ac)${END}|odpowiedz${END}`,
   "(?:o)?publikuj|(?:za)?rezerwuj|zarejestruj|zmien haslo|(?:za)?subskrybuj",
   "anuluj (?:zamowienie|subskrypcj|rezerwacj)",
-  // Czech: poslat, odeslat, rezervovat.
   `poslat|odeslat|(?:posli|odesli)${END}|odpovedet|odpovez${END}`,
   "(?:za)?rezervov|(?:za)?registrov|publikovat|zverejnit",
   "zrusit (?:objednavk|predplatn|rezervac)",
@@ -66,34 +60,29 @@ const BUYING = words(BUY);
 
 /** Nouns that fold into a verb: "Odpowiedź" (an answer) reads as "Odpowiedz" (reply) without its accent. */
 const NOUNS = /(?<![\p{L}\p{N}])odpowiedź(?![\p{L}\p{N}])/giu;
-/** A label as the checks read it: folded, without those nouns. */
 const read = (label: string) => fold(label.normalize("NFC").replace(NOUNS, " "));
 
-/** Whether a label buys, pays, orders or makes or accepts an offer. */
 export const buyingLabel = (label: string) => BUYING.test(read(label));
 
-/** Submitting, confirming, saving and deleting: consequential, except on a filter, sort or search control. */
 const SOFT = words([
   `(?:submit|confirm|delete|remove|apply|save changes)${END}`,
   `potwierdz|zatwierdz|usun(?:ac)?${END}|skasuj|zapisz zmiany|aplikuj`,
   `potvrd|potvrzuji|smazat|smaz${END}|odstran(?:it)?${END}|ulozit zmeny`,
 ]);
 
-/** Filters, sorting, results and search: "Apply filters", "Usuń filtry", "Seřadit". */
 const NARROWING = words([
   "filt|sort|seradit|radit|wynik|vysledk|results|search|szuka|wyszuk|hleda|vyhled",
 ]);
 
-/** A cookie banner's choices: "Confirm my choices", "Potwierdź moje wybory", "Potvrdit výběr". */
+/** A cookie banner's choices ("Confirm my choices") aren't consequential. */
 const CONSENT = words([
   "choices|preferences|cookie|consent|wybor|preferencj|zgod|ciasteczk|prywatnos|vyber|predvolb|souhlas",
 ]);
 
-/** A label that searches, filters or sorts ("Szukaj", "Pokaż wyniki"), and names nothing consequential. */
 export const narrowingLabel = (label: string) =>
   NARROWING.test(read(label)) && !STRONG.test(read(label));
 
-/** Whether a label names a consequential step. `search`: the control narrows a list (a search form, say). */
+/** `search`: the control narrows a list (a search form, say). */
 export function consequentialLabel(label: string, search = false): boolean {
   const l = read(label);
   if (!l) return false;
@@ -101,13 +90,11 @@ export function consequentialLabel(label: string, search = false): boolean {
   return SOFT.test(l) && !search && !NARROWING.test(l) && !CONSENT.test(l);
 }
 
-/** Past this many words, a link's text is a card or a headline: what it names is where it goes. */
 const CARD_WORDS = 8;
 
 /**
- * A link to another page whose text is a card's or a headline's ("Sony WH-1000XM5 … Kup teraz"): it
- * opens that page and does nothing there itself, so its words don't hold it. One that stays on the page
- * (href="#") may run anything, and is read as a button.
+ * A link to another page whose text is a card or a headline ("Sony WH-1000XM5 … Kup teraz") only opens
+ * that page, so its words don't hold it. One that stays on the page (href="#") is read as a button.
  */
 const card = (el: AgentElement) =>
   !!el.href &&
@@ -116,27 +103,21 @@ const card = (el: AgentElement) =>
   !samePage(el.href, el.url) &&
   fold(el.label).split(" ").length > CARD_WORDS;
 
-/** Where an action lands: a point, a browser element reference, the mouse pointer, or the focused element. */
 export type Where =
   | { x: number; y: number }
   | { ref: string }
   | { cursor: true }
   | { focused: true };
-/** What it does there: a click, Enter, shift+Enter (a new line in a text area), or Space. */
+/** "newline" is shift+Enter: a new line in a text area. */
 export type Press = "click" | "enter" | "newline" | "space";
-/** The elements an action needs checked before it runs, or why it can't run at all. */
 export type Check = { press: Press; at: Where[] } | { refuse: string };
 
-/** What a read key combination presses, if anything a check cares about. */
 export function pressOfCombo(c: Combo): Press | null {
   if (c.key === "enter") return c.mods.length === 1 && c.mods[0] === "shift" ? "newline" : "enter";
   return c.key === "space" ? "space" : null;
 }
 
-/**
- * What one key combination ("Return", "shift+Return", "space") presses, if anything a check cares about.
- * Null too for a name readCombo can't read, which checkFor refuses.
- */
+/** Null too for a name readCombo can't read, which checkFor refuses. */
 export function pressOf(combo: string): Press | null {
   const c = readCombo(combo);
   return c && pressOfCombo(c);
@@ -166,9 +147,8 @@ const CLICKS = new Set([
 ]);
 
 /**
- * What an action needs checked: where a click, mouse press or drag lands (both ends of a drag, since
- * either can be the click), or the focused element for Enter and Space, however they're typed. A key
- * sequence that presses Enter or Space after other keys is refused: what it acts on can't be seen first.
+ * Both ends of a drag are checked, since either can be the click. A key sequence that presses Enter or
+ * Space after other keys is refused: what it acts on can't be seen first.
  */
 export function checkFor(
   toolset: "computer" | "browser",
@@ -240,7 +220,6 @@ export function checkFor(
   return null;
 }
 
-/** A host without "www.", lowercased; null for something that isn't a web address. */
 export function hostOf(url: string | null | undefined): string | null {
   try {
     const u = new URL(url ?? "");
@@ -251,21 +230,14 @@ export function hostOf(url: string | null | undefined): string | null {
   }
 }
 
-/** `host` is `domain` or a host under it. */
 export const onHost = (host: string, domain: string) =>
   host === domain || host.endsWith(`.${domain}`);
 
-/** A path without its trailing slash; the root stays "/". */
 export const pathOf = (path: string) => path.replace(/\/+$/, "") || "/";
 
-/** Query parameters that only say where a visit came from. */
 export const TRACKING =
   /^(?:utm_\w*|fbclid|gclid|gbraid|wbraid|dclid|msclkid|yclid|mc_[ce]id|_ga|igshid)$/i;
 
-/**
- * Two addresses are the same page: the same origin, path (a trailing slash aside) and query (in any
- * order, tracking aside): ?id=1 and ?id=2 are two products.
- */
 export function samePage(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   const page = (s: string) => {
@@ -280,14 +252,12 @@ export function samePage(a: string | null | undefined, b: string | null | undefi
   }
 }
 
-/** Payment pages shops hand over to (PayU, Przelewy24, PayPal and the like). */
 const PAYMENT_HOSTS = (
   "payu.com payu.pl przelewy24.pl paypal.com tpay.com paynow.pl imoje.pl dotpay.pl blik.com " +
   "autopay.pl bluemedia.pl gopay.cz gopay.com comgate.cz checkout.stripe.com buy.stripe.com " +
   "js.stripe.com hooks.stripe.com adyen.com klarna.com checkout.com braintreegateway.com pay.google.com"
 ).split(" ");
 
-/** A payment provider's host, or one under it: a step there pays. */
 export function paymentHost(host: string): boolean {
   const h = host.toLowerCase();
   return PAYMENT_HOSTS.some((p) => onHost(h, p));
@@ -303,7 +273,6 @@ const CHECKOUT_QUERY = ["route", "controller", "step", "fc"];
 const CHECKOUT_ROUTE =
   /^(?:checkout|order(?!s|-detail|-history)|payment|platnosc|zamowienie|kasa|objednavka)/i;
 
-/** The host of a checkout or payment page, where any click may order or pay; null for other pages. */
 export function checkoutHost(url: string | undefined): string | null {
   if (!url) return null;
   try {
@@ -324,9 +293,8 @@ export function checkoutHost(url: string | undefined): string | null {
 }
 
 /**
- * Why an element needs confirm_intent: its label, that it has none to go by (the button itself, or the one
- * beside a text box that Enter would press), the page it's on, or that Hatbot can't see it: inside a frame
- * it couldn't get into (named by its title), or not at all.
+ * Why an element needs confirm_intent. `beside`: the button beside a text box that Enter would press;
+ * `frame`: a frame Hatbot couldn't get into, named by its title.
  */
 export type Hold =
   | { label: string }
@@ -337,7 +305,6 @@ export type Hold =
   /** Enter or Space with the keyboard off the page: in the address bar, where it opens what's typed. */
   | { outside: true };
 
-/** A button that does something, as opposed to a text box, a link or plain text. */
 const buttonLike = (el: AgentElement) =>
   el.tag === "button" ||
   el.role === "button" ||
@@ -345,7 +312,7 @@ const buttonLike = (el: AgentElement) =>
   el.role === "clickable" ||
   (el.tag === "input" && ["submit", "button", "image", "reset"].includes(el.type ?? ""));
 
-/** Somewhere to type. An older desktop-agent doesn't say, so it goes by the tag. */
+/** An older desktop-agent doesn't say, so it goes by the tag. */
 const editable = (el: AgentElement) =>
   el.editable ??
   (el.tag === "textarea" ||
@@ -354,7 +321,6 @@ const editable = (el: AgentElement) =>
 /** No name, or only a symbol ("➤"). */
 const nameless = (label: string) => !/[\p{L}\p{N}]/u.test(label);
 
-/** Whether pressing this element needs confirm_intent first, and why. */
 export function consequential(press: Press, el: AgentElement | null): Hold | null {
   if (!el || el.tag === "body") return null;
   // Payment and chat widgets live in frames from another address.
@@ -366,7 +332,6 @@ export function consequential(press: Press, el: AgentElement | null): Hold | nul
   return hold && framed ? { checkout: framed } : hold;
 }
 
-/** Why pressing `el` needs confirm_intent; `checkout`: the checkout or payment page it's on. */
 function pressed(press: Press, el: AgentElement, checkout: string | null): Hold | null {
   const search = el.search === true;
   // Enter or Space on a button or link presses it, like a click.
@@ -388,7 +353,6 @@ function pressed(press: Press, el: AgentElement, checkout: string | null): Hold 
   return labels.some(nameless) ? { unlabelled: "beside" } : null;
 }
 
-/** A click, or Enter or Space on something that isn't a text box. */
 function clicked(el: AgentElement, search: boolean, checkout: string | null): Hold | null {
   // A select's text is all its options.
   if (el.tag !== "select" && !card(el) && consequentialLabel(el.label, search))
@@ -403,7 +367,6 @@ function clicked(el: AgentElement, search: boolean, checkout: string | null): Ho
   return null;
 }
 
-/** The timeline's words for where a held step was. */
 export function heldWhat(hold: Hold): string {
   if ("label" in hold) return `on "${hold.label}"`;
   if ("checkout" in hold) return `on a checkout page (${hold.checkout})`;
@@ -415,10 +378,7 @@ export function heldWhat(hold: Hold): string {
     : "on a button with no label";
 }
 
-/**
- * What the model is told when a step is held for confirm_intent. `el`: what Enter was pressed in, when
- * shift+Return there would be a new line instead (a text area, not a one-line box).
- */
+/** `el`: what Enter was pressed in, when shift+Return there would be a new line instead. */
 export function heldBack(press: Press, hold: Hold, el: AgentElement | null = null): string {
   const act = press === "click" ? "click" : press === "space" ? "Space" : "Enter";
   const newLine =

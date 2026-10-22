@@ -1,9 +1,7 @@
-// Uptime Kuma: look at monitors, read-only. Kuma's own API is socket.io, so this reads its Prometheus
-// endpoint (/metrics) instead, signed in with an API key. Alerts come in separately, as triggers.
+// Kuma's own API is socket.io, so this reads its Prometheus endpoint (/metrics) instead.
 import { z } from "zod";
 import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
-/** monitor_status's values, from Kuma's UP, DOWN, PENDING and MAINTENANCE. */
 const STATUS: Record<number, Status> = { 0: "down", 1: "up", 2: "pending", 3: "maintenance" };
 type Status = "down" | "up" | "pending" | "maintenance";
 /** Down ones first: what the owner asks about. */
@@ -47,7 +45,6 @@ type Monitor = {
 const present = (v: string | undefined) =>
   v && v !== "null" && v !== "undefined" && !/^https?:\/\/$/.test(v) ? v : "";
 
-/** One monitor per name, from the monitor_* samples. */
 export function monitorsFrom(samples: Sample[]): Monitor[] {
   const byName = new Map<string, Monitor>();
   for (const s of samples) {
@@ -78,7 +75,6 @@ export function monitorsFrom(samples: Sample[]): Monitor[] {
 const statusOf = (m: Monitor) =>
   (m.status === undefined ? undefined : STATUS[m.status]) ?? "unknown";
 
-/** What it checks: the url for web monitors, else host:port. */
 const target = (m: Monitor) => {
   const host = m.hostname ? `${m.hostname}${m.port && m.port !== "0" ? `:${m.port}` : ""}` : "";
   const web = /^(http|keyword|json-query|real-browser|grpc-keyword)$/.test(m.type);
@@ -97,7 +93,6 @@ const line = (m: Monitor) =>
     .filter(Boolean)
     .join(", ");
 
-/** Edit distance, for suggesting a name the model nearly got right. */
 const distance = (a: string, b: string) => {
   let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {

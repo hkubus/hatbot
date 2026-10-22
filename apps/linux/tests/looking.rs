@@ -1,4 +1,3 @@
-// L6: search, the to-do list and looking after things (PLAN.md §24.2).
 mod common;
 
 use common::*;

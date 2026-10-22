@@ -7,7 +7,6 @@ const getTheme = (): Theme => (localStorage.getItem("hatbot-theme") as Theme | n
 /** The page's background in each theme (--bg), as in index.html's theme-color tags and theme.js. */
 const BAR = { light: "#f5f5f7", dark: "#161617" } as const;
 
-/** A theme-color tag's colour: its own scheme's under "system", else the chosen theme's. */
 export const barColor = (t: Theme, media: string): string =>
   t === "system" ? (media.includes("dark") ? BAR.dark : BAR.light) : BAR[t];
 
@@ -20,7 +19,6 @@ export function setTheme(t: Theme) {
   window.dispatchEvent(new Event("hatbot:theme"));
 }
 
-/** The chosen theme, wherever it was last changed: the toolbar or Settings. */
 export function useTheme(): Theme {
   return useSyncExternalStore((l) => {
     window.addEventListener("hatbot:theme", l);

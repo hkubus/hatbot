@@ -1,7 +1,3 @@
-// Background tasks (PLAN.md §5.1, §5.6): started by a schedule, a trigger, the chat's run_task, or
-// another bot's ask_bot. The
-// model Settings choose (Haiku by default) with Hatbot's own tools and the plugins' tools, in the
-// background lane, reporting back through finish_task.
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
@@ -65,20 +61,18 @@ import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat
 import type { Tasks } from "./service";
 
 const MAX_STEPS = 30;
-/** Code work (effort medium or high) reads and writes more. */
 const MAX_CODE_STEPS = 80;
 /**
- * The most a run may take of its own time (the model, its tools and its waits), so a schedule's next
- * runs aren't held up for ever. Time waiting for the owner, or for tasks it started, doesn't count.
+ * So a schedule's next runs aren't held up for ever. Time waiting for the owner, or for tasks it
+ * started, doesn't count.
  */
 const MAX_RUN_MS = 4 * 3600_000;
-/** Times one task may ask the owner (ask_owner). */
 const MAX_ASKS = 3;
 const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-display-updates-2026-08-18",
   "context-management-2025-06-27",
 ];
-/** The chat's tools a background task gets. Schedules and triggers stay with the chat. */
+/** Schedules and triggers stay with the chat. */
 const SHARED_TOOLS = [
   "memory_list",
   "memory_read",
@@ -108,7 +102,6 @@ const FinishTask = z.object({
     ),
 });
 
-/** What's wrong with the summary's charts, or "" if they all draw. */
 const chartsWrong = async (summary: string, attachments?: Attachments) =>
   (await brokenChartsOf(summary, attachments))
     .map((b) => `chart ${b.n} doesn't draw (${b.problem}).`)
@@ -127,10 +120,8 @@ const NotifyOwner = z.object({
   message: z.string().min(1).max(500).describe("What the owner should know now, in a line or two"),
 });
 
-/** Notifications one task may send before it ends; its result notifies on its own. */
 const MAX_NOTIFICATIONS = 5;
 
-/** The core's tools for a background task; the plugins' tools follow. */
 const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   ...TOOL_PARAMS.filter((t) => SHARED_TOOLS.includes(t.name)),
   toolParam({
@@ -183,18 +174,17 @@ const STARTED_BY = {
   chat: () => "the owner, from the chat",
 };
 
-/** Why a change asks without the review. */
 const SUSPECTED =
   "Something it read may be instructions aimed at Hatbot, so the review is skipped.";
 
-/** An alert as the task reads it: Kuma's own fields trusted, its message as untrusted data. */
+/** Kuma's own fields are trusted; its message is untrusted data. */
 const alertEvent = (
   { alert, message }: { alert: string; message: string },
   encode: (alert: string) => string,
 ) =>
   `\n<event trusted="true">\n${encode(alert)}\n</event>${message ? `\n${untrustedBlock("event_message", message)}` : ""}`;
 
-/** An alert the limits stopped before anything looked at it: what it said, so you still hear it. */
+/** What an alert the limits stopped said, so you still hear it. */
 function notInvestigated(limit: "daily" | "monthly", payload: string | null): string {
   let said = (payload ?? "").slice(0, 500);
   try {
@@ -215,21 +205,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const children = new Set<number>();
-  /** Untrusted things the task has read, for approvals (PLAN.md §6.2). */
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
   const requests = requestsFor(tasks, task, signal);
-  /** When it got its first slot, and the time since spent waiting for the owner or its own tasks. */
   let startedAt = 0;
   let awayMs = 0;
-  /** The run's own time so far: the model, its tools and its waits. */
   const ownMs = () => tasks.clock() - startedAt - awayMs;
 
   /**
-   * Runs `fn` without holding a slot, then queues for one again, shown as queued meanwhile. `own`: the
-   * time counts towards the run's limit (the wait tool); waiting for the owner or for a task it started
-   * doesn't, since those have limits of their own.
+   * `own`: the time counts towards the run's limit (the wait tool); waiting for the owner or for a
+   * task it started doesn't, since those have limits of their own.
    */
   const withoutSlot = async <T>(fn: () => Promise<T>, own = false): Promise<T> => {
     const from = tasks.clock();
@@ -245,13 +231,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!own) awayMs += tasks.clock() - from;
     }
   };
-  /** What a plugin call is doing now, on the task's card. */
   const shown = tasks.progress(id);
   // Fixed for the whole run: the tool list is part of the prompt cache.
-  // A bot gets only the plugins it may use, less those it leaves to the other bots.
   const own = d.plugins.tools(bot.plugins, d.bots.leftToOthers(bot));
   // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
-  // anything; it ends with finish_research (PLAN.md §17).
+  // anything.
   const { research } = task;
   const negotiating = (from: PluginTool[]) => ({
     from,
@@ -263,7 +247,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       .filter((t) => !research || t.access === "read")
       .map((t) => [t.name, t]),
   );
-  /** A plugin tool the task was offered, as it is now (see liveTool). */
   const current = (name: string): PluginTool | string => {
     const offered = pluginTools.get(name);
     if (!offered) return `Unknown tool "${name}".`;
@@ -292,7 +275,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(research ? LEAD_WEB_TOOLS : WEB_TOOLS),
   ];
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
-  /** Results never cleared: a research task's findings are what it cites. Only tools sent. */
+  /** Results never cleared: a research task's findings are what it cites. */
   const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) => sent.has(n));
   const guidance = d.plugins.guidance(bot.plugins, d.bots.leftToOthers(bot));
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
@@ -300,7 +283,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ? promptFor(researchPrompt(bot), bot, others, { plugins, handOver: RESEARCH_ASK_BOT })
     : promptFor(AGENT_PROMPT, bot, others, { plugins });
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
-  /** What the task reads from outside, screened for prompt injection while it goes on (PLAN.md §6.1). */
   const screener = new Screener(
     d,
     { taskId: id },
@@ -317,7 +299,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     },
     { reserve: usesReserve(task.origin) },
   );
-  /** It read untrusted content, `source`; `text`, when given, is screened. */
   const taint = (source: string, text?: Readable) => {
     if (text !== undefined) screener.add(source, text);
     sources.add(source);
@@ -345,10 +326,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(isError ? { is_error: true } : {}),
   });
 
-  /**
-   * Waits for a task this one started, shown on the timeline as `name`, without holding a slot: one
-   * on the screen or another bot's may need it. It's cancelled with this one.
-   */
+  /** Without holding a slot: one on the screen or another bot's may need it. */
   const waitForChild = async (childId: number, name?: string): Promise<Task> => {
     children.add(childId);
     tasks.addStep(id, {
@@ -389,7 +367,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       request: withNotes(ownerWords()) ?? undefined,
     });
     const ended = await waitForChild(child.id, child.title);
-    // Its summary is made from web pages (PLAN.md §6.1).
+    // Its summary is made from web pages.
     taint(`Desktop task #${child.id}`);
     return result(
       call,
@@ -442,13 +420,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     );
   };
 
-  /** What you told the task on its approvals, newest last: your words, for the approval checks. */
   const notes: string[] = [];
 
-  /**
-   * Asks you and waits, with your note if you wrote one. Nobody answering within 24 hours, or a
-   * cancelled approval, ends the task.
-   */
   const askApproval = async (input: {
     kind: ApprovalKind;
     summary: string;
@@ -472,9 +445,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   };
 
   /**
-   * The instructions you wrote for what started this task, as Haiku's review reads them. A trusted
-   * event (an alert, a trusted webhook) comes with them; an untrusted one doesn't, so it can't pick the
-   * target. Null for a schedule the chat made after reading untrusted content.
+   * An untrusted event isn't shown to the review, so it can't pick the target. Null for a schedule
+   * the chat made after reading untrusted content.
    */
   const standingWords = (): string | null => {
     if (task.origin === "schedule") {
@@ -513,21 +485,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
   };
 
-  /** Your words behind this task. */
   const ownerWords = (): string | null =>
     task.origin === "chat" ? tasks.requestOf(id) : standingWords();
 
-  /** Your words for the approval checks, with the notes you gave on this task's approvals. */
   const withNotes = (words: string | null): string | null =>
     notes.length
       ? `${words ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
       : words;
 
-  /**
-   * The review of a change that would ask (PLAN.md §6.1): if it isn't destructive or dangerous, it
-   * goes ahead and the timeline says so. Never for money, accounts, what you said to always ask
-   * about, or suspected injection. Its reason either way.
-   */
+  /** Never for money, accounts, what you said to always ask about, or suspected injection. */
   const reviewed = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
@@ -538,7 +504,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     await screener.settled();
     const suspected = tasks.get(id)?.injectionSuspected ?? false;
     if (!mayReview(verdict, suspected)) return { safe: false, why: "", suspected };
-    // What you allowed beyond once (PLAN.md §6.2).
     const granted = d.approvals.granted({
       botId: bot.id,
       tool: t.name,
@@ -578,7 +543,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return check;
   };
 
-  /** A plugin tool: its policy and the untrusted-content rule first, then the call. */
   const pluginCall = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
@@ -652,11 +616,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(call, note ? `${r.content}\n\n${ownerNote(note)}` : r.content, r.isError);
   };
 
-  /** Sleeps without holding a slot, until the time is up or the task is told something. */
   const wait = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = Wait.safeParse(call.input);
     if (!p.success) return result(call, invalidInput(p.error), true);
-    // Not past the run's time limit.
     const left = Math.max(1, Math.floor((MAX_RUN_MS - ownMs()) / 60_000));
     const minutes = Math.min(p.data.minutes, left);
     tasks.addStep(id, {
@@ -669,10 +631,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(call, woke ? "Woke early: an event arrived (below)." : `Waited ${minutes} min.`);
   };
 
-  /** Asks the owner and waits without a slot, for their answer or until the time runs out. */
-  /** ask_owner calls so far; a run lasts only as long as the brain, like the task. */
+  /** Not stored: a run lasts only as long as the brain, like the task. */
   let asks = 0;
-  /** Asks the owner and waits without a slot, for every answer or until the time runs out. */
   const ask = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = TaskAskOwner.safeParse(call.input);
     if (!p.success) return result(call, invalidInput(p.error), true);
@@ -719,7 +679,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(call, [...each, ...(answers.includes(null) ? [unanswered] : [])].join("\n\n"));
   };
 
-  /** Research: the helpers' sources, and how finishing has gone. */
   const found = new ResearchState();
   const run = { tasks, task, signal, taint, messages, reserveUsd: 0 };
 
@@ -728,7 +687,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     slot = true;
     startedAt = tasks.clock();
     tasks.setStatus(id, "running");
-    // Why it may already be tainted, for its approvals (PLAN.md §6.2).
     if (task.tainted) sources.add(task.taintedBy ?? "What started it");
     const foreign = untrustedDefinitions([...pluginTools.values()]);
     if (foreign) taint(foreign);
@@ -756,16 +714,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
     /** finish_task sends a summary whose charts don't draw back once, not every time. */
     let chartsChecked = false;
-    /** Research is told once to finish when near its limits. */
     let toldToFinish = false;
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
-    /** It was asked once to end with finish_task after a reply that called no tool. */
     let nudged = false;
-    /**
-     * Only finish_task ends a task: asked once, then it has failed. Research ends with finish_research,
-     * which saves the report: it's asked for once.
-     */
+    /** Only finish_task (research: finish_research) ends a task: asked once, then it has failed. */
     const nudge = () => {
       if (nudged && research)
         throw new Stop("failed", "Stopped: it ended without calling finish_research.");
@@ -837,7 +790,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const res = await requests.stream(params);
       record("assistant", res.content);
       container = containerOf(res, container);
-      // What it read on the web: steps on the timeline, and untrusted (PLAN.md §6.1).
       for (const read of webReads(res.content)) {
         tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
         taint(read);
@@ -915,7 +867,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "wait") return wait(call);
         if (call.name === "ask_owner") return ask(call);
         if (call.name === "send_file") {
-          // On the task, so it shows wherever the task does.
           const r = await runTool(call.name, call.input, { ...ctx, taskId: id });
           if (!r.isError)
             tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
@@ -1008,7 +959,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
   } catch (err) {
     const ended = endOf(err, id, signal);
-    // Research that stops short keeps what it had (PLAN.md §17), unless you stopped it.
+    // Research that stops short keeps what it had, unless you stopped it.
     if (research && ended.status !== "done" && !signal.aborted)
       ended.summary = await keepUnfinished(run, found, ended.summary);
     tasks.finish(id, ended.status, ended.summary, ended.notify);
@@ -1030,7 +981,6 @@ const DONE = {
   search_history: "Searched the chat for",
 } as Record<string, string>;
 
-/** A tool call in a line, for the timeline: "Read notes/framework.md". */
 function describe(name: string, input: unknown): string {
   const o = (input ?? {}) as Record<string, unknown>;
   const arg = o.path ?? (o.query ? `"${o.query}"` : "");

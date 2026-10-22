@@ -1,4 +1,3 @@
-// HTTP client for desktop-agent (PLAN.md §4.2).
 import type {
   AgentAction,
   AgentActionResult,
@@ -28,7 +27,6 @@ export class DesktopError extends Error {
   }
 }
 
-/** What the brain needs from the desktop; tests substitute a fake. */
 export interface DesktopAgent {
   readonly configured: boolean;
   /** `deep`: also grabs a frame and asks Chromium's DevTools, for Check everything. */
@@ -45,7 +43,6 @@ export interface DesktopAgent {
   putFile(path: string, bytes: Uint8Array): Promise<void>;
   /** A file in the shell's home, by a path relative to it, up to 25 MB. */
   getFile(path: string): Promise<Uint8Array>;
-  /** Starts a long command in the shell, which goes on after this returns its id. */
   startJob(job: ShellJob): Promise<string>;
   /** What a job printed from byte `from` on. Throws a 410 once the shell has forgotten it. */
   readJob(id: string, from: number): Promise<ShellJobStatus>;
@@ -57,25 +54,18 @@ export interface DesktopAgent {
   fetch(url: string): Promise<FetchResult>;
   /** The page after its scripts ran, in a headless Chromium on the desktop that isn't the bots'. */
   render(url: string): Promise<RenderResult>;
-  /** Renders a page of the desktop's own whose script writes its text. Throws when that fails. */
   renderCheck(): Promise<void>;
   /** A box's page drawn in the same Chromium, with no network, and the errors it hit (box_look). */
   lookAtBox(look: BoxLook): Promise<BoxLookResult>;
-  /** One browser toolset member, run on Chromium over CDP. */
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
-  /** The element a browser click or Enter would act on. */
   browserInspect(at: BrowserInspect): Promise<AgentElement | null>;
-  /**
-   * Chromium on this bot's own profile (PLAN.md §14), closing it if it's on another's. False where the
-   * desktop has the one shared profile.
-   */
+  /** Chromium on this bot's own profile. False where the desktop has one shared profile. */
   useProfile(botId: string): Promise<boolean>;
   /** Closes the tabs earlier tasks left open, down to one blank tab. False on an older desktop-agent. */
   resetBrowser(): Promise<boolean>;
   lock(): Promise<void>;
   unlock(): Promise<void>;
-  /** WebSocket URL and headers for the live view. */
   liveSocket(): { url: string; headers: Record<string, string> };
   /** The same desktop, its requests ending as soon as `signal` aborts: a task's, once it's cancelled. */
   withSignal?(signal: AbortSignal): DesktopAgent;
@@ -100,7 +90,6 @@ export function browserTimeoutMs(call: BrowserCall): number {
   return 45_000 + (typeof text === "string" ? text.length * 150 : 0);
 }
 
-/** What a desktop-agent too old for a call says: run Update. */
 const tooOld = (what: string) => (): never => {
   throw new DesktopError(`desktop-agent is too old to ${what}; run Update.`, 404);
 };
@@ -157,7 +146,6 @@ export class HttpDesktopAgent implements DesktopAgent {
     return (await (await this.req(method, path, body, timeoutMs)).json()) as T;
   }
 
-  /** `call`, or `old` for a desktop-agent too old to answer it (a 404). */
   private async unlessOld<T>(call: () => Promise<T>, old: () => T): Promise<T> {
     try {
       return await call();

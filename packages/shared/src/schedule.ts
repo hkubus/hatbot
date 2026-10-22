@@ -1,15 +1,12 @@
-// Schedules and triggers (PLAN.md §5.6, §8): types, request bodies, and cron in words.
 import { z } from "zod";
 import { BOT_ID } from "./bot-id";
 
 export type Schedule = {
   id: number;
-  /** The bot its runs are. */
   botId: string;
   name: string;
   /** Five-field cron, in the brain's time zone. Exactly one of cron and runAt is set. */
   cron: string | null;
-  /** A one-off run. */
   runAt: string | null;
   /** What the run does: instructions for a background task that can't see the chat. */
   prompt: string;
@@ -56,13 +53,11 @@ export type TriggerKind = "webhook" | "kuma";
 
 export type Trigger = {
   id: number;
-  /** The bot its runs are. */
   botId: string;
   name: string;
   kind: TriggerKind;
-  /** Payloads count as trusted content (PLAN.md §6.1). Uptime Kuma alerts always do. */
+  /** Payloads count as trusted content. Uptime Kuma alerts always do. */
   trusted: boolean;
-  /** What a run does with the event. */
   prompt: string;
   enabled: boolean;
   /**

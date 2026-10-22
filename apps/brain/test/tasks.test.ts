@@ -17,7 +17,6 @@ function startTask(t: TestApp, goal = "Book a table") {
 
 const pending = (t: TestApp) => waitFor(() => t.approvals.list(true)[0]);
 
-/** What the last message of a request said. */
 const lastText = (req: { messages: { content: unknown }[] } | undefined) =>
   JSON.stringify(req?.messages.at(-1)?.content);
 
@@ -187,7 +186,6 @@ test("notification buttons carry signed, single-use tokens that do only their ow
   expect((await decide(yes)).status).toBe(409);
   expect(t.approvals.get(approval.id)?.decidedVia).toBe("ntfy");
 
-  // Pause all stops the running task and locks the desktop.
   await waitFor(() => t.tasks.get(task.id)?.status === "waiting_takeover");
   expect((await t.call("POST", "/pause-all/token", stop, { origin: "" })).status).toBe(200);
   await t.tasks.idle();
@@ -729,7 +727,6 @@ test("an ended task runs again with its goal as you edited it, still tainted", a
     tainted: true,
     taintedBy: "The event that started it (Forgejo)",
   });
-  // Still running: not twice at once.
   expect((await t.call("POST", `/tasks/${again.id}/rerun`, {}, { cookie })).status).toBe(409);
   await t.tasks.idle();
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("Deploy main again");

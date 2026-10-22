@@ -1,7 +1,4 @@
-// The open chat (PLAN.md §10.2, §10.4): a column of messages with a time after a pause and the
-// finished conversations folded under their recaps, the approvals and questions waiting for you, and
-// the composer. Rows are built again only when what they show changes; a reply streaming in updates
-// in place.
+// Rows are built again only when what they show changes; a reply streaming in updates in place.
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
@@ -20,9 +17,7 @@ use super::tray::Tray;
 
 pub struct Chat {
     pub root: gtk::Widget,
-    /// For the header: in or out of incognito.
     pub incognito: gtk::ToggleButton,
-    /// Shows a message in its chat.
     pub reveal: Rc<dyn Fn(MessageLink)>,
     _inner: Rc<Inner>,
     _listener: Listener,
@@ -313,7 +308,6 @@ impl Inner {
         self.check_seen();
     }
 
-    /// Scrolling up to the top loads the page before it, keeping your place.
     fn load_earlier(self: &Rc<Self>) {
         if self.loading_earlier.get() || !self.store.state().has_earlier {
             return;
@@ -335,7 +329,6 @@ impl Inner {
         });
     }
 
-    /// The rows the chat shows now: times, folds, and the messages that aren't folded away.
     fn rows(&self) -> Vec<(Key, Shows)> {
         let st = self.store.state();
         let group = st

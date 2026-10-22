@@ -11,7 +11,6 @@ import { getSetting, setSetting } from "./settings";
 
 const HISTORY_KEY = "storage:history";
 const UPKEEP_KEY = "storage:upkeep";
-/** Daily samples kept for the growth figure. */
 const KEEP_SAMPLES = 30;
 const KEEP_SNAPSHOTS = 7;
 /** Upkeep runs once a day, at this hour or the first tick after. */
@@ -22,14 +21,12 @@ type Sample = { day: string; total: number };
 
 export type StorageDeps = { db: Db; archive: Archive; clock?: () => number };
 
-/** A local calendar day, YYYY-MM-DD. */
 const dayOf = (ms: number) => {
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-/** The bytes under a folder; a missing one is empty. */
 async function dirSize(dir: string): Promise<number> {
   try {
     const p = Bun.spawn(["du", "-sb", dir], { stdout: "pipe", stderr: "ignore" });
@@ -86,7 +83,7 @@ export class Storage {
     return join(this.d.archive.dir, "db");
   }
 
-  /** Sizes now, and the growth over the last week. Keeps today's sample for later weeks. */
+  /** Also keeps today's sample for later weeks. */
   async measure(): Promise<StorageInfo> {
     const file = this.d.db.filename;
     const size = async (p: string) => (await stat(p).catch(() => null))?.size ?? 0;
@@ -125,7 +122,6 @@ export class Storage {
     };
   }
 
-  /** The upkeep, once a day; the brain calls it every few seconds. */
   tick() {
     if (this.busy) return;
     const now = this.clock();
@@ -151,7 +147,6 @@ export class Storage {
     }
   }
 
-  /** A copy of the database into the archive, keeping the last 7. */
   async snapshot(day = dayOf(this.clock())): Promise<string> {
     await mkdir(this.snapshotDir, { recursive: true });
     const target = join(this.snapshotDir, `hatbot-${day}.sqlite`);

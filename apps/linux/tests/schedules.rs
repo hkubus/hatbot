@@ -1,4 +1,3 @@
-// L5: schedules and triggers (PLAN.md §24.2).
 mod common;
 
 use common::*;

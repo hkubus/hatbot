@@ -1,4 +1,3 @@
-// run_desktop_task: the computer- and browser-use subloop (PLAN.md §5.5, §5.6, §6.1).
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
@@ -47,15 +46,12 @@ import {
 import { DesktopSendToChat, SEND_TO_CHAT_DESCRIPTION, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
-/** A desktop task Haiku gives up on carries on, once, on Opus (PLAN.md §5.4). */
+/** A desktop task Haiku gives up on carries on, once, on Opus. */
 const FIRST_MODEL = "claude-haiku-5-5";
 const ESCALATE_TO = "claude-opus-5-5";
-/**
- * Steps per attempt, and how long Take over waits for another task to let go of the screen for the task
- * that asked; tests lower them.
- */
+/** `takeoverReadyMs`: how long Take over waits for another task to let go of the screen. */
 export const limits = { maxSteps: 80, takeoverReadyMs: 8_000 };
-/** A failure Opus may get past, where the model is asked what it tried. */
+/** Escalate, asking the model what it tried. */
 const ASK = { account: null };
 const MAX_ACTIVE_MS = 30 * 60_000;
 const TAKEOVER_TIMEOUT_MS = 24 * 3600_000;
@@ -170,7 +166,7 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description: "End the task and report the outcome to the owner.",
     schema: FinishTask,
   },
-  // Only in a negotiation's desktop tasks (PLAN.md §16.3).
+  // Only in a negotiation's desktop tasks.
   {
     name: "record_conversation",
     description:
@@ -184,14 +180,13 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   eager_input_streaming: true,
 }));
 
-/** The answer to a reply that called no tool. */
 const NUDGE =
   "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on with the next action.)";
 
-/** How a send the gate let through is confirmed: the text leaving the box. Tests shorten it. */
+/** A send the gate let through is confirmed by the text leaving the box. Tests shorten it. */
 export const sendConfirm = { tries: 6, everyMs: 500 };
 
-/** The computer toolset on desktop-agent. The SDK formats results; the run checks policy before calling it. */
+/** The SDK formats results; the run checks policy before calling it. */
 class Computer extends BetaAbstractComputerToolset20260801 {
   constructor(
     private agent: DesktopAgent,
@@ -220,7 +215,7 @@ class Computer extends BetaAbstractComputerToolset20260801 {
   }
 }
 
-/** The browser toolset on desktop-agent's CDP driver. Like Computer, the run checks policy before calling it. */
+/** Like Computer, the run checks policy before calling it. */
 class Browser extends BetaAbstractBrowserToolset20260801 {
   constructor(
     private agent: DesktopAgent,
@@ -251,7 +246,6 @@ class Browser extends BetaAbstractBrowserToolset20260801 {
   }
 }
 
-/** The open tabs, for the model in place of a screenshot. */
 const tabsText = (state: BrowserState) =>
   state.tabs.length
     ? state.tabs
@@ -259,7 +253,6 @@ const tabsText = (state: BrowserState) =>
         .join("\n")
     : "No tabs are open.";
 
-/** Halt text for the calls after a failed one in the same turn, per toolset. */
 const NOT_EXECUTED: Record<string, string> = {
   computer: "Not executed: an earlier computer action in this turn failed.",
   browser: "Not executed: an earlier action in this turn failed.",
@@ -312,7 +305,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   if (!task) return;
   // Its requests end when the task is cancelled, not when they would have.
   const agent = d.desktop.agent.withSignal?.(signal) ?? d.desktop.agent;
-  /** Haiku's, until it fails and Opus carries on. */
   let model = task.model;
   const requests = requestsFor(tasks, task, signal);
 
@@ -321,14 +313,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let since = 0;
   let seq = 0;
   let lastUrl: string | null = null;
-  /**
-   * An approved confirm_intent: it covers the held step it was asked for, on the page it was asked on. One
-   * asked before trying is spent on the next held step, and dropped when the page changes.
-   */
   let armed: Armed | null = null;
-  /** The last step held for confirm_intent, and where: what an approval asked next is for. */
+  /** What an approval asked next is for. */
   let lastHeld: { hold: Hold; page: string | null; what: string } | null = null;
-  /** A negotiation's task: it may send one approved message, or only read (PLAN.md §16.3). */
+  /** A negotiation's task may send one approved message, or only read. */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
   /** Text was typed or pasted in this task: what's in a box may be ours, not sent. */
@@ -341,7 +329,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
   /** Waiting for the model with the screen held: another task waiting ahead of the line may have it. */
   let thinking = false;
-  /** A task waits ahead of the line: let go of the screen before the next model turn. */
   let yieldAsked = false;
   /** The screen went to another task while the model thought: what it planned may not fit any more. */
   let lostScreen = false;
@@ -381,12 +368,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const holder = tasks.lane.holderId;
     d.desktop.setActiveTask(holder, holder === null ? null : (tasks.get(holder)?.botId ?? null));
   };
-  /** Waits for you with the screen released (PLAN.md §5.6), then queues for it again. */
   const away = async <T>(fn: () => Promise<T>): Promise<T> => {
     release();
     tasks.setStatus(id, "waiting_approval");
     const out = await fn();
-    // Approved or answered: what it waits for now is the screen.
     tasks.setStatus(id, "queued");
     await acquire();
     return out;
@@ -403,7 +388,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (stepId) tasks.setStepScreenshot(stepId, path);
     else tasks.addStep(id, { kind, name: label, detail: "", url: lastUrl, screenshot: path });
     if (!task.tainted) {
-      // The screen shows untrusted content from here on (PLAN.md §6.1).
+      // The screen shows untrusted content from here on.
       task.tainted = true;
       tasks.taint(id, lastUrl ? `The page at ${lastUrl}` : "What was on the screen");
     }
@@ -416,10 +401,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
   const computer = new Computer(agent, onImage);
   const browser = new Browser(agent, onImage);
-  /**
-   * What the model gets to see after a pause (start, approval, takeover): the open tabs, so it reads only
-   * what it needs. The timeline gets a screenshot.
-   */
+  /** The model gets the open tabs, so it reads only what it needs; the timeline gets a screenshot. */
   const look = async (label: string, lead: string): Promise<BlockParam[]> => {
     await capture(await agent.screenshot(), label);
     const state = await agent.browserState().catch(() => null);
@@ -444,7 +426,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.appendTurn(id, role, stored);
   };
 
-  /** What you told the task on its approvals, newest last: your words, for the review. */
   const notes: string[] = [];
   const askApproval = async (input: {
     kind: ApprovalKind;
@@ -464,7 +445,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return answer;
   };
 
-  /** Waits for you, ending the task when it's cancelled or `nobody` once 24 hours pass. */
   const forOwner = async (nobody: string, wait: (until: AbortSignal) => Promise<void>) => {
     const timeout = AbortSignal.timeout(TAKEOVER_TIMEOUT_MS);
     try {
@@ -475,7 +455,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
   };
 
-  /** Waits while you have the desktop, holding the screen lane: you're working on this task's behalf. */
+  /** Holds the screen lane: you're working on this task's behalf. */
   const waitForOwner = async () => {
     tasks.setStatus(id, "waiting_takeover");
     activeMs += tasks.clock() - since;
@@ -486,12 +466,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "running");
   };
 
-  /** Verdicts by page, so a page seen again isn't screened again. */
   const verdicts = new Map<string, Screening>();
   /** Pages being screened while the model reads them; their verdicts come before its next actions. */
   let screening: Promise<{ verdict: Screening; host: string; url: string }>[] = [];
 
-  /** Logs page changes and starts screening each new page for prompt injection. */
   const observePage = async () => {
     const ctx = await agent.context(false).catch(() => null);
     const url = ctx?.url?.split("#")[0] ?? null;
@@ -528,10 +506,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     screening.push(verdict.then((v) => ({ verdict: v, host, url })));
   };
 
-  /**
-   * Applies the verdicts on the pages the model just read: a suspected one asks you to go on, and one
-   * that couldn't be checked only says so.
-   */
   const screened = async () => {
     const pending = screening;
     screening = [];
@@ -572,7 +546,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const invalid = (call: Anthropic.Beta.BetaToolUseBlock, error: z.ZodError) =>
     textResult(call, `Invalid input: ${z.prettifyError(error)}`, true);
 
-  /** A tool's handler, given its input once that's valid. */
   const withInput =
     <S extends z.ZodType>(
       schema: S,
@@ -583,16 +556,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       return p.success ? run(call, p.data) : invalid(call, p.error);
     };
 
-  /** A step not run: on the timeline as `detail`, and to the model as why. */
   const notRun = (call: Anthropic.Beta.BetaToolUseBlock, detail: string, why = detail) => {
     tasks.addStep(id, { kind: "note", name: "Held back", detail, url: lastUrl });
     return textResult(call, `Not run: ${why}`, true);
   };
 
-  /**
-   * Runs one toolset call (computer or browser): waits out a takeover, holds back a consequential click or
-   * Enter until confirm_intent approves it (PLAN.md §6.1), then logs and runs it.
-   */
+  /** Holds back a consequential click or Enter until confirm_intent approves it. */
   const toolsetCall = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const input = (call.input ?? {}) as Record<string, unknown>;
     const isBrowser = call.toolset_name === "browser";
@@ -627,7 +596,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }
       return r as ToolResult;
     }
-    /** Looks again at what the check looked at, to see whether a send left the text box. */
     let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
     if (check) {
@@ -689,8 +657,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
-      // An approval covers the step it was asked for, on the page it was given for. One asked before
-      // trying is spent on the first held step, covered or not.
+      // One asked before trying is spent on the first held step, covered or not.
       const here = el?.url ?? lastUrl;
       const was = armed;
       const uncovered = hold && was ? notCovered(was, hold, here) : null;
@@ -750,10 +717,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return r;
   };
 
-  /**
-   * Whether the approved text has left the text boxes, looking a few times as the page catches up, and
-   * the address of the page it was sent from (its tab, not whichever is on screen).
-   */
+  /** The address is the send's tab's, not whichever is on screen. */
   const sentFrom = async (
     inspectAgain: () => Promise<Inspected>,
   ): Promise<{ went: boolean; url: string | null }> => {
@@ -767,7 +731,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return { went: false, url: null };
   };
 
-  /** record_conversation: the brain stores what the seller wrote, and says whether the send may go. */
   const recordConversation = withInput(RecordConversation, async (call, input) => {
     if (!gate || !tasks.negotiations)
       return textResult(call, "This task has no negotiation.", true);
@@ -834,7 +797,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const arm = (hold: Hold | null) => {
       armed = { page, kind, summary: input.summary, control: input.control, hold };
     };
-    // The pages it read are screened first: suspected injection skips the review (PLAN.md §6.1).
+    // The pages it read are screened first: suspected injection skips the review.
     await screened();
     const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
     if (
@@ -909,7 +872,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     );
   });
 
-  /** The desktop's shell. Destructive patterns ask, as on your hosts (PLAN.md §5.5). */
+  /** Destructive patterns ask, as on your hosts. */
   const shellCall = withInput(DesktopShell, async (call, input) => {
     const { command, timeout_s: timeoutS = 60 } = input;
     if (d.desktop.get().control === "owner") await waitForOwner();
@@ -1035,7 +998,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return textResult(call, await look("After takeover", "The owner handed the desktop back."));
   });
 
-  /** The tools besides the computer and browser, by name; record_conversation only in a negotiation. */
   const handlers = new Map([
     ["confirm_intent", confirmIntent],
     ["request_takeover", requestTakeover],
@@ -1084,7 +1046,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     messages: msgs,
   });
 
-  /** One model's go at the task. It ends by throwing: Stop, or why it couldn't go on. */
+  /** Ends by throwing: Stop, or why it couldn't go on. */
   const attempt = async (label: string, brief: string): Promise<never> => {
     const first = await look(
       label,
@@ -1152,7 +1114,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
       const results: BlockParam[] = [];
       let finished: z.infer<typeof FinishTask> | null = null;
-      /** Toolsets whose batch stopped at a failure this turn: their later calls don't run. */
       const halted = new Set<string>();
       for (const call of calls) {
         const toolset = call.toolset_name ?? "";
@@ -1200,11 +1161,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
   };
 
-  /** Whether a failed attempt carries on on Opus: Haiku's, once, unless Settings say not to. */
   const escalates = () =>
     model === FIRST_MODEL && d.settings.get().desktopEscalate && !signal.aborted;
 
-  /** The model's account of what it tried, for the one carrying on; empty if it can't give one. */
   const accountOf = async (why: string): Promise<string> => {
     const ask: BlockParam = {
       type: "text",
@@ -1233,7 +1192,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
 
   try {
-    // The owner saved it (PLAN.md §5.4), so it's trusted like the task itself.
+    // The owner saved it, so it's trusted like the task itself.
     const steps = task.skill ? await d.memory.readOrNull(skillPath(task.skill)) : null;
     const skill =
       steps === null ? "" : `<skill name="${task.skill}">\n${steps.trim()}\n</skill>\n\n`;

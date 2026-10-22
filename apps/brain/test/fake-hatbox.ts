@@ -20,7 +20,6 @@ export class FakeHatbox implements HatboxAgent {
   runs: number[] = [];
   /** What the next scheduled() run gives back. */
   run: BoxRun = { ok: true };
-  /** Each box's secrets as the guest holds them. */
   secretsOf = new Map<number, BoxSecrets>();
   /** The lines the brain wrote in the boxes' logs. */
   notes: string[] = [];

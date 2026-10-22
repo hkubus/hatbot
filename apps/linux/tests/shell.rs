@@ -1,4 +1,3 @@
-// L1: signing in, the event stream and signing out (PLAN.md §24.2).
 mod common;
 
 use std::cell::Cell;

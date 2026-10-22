@@ -1,6 +1,3 @@
-// The share sheet's Hatbot: what you share, with a note, goes to Hatbot's chat; text someone else wrote
-// goes as a file, not as your words. It reads the token the app keeps in the App Group's Keychain
-// access group.
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -26,8 +23,8 @@ final class ShareViewController: UIViewController {
   }
 }
 
-/// A file from the share sheet, ready to upload: a photo already scaled, anything else copied to a file
-/// that goes up from disk, a piece at a time: the extension can't hold a big one in memory.
+/// Anything but a photo is copied to a file and uploaded from disk a piece at a time: the extension
+/// can't hold a big one in memory.
 struct SharedFile: Identifiable {
   enum Content {
     case data(Data)
@@ -40,13 +37,11 @@ struct SharedFile: Identifiable {
   var mediaType: String
   var preview: UIImage?
 
-  /// Its copy, sent or left out.
   func deleteCopy() {
     if case let .file(url) = content { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
   }
 }
 
-/// What came of a file the share sheet lends.
 private enum Lent {
   case file(SharedFile)
   /// Over the brain's 25 MB: not copied, and not sent.
@@ -60,9 +55,7 @@ struct ShareView: View {
   let done: (Bool) -> Void
   @State private var draft = ShareDraft()
   @State private var files: [SharedFile] = []
-  /// Files left out for their size.
   @State private var tooBig: [String] = []
-  /// Files past the ones a message takes.
   @State private var leftOut = 0
   @State private var loading = true
   @State private var sending = false
@@ -146,7 +139,6 @@ struct ShareView: View {
         take(await Self.copy(p, type, name: name))
       }
     }
-    // What's listed is what's sent.
     let extra = files.dropFirst(draft.fileRoom)
     extra.forEach { $0.deleteCopy() }
     leftOut = extra.count
@@ -230,7 +222,6 @@ struct ShareView: View {
     }
   }
 
-  /// A file from Files or another app.
   private static func file(_ p: NSItemProvider) async -> Lent {
     await withCheckedContinuation { c in
       _ = p.loadObject(ofClass: URL.self) { url, _ in

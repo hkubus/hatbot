@@ -1,5 +1,5 @@
 // The brain's address as typed at sign-in. Never plain http: the token goes with every request,
-// and a laptop joins networks you don't control (PLAN.md §22.1, as on iOS).
+// and a laptop joins networks you don't control (as on iOS).
 use gtk::glib;
 
 pub const API_PREFIX: &str = "/api/v1";
@@ -28,7 +28,6 @@ pub fn server_url(input: &str) -> Option<String> {
     Some(format!("https{}", &s[uri.scheme().len()..]))
 }
 
-/// An address typed with http://, which the app won't use.
 pub fn is_plain_http(input: &str) -> bool {
     input.trim().to_ascii_lowercase().starts_with("http://")
 }

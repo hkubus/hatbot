@@ -15,7 +15,6 @@ import { useStore } from "../store";
 import { tokenText } from "../tasks";
 import { Seg } from "../ui";
 
-/** What the ledger's purposes are, in words. */
 const PURPOSE_NAMES: Record<string, string> = {
   thread: "Chat",
   task: "Tasks",
@@ -37,7 +36,6 @@ const parseDay = (d: string) => new Date(`${d}T12:00:00`);
 const fmtDay = (d: string) =>
   parseDay(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 
-/** One bar: its dollars, the label under it (if any), and what the tooltip and table say. */
 type Point = { key: string; usd: number; axis?: string; title: string; detail: string };
 
 function BarChart({ points, limit, label }: { points: Point[]; limit?: number; label: string }) {
@@ -145,7 +143,6 @@ function BarChart({ points, limit, label }: { points: Point[]; limit?: number; l
   );
 }
 
-/** A chart with a Table view of the same numbers. */
 function SpendCard({ title, points, limit }: { title: string; points: Point[]; limit?: number }) {
   const [mode, setMode] = useState<"chart" | "table">("chart");
   return (
@@ -208,7 +205,6 @@ export function Spend() {
   const [byPurpose, setByPurpose] = useState<SpendByPurpose[]>([]);
   const botNames = useStore((s) => s.bots);
   const live = useStore((s) => s.todayUsd);
-  // New limits.
   const settingsVersion = useStore((s) => s.settingsVersion);
   // A desktop task bills every step: today's figures follow within 10 s, the 30-day totals within
   // 5 minutes.

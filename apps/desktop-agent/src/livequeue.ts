@@ -12,7 +12,6 @@ export class LiveQueue {
   private running = false;
   /** Keys (named ones: a character is typed, not held) and buttons pushed down and not yet up. */
   private held = new Map<string, LiveInput>();
-  /** Where the pointer was last sent. */
   private at = { x: 0, y: 0 };
 
   constructor(

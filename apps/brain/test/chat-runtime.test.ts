@@ -66,7 +66,6 @@ test("a summary waits for an idle conversation with no reply running, is tried a
   for (let i = 0; i < 4; i++) await t.thread.sweep();
   expect(model.creates).toHaveLength(0);
   t.settings.update({ limits });
-  // A failed try.
   await t.thread.sweep();
   expect(summarized(t)).toEqual([{ id: 1, summarized: 0 }]);
 
@@ -88,7 +87,6 @@ test("a summary waits for an idle conversation with no reply running, is tried a
     { id: 2, summarized: 0 },
   ]);
 
-  // Given up after three failed tries.
   t.advance(31 * 60_000);
   for (let i = 0; i < 3; i++) await t.thread.sweep();
   expect(summarized(t).at(-1)).toEqual({ id: 2, summarized: 1 });
@@ -309,7 +307,6 @@ test("only the latest reply that failed can be tried again; it's written in plac
     editedAt: null,
   });
   expect(t.events.some((e) => e.type === "message.rewrite" && e.id === second?.id)).toBe(true);
-  // Done now, so not again.
   expect((await retry(second?.id)).status).toBe(409);
 
   // A request that failed goes again as it was: the owner's message once, nothing added.
@@ -498,7 +495,6 @@ test("an effort change mid-conversation is a message where it was made, so the c
   expect(two?.messages[3]?.role).toBe("user");
   // Set once: the next reply carries on at it.
   expect(three?.messages.filter((m) => m.role === "system")).toHaveLength(1);
-  // A new conversation starts at it.
   t.advance(31 * 60_000);
   await t.thread.post("fourth").done;
   expect(model.requests[3]?.output_config).toEqual({ effort: "medium" });
@@ -532,7 +528,6 @@ test("tasks a restart stopped are told in their chat, with one notification", as
   const notes = t.notifier.sent.slice(sent);
   expect(notes).toHaveLength(1);
   expect(notes[0]?.message).toContain("Book a table");
-  // Once only.
   restarted.recover();
   expect(t.notifier.sent.length).toBe(sent + 1);
 });

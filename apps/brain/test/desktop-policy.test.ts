@@ -1,4 +1,4 @@
-// The desktop's click and Enter checks and its approvals' kinds (PLAN.md §6.1, §6.2), without a desktop.
+// The desktop's click and Enter checks and its approvals' kinds, without a desktop.
 import { expect, test } from "bun:test";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { marketplaceSend } from "../src/negotiate/marketplace";
@@ -164,7 +164,6 @@ test("keys and typed text that could submit unseen are refused; single presses a
   expect(type("Dzień dobry\n")).toEqual({ press: "enter", at: focused });
   expect(type("Jan\tKowalski")).toBeNull();
   expect(type("Jan\tul. Polna 5")).toHaveProperty("refuse");
-  // An address that runs script, typed where the address bar may be.
   expect(type(" JavaScript:void(0)", "computer")).toEqual({
     refuse: expect.stringContaining("javascript:"),
   });
@@ -225,7 +224,6 @@ test("outside a negotiation, a click or Enter that could message a seller asks; 
     "with text in a box on olx.pl",
   );
   expect(marketplaceSend("click", send(["Czy aktualne?"]), null)).toContain("olx.pl");
-  // Empty boxes, filters and other sites take the usual check.
   expect(marketplaceSend("click", send([]), null)).toBeNull();
   expect(marketplaceSend("click", { ...send(["1000"]), label: "Pokaż wyniki" }, null)).toBeNull();
   expect(

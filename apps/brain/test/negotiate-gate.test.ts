@@ -1,4 +1,4 @@
-// The exact-text send gate's rules, without a desktop (PLAN.md §16.3).
+// The exact-text send gate's rules, without a desktop.
 import { expect, test } from "bun:test";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import {
@@ -271,7 +271,6 @@ test("Enter anywhere in a key press is checked", () => {
   expect(pressesEnter("shift+Return")).toBe(true);
   expect(pressesEnter("a KP_Enter")).toBe(true);
   expect(pressesEnter("ctrl+a BackSpace")).toBe(false);
-  // The message is one paragraph.
   expect(refused(gate, "key", { text: "shift+Return" })).toContain("no new lines");
   expect(refused(gate, "key", { text: "ctrl+Return" })).toBeNull();
 });

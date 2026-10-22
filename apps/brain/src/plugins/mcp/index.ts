@@ -1,8 +1,5 @@
-// MCP (PLAN.md §4.5, §5.5): tools from Model Context Protocol servers, over streamable HTTP or as a
-// local process (stdio). Each tool is "ask first" until you allow it in Settings, and one that looks
-// like it pays or buys always asks; output is untrusted unless you trust the server. A stdio server
-// runs on the brain as the hatbot user, so prefer HTTP servers that run elsewhere for anything you
-// didn't write.
+// A stdio MCP server runs on the brain as the hatbot user, so prefer HTTP servers that run
+// elsewhere for anything you didn't write.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -43,11 +40,9 @@ const BUYS =
 /** Words that look like money but aren't, here: a branch checked out, issues in order, a repo moved. */
 const NOT_MONEY =
   /\b(in order( to| that| for)?|(sort|sorting|sorted|ascending|descending|reverse|alphabetical|chronological|natural|same|random) order|order (by|of)|out of order|free of charge|in charge)\b|\b(check ?outs?|switch(es)?|transfers?|transferring)\b(?=[^.]*\b(branch|branches|commit|commits|revision|tag|repo|repository|repositories|ownership|issue|issues)\b)/gi;
-/** A name written as one word: placeorder, buynow, makepayment. */
 const ONE_WORD_PAYS = /^(pay|checkout|charge|donate)|payment|sendmoney|transfer(funds|money)/;
 const ONE_WORD_BUYS = /^(buy|purchase|order|subscribe|book|reserve)|placeorder|buynow|purchase/;
 
-/** Whether a tool looks like it moves money, from its name and description: what it'd be approving. */
 export function moneyKind(name: string, description = ""): "payment" | "purchase" | null {
   const words = name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_.-]+/g, " ");
   const text = `${words} ${description}`.replace(NOT_MONEY, "");
@@ -60,7 +55,6 @@ export function moneyKind(name: string, description = ""): "payment" | "purchase
   return null;
 }
 
-/** What a tool's calls are, if they move money or change accounts: the owner's say, or a guess. */
 const Kind = z.enum(["payment", "purchase", "account_security", "none"]);
 type Kind = Exclude<z.infer<typeof Kind>, "none">;
 const KIND_WHY: Record<Kind, string> = {
@@ -77,7 +71,6 @@ const INVISIBLE =
   // biome-ignore lint/suspicious/noMisleadingCharacterClass: each one is removed on its own.
   /[\p{Cf}\u{E0000}-\u{E007F}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u115F\u1160\u3164\uFFA0]/gu;
 export const visible = (text: string) => text.replace(INVISIBLE, "");
-/** A schema with every string in it, names included, as Settings shows it. */
 function visibleAll(value: unknown): unknown {
   if (typeof value === "string") return visible(value);
   if (Array.isArray(value)) return value.map(visibleAll);
@@ -96,7 +89,6 @@ const Server = z.object({
   args: z.array(z.string()).default([]),
   /** Extra environment for a stdio server; values may use ${NAME}. */
   env: z.record(z.string(), z.string()).default({}),
-  /** Its output counts as trusted content (PLAN.md §6.1). */
   trusted: z.boolean().default(false),
   enabled: z.boolean().default(true),
   /** Per tool; tools not listed are "ask", or "always" when they look like they pay or buy. */
@@ -124,7 +116,6 @@ const Config = z.object({
     ),
 });
 
-/** The most tools offered from one server, the biggest input schema (as JSON), and pages listed. */
 const MAX_TOOLS = 50;
 const MAX_SCHEMA_CHARS = 16_000;
 const MAX_PAGES = 10;
@@ -138,7 +129,6 @@ type Listed = {
   inputSchema: Record<string, unknown>;
   /** definitionHash of the three above. */
   hash: string;
-  /** Why it can't be offered, for Settings. */
   problem: string | null;
 };
 type Conn = {
@@ -148,13 +138,9 @@ type Conn = {
   error: string | null;
 };
 
-/** The file systemd loads the MCP servers' secrets from; HATBOT_MCP_ENV_FILE elsewhere. */
 const SECRETS_FILE = "/etc/hatbot/mcp.env";
 
-/**
- * The names a secrets file sets. Only these may be used, so a server can't be given the brain's own.
- * Null when it's there but Hatbot can't read it.
- */
+/** The names a secrets file sets: only these may be used, so a server can't be given the brain's own. */
 export function secretNames(file: string): Set<string> | null {
   let text = "";
   try {
@@ -168,10 +154,6 @@ export function secretNames(file: string): Set<string> | null {
   return new Set(names.filter((n): n is string => Boolean(n)));
 }
 
-/**
- * ${NAME}: a secret set on MCP's page, or else from the brain's environment when the secrets file sets
- * it; or an error naming what's missing.
- */
 function expand(
   values: Record<string, string>,
   env: Record<string, string | undefined>,
@@ -219,7 +201,6 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 /** Property names Claude's API takes in an input schema. */
 const PROPERTY_NAME = /^[a-zA-Z0-9_.-]{1,64}$/;
-/** The first property name anywhere in a schema that the API wouldn't take. */
 function badName(schema: unknown): string | null {
   if (typeof schema !== "object" || schema === null) return null;
   if (isObject(schema) && isObject(schema.properties))
@@ -232,7 +213,6 @@ function badName(schema: unknown): string | null {
   return null;
 }
 
-/** Why the API wouldn't take this tool's definition, or why Hatbot can't run it; null if it's fine. */
 export function problemOf(t: Record<string, unknown>): string | null {
   const s = t.inputSchema;
   if (!isObject(s)) return "Its input schema isn't a JSON object.";
@@ -276,7 +256,6 @@ export function definitionHash(t: Pick<Listed, "name" | "description" | "inputSc
     .digest("hex");
 }
 
-/** The schema as the API wants it: no $schema or $id. */
 function withoutMeta(schema: Record<string, unknown>): Record<string, unknown> {
   const { $schema: _, $id: __, ...rest } = schema;
   return rest;
@@ -288,7 +267,6 @@ const answered = (err: unknown) =>
   // A 5xx is often a proxy's, after the server took the call; -1 is an answer that isn't MCP.
   (err instanceof StreamableHTTPError && (err.code ?? -1) >= 400 && (err.code ?? -1) < 500);
 
-/** What a call that failed after it may have reached the server says to the model. */
 export function callFailure(server: string, err: unknown): PluginError {
   if (err instanceof McpError && err.code === ErrorCode.RequestTimeout)
     return new PluginError(
@@ -307,7 +285,6 @@ export function callFailure(server: string, err: unknown): PluginError {
   );
 }
 
-/** What fetch says when it couldn't open a connection at all. */
 const NO_CONNECTION = new Set(["ConnectionRefused", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"]);
 
 /**
@@ -324,7 +301,6 @@ export function unsent(err: unknown): boolean {
   return typeof code === "string" && NO_CONNECTION.has(code);
 }
 
-/** An MCP tool result as text for the model. */
 function resultText(r: { content?: unknown; structuredContent?: unknown }): string {
   const parts: string[] = [];
   for (const c of (r.content ?? []) as Record<string, unknown>[]) {
@@ -398,7 +374,6 @@ export const mcpPlugin = definePlugin({
             { timeout: CONNECT_TIMEOUT_MS },
           );
           for (const t of r.tools) {
-            // Without a name there's nothing to call it by, or to show.
             if (!isObject(t) || typeof t.name !== "string" || !t.name) continue;
             // As the owner will see it: what can't be seen is left out of what the model reads.
             const shown = {
@@ -451,10 +426,7 @@ export const mcpPlugin = definePlugin({
       if (kind && mode === "chat") return "allow";
       return mode;
     };
-    /**
-     * A server's tools with their names for the API, and why any can't be offered. Names are given in
-     * the server's order whatever the modes, so switching one tool off doesn't rename another.
-     */
+    /** Names follow the server's order whatever the modes, so switching a tool off renames no other. */
     const checked = (c: Conn) => {
       const taken = new Set<string>();
       let offered = 0;
@@ -529,7 +501,6 @@ export const mcpPlugin = definePlugin({
                 // owner said so): a write could run twice.
                 if (!unsent(err) && (mode !== "chat" || answered(err)))
                   throw callFailure(c.server.name, err);
-                // The server restarted, dropped the session or the connection: reconnect once.
                 await reconnect(c);
                 try {
                   r = await call();
@@ -557,7 +528,6 @@ export const mcpPlugin = definePlugin({
             )
             .join(", ")}. Their tools are named mcp_<server>_<tool>.`
         : undefined;
-    /** What's offered, from what each server listed when it last connected. */
     const refresh = () => {
       tools = conns.flatMap(toolsOf);
       guide = guidance();
@@ -580,7 +550,6 @@ export const mcpPlugin = definePlugin({
                 mode,
                 problem,
                 hash: t.hash,
-                /** What its words suggest it does, if it moves money. */
                 guess: moneyKind(t.name, t.description),
               }))
             : [],
@@ -613,7 +582,6 @@ export const mcpPlugin = definePlugin({
           })
           .join("\n") || "No servers.",
       actions: { status: async () => status() },
-      // Servers that were down at the start, or dropped and couldn't be reconnected.
       down: () => {
         const down = failed();
         return down.length ? down.map((c) => `${c.server.name}: ${c.error}`).join("\n") : null;

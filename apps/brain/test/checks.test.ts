@@ -44,7 +44,6 @@ test("Check everything tries each part and keeps the report, and a test approval
   // Plain lines for infra/smoke.sh.
   const text = await (await t.call("POST", "/checks?text=1", undefined, { cookie })).text();
   expect(text).toContain("ok    Database: Schema version");
-  // A part that's down fails: here Chromium's DevTools.
   t.agent.health = { ok: false, x: true, cdp: false };
   expect(byId(await t.checks.run()).desktop?.state).toBe("fail");
 

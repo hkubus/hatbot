@@ -1,6 +1,3 @@
-// The sections, in a drawer under the left edge, so chat gets the whole screen. The section slides
-// aside to show it, following your finger: swipe in from the left edge, or tap the button at the
-// top left of each section, which counts what needs you. On an iPad's full width it stays beside them.
 import SwiftUI
 import UIKit
 
@@ -44,7 +41,6 @@ extension EnvironmentValues {
 }
 
 extension View {
-  /// The button that opens the sidebar, on a section's first page.
   func sidebarButton() -> some View { modifier(SidebarButton()) }
 }
 
@@ -96,7 +92,6 @@ struct Sidebar<Content: View>: View {
   @ViewBuilder var content: Content
   @Environment(AppStore.self) private var store
   @GestureState(resetTransaction: Transaction(animation: .snappy)) private var drag: CGFloat = 0
-  /// How far the edge swipe has pulled the drawer out.
   @State private var edge: CGFloat = 0
   @State private var newBot = false
   @State private var newGroup = false
@@ -165,9 +160,7 @@ struct Sidebar<Content: View>: View {
             tab = .chat
           }
         } else {
-          // The chats, each bot's own and the groups, in place of one Chat.
           ForEach(store.conversations) { c in
-            // A bot's own chat goes by its icon, in its colour.
             let bot = c.kind == .direct ? c.botIds.first.flatMap { store.bots[$0] } : nil
             row(
               store.chatName(c), icon: bot?.icon.symbol ?? (c.kind == .group ? "person.3" : "bubble.left"),
@@ -253,9 +246,7 @@ struct Sidebar<Content: View>: View {
 /// what's under them.
 private struct EdgePan: UIGestureRecognizerRepresentable {
   var enabled: Bool
-  /// How far the finger has come in from the edge.
   var moved: (CGFloat) -> Void
-  /// Where the throw would land.
   var ended: (CGFloat) -> Void
 
   func makeUIGestureRecognizer(context: Context) -> UIScreenEdgePanGestureRecognizer {

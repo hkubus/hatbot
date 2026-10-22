@@ -1,8 +1,5 @@
-// The schedule form's times: a one-off time as you see it, and whether a cron expression reads.
-
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** datetime-local's value for an ISO time, in this browser's time zone. */
 export function localInput(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -28,7 +25,6 @@ const RANGES: [number, number][] = [
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-/** A field's value as a number, or null when it isn't one it takes. */
 function fieldValue(v: string, field: number): number | null {
   const names = field === 3 ? MONTHS : field === 4 ? DAYS : [];
   const named = names.indexOf(v.toLowerCase());
@@ -49,7 +45,6 @@ function partOk(part: string, field: number): boolean {
   return ends.length === 1 || (ends[0] as number) <= (ends[1] as number);
 }
 
-/** Whether a cron expression is one the brain can read: five fields, or a nickname like @daily. */
 export function cronOk(expr: string): boolean {
   const t = expr.trim();
   if (NICKNAMES.test(t)) return true;

@@ -1,4 +1,3 @@
-// Watchers: a page or a plugin's value, looked at on a timer without the model.
 import {
   describeEvery,
   HATBOT_ID,
@@ -98,7 +97,6 @@ const formOf = (w: Watcher): Form => ({
   botId: w.botId,
 });
 
-/** Where the form looks, or what's wrong with it: all Try it needs. */
 export function sourceOf(f: Form): WatchSource | string {
   let input: Record<string, unknown> = {};
   if (f.kind === "tool") {
@@ -119,7 +117,6 @@ export function sourceOf(f: Form): WatchSource | string {
   };
 }
 
-/** The form as the API takes it, or what's wrong with it. */
 export function bodyOf(f: Form): { source: WatchSource; condition: WatchCondition } | string {
   const source = sourceOf(f);
   if (typeof source === "string") return source;
@@ -136,7 +133,6 @@ export function bodyOf(f: Form): { source: WatchSource; condition: WatchConditio
   return { source, condition };
 }
 
-/** The form's other fields as the API takes them. */
 const fieldsOf = (f: Form) => ({
   name: f.name.trim(),
   prompt: f.prompt.trim(),
@@ -145,10 +141,7 @@ const fieldsOf = (f: Form) => ({
   botId: f.botId,
 });
 
-/**
- * What's wrong, for its row and its page: it can't read what it looks at, or it counted so often
- * that it was switched off. That last read worked, so it isn't a failed one, and isn't shown as one.
- */
+/** A watcher switched off for counting too often isn't a failed read, and isn't shown as one. */
 export function trouble(w: Watcher): { short: string; long: string } | null {
   if (!w.lastError) return null;
   if (w.errors === 0) return { short: "Off", long: w.lastError };
@@ -167,7 +160,6 @@ export function WatcherEdit({ id }: { id: number | null }) {
     saved,
   } = useStoredForm<Form>(id === null ? blank : stored ? formOf(stored) : undefined);
   const [preview, setPreview] = useState<WatchPreview | null>(null);
-  /** What went wrong with Try it, shown beside it. */
   const [previewError, setPreviewError] = useState("");
   const [values, setValues] = useState<WatcherValue[]>([]);
   const { busy, error, setError, run } = useAction();

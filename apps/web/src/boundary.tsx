@@ -1,6 +1,5 @@
 import { Component, type ReactNode } from "react";
 
-/** Something that failed while drawing: one plain line and Reload, not a blank page. */
 export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   override state = { failed: false };
 

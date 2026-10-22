@@ -25,7 +25,6 @@ pub enum Block {
     Rule,
 }
 
-/// Text made safe to put in Pango markup.
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -50,7 +49,6 @@ pub fn opens(url: &str) -> bool {
 #[derive(Default)]
 struct Builder {
     blocks: Vec<Block>,
-    /// The markup of the block being read.
     text: String,
     /// Each open list's next number, or None for bullets.
     lists: Vec<Option<u64>>,
@@ -241,7 +239,6 @@ fn fence_closed(block: &str) -> bool {
     })
 }
 
-/// The blocks of `text`.
 pub fn blocks(text: &str) -> Vec<Block> {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;

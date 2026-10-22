@@ -1,5 +1,4 @@
-// The Update button (PLAN.md §9.4): the brain only asks. hatbot-update runs as root on the brain,
-// fetches from git and deploys; this reads what it reports.
+// The brain only asks: hatbot-update runs as root, fetches from git and deploys; this reads what it reports.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UpdateInfo, UpdateStatus } from "@hatbot/shared";

@@ -4,7 +4,6 @@
 import { afterAll } from "bun:test";
 import { API_PREFIX, type HatbotEvent } from "@hatbot/shared";
 
-/** localStorage or sessionStorage. */
 export class MemoryStorage {
   private map = new Map<string, string>();
   get length() {
@@ -57,7 +56,6 @@ export type Answer = (req: Request) => unknown;
 type Frame = (t: number) => void;
 const ORIGIN = "http://hatbot.test";
 
-/** A browser at `start`. */
 export function installDom(start = "/") {
   const g = globalThis as Record<string, unknown>;
   const frames = new Map<number, Frame>();
@@ -165,5 +163,4 @@ export function installDom(start = "/") {
   };
 }
 
-/** Lets pending promises and timers run. */
 export const settle = () => new Promise((r) => setTimeout(r, 0));

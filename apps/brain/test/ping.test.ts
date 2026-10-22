@@ -3,7 +3,6 @@ import { openDb } from "../src/db";
 import { DeadManPing } from "../src/ping";
 import { testApp } from "./helpers";
 
-// A stand-in for an Uptime Kuma Push monitor.
 const pings: URL[] = [];
 const kuma = Bun.serve({
   port: 0,

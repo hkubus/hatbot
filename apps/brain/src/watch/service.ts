@@ -1,5 +1,3 @@
-// Watchers: a page or a plugin's value, looked at on a timer without the model. Only a change that
-// counts tells you or starts a bot's task, so watching costs nothing until something happens.
 import {
   type CreateWatcher,
   describeCondition,
@@ -28,15 +26,10 @@ import { counts, pick, WatchError } from "./extract";
 
 export { WatchError } from "./extract";
 
-/** Checks running at once. */
 const PARALLEL = 4;
-/** Failed checks in a row before you're told, once. */
 const TELL_AFTER_ERRORS = 5;
-/** Values kept per watcher. */
 const KEEP_VALUES = 500;
-/** Times a watcher may count in a day; more and it's switched off, as a page that changes on every look. */
 const MAX_FIRES_PER_DAY = 12;
-/** From this many failed checks in a row, each wait doubles, up to BACKOFF_MAX_MINUTES. */
 const BACKOFF_AFTER_ERRORS = 3;
 const BACKOFF_MAX_MINUTES = 6 * 60;
 
@@ -105,13 +98,11 @@ const toWatcher = (r: Row): Watcher => ({
   lastTaskId: r.last_task_id,
 });
 
-/** "€1,299" → "€1,099", cut short for a notification. */
 const short = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /** A source as it's kept: a switch that's off is left out, so it reads the same however it was saved. */
 const saved = (s: WatchSource) => JSON.stringify({ ...s, render: s.render || undefined });
 
-/** Throws when a watcher would look more often than its source allows. */
 function oftenEnough(source: WatchSource, everyMinutes: number) {
   const min = minWatchMinutes(source);
   if (everyMinutes < min)
@@ -120,7 +111,6 @@ function oftenEnough(source: WatchSource, everyMinutes: number) {
     );
 }
 
-/** Where a watcher looks, in a few words: the page's host, or the tool. */
 export function describeSource(s: WatchSource): string {
   if (s.kind === "tool") return s.tool ?? "a tool";
   try {
@@ -155,7 +145,6 @@ export class Watchers {
     return r ? toWatcher(r) : null;
   }
 
-  /** The values it saw, newest first. */
   values(id: number, limit = 100): WatcherValue[] {
     return this.d.db
       .query<{ id: number; value: string; fired: number; created_at: string }, [number, number]>(
@@ -166,13 +155,12 @@ export class Watchers {
   }
 
   /**
-   * Makes a watcher after a first look, so a page that can't be read or a selector that matches nothing
-   * is said now rather than on every check. That look is the first value. Throws WatchError.
+   * Looks first, so a page that can't be read or a selector that matches nothing fails now rather
+   * than on every check.
    */
   async create(
     input: z.output<typeof CreateWatcher>,
     via: "chat" | "owner",
-    /** What the chat had read, when it had read untrusted content. */
     taintedBy: string | null = null,
   ): Promise<Watcher> {
     taintedBy = via === "chat" ? taintedBy : null;
@@ -204,10 +192,7 @@ export class Watchers {
     return this.get(id) as Watcher;
   }
 
-  /**
-   * `by`: you (saving it clears the tainted mark), or the chat (`taintedBy`: what untrusted content it
-   * had read, which sets it). A new source is looked at first. Throws WatchError.
-   */
+  // Your save clears the tainted mark; the chat's sets it when it had read untrusted content.
   async update(
     id: number,
     patch: z.output<typeof UpdateWatcher>,
@@ -264,14 +249,13 @@ export class Watchers {
         this.now(),
         id,
       );
-    // Like a new watcher, that look is its first value. Null: deleted while its new source was read.
+    // Null: deleted while its new source was read.
     const updated = this.get(id);
     if (!updated) return null;
     if (first) await this.saw(updated, first.value, first.untrusted);
     return this.changed(id);
   }
 
-  /** You trust what the chat wrote: its tasks no longer start tainted. */
   trust(id: number): Watcher | null {
     this.d.db.query("UPDATE watchers SET tainted = 0, tainted_by = NULL WHERE id = ?").run(id);
     return this.changed(id);
@@ -283,7 +267,6 @@ export class Watchers {
     return gone;
   }
 
-  /** What a check would find now, without saving it: the form's Try button. */
   async preview(source: WatchSource, botId: string): Promise<WatchPreview> {
     try {
       return { ok: true, value: (await this.read(source, botId)).value };
@@ -293,7 +276,6 @@ export class Watchers {
     }
   }
 
-  /** Looks now, outside its timer. */
   async checkNow(id: number): Promise<Watcher | null> {
     const w = this.get(id);
     if (!w) return null;
@@ -301,7 +283,6 @@ export class Watchers {
     return this.get(id);
   }
 
-  /** Starts the checks that are due; the brain calls it every few seconds. */
   tick() {
     if (this.d.settings.get().paused) return;
     const due = this.d.db
@@ -315,7 +296,6 @@ export class Watchers {
       void this.check(w).catch((err) => console.error(`watcher ${w.id}: check failed`, err));
   }
 
-  /** Waits for the checks in flight (tests). */
   async idle() {
     while (this.checking.size) await Bun.sleep(5);
   }
@@ -350,7 +330,6 @@ export class Watchers {
     const w = this.still(seen);
     if (!w) return;
     const errors = w.errors + 1;
-    // One that keeps failing looks less often: each wait twice the last, up to six hours.
     const every = Math.max(minWatchMinutes(w.source), w.everyMinutes);
     const doubled = every * 2 ** (errors - BACKOFF_AFTER_ERRORS + 1);
     const wait = Math.max(every, Math.min(BACKOFF_MAX_MINUTES, doubled));
@@ -370,7 +349,6 @@ export class Watchers {
       });
   }
 
-  /** A value it found: kept if it's new, and acted on if it counts. */
   private async saw(seen: Watcher, value: string, untrusted: boolean) {
     const w = this.still(seen);
     if (!w) return;
@@ -421,7 +399,6 @@ export class Watchers {
     return w && saved(w.source) === saved(seen.source) ? w : null;
   }
 
-  /** Times it counted in the last 24 hours, since it was last switched on or given a new source. */
   private firedToday(id: number): number {
     return (
       this.d.db
@@ -434,7 +411,6 @@ export class Watchers {
     );
   }
 
-  /** Counted more often than anyone wants to hear: switched off, and you're told once. */
   private tooOften(w: Watcher) {
     const why = `It counted more than ${MAX_FIRES_PER_DAY} times in a day, so it was switched off.`;
     this.d.db
@@ -449,7 +425,6 @@ export class Watchers {
     });
   }
 
-  /** It counted: you're told, or its bot works on it. */
   private fire(w: Watcher, previous: string | null, value: string, untrusted: boolean) {
     if (orphaned(this.d.db, "watchers", w.id, w.botId)) {
       this.changed(w.id);
@@ -500,7 +475,6 @@ export class Watchers {
     );
   }
 
-  /** Fetches or calls the source and picks the value out. Throws WatchError. */
   private async read(
     source: WatchSource,
     botId: string,
@@ -527,7 +501,7 @@ export class Watchers {
         if (err instanceof DesktopError) throw new WatchError(err.message);
         throw err;
       }
-      // Web pages are written by strangers (PLAN.md §6.1), and so are their scripts.
+      // Web pages are written by strangers, and so are their scripts.
       return { value: await pick(body, contentType, source), untrusted: true };
     }
     const bot = this.d.bots.get(botId) ?? this.d.bots.hatbot();
@@ -550,10 +524,7 @@ export class Watchers {
     return { value: await pick(out, json, source), untrusted: untrustedOf(t, input.data, out) };
   }
 
-  /**
-   * Whether what it saw came from untrusted content (PLAN.md §6.1): a page, a tool whose output is, or
-   * a watcher the chat wrote after reading some.
-   */
+  /** A page, a tool whose output is untrusted, or a watcher the chat wrote after reading such. */
   sawUntrusted(w: Watcher): boolean {
     if (w.source.kind === "page" || w.tainted) return true;
     const bot = this.d.bots.get(w.botId) ?? this.d.bots.hatbot();
@@ -570,7 +541,6 @@ export class Watchers {
   }
 }
 
-/** A watcher in a line or two, for the chat's tools. What an untrusted source said is quoted as data. */
 export function watcherLine(w: Watcher, untrusted = false): string {
   return [
     `#${w.id} "${w.name}": ${describeLook(w.source)}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
@@ -579,7 +549,6 @@ export function watcherLine(w: Watcher, untrusted = false): string {
   ].join("\n");
 }
 
-/** What a watcher looks at, and what it picks out of it. */
 export function describeLook(s: WatchSource): string {
   const where = s.kind === "page" ? s.url : `${s.tool} ${JSON.stringify(s.input ?? {})}`;
   const picks = [
@@ -591,7 +560,6 @@ export function describeLook(s: WatchSource): string {
   return `${where}${picks.length ? ` (${picks.join(", ")})` : ""}`;
 }
 
-/** Its condition, from the chat tools' flat fields. */
 export function conditionOf(input: {
   when?: WatchCondition["when"];
   text?: string;

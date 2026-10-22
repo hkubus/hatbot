@@ -1,6 +1,5 @@
-// Code: commands and scripts in the desktop's sandbox shell (apps/desktop-agent/src/shell.ts), for the chat
-// and for tasks. The shell is its own throwaway user on the desktop container: no browser profile, no
-// screen, no secrets and no LAN, but it does reach the internet. Your attachments can be copied in first.
+// The sandbox shell is its own throwaway user on the desktop container: no browser profile, no screen,
+// no secrets and no LAN, but it does reach the internet.
 import { z } from "zod";
 import type { Attachments } from "../../attachments";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
@@ -38,7 +37,7 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
               .describe("Attachment ids to copy into in/ before running"),
           }),
           // The sandbox reaches the internet and keeps its files across chats and tasks, so what a
-          // command prints may be what some page said, today or last week (PLAN.md §6.1).
+          // command prints may be what some page said, today or last week.
           untrusted: true,
           describe: ({ command }) => {
             const line = command.trim().split("\n")[0] ?? "";

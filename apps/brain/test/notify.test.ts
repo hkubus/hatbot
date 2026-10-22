@@ -6,7 +6,6 @@ test("an approval's notification keeps its whole summary, opens the iOS app when
   const { cookie } = signIn(t);
   const res = await t.call("PUT", "/settings", { notificationsOpen: "app" }, { cookie });
   expect(res.status).toBe(200);
-  // Every client hears of the change.
   expect(t.events.at(-1)).toMatchObject({
     type: "settings.updated",
     settings: { notificationsOpen: "app" },

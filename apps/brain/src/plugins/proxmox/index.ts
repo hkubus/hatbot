@@ -1,5 +1,4 @@
-// Proxmox (PLAN.md §5.5, §9.3): see every guest, start and reboot them, and ask before shutting one
-// down. Uses the scoped token host-setup.sh makes, which can't change configs or destroy.
+// Uses the scoped token host-setup.sh makes, which can't change configs or destroy.
 import { z } from "zod";
 import { Proxmox } from "../../proxmox";
 import {
@@ -14,7 +13,6 @@ import {
   tool,
 } from "../plugin";
 
-/** How long a power action may take before the tool stops waiting. */
 const POWER_TIMEOUT_MS = 3 * 60_000;
 
 type Resource = {
@@ -37,10 +35,7 @@ type Resource = {
 };
 
 const Config = z.object({
-  /**
-   * Guests where every change waits for the owner, e.g. the router or the NAS: power actions here,
-   * and commands and files in them through the SSH plugin.
-   */
+  /** Every change waits for the owner: power actions here, and commands and files through the SSH plugin. */
   careful: z.array(z.number().int().positive()).default([]),
 });
 
@@ -67,9 +62,8 @@ export const proxmoxPlugin = definePlugin({
       );
     const brain = Number(pve.brainId) || null;
     const desktop = Number(pve.desktopId) || null;
-    /** Names from the last listing, so timeline lines and approvals can say which guest. */
     const names = new Map<number, string>();
-    /** Guests tagged as Hatbot's own (host-setup.sh tags them), from the last listing. */
+    /** host-setup.sh tags Hatbot's own guests. */
     const own = new Set<number>();
 
     const guests = async (): Promise<Resource[]> => {

@@ -1,4 +1,3 @@
-// Built-in tools for the chat thread (PLAN.md §5.5): memory, history search, desktop tasks, schedules.
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type Bot,
@@ -68,65 +67,45 @@ import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } fr
 
 export type ToolContext = {
   db: Db;
-  /** Now, for the dates tools write. */
   clock?: () => number;
   memory: MemoryStore;
   events: EventBus;
-  /** The bot calling: whose memory commits these are, and whose tasks and schedules it starts. */
   bot?: Bot;
   bots?: Bots;
-  /** The chat the reply is in: where tasks it starts report. */
   conversationId?: number;
   tasks?: Tasks;
   schedules?: Schedules;
   triggers?: Triggers;
   watchers?: Watchers;
-  /** The chat reply being written; a task it starts shows under it. */
   messageId?: number;
   /** The conversation the reply is in: history search leaves it out, since the model already has it. */
   episodeId?: number;
-  /** The background task running the tool: files it sends go on the task. */
   taskId?: number;
   attachments?: Attachments;
-  /** Boxes the chat makes and changes (PLAN.md §21). */
   boxes?: Boxes;
-  /** The desktop, whose sandbox send_file takes files from. */
   desktop?: DesktopAgent;
-  /** Adds a schedule's card to the thread. */
   scheduleCard?: (s: Schedule) => void;
-  /** The plugin tools this reply was offered, with negotiation's. */
   pluginTools?: PluginTool[];
-  /** Where writes to skills and indexes go while the conversation or task is tainted. */
   proposals?: Proposals;
-  /**
-   * What untrusted content the conversation or task first read, or null; tasks it starts begin tainted
-   * (PLAN.md §6.1).
-   */
+  /** What untrusted content was read first, or null; tasks it starts begin tainted. */
   tainted?: () => string | null;
-  /** Marks the conversation as having read untrusted content: `by`, and `text` to screen. */
   taint?: (by: string, text?: string) => void;
   /**
-   * Whether something the conversation read is suspected of being a prompt injection, once what it
-   * read so far is screened: work it starts is marked so, and Haiku's review doesn't let its changes
-   * through.
+   * Suspected prompt injection: work it starts is marked so, and Haiku's review doesn't let its
+   * changes through.
    */
   suspected?: () => Promise<boolean>;
-  /** Your own latest messages in this conversation, for a task's approval check. */
   ownerSaid?: () => string;
   /** The hand-off the reply answers, if it answers one: hand-offs it makes count from there. */
   answering?: Task;
   /** A plugin tool as it is now, for a call: the reply's may be from before a change; a string says why not. */
   livePlugin?: (t: PluginTool) => PluginTool | string;
-  /** Runs a plugin tool that changes something, after its checks and your approval if it needs one. */
   gated?: (
     t: PluginTool,
     input: unknown,
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
-  /**
-   * Asks about a change a core tool would make, as a plugin's change asks: Haiku's review, then you.
-   * Your note on the approval, for the tool's result, or why it mustn't go ahead. `always`: only you.
-   */
+  /** Asks as a plugin's change asks: Haiku's review, then you. `always`: only you. */
   approve?: (
     call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
     signal: AbortSignal,
@@ -154,7 +133,6 @@ export const DesktopTaskInput = z.object({
     ),
 });
 
-/** Why a desktop task can't use `skill`, or null if it can. */
 export async function missingSkill(memory: MemoryStore, skill?: string): Promise<string | null> {
   if (!skill || (await memory.exists(skillPath(skill)))) return null;
   return `There's no skill called "${skill}" (skills/${skill}.md). Check INDEX.md, or leave skill out.`;
@@ -227,21 +205,15 @@ function seenLine(ctx: ToolContext, w: Watcher): string {
   return watcherLine(w, untrusted);
 }
 
-/** The calling bot is the one code and boxes go to (PLAN.md §14.7). */
 const isCodeBot = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots?.codeBot()?.id === ctx.bot.id);
 
 /** The bot was deleted while it wrote this reply: what it makes now would run as nobody's. */
 const gone = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots && !ctx.bots.active(ctx.bot.id));
 const GONE = "Not made: the owner deleted you.";
 
-/** "Runs as Coder", for a schedule or trigger another bot runs. */
 const whose = (botId: string, bot?: Bot, bots?: Bots) =>
   bots && botId !== (bot?.id ?? HATBOT_ID) ? `\n  Runs as: ${bots.nameOf(botId)}` : "";
 
-/**
- * Who a memory change is by: the bot calling. Another bot's folder (bots/<id>/) is that bot's own, so
- * it's refused.
- */
 function authorOf(ctx: ToolContext, path: string) {
   const id = ctx.bot?.id ?? HATBOT_ID;
   // The path as it lands, so "notes/../bots/x/…" counts as bots/x.
@@ -253,25 +225,20 @@ function authorOf(ctx: ToolContext, path: string) {
   return ctx.bots?.author(id) ?? HATBOT;
 }
 
-/**
- * Files every later chat and task reads and trusts: skills, the memory indexes, homelab.md, the map of
- * the homelab that every bot shares and alert tasks act on, and the to-do list, which reminds you.
- */
+/** Files every later chat and task reads and trusts. */
 const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|todo\.md)$/;
 
-/** Research's reports and notes, in research/ or a bot's own: written from what it read on the web. */
+/** Research's reports and notes: written from what it read on the web. */
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
 
-/** What research wrote, read back: untrusted, and the reader is tainted by it (PLAN.md §6.1). */
 function researchNotes(ctx: ToolContext, tool: string, path: string, text: string): string {
   ctx.taint?.(`Research notes: ${path}`, text);
   return untrustedBlock("tool_output", text, { tool });
 }
 
 /**
- * A write (or, content null, a delete) to a trusted file after reading untrusted content becomes a
- * proposal you apply, so injected text can't make itself trusted (PLAN.md §6.1). The tool's reply,
- * or null to write it directly.
+ * After reading untrusted content, a write (or, content null, a delete) to a trusted file becomes a
+ * proposal you apply, so injected text can't make itself trusted. Null to write it directly.
  */
 async function held(
   ctx: ToolContext,
@@ -292,17 +259,13 @@ async function held(
   return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md, homelab.md and todo.md wait for them.";
 }
 
-/** Why a task the chat starts is tainted, from what the chat had read. */
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
-/** A change that wasn't made: its message is for the model. */
 export class NotChanged extends Error {}
 
 /**
- * Deleting or switching off a schedule, watcher or trigger after reading untrusted content waits for
- * approval (Haiku's review, or you), as a plugin's change does (PLAN.md §6.1): injected text mustn't
- * quietly stop what looks after the homelab. Untainted, it goes ahead at once. Resolves to your note
- * on the approval, if any, for the tool's result; throws NotChanged when it mustn't go ahead.
+ * After reading untrusted content, deleting or switching off a schedule, watcher or trigger waits for
+ * approval: injected text mustn't quietly stop what looks after the homelab.
  */
 async function asked(
   ctx: ToolContext,
@@ -334,10 +297,7 @@ async function askedIfSuspected(
 
 const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/**
- * A change to a schedule or watcher that's on, in words for its approval: all of it, since it all goes
- * ahead once approved. Only switching off: "Switch off …".
- */
+/** All of the change, in words for its approval, since it all goes ahead once approved. */
 function changing(what: string, changes: string[]): string {
   return changes.length === 1 && changes[0] === "switch it off"
     ? `Switch off the ${what}`
@@ -431,7 +391,6 @@ const scheduleWhen = {
   at: z.string().optional().describe('Once: local date and time, e.g. "2026-10-11T08:00"'),
 };
 
-/** One of the calling bot's boxes: another bot's is theirs to change. The code bot's are all of them. */
 function ownBox(ctx: ToolContext, id: number): Box {
   const box = ctx.boxes?.get(id);
   if (!box) throw new BoxError(`There's no box #${id}.`);
@@ -443,7 +402,6 @@ function ownBox(ctx: ToolContext, id: number): Box {
   return box;
 }
 
-/** The page with each exact replacement made in turn; each old text must be there once. */
 function edited(
   html: string,
   edits: { old: string; new: string }[],
@@ -461,10 +419,7 @@ function edited(
   }, html);
 }
 
-/**
- * What a box gives the model, untrusted and tainting when `by` says what tainted it. `screened`: what
- * the screening reads, when it's more than the text.
- */
+/** `screened`: what the screening reads, when it's more than the text. */
 function boxOutput(
   ctx: ToolContext,
   tool: string,
@@ -483,7 +438,6 @@ function lookError(e: BoxLookError, lines: number | null): string {
   return `- ${e.message}${at}${e.count ? ` (${e.count} times)` : ""}`;
 }
 
-/** Shows the box under the reply, and says so. */
 function shown(ctx: ToolContext, box: Box): string {
   if (ctx.messageId) ctx.boxes?.attach(ctx.messageId, box.id);
   return `Box #${box.id} "${box.title}", version ${box.version}, shows under your reply, where the owner opens it.`;
@@ -491,11 +445,9 @@ function shown(ctx: ToolContext, box: Box): string {
 
 const BOX_TITLE = z.string().min(1).max(80).describe('Short, e.g. "Habit tracker"');
 
-/** A box's feed, for box_data. */
 const feedLine = (f: BoxFeed) =>
   `"${f.name}": ${f.tool} ${JSON.stringify(f.input)}, every ${f.everyMinutes} min${f.error ? `; ${f.error}` : ""}\n  ${f.at ? `Latest, ${f.at.slice(0, 16).replace("T", " ")} UTC: ${cut(JSON.stringify(f.value), 2000)}` : "Nothing yet"}`;
 
-/** What a feed gave, in a word or two. */
 const kindOf = (v: unknown) =>
   typeof v === "string" ? "text" : Array.isArray(v) ? "a JSON array" : "a JSON object";
 const BOX_FILES = z
@@ -508,18 +460,16 @@ const BOX_FILES = z
   .min(1)
   .max(MAX_BOX_FILES);
 
-/** The boxes guest, which builds boxes with files and runs their backends; one plain sentence if none. */
 function backends(ctx: ToolContext): Backends {
   const b = ctx.boxes?.backends;
   if (!b?.available) throw new BoxError(NO_GUEST);
   return b;
 }
 
-/** Files in one order, to tell whether they changed. */
 const fileKey = (files: BoxFile[] | undefined) =>
   JSON.stringify([...(files ?? [])].sort((a, b) => (a.path < b.path ? -1 : 1)));
 
-/** A box's files with box_edit's changes made: whole files first, then removals, then edits. */
+/** Whole files first, then removals, then edits. */
 function changedFiles(
   current: { html: string; files?: BoxFile[] },
   c: {
@@ -545,7 +495,6 @@ function changedFiles(
   return list;
 }
 
-/** box.json, or none for files without a valid one. */
 const configOf = (files: BoxFile[]) => {
   try {
     return boxConfig(files.find((f) => f.path === BOX_CONFIG)?.content);
@@ -555,9 +504,8 @@ const configOf = (files: BoxFile[]) => {
 };
 
 /**
- * Whether `next` changes what a box's backend runs, from `before`: its code or anything it may import
- * (every file but the page's .html, .css and .svg, which a build for Bun keeps out of server.js), its
- * packages, or which secrets it reads.
+ * Every file but the page's .html, .css and .svg counts as backend code: a build for Bun keeps only
+ * those out of server.js. Packages and which secrets it reads count too.
  */
 function backendChanged(before: BoxFile[], next: BoxFile[]): boolean {
   const code = (files: BoxFile[]) =>
@@ -570,13 +518,10 @@ function backendChanged(before: BoxFile[], next: BoxFile[]): boolean {
 }
 
 /**
- * A change to a box you've set secrets for, which asks you every time, past Haiku's review, when it
- * lets the backend reach a host it couldn't before (which could then receive them), or changes the
- * backend's code in a chat that read untrusted content: even a host it already reaches, an API that
- * stores text say, could carry them away, and a review of the code's text needn't see that. Any secret
- * set counts, declared by this version or not, so dropping one from box.json, adding a host, then
- * declaring it again doesn't get past. Your note on the approval, or null when it doesn't ask; throws
- * NotChanged when it mustn't go ahead.
+ * A box with secrets you set asks you every time, past Haiku's review, when its backend may reach a new
+ * host, or its code changes in a tainted chat: even a host it already reaches, an API that stores text
+ * say, could carry them away. Any secret set counts, declared by this version or not, so dropping one
+ * from box.json, adding a host, then declaring it again doesn't get past.
  */
 async function secretsAsked(
   ctx: ToolContext,
@@ -613,7 +558,7 @@ async function secretsAsked(
   return r.content;
 }
 
-/** The box's secrets, for the model: their names and whether each is set, never a value. */
+/** Their names and whether each is set, never a value. */
 function secretsLine(ctx: ToolContext, id: number): string {
   const list = ctx.boxes?.secrets(id) ?? [];
   return list.length
@@ -621,7 +566,6 @@ function secretsLine(ctx: ToolContext, id: number): string {
     : "";
 }
 
-/** For a box just made or changed: the secrets the owner still has to set. */
 export function unsetSecrets(ctx: ToolContext, id: number): string {
   const unset = (ctx.boxes?.secrets(id) ?? []).filter((x) => !x.set).map((x) => x.name);
   return unset.length
@@ -629,12 +573,7 @@ export function unsetSecrets(ctx: ToolContext, id: number): string {
     : "";
 }
 
-/**
- * A box's files built on the boxes guest, once hosts its backend couldn't reach before are approved
- * (in a tainted chat, or always for a box with secrets), and a change to the code of one with secrets
- * in a tainted chat. The page built and the approval's note, or what the model is told instead: a
- * failed build's output is untrusted, since npm packages' code and text are in it.
- */
+/** A failed build's output is untrusted, since npm packages' code and text are in it. */
 export async function builtBox(
   ctx: ToolContext,
   signal: AbortSignal,
@@ -644,7 +583,6 @@ export async function builtBox(
     title: string;
     files: BoxFile[];
     hosts: string[];
-    /** The box's files before this change. */
     before?: BoxFile[];
   },
 ): Promise<{ id: number; page: string; note: string } | string> {
@@ -681,15 +619,13 @@ export async function builtBox(
   return { id, page: result.page, note };
 }
 
-/** What a box is and may do, for whoever writes one: the chat's box_create, and Claude Code (box_claude). */
+/** Shared by the chat's box_create and Claude Code (box_claude). */
 export const BOX_PAGE_RULES =
   "A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with box_feed last read.";
 
-/** A box of files, built on the boxes guest, with a backend. */
 export const BOX_FILES_RULES =
   'For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}.';
 
-/** A tool's result with a picture the model sees too (box_look). */
 export type ToolImage = { data: string; mediaType: "image/png" };
 
 type ToolDef<S extends z.ZodType> = {
@@ -703,10 +639,7 @@ type ToolDef<S extends z.ZodType> = {
   ) => Promise<string | { text: string; image: ToolImage }>;
 };
 
-/**
- * Changes the to-do list: at once, or, after reading untrusted content, as a proposal (held), so a page
- * can't put "pay this invoice" on it. `change` throws a MemoryError when it can't be made.
- */
+/** After reading untrusted content, a proposal, so a page can't put "pay this invoice" on the list. */
 async function changeTodos(
   ctx: ToolContext,
   reason: string,
@@ -722,10 +655,6 @@ async function changeTodos(
   return null;
 }
 
-/**
- * Ticks off, today, the open item `pick` finds in the list (a string says why there's none): todo_done,
- * the apps' checkboxes, and a task on the item that ended done. The reply.
- */
 export async function tickTodo(
   ctx: ToolContext,
   item: string,
@@ -750,7 +679,6 @@ export async function tickTodo(
 
 const DUE = /^(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?$/;
 
-/** "2026-10-25" or "2026-10-25 14:00" as a tag, when it's a real date and time. */
 export function dueInput(due: string): string {
   const [, date = "", at] = DUE.exec(due) ?? [];
   const [y, m, d] = date.split("-").map(Number) as [number, number, number];
@@ -887,8 +815,7 @@ export const TOOLS = [
     run: async ({ query, after, before }, { db, episodeId, bot, bots, taint }) => {
       const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
       if (!terms.length) return "No searchable words in the query.";
-      // Not the conversation you're in: the message asking would otherwise be the best match. Only
-      // the chats this bot is in.
+      // Not the conversation you're in: the message asking would otherwise be the best match.
       const rows = db
         .query<
           {
@@ -908,8 +835,6 @@ export const TOOLS = [
            ORDER BY rank LIMIT 20`,
         )
         .all(
-          // Any of the words, each also as the start of a longer one; rank puts messages with more
-          // of them, and rarer ones, first.
           terms.map((t) => `"${t}"*`).join(" OR "),
           // The dates are local, as the times shown are.
           after ? dayStart(after) : "0000",
@@ -1436,7 +1361,6 @@ export const TOOLS = [
         message: messageId,
         taintedBy: chatTaint(tainted?.()),
         request: ownerSaid?.(),
-        // Answering a hand-off: it counts toward how deep hand-offs go.
         askedIn: answering,
       });
       if (!task) return "The task couldn't start.";
@@ -1885,10 +1809,8 @@ export const TOOLS = [
   }),
 ];
 
-/** What the model is told when a tool's input doesn't fit its schema. */
 export const invalidInput = (error: z.ZodError) => `Invalid input: ${z.prettifyError(error)}`;
 
-/** A tool definition as sent to the API. */
 export const toolParam = (t: {
   name: string;
   description: string;
@@ -1903,8 +1825,8 @@ export const toolParam = (t: {
 });
 
 /**
- * A tool a reply or task was offered, as it is in `now`: a call runs on the plugin's current instance
- * and policy. Why not, when it's gone, describes itself differently, or (`onlyLooks`) changes things.
+ * A call runs on the plugin's current instance and policy. A string says why not: it's gone, describes
+ * itself differently, or (`onlyLooks`) changes things.
  */
 export function liveTool(
   offered: PluginTool,
@@ -1922,14 +1844,10 @@ export function liveTool(
   return tool;
 }
 
-/** The core's tool definitions. Order and content must stay stable to keep the cache. */
+/** Order and content must stay stable to keep the cache. */
 export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
 
-/**
- * Runs a chat tool call: a core tool, or a plugin's tool (one that changes something goes through
- * `gated`). Input is validated here: with eager input streaming the API doesn't. `untrusted`: the output
- * was untrusted content.
- */
+/** Input is validated here: with eager input streaming the API doesn't. */
 export async function runTool(
   name: string,
   input: unknown,
@@ -1977,16 +1895,12 @@ export async function runTool(
   }
 }
 
-/** Core tools that need the desktop, left out when there's none. */
 export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
 
-/** The tools that write a box's code or change what it gets: the code bot's, when there is one. */
+/** Only the code bot gets these, when there is one. */
 export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed", "box_claude"];
 
-/**
- * The core tools an incognito conversation gets: lookups that leave nothing behind. Not history search,
- * which it doesn't see, or anything that writes or starts work that outlives it.
- */
+/** Lookups that leave nothing behind; not history search, which incognito doesn't see. */
 export const INCOGNITO_TOOLS = [
   "memory_list",
   "memory_read",
@@ -1997,7 +1911,6 @@ export const INCOGNITO_TOOLS = [
   "watch_list",
 ];
 
-/** Core tools that only look things up, so several can run at once. */
 export const LOOKUP_TOOLS = [
   "memory_list",
   "memory_read",
@@ -2007,9 +1920,8 @@ export const LOOKUP_TOOLS = [
 ];
 
 /**
- * Runs a turn's tool calls in order, except that calls in a row that may run together do: what
- * `parallel` says may (true, or the thing a change acts on) and, for changes, each on a different
- * thing. Lookups and changes don't share a batch. Results come back in the calls' order.
+ * Calls in a row run together when `parallel` allows (true, or the thing a change acts on), changes
+ * each on a different thing. Lookups and changes don't share a batch. Results keep the calls' order.
  */
 export async function inBatches<C, R>(
   calls: C[],
@@ -2051,25 +1963,17 @@ export const CORE_TOOL_NAMES = [
   ...NEGOTIATE_TOOL_NAMES,
 ];
 
-/** The code the API runs for the web tools' dynamic filtering, by its server tool names. */
 // The text editor views and writes files in the same container as the code.
 const CODE_TOOLS = ["code_execution", "bash_code_execution", "text_editor_code_execution"];
 
 /**
- * Anthropic's web search and fetch, run by the API itself (PLAN.md §5.5), in the versions with dynamic
- * filtering. The model calls them directly for a quick look, or from code it runs in a container of
- * Anthropic's, so that only what matters of the results and pages reaches it. A call made from code
- * stays out of the response, with what it read; the code's output is what the model sees. Fetch only
- * takes URLs already in the conversation. Searches are local to the brain's time zone, which is the
- * owner's. HATBOT_WEB_TOOLS=basic brings back the versions without filtering, should the API refuse
- * these.
+ * The versions with dynamic filtering: a call made from code stays out of the response, with what it
+ * read; the code's output is what the model sees. HATBOT_WEB_TOOLS=basic brings back the versions
+ * without filtering, should the API refuse these.
  */
 export function webTools(opts: {
-  /** The most of a page a direct fetch reads. */
   pageTokens: number;
-  /** Searches and fetches each request may make. */
   uses?: number;
-  /** A fetched page can be cited, as search results always can. */
   citations?: boolean;
   timeZone?: string;
   env?: Record<string, string | undefined>;
@@ -2109,7 +2013,7 @@ export function webTools(opts: {
   ];
 }
 
-/** A task's: it reads more of a page than the chat, where a page stays for every later reply. */
+/** A task reads more of a page than the chat, where a page stays for every later reply. */
 export const WEB_TOOLS = webTools({ pageTokens: 30000 });
 export const CHAT_WEB_TOOLS = webTools({ pageTokens: 10000, citations: true });
 
@@ -2121,10 +2025,7 @@ const QUERY = new RegExp(String.raw`(?:["']query["']\s*:|\bquery\s*=)\s*${STRING
 const URL_IN_CODE = /https?:\/\/[^\s"'`\\<>)\]}]+/g;
 const MAX_CALLS = 10;
 
-/**
- * The web searches and reads in a server tool call: one made directly, or the ones in code the model
- * ran for dynamic filtering, from the queries and URLs written in it.
- */
+/** For code the model ran, from the queries and URLs written in it. */
 export function webCalls(name: string, input: Record<string, unknown>): WebCall[] {
   if (name === "web_search") return [{ search: String(input.query ?? "") }];
   if (name === "web_fetch") return [{ read: String(input.url ?? "") }];
@@ -2154,9 +2055,8 @@ const readLine = (c: WebCall) =>
 const CODE_READ = "Ran code that can search and read the web";
 
 /**
- * What a reply looked up on the web, in a line each: `Searched the web for "x"`, `Read https://…`.
- * Code whose own calls came back with it (a paused turn's) is told by those. Code the web tools run
- * counts as a read even when no call shows in it: a URL in a variable or a helper function hides one.
+ * Code whose own calls came back with it (a paused turn's) is told by those. Code counts as a read even
+ * when no call shows in it: a URL in a variable or a helper function hides one.
  */
 export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
   const told = new Set(
@@ -2185,14 +2085,7 @@ export function serverToolWaiting(content: Anthropic.Beta.BetaContentBlock[]): b
   return content.some((b) => b.type === "server_tool_use" && !done.has(b.id));
 }
 
-/**
- * The container the API ran the model's code in, to send with the next request of the same reply or
- * task: code paused mid-run carries on in it, and what the code kept stays.
- */
-/**
- * The web pages a response cites, adding them to `cited` in the order it first cites them. A fetched
- * page's citations name its title, not its URL: `pages` maps the titles of what was fetched so far.
- */
+/** A fetched page's citations name its title, not its URL: `pages` maps the titles fetched so far. */
 export function addSources(
   cited: Source[],
   pages: Map<string, string>,
@@ -2217,9 +2110,8 @@ export function addSources(
 }
 
 /**
- * The untrusted text a response's server tools brought in, to screen: pages fetched (a PDF as it
- * came), the titles of search results (their text comes encrypted), what the web tools' code printed,
- * and files viewed in its container.
+ * The untrusted text to screen: pages fetched (a PDF as it came), search results' titles (their text
+ * comes encrypted), what the web tools' code printed, and files viewed in its container.
  */
 export function webTexts(
   content: Anthropic.Beta.BetaContentBlock[],
@@ -2250,5 +2142,6 @@ export function webTexts(
   return out;
 }
 
+/** Sent with the next request of the same reply or task: code paused mid-run carries on in it. */
 export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>
   res.container?.id ?? before;

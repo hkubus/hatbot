@@ -1,5 +1,3 @@
-// A WebSocket to the brain that reconnects with backoff until it's stopped, and at once when the network
-// comes back.
 import Foundation
 
 #if canImport(FoundationNetworking)
@@ -23,17 +21,14 @@ final class Socket {
   /// The brain turned the token away at the handshake; the socket stops.
   var onUnauthorized: () -> Void = {}
 
-  /// How long a ping may go unanswered before the socket is given up.
   private static let pongWait: Duration = .seconds(10)
 
   private let make: () -> URLSessionWebSocketTask
   private let maxDelay: Double
   private var ws: URLSessionWebSocketTask?
   private var loop: Task<Void, Never>?
-  /// The wait before trying again, which `retryNow` cuts short.
   private var wait: Task<Void, Never>?
   private var retry = 0
-  /// Pongs so far, so a ping can tell whether its own came.
   private var pongs = 0
   /// Kept across stop and start: opening again after the app was in the background is a reconnect,
   /// so what was missed meanwhile gets loaded.
@@ -72,8 +67,7 @@ final class Socket {
     ws?.send(.string(text)) { _ in }
   }
 
-  /// Tries again now rather than when the backoff says. A socket that's open or opening is checked
-  /// instead: one that went quiet doesn't say so.
+  /// A socket that's open or opening is checked instead: one that went quiet doesn't say so.
   func retryNow() {
     guard loop != nil else { return }
     retry = 0
@@ -84,7 +78,6 @@ final class Socket {
     }
   }
 
-  /// Whether this open is a reconnect.
   func opened() -> Bool {
     defer { everOpened = true }
     return everOpened
@@ -107,7 +100,6 @@ final class Socket {
     }
   }
 
-  /// Back online, or on another network: try at once, or check the socket still gets through.
   private func watchNetwork() {
     #if canImport(Network)
       let monitor = NWPathMonitor()

@@ -32,7 +32,6 @@ test("Update asks hatbot-update by writing the request file, once at a time, and
   });
   expect((await post()).status).toBe(409);
   t.advance(60 * 60_000);
-  // The brain isn't restarted under a running task.
   t.db.run(
     "INSERT INTO tasks (title, goal, origin, lane, model, status, budget_usd) VALUES ('x', 'x', 'chat', 'screen', 'm', 'running', 1)",
   );
@@ -89,7 +88,6 @@ test("hatbot-update.sh deploys signed commits only forward, not a branch moved b
       if (p.exitCode !== 0) throw new Error(`${cmd.join(" ")}: ${p.stderr.toString()}`);
       return p.stdout.toString().trim();
     };
-    // Your signing key, and a repository with two commits signed with it.
     run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", join(dir, "key")]);
     const pub = readFileSync(join(dir, "key.pub"), "utf8").trim();
     mkdirSync(join(dir, "etc"));
@@ -154,7 +152,6 @@ test("hatbot-update.sh deploys signed commits only forward, not a branch moved b
       };
     };
 
-    // Forward: deployed.
     expect(update(v1)).toMatchObject({ status: { state: "done" }, deployed: "v2: the fix" });
     // Someone with the forge account moves the branch back to the older signed commit.
     repo("reset", "-q", "--hard", v1);

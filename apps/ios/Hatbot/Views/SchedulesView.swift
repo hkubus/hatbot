@@ -1,5 +1,4 @@
-// Schedules & Triggers (PLAN.md §5.6, §8): what runs on its own. Schedules can be made here; webhooks and
-// Uptime Kuma triggers are set up on the web, where their URL gets pasted into the sender.
+// Webhooks and Uptime Kuma triggers are set up on the web, where their URL gets pasted into the sender.
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -67,7 +66,7 @@ struct SchedulesView: View {
   }
 }
 
-/// A schedule to edit, or a new one (`id` nil).
+/// `id` nil makes a new one.
 struct ScheduleDetailView: View {
   let id: Int?
   @Environment(AppStore.self) private var store
@@ -203,7 +202,6 @@ struct ScheduleDetailView: View {
   }
 }
 
-/// A trigger: its switch, trust and instructions; a new secret; delete.
 struct TriggerDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store

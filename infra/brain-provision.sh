@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: provision the brain container (PLAN.md §4.1, §7, §9).
+# Hatbot: provision the brain container.
 # Runs inside the brain as root. host-setup.sh or ssh-setup.sh pushes and starts it; safe to re-run.
 # The app and its service unit come later, from deploy.sh.
 #   DESKTOP_IP     the desktop's IP; it may not open connections to the brain (empty: no desktop)

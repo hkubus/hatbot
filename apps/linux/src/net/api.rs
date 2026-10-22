@@ -1,5 +1,4 @@
-// JSON requests to the brain with the app's bearer token (PLAN.md §8), on libsoup and the GLib
-// main loop.
+// JSON requests to the brain with the app's bearer token, on libsoup and the GLib main loop.
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -125,7 +124,6 @@ impl Api {
         self.call(path, "POST", Some(body), false).await
     }
 
-    /// A POST whose answer doesn't matter.
     pub async fn post_empty(&self, path: &str) -> Result<()> {
         let _: serde_json::Value = self.call(path, "POST", Some(&Empty {}), false).await?;
         Ok(())
@@ -166,7 +164,6 @@ impl Api {
         Ok(())
     }
 
-    /// Raw bytes, for screenshots and attachments.
     pub async fn bytes(&self, path: &str) -> Result<glib::Bytes> {
         let msg = self.message("GET", &self.url(path));
         self.send(path, &msg, false).await

@@ -103,7 +103,6 @@ test("a once-off runs at the moment picked, one run at a time, waits out a pause
   await t.tasks.idle();
   expect(t.schedules.get(once.id)).toMatchObject({ enabled: false, nextRunAt: null });
   expect((await call("PATCH", `/schedules/${once.id}`, { enabled: true })).status).toBe(400);
-  // More often than every 5 minutes is refused.
   expect((await make({ cron: "* * * * *" })).status).toBe(400);
   expect((await make({ cron: "*/15 * * * *" })).status).toBe(201);
 });
@@ -122,7 +121,6 @@ test("a signed webhook starts an untrusted task; oversized, unsigned or replayed
     })
   ).json()) as TriggerWithSecret;
   expect(created.url).toBe(`https://hatbot.test/api/v1/hooks/${created.id}`);
-  // The secret isn't shown again.
   expect(JSON.stringify(await (await call("GET", "/triggers")).json())).not.toContain(
     created.secret,
   );
@@ -215,7 +213,6 @@ test("a signed webhook starts an untrusted task; oversized, unsigned or replayed
   expect((await forge(third, "d-3")).status).toBe(202);
   await t.tasks.idle();
 
-  // A new secret replaces the old one.
   const rotated = (await (
     await call("POST", `/triggers/${created.id}/secret`)
   ).json()) as TriggerWithSecret;
@@ -338,7 +335,6 @@ test("a task waits for the tasks it starts and reports for them; cancelling it c
   const child = t.tasks.list().find((x) => x.parentId === task.id) as Task;
   expect(child).toMatchObject({ lane: "screen", status: "done" });
   expect(t.tasks.steps(task.id).find((s) => s.kind === "task")?.url).toBe(`/tasks/${child.id}`);
-  // One card and one notification, both for the background task.
   const cards = t.thread.list().filter((m) => m.kind === "task");
   expect(cards.map((m) => m.taskId)).toEqual([task.id]);
   expect(t.notifier.sent.map((n) => n.title)).toEqual(["Done: Price check"]);
@@ -360,7 +356,6 @@ test("a task waits for the tasks it starts and reports for them; cancelling it c
     },
     { content: [toolUse("ask_bot", { bot: "Chef", request: "Plan Sunday dinner" })] },
   );
-  // Chef answers in its own chat.
   t.model.script.push({
     wait: new Promise((r) => {
       release = () => r(null);

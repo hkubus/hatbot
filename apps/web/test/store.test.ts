@@ -6,7 +6,6 @@ import { msg } from "./fixtures";
 const dom = installDom();
 dom.answer(() => []);
 
-/** A store of its own, as a fresh page load has. */
 const freshStore = (name: string) =>
   import(`../src/store.ts?${name}`) as Promise<typeof import("../src/store")>;
 

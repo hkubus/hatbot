@@ -1,6 +1,5 @@
-# `cargo deny check licenses`: every crate must be permissive (PLAN §2). GTK, libadwaita, GLib,
-# libsoup and libsecret are LGPL, but they're system libraries the app links dynamically and
-# never ships, which §2 allows by name; their Rust bindings are MIT.
+# Every crate must be permissive. GTK, libadwaita, GLib, libsoup and libsecret are LGPL, but
+# they're system libraries the app links dynamically and never ships; their Rust bindings are MIT.
 [licenses]
 allow = [
   "MIT",

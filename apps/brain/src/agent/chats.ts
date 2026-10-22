@@ -1,5 +1,3 @@
-// Your chats (PLAN.md §14): each bot's own, and groups of bots. One Thread runs each; what isn't tied
-// to one chat (tasks' messages, what you've seen) is here.
 import {
   type Box,
   type Conversation,
@@ -24,11 +22,7 @@ type Parts = Pick<
   | "proposals"
 >;
 
-/**
- * The chats you have, as SQL on `conversations c`: not deleted groups, and not the own chat of a
- * deleted bot.
- */
-/** A message you haven't seen since it was sent or edited. Word for word messages_unread's condition. */
+/** Must stay word for word messages_unread's condition. */
 const UNREAD = `role = 'assistant' AND status != 'streaming' AND incognito = 0
   AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at))`;
 
@@ -47,7 +41,7 @@ type Row = {
 
 export class Chats {
   private threads = new Map<number, Thread>();
-  /** Every chat's, so what attach adds reaches the chats open already. */
+  /** Shared by every chat, so what attach adds reaches the chats open already. */
   private d: ThreadDeps;
   private clock: () => number;
 
@@ -68,7 +62,6 @@ export class Chats {
     return new Date(this.clock()).toISOString();
   }
 
-  /** The chat, or null if there's no such one (or it was deleted). */
   thread(conversationId: number): Thread | null {
     const known = this.threads.get(conversationId);
     if (known) return known;
@@ -81,7 +74,6 @@ export class Chats {
     return thread;
   }
 
-  /** A bot's own chat, made the first time it's needed. */
   direct(botId: string): Thread {
     const id =
       this.d.db
@@ -105,12 +97,10 @@ export class Chats {
     return this.thread(id) as Thread;
   }
 
-  /** Hatbot's own chat: what /thread is. */
   hatbot(): Thread {
     return this.direct(HATBOT_ID);
   }
 
-  /** Every bot's own chat, then the groups, newest first. */
   list(): Conversation[] {
     // Every bot has its own chat, even before anything is said in it.
     for (const bot of this.d.bots.list()) this.direct(bot.id);
@@ -161,46 +151,38 @@ export class Chats {
     };
   }
 
-  /** Called once the services that need the chats exist. */
   attach(parts: Parts) {
     Object.assign(this.d, parts);
   }
 
-  /** Every chat that has been opened since the brain started. */
   private open(): Thread[] {
     for (const c of this.list()) this.thread(c.id);
     return [...this.threads.values()];
   }
 
-  /** Pause all: stops every reply in progress. */
   abortAll() {
     for (const t of this.threads.values()) t.abortCurrent();
   }
 
-  /** Stops the replies `botId` is writing: it was deleted. */
   abortBot(botId: string) {
     for (const t of this.threads.values()) t.abortCurrent(botId);
   }
 
-  /** Summaries and incognito endings, every minute. */
   async sweep() {
     for (const t of this.open()) await t.sweep();
   }
 
-  /** Ends every incognito conversation; the brain does it on start. */
   async endIncognito() {
     for (const t of this.open()) await t.endIncognito();
   }
 
-  /** Waits for every chat's queued replies (tests, shutdown). */
   async idle() {
     await Promise.all([...this.threads.values()].map((t) => t.idle()));
   }
 
   /**
-   * Your bots' messages sent or edited since you last saw them: each chat's newest UNREAD_PER_CHAT, for
-   * the marks on the messages loaded. A bot's chat never read had thousands; the chat list counts them all.
-   * Pinned to messages_unread: SQLite otherwise picks messages_conversation and walks a long chat's read messages.
+   * Capped per chat: a bot's chat never read had thousands. Pinned to messages_unread: SQLite
+   * otherwise picks messages_conversation and walks a long chat's read messages.
    */
   unread(): number[] {
     return this.d.db
@@ -213,7 +195,6 @@ export class Chats {
       .map((r) => r.id);
   }
 
-  /** You saw these messages. One still streaming isn't seen until it's done. */
   markSeen(ids: number[]) {
     const seenAt = this.now();
     const marked = this.d.db
@@ -226,7 +207,6 @@ export class Chats {
     if (marked.length) this.d.events.emit({ type: "message.seen", ids: marked, seenAt });
   }
 
-  /** A task's result changed these messages: the card that showed it running, or the reply that started it. */
   markEdited(taskId: number) {
     const editedAt = this.now();
     const rows = this.d.db
@@ -237,11 +217,6 @@ export class Chats {
     for (const r of rows) this.d.events.emit({ type: "message.edited", id: r.id, editedAt });
   }
 
-  /**
-   * A task shown under a reply ended (not cancelled). With `rewrite`, its bot is about to write the
-   * reply again, so it shows as being written; otherwise the task's result takes its place. Not a reply
-   * still being written: its bot rewrites that one when it's done.
-   */
   endReply(task: Task, rewrite: boolean) {
     const rows = this.d.db
       .query<
@@ -260,7 +235,6 @@ export class Chats {
       );
   }
 
-  /** Shows a task under the reply that started it, so its progress and result don't need a card. */
   attachTask(messageId: number, taskId: number): boolean {
     const done = this.d.db
       .query(
@@ -271,7 +245,7 @@ export class Chats {
     return done > 0;
   }
 
-  /** A hand-off's asking message now links to its request in the other bot's chat (PLAN.md §14.7). */
+  /** A hand-off's asking message now links to its request in the other bot's chat. */
   link(messageId: number, link: MessageLink) {
     this.d.db
       .query("UPDATE messages SET link_conversation_id = ?, link_message_id = ? WHERE id = ?")
@@ -279,7 +253,7 @@ export class Chats {
     this.d.events.emit({ type: "message.link", id: messageId, link });
   }
 
-  /** A card from `botId` in a chat; a deleted one's go to the bot's own. */
+  /** A deleted chat's cards go to the bot's own. */
   addCard(
     conversationId: number,
     botId: string,
@@ -290,19 +264,12 @@ export class Chats {
     return (this.thread(conversationId) ?? this.direct(botId)).add({ kind, text, ...ref, botId });
   }
 
-  /**
-   * A line from a bot in its own chat, outside any conversation, e.g. what a watcher saw. `taintedBy`:
-   * its text came from untrusted content, this; a conversation that reads it is tainted.
-   */
+  /** `taintedBy`: the text came from untrusted content; a conversation that reads it is tainted. */
   note(botId: string, text: string, taintedBy: string | null = null) {
     return this.direct(botId).add({ text, botId, taintedBy });
   }
 
-  /**
-   * A note from a box's page (hatbox.send) or its backend (a notification), in the chat the box was
-   * made in while its bot is in it, else in the bot's own. The box's code wrote it, so it's untrusted:
-   * never your words, nor the bot's.
-   */
+  /** The box's code wrote it, so it's untrusted: never your words, nor the bot's. */
   boxNote(box: Box, text: string) {
     const made = box.conversationId === null ? null : this.thread(box.conversationId);
     const thread =
@@ -318,12 +285,10 @@ export class Chats {
     });
   }
 
-  /** A task ended: `botId` tells you in the chat it was started from. */
   taskEnded(conversationId: number, botId: string) {
     return (this.thread(conversationId) ?? this.direct(botId)).taskEnded(botId);
   }
 
-  /** A group of `botIds` and you. */
   createGroup(title: string | undefined, botIds: string[]): Conversation {
     const ids = this.groupBots(botIds);
     const id = this.d.db.transaction(() => {
@@ -340,7 +305,6 @@ export class Chats {
     return this.get(id) as Conversation;
   }
 
-  /** A group's name or bots. Null if there's no such group. */
   updateGroup(id: number, patch: { title?: string; botIds?: string[] }): Conversation | null {
     if (this.get(id)?.kind !== "group") return null;
     const ids = patch.botIds && this.groupBots(patch.botIds);
@@ -358,7 +322,6 @@ export class Chats {
     return this.get(id);
   }
 
-  /** Deletes a group; its bots' own chats stay. False if there's no such group. */
   deleteGroup(id: number): boolean {
     if (this.get(id)?.kind !== "group") return false;
     this.threads.get(id)?.abortCurrent();
@@ -368,7 +331,6 @@ export class Chats {
     return true;
   }
 
-  /** A group's bots: ones that exist, each once. */
   private groupBots(botIds: string[]): string[] {
     const ids = [...new Set(botIds)];
     const missing = ids.find((b) => !this.d.bots.active(b));
@@ -384,7 +346,6 @@ export class Chats {
     for (const [i, b] of botIds.entries()) add.run(id, b, i);
   }
 
-  /** Tells the apps a chat's name or bots changed. */
   changed(conversationId: number) {
     const conversation = this.get(conversationId);
     if (conversation) this.d.events.emit({ type: "conversation.updated", conversation });

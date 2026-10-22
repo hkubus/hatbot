@@ -1,15 +1,10 @@
-// Points on two measured axes. A few points are named beside themselves where there's room; the
-// readout names the one nearest the pointer, and the arrow keys walk them left to right.
 import { chartValue, niceTicks, type ScatterChart, seriesNames } from "@hatbot/shared";
 import { CHAR_W, color, cutTo, Plot, TipRow, tipBeside, usePlot } from "./frame";
 
 const PLOT_H = 190;
 const AXIS_H = 22;
-/** Room for an axis's name: the y's above the plot, the x's below its ticks. */
 const NAME_H = 16;
-/** Up to this many points are each named on the plot. */
 const LABEL_MAX = 12;
-/** How near the pointer has to be to a point to pick it. */
 const REACH = 24;
 
 type Box = { x0: number; y0: number; x1: number; y1: number };

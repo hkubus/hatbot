@@ -1,7 +1,6 @@
-// Research tasks (PLAN.md §17). The lead plans the question and hands parts to Haiku helpers that search
-// at once; each finding comes back with the quote it rests on and a numbered source. Before the report
-// is final, Haiku checks its numbers against those quotes. The answer goes to the chat, and the report
-// into the bot's notes and onto the task.
+// The lead plans the question and hands parts to Haiku helpers that search at once; each finding
+// comes back with the quote it rests on and a numbered source. Before the report is final, Haiku
+// checks its numbers against those quotes.
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
@@ -148,7 +147,6 @@ const WORKER_TOOLS: Anthropic.Beta.BetaToolUnion[] = [
 /** The lead's own web tools: it checks one thing, and leaves reading pages to the helpers. */
 export const LEAD_WEB_TOOLS = webTools({ pageTokens: 10_000 });
 
-/** The research prompt, with where this bot keeps its reports. */
 export const researchPrompt = (bot: Bot) => RESEARCH_PROMPT.replaceAll("{research}", folderOf(bot));
 
 const folderOf = (bot: { id: string }) => {
@@ -156,7 +154,7 @@ const folderOf = (bot: { id: string }) => {
   return folder ? `${folder}/research` : "research";
 };
 
-/** `read`: a helper read the page, so its link is one the task has (PLAN.md §17). */
+/** `read`: a helper read the page, so its link is one the task has. */
 type Source = { n: number; url: string; title: string; date?: string; read?: boolean };
 
 /** One page, one source: without its fragment, tracking parameters or a trailing slash. */
@@ -209,7 +207,6 @@ export function quoteFound(quote: string, read: string): boolean {
   );
 }
 
-/** What a helper read, gathered from each reply. */
 type Read = {
   texts: string[];
   visited: Set<string>;
@@ -262,7 +259,6 @@ type Quoted = {
   n: number;
   claim: string;
   quote: string;
-  /** The quote is in what the helper read. */
   confirmed: boolean;
   /** Not confirmed because its page couldn't be read here, not because the quote isn't on it. */
   unchecked?: boolean;
@@ -297,7 +293,6 @@ export class ResearchSources {
   }
 }
 
-/** A research run's state between its steps. */
 export class ResearchState {
   readonly sources = new ResearchSources();
   /** The last report it tried to finish with: kept if the run stops short. */
@@ -312,7 +307,6 @@ export class ResearchState {
   unchecked: string | null = null;
 }
 
-/** What a research run needs from the task running it. */
 export type ResearchRun = {
   tasks: Tasks;
   task: Task;
@@ -351,7 +345,7 @@ const hostKey = (link: string) =>
 /**
  * The links the task has from outside: in its own messages (the goal, events), search results and
  * pages it read, and the helpers' sources. Not what the model wrote, what its code printed or what
- * tools echoed back: those could carry what it read (PLAN.md §17).
+ * tools echoed back: those could carry what it read.
  */
 function linksSeen(messages: Anthropic.Beta.BetaMessageParam[], sources: ResearchSources) {
   const seen = new Set<string>();
@@ -411,10 +405,6 @@ const estimate = (messages: Anthropic.Beta.BetaMessageParam[]) =>
     webSearches: HELPER_USES,
   });
 
-/**
- * A helper's findings, why it stopped short if it did, what it read, as `plain` text, what it read that
- * can't be read here, and the pages its searches and fetches came back with.
- */
 type HelperReport = Findings & {
   note?: string;
   read: string;
@@ -688,7 +678,6 @@ const UNCHECKED =
 const CITE = /(?<!\[)\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\](?![(\]])/g;
 const numbersIn = (match: string) => match.match(/\d+/g)?.map(Number) ?? [];
 
-/** Runs `fn` on the parts of markdown outside fenced and inline code. */
 function outsideCode(text: string, fn: (part: string) => string): string {
   return text
     .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
@@ -696,7 +685,6 @@ function outsideCode(text: string, fn: (part: string) => string): string {
     .join("");
 }
 
-/** The source numbers cited, in the order first cited. */
 function citedIn(texts: string[]): number[] {
   const order: number[] = [];
   for (const text of texts)
@@ -954,7 +942,6 @@ function head(run: { tasks: Tasks; task: Task }, note: string): string {
   ].join("\n\n");
 }
 
-/** The sources `order` names, numbered in that order, as a report's list. */
 function sourceList(sources: ResearchSources, order: number[]): string[] {
   const list = order.map((n, i) => {
     const s = sources.get(n) as Source;
@@ -1013,7 +1000,6 @@ async function saveReport(run: { tasks: Tasks; task: Task }, content: string): P
   return { path, attached };
 }
 
-/** Where `what` went, in a sentence. */
 function savedLine(saved: Saved, what: string): string {
   if (saved.path && saved.attached)
     return `${what} is attached, and in memory as \`${saved.path}\`.`;

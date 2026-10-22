@@ -1,6 +1,5 @@
-// Looking after things (PLAN.md §15, LookingViews.swift on iOS): watchers, Check everything and the
-// heartbeat, under Settings. Watchers are made and changed in the chat or on the web; here you switch
-// them, look now and delete them.
+// As LookingViews.swift on iOS. Watchers are made and changed in the chat or on the web; here
+// you switch them, look now and delete them.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -155,7 +154,6 @@ impl WatcherList {
     }
 }
 
-/// A watcher: what it looks at, its last look and values.
 pub struct WatcherPage {
     pub page: adw::NavigationPage,
     _inner: Rc<WatcherView>,
@@ -469,7 +467,6 @@ impl WatcherView {
     }
 }
 
-/// Check everything: a real try of each part Hatbot depends on.
 pub struct ChecksPage {
     pub page: adw::NavigationPage,
     _inner: Rc<Checks>,
@@ -665,7 +662,6 @@ impl Checks {
     }
 }
 
-/// The heartbeat: how often it looks, as which bot, what you want done, and what it found.
 pub struct HeartbeatPage {
     pub page: adw::NavigationPage,
     _inner: Rc<Heartbeat>,

@@ -1,4 +1,4 @@
-// Teach-by-showing (PLAN.md §1, §5.4): record the owner doing a chore, have Opus draft a skill, save it once reviewed.
+// Teach-by-showing: record the owner doing a chore, have Opus draft a skill, save it once reviewed.
 import type Anthropic from "@anthropic-ai/sdk";
 import { SKILL_NAME, type TeachSession } from "@hatbot/shared";
 import { type ModelClient, modelErrorText, oneShot } from "../agent/model";
@@ -17,7 +17,6 @@ import { type Skills, skillPath } from "./skills";
 export const TEACH_MODEL = "claude-opus-5-5";
 /** Holds the screen lane while you record, so no task starts on the desktop. */
 const TEACH_LANE = -2;
-/** Screenshots sent with the recording, spread across it. */
 const SCREENS_SENT = 16;
 
 export class TeachError extends UserError {}
@@ -50,7 +49,6 @@ type Row = {
 const actions = (steps: RecStep[]) =>
   steps.filter((s) => s.kind !== "page" && s.kind !== "move").length;
 
-/** Evenly spread picks from `items`, keeping the first and the last. */
 function spread<T>(items: T[], n: number): T[] {
   if (items.length <= n) return items;
   return Array.from(
@@ -59,7 +57,6 @@ function spread<T>(items: T[], n: number): T[] {
   );
 }
 
-/** The skill's name from its front matter or title, else `fallback`. */
 function nameOf(skill: string, fallback: string): string {
   const front = /^---\n[\s\S]*?^name:\s*(.+)$/m.exec(skill)?.[1]?.trim();
   if (front && SKILL_NAME.test(front)) return front;
@@ -128,7 +125,6 @@ export class Teach {
     return r ? this.toSession(r) : null;
   }
 
-  /** The recording in progress, and drafts waiting for you. */
   current(): { recording: TeachSession | null; drafts: TeachSession[] } {
     const drafts = this.d.db
       .query<Row, []>(
@@ -155,10 +151,7 @@ export class Teach {
     if (session) this.d.events.emit({ type: "teach.updated", session });
   }
 
-  /**
-   * Takes control of the desktop for you and starts recording what you do. `replaces`: the skill this
-   * records again, whose name the draft keeps.
-   */
+  /** `replaces`: the skill this records again, whose name the draft keeps. */
   async start(replaces?: string): Promise<TeachSession> {
     const { desktop, lane, archive } = this.d;
     if (this.rec) throw new TeachError("Already recording.", 409);
@@ -219,7 +212,6 @@ export class Teach {
     return this.get(id) as TeachSession;
   }
 
-  /** Your input from the live view, while you have control. */
   input(m: Parameters<Recorder["input"]>[0]) {
     this.rec?.recorder.input(m);
   }
@@ -229,7 +221,6 @@ export class Teach {
     this.rec?.recorder.keysUp();
   }
 
-  /** Ends the recording, hands the desktop back, and leaves the steps behind. */
   private async endRecording(id: number): Promise<RecStep[] | null> {
     const rec = this.rec;
     if (rec?.id !== id) return null;
@@ -241,7 +232,6 @@ export class Teach {
     return steps;
   }
 
-  /** Stops the recording and starts writing the skill. */
   async stop(): Promise<TeachSession> {
     const id = this.rec?.id;
     if (id === undefined) throw new TeachError("Nothing is being recorded.", 409);
@@ -262,7 +252,6 @@ export class Teach {
     return this.get(id) as TeachSession;
   }
 
-  /** Writes the skill again, after a failure or to start over from the recording. */
   redraft(id: number): TeachSession {
     const r = this.row(id);
     if (!r) throw new TeachError("No such recording.", 404);
@@ -275,7 +264,6 @@ export class Teach {
     return this.get(id) as TeachSession;
   }
 
-  /** One Opus call from the step log and a spread of the screenshots. */
   private async write(id: number) {
     const { archive } = this.d;
     try {
@@ -350,7 +338,6 @@ export class Teach {
     return { session: this.get(id) as TeachSession, path: skillPath(input.name), sha };
   }
 
-  /** Throws the recording or draft away. A recording in progress hands the desktop back. */
   async discard(id: number): Promise<TeachSession> {
     const r = this.row(id);
     if (!r) throw new TeachError("No such recording.", 404);
@@ -374,7 +361,6 @@ export class Teach {
       .catch((err) => console.error("teach screenshots not removed", err));
   }
 
-  /** Stops the page poll; for tests and shutdown. */
   close() {
     if (this.rec) clearInterval(this.rec.timer);
   }

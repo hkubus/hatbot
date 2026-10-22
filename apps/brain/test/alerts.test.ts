@@ -103,7 +103,6 @@ test("a flapping monitor goes on its last task's timeline for an hour; a trigger
     reason: "limit",
   });
   expect(t.notifier.sent.filter((n) => n.title === "Kuma is at its limit")).toHaveLength(1);
-  // A day later it starts tasks again.
   await t.tasks.idle();
   t.advance(24 * 3600_000);
   expect(t.triggers.receiveKuma(triggerId, other(8)).status).toBe("started");

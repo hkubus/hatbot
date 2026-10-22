@@ -1,5 +1,3 @@
-// Options against criteria as a table: a value in each cell, each column shaded on its own from
-// its worst (faint) to its best (strongest). A wide one scrolls inside its box.
 import { chartValue, type MatrixChart } from "@hatbot/shared";
 import { useLayoutEffect, useRef, useState } from "react";
 import { clamp, TipRow } from "./frame";
@@ -41,7 +39,6 @@ export function MatrixPlot({ spec }: { spec: MatrixChart }) {
       ? undefined
       : `color-mix(in srgb, var(--chart) ${FAINT + (STRONG - FAINT) * t}%, transparent)`;
 
-  // The readout sits under the cell, or over it in the lower half.
   useLayoutEffect(() => {
     const el = box.current;
     const cell = at && el?.querySelector<HTMLElement>(`[data-cell="${at[0]}-${at[1]}"]`);

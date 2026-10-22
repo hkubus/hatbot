@@ -69,7 +69,6 @@ import {
 } from "../tasks";
 import { splitWaiting } from "../waiting";
 
-/** How long an unread message stays on screen before it counts as seen. */
 const SEEN_AFTER_MS = 1500;
 
 const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
@@ -107,7 +106,6 @@ export function dayLabel(iso: string, now: Date): string {
   return label;
 }
 
-/** Time, then actions that show on hover (or a tap on touch screens). */
 function Meta({
   m,
   copy,
@@ -117,7 +115,6 @@ function Meta({
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
-  /** An errored reply: its bot writes it again. */
   retry?: () => Promise<unknown>;
 }) {
   const [copied, doCopy] = useCopy();
@@ -175,7 +172,6 @@ function Meta({
   );
 }
 
-/** A task, as a message: what it's doing while it runs, then how it ended. */
 function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
@@ -220,7 +216,6 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   );
 }
 
-/** A task under the reply that started it: working dots, then how it ended. */
 function TaskResult({ taskId }: { taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
@@ -249,7 +244,6 @@ function TaskResult({ taskId }: { taskId: number }) {
   return <div className="muted resolved">Cancelled.</div>;
 }
 
-/** A negotiation under the reply that started it: the listing, and where it stands. */
 function NegotiationResult({ id }: { id: number }) {
   const n = useStore((s) => s.negotiations[id]);
   useEffect(() => ensureNegotiation(id), [id]);
@@ -266,7 +260,6 @@ function NegotiationResult({ id }: { id: number }) {
   );
 }
 
-/** A box under the reply that made or changed it: its title, with Open. */
 function BoxResult({ id }: { id: number }) {
   const box = useStore((s) => s.boxes[id]);
   useEffect(() => ensureBox(id), [id]);
@@ -282,10 +275,7 @@ function BoxResult({ id }: { id: number }) {
   );
 }
 
-/**
- * Where a hand-off's other end is: the chat it's in, by its bot's name. Opened at the message, so
- * the hand-off reads with what came of it.
- */
+/** Opened at the message, so the hand-off reads with what came of it. */
 function useLinkOpen(link: MessageLink | undefined) {
   const label = useStore((s) => {
     if (!link) return "";
@@ -298,10 +288,7 @@ function useLinkOpen(link: MessageLink | undefined) {
     : undefined;
 }
 
-/**
- * Another bot handing this chat's bot work: its request, which this bot answers here like any message.
- * One a task asked for has no chat to go back to; its task page says which task.
- */
+/** One a task asked for has no chat to go back to; its task page says which task. */
 function HandoffMessage({ m }: { m: ThreadMessage }) {
   const name = useStore((s) => botName(s, m.botId));
   const open =
@@ -320,7 +307,7 @@ function HandoffMessage({ m }: { m: ThreadMessage }) {
   );
 }
 
-/** A note a box's page sent (hatbox.send): the box's words, neither yours nor the bot's, as plain text. */
+/** The box's words, neither yours nor the bot's: plain text. */
 function BoxNote({ m }: { m: ThreadMessage }) {
   const box = useStore((s) => (m.boxId ? s.boxes[m.boxId] : null));
   useEffect(() => {
@@ -414,7 +401,6 @@ function ReplyMessage({
   );
 }
 
-/** An approval waiting for you, in the tray above the composer: what it asks, and where it came from. */
 function TrayApproval({ a }: { a: Approval }) {
   const negotiation = useStore((s) => (a.kind === "mandate" ? negotiationOf(s, a.id) : undefined));
   return (
@@ -444,7 +430,6 @@ function TrayApproval({ a }: { a: Approval }) {
   );
 }
 
-/** A schedule Hatbot made, as one line. */
 function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: number }) {
   const s = useStore((st) => st.schedules[scheduleId]);
   useEffect(() => ensureSchedule(scheduleId), [scheduleId]);
@@ -484,7 +469,6 @@ function ScheduleMessage({ m, scheduleId }: { m: ThreadMessage; scheduleId: numb
   );
 }
 
-/** The pages a reply cites, in a line. */
 /**
  * The answers the questions at the end of a reply offer. For one, a tap sends it as your message; for
  * several, you pick or write each answer and send them together, numbered like the questions.
@@ -584,7 +568,6 @@ function Sources({ list }: { list: Source[] }) {
   );
 }
 
-/** A message's files: pictures and Markdown you can open, the rest to open or save. */
 function Files({ list }: { list: Attachment[] }) {
   return (
     <div className="files">
@@ -627,7 +610,6 @@ function Files({ list }: { list: Attachment[] }) {
   );
 }
 
-/** A line in the menu over the composer: a command, or in a group a bot to @mention. */
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
@@ -642,16 +624,12 @@ export const Message = memo(function Message({
   m: ThreadMessage;
   progress?: string;
   animate: boolean;
-  /** The latest reply, errored: it can be tried again. */
   retryable?: boolean;
-  /** The latest message, a question: its choices can be tapped. */
   answerable?: boolean;
-  /** Sent or edited since you last saw it. */
   unread: boolean;
 }) {
   // Touch screens have no hover: a tap shows the message's actions.
   const [tapped, setTapped] = useState(false);
-  // What came of a command: a quiet line rather than a message.
   if (m.role === "assistant" && m.kind === "command" && !m.taskId)
     return (
       <div className="msg-note" data-id={m.id}>
@@ -694,7 +672,6 @@ export const Message = memo(function Message({
   );
 });
 
-/** A finished conversation, folded up under its recap. */
 function Fold({
   messages,
   text,
@@ -836,7 +813,6 @@ export function Chat({ id }: { id: number }) {
   const scroller = useRef<HTMLElement>(null);
   const thread = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  // Scrolled well up: an arrow above the composer goes back down.
   const [far, setFar] = useState(false);
   // Only messages that arrive after the first paint animate in.
   const animateFrom = useRef<number>(Number.POSITIVE_INFINITY);
@@ -848,7 +824,6 @@ export function Chat({ id }: { id: number }) {
     stick.current = true;
   }, []);
   const chatKey = `${id}${incognito ? ":incognito" : ""}`;
-  // Files dropped anywhere in the window go into the composer.
   const [dropping, setDropping] = useState(false);
   useEffect(() => {
     const on = fileDrops((list) => attachFiles(chatKey, list), setDropping);
@@ -858,7 +833,6 @@ export function Chat({ id }: { id: number }) {
     };
   }, [chatKey]);
 
-  // Opening the chat, or going to or from incognito, loads its conversation in the store.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
   useEffect(() => {
     animateFrom.current = Number.POSITIVE_INFINITY;
@@ -909,7 +883,6 @@ export function Chat({ id }: { id: number }) {
     };
   }, [target]);
 
-  // Follow the conversation while the view is at the bottom.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -975,7 +948,6 @@ export function Chat({ id }: { id: number }) {
     });
   };
 
-  // Only the latest reply can be tried again, and only if it errored.
   const lastReply = messages.findLast(
     (m) => m.role === "assistant" && m.kind !== "command" && m.kind !== "box",
   );
@@ -996,7 +968,6 @@ export function Chat({ id }: { id: number }) {
     lastDay = day;
     return show ? <div className="day">{day}</div> : null;
   };
-  // In a group, the bot's name above each run of its messages.
   let lastSender: string | null = null;
   const senderBefore = (m: ThreadMessage) => {
     // A box's note isn't its bot's words.
@@ -1148,14 +1119,12 @@ export function Chat({ id }: { id: number }) {
   );
 }
 
-/** A reply as a screen reader says it: who, then its text without Markdown's marks, cut short. */
 export function spoken(m: ThreadMessage, name: string): string {
   const text = plainText(m.text);
   if (!text) return "";
   return `${name}: ${text.length > 400 ? `${text.slice(0, 399)}…` : text}`;
 }
 
-/** A group's bots, for the names above their messages and @ in the composer. */
 const groupMembers = (s: ReturnType<typeof getState>) => {
   const c = currentChat(s);
   return c?.kind === "group" ? c.botIds : null;
@@ -1167,7 +1136,7 @@ const randomId = () =>
     b.toString(16).padStart(2, "0"),
   ).join("");
 
-/** What you're writing, its files and the menu over it; apart from the thread, so typing redraws only this. */
+/** Apart from the thread, so typing redraws only this. */
 export function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
@@ -1180,7 +1149,6 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
       saveDraftText(chat, next);
       return next;
     });
-  // The command list under "/…": which one is picked, and whether Escape closed it.
   const [pick, setPick] = useState(0);
   const [menuClosed, setMenuClosed] = useState(false);
   const files = useDraftFiles(chat);
@@ -1228,7 +1196,6 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
       textarea.current?.focus();
     } else void send(`/${c.name}`);
   };
-  // In a group, "@" at the end offers its bots.
   const at = members && !menuClosed ? /(?:^|\s)@([^\s@]*)$/.exec(draft) : null;
   const typed = at?.[1]?.toLowerCase() ?? "";
   const mentionable = at

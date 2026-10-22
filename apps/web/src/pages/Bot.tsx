@@ -1,4 +1,3 @@
-// A bot's page (PLAN.md §14): its name, role, model and plugins. "new" makes one, from a template or not.
 import { BOT_COLORS, BOT_ICONS, BOT_TEMPLATES, type Bot, HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";
@@ -56,7 +55,6 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     s.conversations.find((c) => c.kind === "direct" && c.botIds[0] === id),
   );
   const plugins = useStore((s) => s.plugins);
-  // A new bot starts in a colour none of the others has yet.
   const freeColor = useStore((s) => {
     const used = s.botIds.map((b) => s.bots[b]?.color);
     const count = (c: Bot["color"]) => used.filter((u) => u === c).length;

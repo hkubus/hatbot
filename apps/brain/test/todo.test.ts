@@ -3,7 +3,6 @@ import type { Task, TodoList } from "@hatbot/shared";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp } from "./helpers";
 
-/** Moves the clock to that local time. */
 const at = (t: TestApp, y: number, m: number, d: number, h: number, min = 0) =>
   t.advance(new Date(y, m - 1, d, h, min).getTime() - t.clock());
 const reminders = (t: TestApp) =>
@@ -53,7 +52,6 @@ test("the to-do list: added and ticked off in the chat, shown to the next conver
   const opening = JSON.stringify(model.requests.at(-1)?.messages);
   expect(opening).toContain("- Renew the domain (due 2026-10-09)\\n- Buy filters\\n</todo>");
 
-  // The morning list goes out at the hour set.
   t.settings.update({ todoHour: 10 });
   at(t, 2026, 10, 11, 9, 5);
   await t.todoReminders.tick();

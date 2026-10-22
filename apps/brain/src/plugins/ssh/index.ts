@@ -1,6 +1,4 @@
-// SSH (PLAN.md §5.5, §6.4): run commands on the hosts you list in Settings, as the `hatbot` user, with
-// the brain's own key. Host keys are pinned the first time Hatbot connects; a changed key stops it.
-// Uses the system's OpenSSH client.
+// Host keys are pinned the first time Hatbot connects; a changed key stops it.
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type ApprovalKind, MAX_BOX_VALUE } from "@hatbot/shared";
@@ -22,7 +20,6 @@ import { saved } from "../registry";
 import { commandCount, destructive, inContainer, readOnly, statusOnly } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
-/** The most lines ssh_read_file shows in one call. */
 const READ_LINES = 500;
 
 const Host = z.object({
@@ -47,7 +44,6 @@ type Host = z.infer<typeof Host>;
 
 const Config = z.object({ hosts: z.array(Host).default([]) });
 
-/** Safe looks for the chat: fixed commands, so nothing can change. */
 const CHECKS = {
   overview: "uptime; echo; df -h -x tmpfs -x devtmpfs -x overlay; echo; free -m",
   failed: "systemctl --failed --no-pager --plain",
@@ -60,11 +56,8 @@ const CHECKS = {
   top: "top -b -n 1 -o %CPU | head -n 25",
 } as const;
 
-/** The most output kept from each stream; past it, its first and last halves. */
 const KEEP_BYTES = 1024 * 1024;
-/** A command that writes more than this is stopped: nothing useful is that long. */
 const FLOOD_BYTES = 256 * 1024 * 1024;
-/** Keys only, never a password prompt; a new host's key is learned, a changed one refused. */
 const SSH_OPTIONS =
   "BatchMode=yes IdentitiesOnly=yes StrictHostKeyChecking=accept-new ConnectTimeout=10 ServerAliveInterval=15 LogLevel=ERROR";
 /** Printed on the host before the command runs, so a failed command isn't taken for a failed login. */
@@ -75,22 +68,18 @@ const silent = (out: string | undefined) =>
 
 export type Run = (
   args: string[],
-  /** `input`: what the command reads on stdin. `keepBytes`: the most of stdout kept whole. */
   opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array; keepBytes?: number },
 ) => Promise<{
   code: number;
   stdout: string;
   /** stdout as it came, for files: its first and last parts if `cut`. */
   bytes: Uint8Array;
-  /** How many bytes of stdout were left out of the middle. */
   cut: number;
   stderr: string;
   timedOut: boolean;
-  /** Stopped for writing more than FLOOD_BYTES. */
   flooded: boolean;
 }>;
 
-/** Runs a program and collects its output; kills it on timeout, abort, or endless output. */
 export const spawnRun =
   (bin: string): Run =>
   async (args, { timeoutMs, signal, input, keepBytes = KEEP_BYTES }) => {
@@ -136,9 +125,8 @@ export const spawnRun =
   };
 
 /**
- * Reads a stream as it comes, so the output so far is there even if it never ends. Up to `keep`
- * bytes are kept whole; past that only the first and last halves, so a command that writes
- * gigabytes doesn't fill the brain's memory.
+ * Reads a stream as it comes, so the output so far is there even if it never ends. Past `keep` bytes
+ * only the first and last halves are kept, so a command that writes gigabytes doesn't fill memory.
  */
 function collect(stream: ReadableStream<Uint8Array>, keep: number, flood: () => void) {
   const half = Math.floor(keep / 2);
@@ -211,7 +199,6 @@ export const sshPlugin = definePlugin({
     const desktopId = Number(env.HATBOT_DESKTOP_ID) || null;
     const marked = config.hosts.filter((h) => h.proxmox).map((h) => h.name);
     const pctHosts = brainId ? marked : [];
-    /** Why a container can't be reached from here, if it can't. */
     const guestRefused = (guest: number): string | null =>
       !brainId
         ? `Containers are off until HATBOT_BRAIN_ID is set in Settings → Proxmox.`
@@ -229,7 +216,6 @@ export const sshPlugin = definePlugin({
     };
     const target = (h: Host) => (h.port === 22 ? h.address : `[${h.address}]:${h.port}`);
 
-    /** Runs a command on a host; throws if it couldn't connect. */
     const connect = async (
       h: Host,
       command: string,
@@ -274,7 +260,6 @@ export const sshPlugin = definePlugin({
       };
     };
 
-    /** Runs a command on a host; the result as text for the model. */
     const exec = async (
       h: Host,
       command: string,
@@ -302,7 +287,6 @@ export const sshPlugin = definePlugin({
       return parsed.success ? parsed.data.careful : [];
     };
 
-    /** A file's host and path; with `guest`, inside that Proxmox host's container. */
     const placeOf = (r: Remote): Host => {
       const h = hostOf(r.host);
       if (r.guest === undefined) return h;
@@ -314,7 +298,6 @@ export const sshPlugin = definePlugin({
       if (refused) throw new PluginError(refused);
       return h;
     };
-    /** A command for the file's place: in the container through its wrapper, or on the host. */
     const inPlace = (r: Remote, command: string) =>
       r.guest !== undefined
         ? `sudo -n /usr/local/sbin/hatbot-pct-exec ${r.guest} ${quote(command)}`
@@ -357,9 +340,7 @@ export const sshPlugin = definePlugin({
       if (res.code !== 0 || res.timedOut) throw failed(r, "write", res);
     };
 
-    /** You said nobody else writes what this host prints. */
     const trusts = (host: string) => hosts.get(host)?.trustOutput ?? false;
-    /** Why every change there waits for the owner, if it does: a careful host or a careful guest. */
     const carefulOf = (host: string, guest?: number): string | null =>
       hosts.get(host)?.careful
         ? `The owner asked to approve every change on ${host}.`
@@ -388,7 +369,6 @@ export const sshPlugin = definePlugin({
           ? ask(why, kind)
           : allow();
 
-    /** Writing a file on a host: its own files run, the rest asks. */
     const writePolicy = (r: Remote): Verdict => {
       const refused = r.guest === undefined ? null : guestRefused(r.guest);
       if (refused) return block(refused);
@@ -518,7 +498,6 @@ export const sshPlugin = definePlugin({
           const got = res.stdout ? res.stdout.split("\n") : [];
           if (res.stdout.endsWith("\n")) got.pop();
           const over = feed && res.bytes.byteLength > cap;
-          /** The lines that fit, in the order given. */
           const fit = (from: string[]) => {
             const kept: string[] = [];
             let size = 0;
@@ -698,7 +677,6 @@ export const sshPlugin = definePlugin({
       }),
     ];
 
-    /** Each host's pinned key, if Hatbot has connected before. */
     const pinned = async (h: Host): Promise<string | null> => {
       const r = await keygen(["-F", target(h), "-l", "-f", knownHosts], { timeoutMs: 5000 });
       // "256 SHA256:abc… 192.168.55.10 (ED25519)"
@@ -708,17 +686,14 @@ export const sshPlugin = definePlugin({
     };
 
     const actions = {
-      /** The key to put in each host's ~hatbot/.ssh/authorized_keys. */
       publicKey: async () => {
         const f = Bun.file(`${key}.pub`);
         if (!(await f.exists()))
           throw new PluginError(`No key at ${key}.pub. infra/brain-provision.sh creates it.`);
         return (await f.text()).trim();
       },
-      /** Each host with its pinned key's fingerprint. */
       keys: async () =>
         Promise.all(config.hosts.map(async (h) => ({ name: h.name, key: await pinned(h) }))),
-      /** Forgets a host's pinned key; the next connection pins the new one. */
       forget: async (args: unknown) => {
         const { name } = z.object({ name: z.string() }).parse(args);
         const h = hostOf(name);
@@ -797,7 +772,6 @@ const ToOwner = z.object({
 type Remote = { host: string; guest?: number; path: string; sudo?: boolean };
 type Place = Remote | { sandbox: string } | { attachment: number } | { owner: true };
 
-/** A place in a few words, for the timeline and approvals. */
 function where(p: Place): string {
   if ("host" in p)
     return `${p.guest !== undefined ? `CT ${p.guest} on ${p.host}` : p.host}:${p.path}`;
@@ -808,7 +782,6 @@ function where(p: Place): string {
 
 const baseName = (path: string) => path.replace(/\/+$/, "").split("/").pop() || "file";
 
-/** The destination's path: a directory (ending in /) gets the file's own name. */
 const into = (path: string, name: string) =>
   path.endsWith("/") ? `${path}${name.replace(/[/\0\n]/g, "_")}` : path;
 

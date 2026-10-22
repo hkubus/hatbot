@@ -1,5 +1,3 @@
-// The chat's pictures as the brain sent them for a bubble, kept on disk so the next launch shows them
-// without downloading them again. Signing out deletes them (ImageCache.clear).
 import Foundation
 
 struct DiskPictures: Sendable {
@@ -12,7 +10,6 @@ struct DiskPictures: Sendable {
     dir: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Pictures", isDirectory: true))
 
-  /// The file for `key`, which may hold any characters.
   func url(_ key: String) -> URL {
     dir.appendingPathComponent(key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key)
   }
@@ -26,7 +23,6 @@ struct DiskPictures: Sendable {
     try? data.write(to: url(key), options: .atomic)
   }
 
-  /// Deletes the oldest files once they're over the budget.
   func trim() {
     let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
     guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }

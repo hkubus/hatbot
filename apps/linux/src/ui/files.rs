@@ -1,5 +1,3 @@
-// Files in the chat: pictures inline (a click shows them whole), Markdown in a reader, the rest opened
-// in the app the desktop picks; and the files waiting in the composer while they upload.
 use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
@@ -92,7 +90,6 @@ impl Thumb {
         self.imp().texture.borrow().clone()
     }
 
-    /// Loads the picture at `path` from the brain.
     pub fn load(&self, store: &Store, path: String) {
         let weak = self.downgrade();
         let api = store.api().clone();
@@ -122,7 +119,6 @@ pub fn is_markdown(a: &Attachment) -> bool {
     a.media_type == "text/markdown" || a.name.to_lowercase().ends_with(".md")
 }
 
-/// A message's files, on its side.
 pub fn message_files(store: &Store, list: &[Attachment], align: gtk::Align) -> gtk::Box {
     let column = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -148,7 +144,6 @@ fn picture(store: &Store, a: &Attachment) -> gtk::Widget {
     thumb.upcast()
 }
 
-/// A click shows the picture whole, in a dialog titled `name`.
 pub fn zoom_on_click(thumb: &Thumb, name: &str) {
     thumb.set_cursor_from_name(Some("pointer"));
     let click = gtk::GestureClick::new();
@@ -177,7 +172,6 @@ pub fn zoom_on_click(thumb: &Thumb, name: &str) {
     thumb.add_controller(click);
 }
 
-/// Any other file: its name; a click opens it.
 fn file(store: &Store, a: &Attachment) -> gtk::Widget {
     let button = gtk::Button::builder()
         .child(&chip(&a.name))
@@ -244,7 +238,6 @@ fn open(store: &Store, a: &Attachment, b: &gtk::Button) {
     });
 }
 
-/// A Markdown file in a reader.
 pub fn read(store: &Store, a: &Attachment, b: &gtk::Button) {
     let api = store.api().clone();
     let (store, a) = (store.clone(), a.clone());
@@ -281,7 +274,6 @@ pub fn read(store: &Store, a: &Attachment, b: &gtk::Button) {
     });
 }
 
-/// A file in the composer: uploading, uploaded, or failed.
 #[derive(Clone)]
 pub struct Pending {
     pub key: u64,
@@ -290,7 +282,6 @@ pub struct Pending {
     pub failed: bool,
 }
 
-/// The files waiting in the composer, each with a button to take it out.
 pub fn pending_files(files: &[Pending], remove: impl Fn(u64) + Clone + 'static) -> gtk::Widget {
     let line = gtk::Box::builder().spacing(8).build();
     for f in files {

@@ -1,4 +1,3 @@
-// API types shared by the brain, the web app and the future iOS app (PLAN.md §4.4).
 import { z } from "zod";
 import { BOT_ID } from "./bot-id";
 import type { Box } from "./box";
@@ -50,21 +49,17 @@ export type CreateTokenResponse = ApiToken & { token: string };
 
 export type Me = { setupDone: boolean; authenticated: boolean };
 
-/** Your password and a current code: what changing the password or the authenticator needs. */
 export const ConfirmOwner = z.object({
   password: z.string().min(1).max(1024),
   totp: z.string().regex(/^\d{6}$/),
 });
 export const ChangePassword = ConfirmOwner.extend({ newPassword: z.string().min(12).max(1024) });
-/** A code from the new authenticator, which makes it the one Hatbot asks for. */
 export const FinishTotpChange = z.object({ totp: z.string().regex(/^\d{6}$/) });
-/** A browser signed in with the session cookie. */
 export type Session = {
   id: number;
   userAgent: string | null;
   createdAt: string;
   expiresAt: string;
-  /** The one asking. */
   current: boolean;
 };
 /** How many other sessions and tokens a change signed out. */
@@ -73,14 +68,10 @@ export type SignedOutOthers = { ok: true; ended: number };
 export const PostMessage = z
   .object({
     text: z.string().trim().max(100_000),
-    /** Files uploaded first with POST /api/attachments. */
     attachmentIds: z.array(z.number().int().positive()).max(10).default([]),
     /** In the incognito conversation: it sees no history and is deleted when it ends. */
     incognito: z.boolean().default(false),
-    /**
-     * The sender's own id for this message: sent again with the same one (its answer was lost), it's
-     * posted once.
-     */
+    /** The sender's own id: a resend with the same one (its answer was lost) is posted once. */
     clientId: z.string().min(1).max(64).optional(),
   })
   .refine((m) => m.text.length > 0 || m.attachmentIds.length > 0, {
@@ -103,7 +94,6 @@ export const PutMemoryFile = z.object({
 export type ThreadMessage = {
   id: number;
   role: "user" | "assistant";
-  /** The conversation it's in: a bot's own chat, or a group. */
   conversationId: number;
   /** The bot that wrote it; null for yours. */
   botId: string | null;
@@ -112,7 +102,7 @@ export type ThreadMessage = {
    * you typed, or what came of it (one with a task shows the task like a reply does). "box": a note the
    * box `boxId` sent (hatbox.send, or its backend's scheduled() as a notification), shown as from the
    * box: neither yours nor the bot's words. "handoff": another bot (`botId`) handing this chat's bot
-   * work (ask_bot, PLAN.md §14.7); its text is the request, and `taskId` the hand-off.
+   * work (ask_bot); its text is the request, and `taskId` the hand-off.
    */
   kind: "text" | "task" | "schedule" | "command" | "box" | "handoff";
   text: string;
@@ -120,12 +110,11 @@ export type ThreadMessage = {
   createdAt: string;
   taskId: number | null;
   scheduleId: number | null;
-  /** A negotiation this reply started shows under it (PLAN.md §16.5). */
   negotiationId: number | null;
-  /** The box this reply made or changed last shows under it (PLAN.md §21.5). */
+  /** The box this reply made or changed last shows under it. */
   boxId: number | null;
   /**
-   * A hand-off's other end (PLAN.md §14.7): on the request in the other bot's chat, the message that
+   * A hand-off's other end: on the request in the other bot's chat, the message that
    * asked; on that message, the request. Absent otherwise, and on a request a task asked for.
    */
   link?: MessageLink;
@@ -135,9 +124,7 @@ export type ThreadMessage = {
   editedAt: string | null;
   /** When you last saw it. Hatbot's messages are unread while this is before they were sent or edited. */
   seenAt: string | null;
-  /** Files sent with it: yours, or ones Hatbot (or the task under it) sent you. Absent when none. */
   attachments?: Attachment[];
-  /** In the incognito conversation, which isn't kept. Absent otherwise. */
   incognito?: true;
   /** The web pages it cites, in the order it first cites them. Absent when none. */
   sources?: Source[];
@@ -148,10 +135,8 @@ export type ThreadMessage = {
   choices?: string[][];
 };
 
-/** A message in another chat. */
 export type MessageLink = { conversationId: number; messageId: number };
 
-/** A web page a reply cites. */
 export type Source = { url: string; title: string };
 
 /**
@@ -175,7 +160,6 @@ export type Attachment = {
   forChat?: true;
 };
 
-/** A conversation in the thread (PLAN.md §5.3). Finished ones fold up under their recap. */
 export type Episode = {
   id: number;
   startedAt: string;
@@ -204,7 +188,6 @@ export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
 
 export type Task = {
   id: number;
-  /** The bot doing it: its prompt, plugins and browser profile. */
   botId: string;
   /** The bot that handed it over with ask_bot; null when you or its own bot started it. */
   requestedBy: string | null;
@@ -219,7 +202,6 @@ export type Task = {
   source: string | null;
   scheduleId: number | null;
   triggerId: number | null;
-  /** The watcher whose change started it. */
   watcherId: number | null;
   /** The task that started this one (a desktop task run by a background task). */
   parentId: number | null;
@@ -230,14 +212,13 @@ export type Task = {
   skill: string | null;
   /** Background tasks: null runs at the chat's effort. */
   effort: "low" | "medium" | "high" | null;
-  /** A research task (PLAN.md §17): Opus with helpers, ending in a report. */
+  /** A research task: Opus with helpers, ending in a report. */
   research: boolean;
-  /** A research task's report, in memory. */
   reportPath: string | null;
-  /** The to-do item it works on (PLAN.md §19), ticked off when it ends done. */
+  /** The to-do item it works on, ticked off when it ends done. */
   todo: string | null;
   status: TaskStatus;
-  /** It has read untrusted content (PLAN.md §6.1). */
+  /** It has read untrusted content. */
   tainted: boolean;
   /** The first untrusted thing it read, or what started it tainted. Null before this was kept. */
   taintedBy: string | null;
@@ -255,14 +236,12 @@ export type Task = {
  * event and cost, which only its own page shows, from `GET /tasks/:id`.
  */
 export type TaskCard = Omit<Task, "goal" | "successCriteria" | "payload" | "costUsd" | "steps">;
-/** Whether a task has what its page shows, or is only a card. */
 export const isFullTask = (t: Task | TaskCard): t is Task => "goal" in t;
 
 export type TaskStep = {
   id: number;
   taskId: number;
   kind: "note" | "action" | "screenshot" | "page" | "approval" | "takeover" | "error" | "task";
-  /** Action name, or a short label. */
   name: string;
   detail: string;
   /** Archive path of a screenshot; fetch it from /tasks/:id/screens/:stepId. */
@@ -290,12 +269,12 @@ export type ApprovalKind =
   | "access"
   | "injection_warning"
   | "budget"
-  /** A negotiation's mandate (PLAN.md §16.1): what the bot may do on its own with one seller. */
+  /** A negotiation's mandate: what the bot may do on its own with one seller. */
   | "mandate"
   | "other";
 
 /**
- * How far an approval goes besides this once (PLAN.md §6.2): `session`, the same tool on the same
+ * How far an approval goes besides this once: `session`, the same tool on the same
  * thing for the rest of the task or conversation, where only untrusted content asks; `always`, this
  * exact call for this bot from now on.
  */
@@ -303,7 +282,6 @@ export type ApprovalScope = "session" | "always";
 
 export type Approval = {
   id: number;
-  /** The bot asking. */
   botId: string;
   taskId: number | null;
   /** The chat that waits for it, when no task does. */
@@ -313,7 +291,7 @@ export type Approval = {
   kind: ApprovalKind;
   summary: string;
   reason: string;
-  /** Untrusted sources the task had read (PLAN.md §6.2). */
+  /** Untrusted sources the task had read. */
   sources: string[];
   /** The step whose screenshot shows what's being approved. */
   screenshotStepId: number | null;
@@ -350,7 +328,6 @@ export const TokenDecision = z.object({
   sig: z.string().min(1).max(200),
 });
 
-/** A background task's question to you (PLAN.md §20). */
 export type Question = {
   id: number;
   botId: string;
@@ -379,7 +356,6 @@ export const TokenAnswer = z.object({
 /** At most this many choices, each at most this long: they're buttons. */
 export const MAX_CHOICES = 4;
 export const MAX_CHOICE_CHARS = 60;
-/** Questions asked at once. */
 export const MAX_QUESTIONS_AT_ONCE = 3;
 
 export type DesktopState = {
@@ -387,9 +363,7 @@ export type DesktopState = {
   online: boolean;
   /** "hatbot": Hatbot may act; "owner": you have control (takeover). */
   control: "hatbot" | "owner";
-  /** A task waiting for you to take over, and why. */
   request: { taskId: number; reason: string } | null;
-  /** The task using the screen. */
   activeTaskId: number | null;
   /** The bot whose task that is, and whose browser profile is open. */
   botId: string | null;
@@ -415,7 +389,6 @@ export type Snapshot = {
 /** Unread message ids the stream's snapshot sends per chat: a page's worth and more. */
 export const UNREAD_PER_CHAT = 100;
 
-/** Live events on /api/v1/stream. */
 export type HatbotEvent =
   | ({ type: "snapshot" } & Snapshot)
   | { type: "message.created"; message: ThreadMessage }
@@ -430,14 +403,10 @@ export type HatbotEvent =
       sources?: Source[];
       choices?: string[][];
     }
-  /** A task now shows under this reply. */
   | { type: "message.task"; id: number; taskId: number }
   | { type: "message.link"; id: number; link: MessageLink }
-  /** A negotiation now shows under this reply (PLAN.md §16.5). */
   | { type: "message.negotiation"; id: number; negotiationId: number }
-  /** A box this reply made or changed now shows under it (PLAN.md §21.5). */
   | { type: "message.box"; id: number; boxId: number }
-  /** A task's result changed this message. */
   | { type: "message.edited"; id: number; editedAt: string }
   /** The task shown under this reply ended: its bot is writing the reply again, to say what came of it. */
   | { type: "message.rewrite"; id: number }
@@ -522,13 +491,11 @@ export const BOT_COLORS = [
 ] as const;
 export type BotColor = (typeof BOT_COLORS)[number];
 
-/** One of your bots (PLAN.md §14): its own role, chat, memory folder, plugins and browser profile. */
 export type Bot = {
   id: string;
   name: string;
   icon: BotIcon;
   color: BotColor;
-  /** Its role, in your words. */
   instructions: string;
   /** Null: what Settings → Chat say. */
   chatModel: AppSettings["chatModel"] | null;
@@ -563,14 +530,12 @@ export const UpdateBot = z.object(botFields).partial();
 /** Most bots in a group, besides you. */
 export const MAX_GROUP_BOTS = 6;
 
-/** A chat: one bot's own, or a group of bots and you. */
 export type Conversation = {
   id: number;
   kind: "direct" | "group";
   /** A group's name; null for a bot's own chat, which goes by the bot's. */
   title: string | null;
   botIds: string[];
-  /** Messages from its bots you haven't seen. */
   unread: number;
   lastMessageAt: string | null;
 };
@@ -588,7 +553,7 @@ export const UpdateGroup = z
 /** A skill's name: its file is skills/<name>.md. */
 export const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,59}$/;
 
-/** Teach-by-showing (PLAN.md §1): a recording of you doing a chore, then the skill drafted from it. */
+/** Teach-by-showing: a recording of you doing a chore, then the skill drafted from it. */
 export type TeachSession = {
   id: number;
   /** recording → drafting → draft → saved; failed can be drafted again. */
@@ -599,7 +564,6 @@ export type TeachSession = {
   steps: number;
   /** The suggested name, then the saved one. */
   name: string | null;
-  /** The drafted skill, markdown. */
   draft: string | null;
   error: string | null;
 };
@@ -627,9 +591,7 @@ export type UpdateInfo = {
    * are deployed (HATBOT_UPDATE_SIGNERS); absent from a brain-deploy.sh older than that.
    */
   source: { url: string; branch: string; signed?: boolean } | null;
-  /** The running release. */
   current: { sha?: string; subject?: string; deployedAt?: string } | null;
-  /** The last or current update. */
   status: UpdateStatus | null;
   /** Requested, and hatbot-update hasn't picked it up yet. */
   requested: boolean;
@@ -637,7 +599,7 @@ export type UpdateInfo = {
 
 export type MemoryFile = { path: string; size: number };
 
-/** A change to memory for you to look over: a tidy-up, a fix to a skill, or a held write (PLAN.md §6.1). */
+/** A change to memory for you to look over: a tidy-up, a fix to a skill, or a held write. */
 export type Proposal = {
   id: number;
   kind: "tidy" | "skill" | "write";
@@ -645,7 +607,6 @@ export type Proposal = {
   reason: string;
   /** null before: a new file; null after: deleted. */
   changes: { path: string; before: string | null; after: string | null }[];
-  /** For a skill fix, the skill's name. */
   skill: string | null;
   /** stale: memory changed since, so it can't be applied as it is. */
   status: "pending" | "applied" | "dismissed" | "stale";
@@ -657,7 +618,6 @@ export type Proposal = {
 export type SkillStatus = {
   name: string;
   description: string;
-  /** Tasks since the skill last changed. */
   runs: number;
   failed: number[];
   takeovers: number[];
@@ -744,7 +704,6 @@ export type AppSettings = {
   reviewChanges: boolean;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
-  /** The model that drives desktop tasks. */
   desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";
   /** A desktop task Haiku fails at carries on once on Opus. */
   desktopEscalate: boolean;
@@ -754,7 +713,7 @@ export type AppSettings = {
   /** A tidy-up of memory proposed weekly, at the weekly report's time. */
   memoryTidy: boolean;
   weeklyReport: WeeklyReportSettings;
-  /** The local hour the to-do list's morning reminder goes out (PLAN.md §19). */
+  /** The local hour the to-do list's morning reminder goes out. */
   todoHour: number;
 };
 
@@ -780,10 +739,8 @@ export type WeeklyReportSettings = {
   hour: number;
 };
 
-/** The heartbeat's last look, for Settings. */
 export type HeartbeatInfo = {
   at: string | null;
-  /** The new things it found. */
   found: string[];
   action: "nothing" | "notify" | "task" | null;
   note: string;
@@ -792,7 +749,6 @@ export type HeartbeatInfo = {
   recent: HeartbeatRun[];
 };
 
-/** A look that found something. */
 export type HeartbeatRun = {
   at: string;
   found: string[];

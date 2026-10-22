@@ -1,4 +1,3 @@
-// A negotiation's page (PLAN.md §16.5): its mandate, what's been said, and every message with the seller.
 import { type NegotiationMessage, OPEN_NEGOTIATION_STATUSES } from "@hatbot/shared";
 import { useAction } from "../action";
 import { api } from "../api";

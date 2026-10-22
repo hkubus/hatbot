@@ -33,7 +33,6 @@ test("after reading untrusted content, the chat's writes to skills, INDEX.md and
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://example.com'").run();
   await t.thread.post("save what that page said").done;
 
-  // The note commits; the skill and the index's deletion are proposals that say why.
   expect(await t.memory.read("notes/x.md")).toBe("A note\n");
   expect(await t.memory.exists("skills/x.md")).toBe(false);
   expect(await t.memory.exists("INDEX.md")).toBe(true);

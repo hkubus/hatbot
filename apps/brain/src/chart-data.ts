@@ -1,6 +1,4 @@
-// Charts that draw from a file: a chart block's "data" names an attachment, CSV, TSV or JSON, so the
-// model doesn't type out thousands of values. The brain reads it, checks it, and thins it to what a
-// chart draws (CHART_MAX_POINTS), keeping each series' highs and lows; the clients draw the rest.
+// A chart block's "data" can name an attachment, so the model doesn't type out thousands of values.
 import {
   CHART_FILE_MAX_ROWS,
   CHART_MAX_POINTS,
@@ -21,7 +19,6 @@ type Series = SeriesChart["series"];
 type ScatterSeries = ScatterChart["series"];
 type Read = { data: ChartData } | { problem: string };
 
-/** A file's rows, quoted fields and all; tab-separated when its first line has a tab. */
 export function csvRows(text: string): string[][] {
   const first = text.slice(0, text.indexOf("\n") >>> 0);
   const sep = first.includes("\t") ? "\t" : first.includes(";") && !first.includes(",") ? ";" : ",";
@@ -241,7 +238,6 @@ export function thinScatter(series: ScatterSeries, max = CHART_MAX_POINTS): Scat
   }));
 }
 
-/** The values in a file's text for a chart of this kind, checked and thinned; or why it won't draw. */
 export function readChartData(text: string, kind: Kind, json: boolean, horizontal = false): Read {
   let read: Read;
   if (json) {
@@ -294,10 +290,9 @@ export function readChartData(text: string, kind: Kind, json: boolean, horizonta
 }
 
 const TEXT = ["application/json", "text/csv", "text/tab-separated-values", "text/plain"];
-/** Each Attachments' files as read for charts, the last few: a file never changes once saved. */
+/** Safe to cache: a file never changes once saved. */
 const cache = new WeakMap<Attachments, Map<string, Read>>();
 
-/** The values in attachment #id for a chart of this kind, or why they won't draw. */
 export async function chartData(
   attachments: Attachments,
   id: number,
@@ -320,7 +315,6 @@ export async function chartData(
   return read;
 }
 
-/** Why a chart block doesn't draw, its file included; null if it does. */
 export async function chartProblemOf(source: string, attachments?: Attachments) {
   const problem = chartProblem(source);
   if (problem) return problem;
@@ -332,7 +326,6 @@ export async function chartProblemOf(source: string, attachments?: Attachments) 
   return "problem" in read ? `its file, attachment #${file.data}: ${read.problem}` : null;
 }
 
-/** The chart blocks in a reply that don't draw, files checked too: each with why, and which it is from 1. */
 export async function brokenChartsOf(markdown: string, attachments?: Attachments) {
   const broken: { start: number; end: number; source: string; problem: string; n: number }[] = [];
   for (const [i, b] of chartBlocks(markdown).entries()) {

@@ -1,6 +1,5 @@
-// The mandate (PLAN.md §16.1): what Hatbot may do on its own in one negotiation, as the owner approves
-// it. Its approval card, its checks, and a steering note on the card turned into new numbers by Haiku,
-// which reads only the note, the mandate and the asking price: nothing a seller wrote.
+// A steering note on the mandate's card is turned into new numbers by Haiku, which reads only the note,
+// the mandate and the asking price: nothing a seller wrote.
 import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
 import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared";
 import { z } from "zod";
@@ -8,7 +7,6 @@ import { type ModelClient, oneShot } from "../agent/model";
 import type { Spend } from "../spend";
 import { allowance, zl } from "./policy";
 
-/** The mandate as negotiate_start takes it, and as Haiku gives it back from a note. */
 export const MandateInput = z.object({
   opening: z.number().positive().describe("The first offer"),
   target: z.number().positive().describe("What to aim for"),
@@ -30,7 +28,6 @@ export const MandateInput = z.object({
 });
 export type MandateInput = z.infer<typeof MandateInput>;
 
-/** Why these numbers aren't a mandate, or null when they are. */
 export function mandateProblem(
   m: Pick<Mandate, "opening" | "target" | "limit">,
   role: "buy" | "sell",
@@ -47,7 +44,6 @@ export function mandateProblem(
   return null;
 }
 
-/** Builds a mandate from the tool's input, expiring `expires_in_days` from now. */
 export function toMandate(i: MandateInput, currency: string, now: number): Mandate {
   return {
     currency,
@@ -60,16 +56,12 @@ export function toMandate(i: MandateInput, currency: string, now: number): Manda
   };
 }
 
-/** The mandate's numbers in a line: "open at 1,060 zł, aim for 1,250 zł, pay at most 1,400 zł". */
 export function mandateTerms(n: Pick<Negotiation, "mandate" | "role">): string {
   const m = n.mandate;
   return `open at ${zl(m.opening, m.currency)}, aim for ${zl(m.target, m.currency)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit, m.currency)}`;
 }
 
-/**
- * The listing's title, which is the seller's words, ready to quote: without quote marks or line breaks,
- * so it can't close the quote and read as ours, and cut short.
- */
+/** The title is the seller's words: without quote marks or line breaks, so it can't close the quote and read as ours. */
 export function quotedTitle(title: string): string {
   const t = title
     .replace(/["＂„‚\p{Pi}\p{Pf}]/gu, "")
@@ -78,18 +70,16 @@ export function quotedTitle(title: string): string {
   return `“${t.length > 60 ? `${t.slice(0, 59)}…` : t}”`;
 }
 
-/** The mandate approval's one line: the terms first, so a cut notification still shows them. */
+/** The terms first, so a cut notification still shows them. */
 export function mandateSummary(n: Negotiation): string {
   return `Negotiate: ${mandateTerms(n)} · ${quotedTitle(n.title)}`;
 }
 
-/** "23 Oct", as the web shows dates. */
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
 const contacts = (allow: string[]) => (allow.length ? allow.join(", ") : "none");
 
-/** The mandate approval's detail: the appraisal it rests on and the rest of the mandate. */
 export function mandateReason(n: Negotiation, botName: string): string {
   const m = n.mandate;
   const a = n.appraisal;
@@ -105,10 +95,7 @@ export function mandateReason(n: Negotiation, botName: string): string {
   ].join("\n");
 }
 
-/**
- * What a mandate made from a note allows beyond the one approved, a line each with the old value and
- * the new: a higher ceiling (or lower floor), other delivery terms, more contact details, more time.
- */
+/** What a mandate made from a note allows beyond the one approved. */
 export function widened(n: Pick<Negotiation, "mandate" | "role">, after: Mandate): string[] {
   const b = n.mandate;
   const buying = n.role === "buy";
@@ -131,10 +118,7 @@ export const NOTE_PROMPT = `You apply the owner's note to the mandate of a negot
 
 Change only what the note asks to change, and keep everything else exactly as it is. A note that doesn't touch the mandate, such as advice on tone, leaves it as it is. Keep the numbers in order: buying, opening ≤ target ≤ limit; selling, opening ≥ target ≥ limit. If the note sets only the limit, move the target or the opening only as far as that order needs. Amounts are plain numbers in the mandate's currency. Answer with the whole mandate.`;
 
-/**
- * The mandate with the owner's note applied, by Haiku in the mandate's JSON; or why it couldn't be:
- * the note is then shown to the owner again with the old numbers.
- */
+/** When the note can't be applied, it's shown to the owner again with the old numbers. */
 export async function applyNote(
   d: { model: ModelClient; spend: Spend },
   n: Negotiation,

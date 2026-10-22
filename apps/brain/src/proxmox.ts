@@ -1,5 +1,3 @@
-// Proxmox VE API client with Hatbot's scoped token (PLAN.md §9.3): the desktop's snapshots for
-// Settings, and the Proxmox plugin's calls.
 // The host's certificate is self-signed, so the connection is pinned to its SHA-256 fingerprint. A
 // certificate from a public CA for the host's name is accepted too, so one that renews itself (ACME)
 // keeps working. Bun's fetch skips checkServerIdentity when rejectUnauthorized is off, so requests go
@@ -13,23 +11,18 @@ export type Snapshot = { name: string; description: string; createdAt: string | 
 
 const normalizeFp = (fp: string) => fp.replace(/:/g, "").toUpperCase();
 
-/** A Proxmox-style API (VE or Backup Server) behind a self-signed certificate. */
 export type PinnedApi = {
-  /** For messages: "Proxmox", "Proxmox Backup Server". */
   name: string;
   host: string;
   port: number;
   /** SHA-256, colons optional. */
   fingerprint: string;
-  /** Where the owner sets the fingerprint, for when the certificate changes. */
   setting: string;
-  /** The Authorization header. */
   auth: string;
-  /** Certificate authorities to trust instead of the system's: for tests. */
+  /** For tests. */
   ca?: string;
 };
 
-/** One call to /api2/json over a connection checked against the pinned fingerprint; its `data`. */
 export async function pinnedRequest(
   api: PinnedApi,
   method: "GET" | "POST" | "DELETE",
@@ -111,15 +104,12 @@ export async function pinnedRequest(
 }
 
 export class Proxmox {
-  /** The API's address, token and fingerprint are set. */
   readonly hasApi: boolean;
-  /** …and the desktop's id, for its snapshots. */
   readonly configured: boolean;
   private api: PinnedApi;
   readonly node: string;
   readonly desktopId: string;
   readonly brainId: string;
-  /** The longest waitTask goes between asking Proxmox whether a task is done. */
   pollMs = 2000;
 
   constructor(env: Record<string, string | undefined> = process.env) {
@@ -162,7 +152,6 @@ export class Proxmox {
     return `/nodes/${encodeURIComponent(this.node)}/lxc/${this.desktopId}`;
   }
 
-  /** The desktop's snapshots, newest first. */
   async desktopSnapshots(): Promise<Snapshot[]> {
     const list = (await this.request("GET", `${this.lxc}/snapshot`)) as {
       name: string;
@@ -179,7 +168,6 @@ export class Proxmox {
       }));
   }
 
-  /** Rolls the desktop back to a snapshot and starts it again; resolves when Proxmox is done. */
   async rollbackDesktop(name: string, timeoutMs = 180_000) {
     if (!/^[A-Za-z][\w-]{0,39}$/.test(name)) throw new PluginError("Not a snapshot name.", 400);
     if (!this.configured) throw new PluginError("The desktop's id isn't set.");
@@ -193,7 +181,7 @@ export class Proxmox {
     if (exit !== "OK") throw new PluginError(`Rollback failed: ${exit}`);
   }
 
-  /** Waits for a Proxmox task to end: its exit status ("OK" when it worked), or null on timeout. */
+  /** The task's exit status ("OK" when it worked), or null on timeout. */
   async waitTask(upid: string, timeoutMs: number, signal?: AbortSignal): Promise<string | null> {
     const node = upid.split(":")[1] || this.node;
     const deadline = Date.now() + timeoutMs;

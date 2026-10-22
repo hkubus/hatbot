@@ -6,7 +6,6 @@ import type { AppEnv } from "../context";
 import { PluginError } from "../plugins/plugin";
 import { found, json } from "./util";
 
-// Plugins in Settings (PLAN.md §4.5): switch on or off, change settings and secrets, test.
 export const pluginRoutes = new Hono<AppEnv>()
   .use("/plugins", requireAuth)
   .use("/plugins/*", requireAuth)

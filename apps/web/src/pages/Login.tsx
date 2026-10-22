@@ -102,10 +102,6 @@ export function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-/**
- * For an authenticator on this device, where there's no code to scan: a link that opens it, and the
- * secret in groups of four to copy.
- */
 export function AddToAuthenticator({ uri, secret }: { uri: string; secret: string }) {
   const shown = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState(false);

@@ -1,4 +1,3 @@
-// Schedules & Triggers (PLAN.md §10.3): see, pause and edit what runs on its own.
 import {
   describeCron,
   HATBOT_ID,
@@ -39,7 +38,6 @@ const CONFIRM = ["First failure", "2 failures", "3 failures"];
 /** A trigger just made, so its page can show the secret after the route changes to its id. */
 let fresh: TriggerWithSecret | null = null;
 
-/** The page for /schedules, /schedules/:id, /triggers/:id, /watchers/:id, and their /new forms. */
 export function SchedulesView({ path, params }: { path: string; params: URLSearchParams }) {
   const m = /^\/(schedules|triggers|watchers)\/(new|\d+)$/.exec(path);
   if (!m) return <List />;
@@ -129,7 +127,6 @@ function List() {
   );
 }
 
-/** One kind on the list, by name, each with its switch. */
 function RoutineGroup<T extends { id: number; name: string; enabled: boolean }>({
   title,
   items,
@@ -144,7 +141,6 @@ function RoutineGroup<T extends { id: number; name: string; enabled: boolean }>(
   /** As in the store, where a deleted one is null. */
   items: Record<number, T | null>;
   path: string;
-  /** What it's doing, beside its name. */
   value: (item: T) => ReactNode;
   bad?: (item: T) => boolean;
   toggle: (item: T, enabled: boolean) => Promise<unknown>;

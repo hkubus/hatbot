@@ -1,4 +1,3 @@
-// Schedules (PLAN.md §4.1, §5.6): cron or one-off, stored in SQLite, run in-process as background tasks.
 import { HATBOT_ID, type Schedule } from "@hatbot/shared";
 import { Cron } from "croner";
 import { orphaned } from "./bots";
@@ -85,11 +84,9 @@ export class Schedules {
     return r ? toSchedule(r) : null;
   }
 
-  /** Throws ScheduleError with a message for the owner (or the model) when the time is wrong. */
   create(
     input: ScheduleInput & { name: string; prompt: string },
     via: "chat" | "owner",
-    /** What the chat had read, when it had read untrusted content. */
     taintedBy: string | null = null,
   ): Schedule {
     taintedBy = via === "chat" ? taintedBy : null;
@@ -131,10 +128,6 @@ export class Schedules {
     return this.changed(row?.id ?? -1) as Schedule;
   }
 
-  /**
-   * `by`: you, from the app (saving the instructions clears the tainted mark), or the chat
-   * (`taintedBy`: what untrusted content it had read, which sets the mark).
-   */
   update(
     id: number,
     patch: ScheduleInput,
@@ -183,7 +176,6 @@ export class Schedules {
     return this.changed(id);
   }
 
-  /** You trust what the chat wrote: its runs no longer start tainted. */
   trust(id: number): Schedule | null {
     this.db.query("UPDATE schedules SET tainted = 0, tainted_by = NULL WHERE id = ?").run(id);
     return this.changed(id);
@@ -195,17 +187,13 @@ export class Schedules {
     return gone;
   }
 
-  /** Starts a run now, outside the schedule. Null if the last run is still going. */
+  /** Null if the last run is still going. */
   runNow(id: number) {
     const s = this.get(id);
     if (!s) return null;
     return this.fire(s);
   }
 
-  /**
-   * Starts every run that's due; the brain calls it every few seconds. Runs missed while the brain was
-   * down or paused happen once, when it's back.
-   */
   tick() {
     if (this.settings.get().paused) return;
     const due = this.db
@@ -260,7 +248,6 @@ export class Schedules {
     return new Cron(cron, { paused: true }).nextRun(new Date(this.clock()))?.toISOString() ?? null;
   }
 
-  /** Checks a cron expression or a one-off time and works out the next run. */
   private when(
     cron?: string,
     at?: string,

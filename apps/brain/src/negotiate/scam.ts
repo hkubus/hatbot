@@ -1,16 +1,13 @@
-// A seller's message that looks like the start of a scam (PLAN.md §16.1): paying off the platform, a
-// link, or a move to another app or to contact details the mandate doesn't allow. The negotiation is
-// held for the owner; the template's rule alone isn't enough.
+// A seller's message that looks like the start of a scam holds the negotiation for the owner; the
+// template's rule alone isn't enough.
 import type { MandateContact } from "@hatbot/shared";
 import { escapeRe } from "./gate";
 import { MARKETPLACE_HOSTS } from "./marketplace";
 import { CONTACT_NAMES, contactsIn, linksIn, plain } from "./policy";
 
-/** Paying off the platform, and the apps scams move to. */
 const OFF_PLATFORM =
   /(?<!\p{L})(blik\p{L}*|przelew\p{L}*|przelać|przelej\p{L}*|iban|numer\p{L}* konta|nr\.? konta|konto bankowe|revolut\p{L}*|paypal\p{L}*|western union|link\p{L}* do (?:płatności|zapłaty|odbioru|paczki|przesyłki)|payment link|bank transfer|whats\s?app\p{L}*|telegram\p{L}*|wa\.me|t\.me)(?!\p{L})/iu;
 
-/** Cyrillic and Greek letters that look like Latin ones, lowercased. */
 const LOOK_ALIKE: Record<string, string> = {
   а: "a",
   в: "b",
@@ -40,11 +37,7 @@ const LOOK_ALIKE: Record<string, string> = {
   χ: "x",
 };
 
-/**
- * Text as a filter-dodger's spelling folds to: accents dropped, look-alike letters made Latin, i, l, 1
- * and | read as one letter ("BLIK", "BL1K", "BLlK"), 0 as o, and single letters split by spaces, dots
- * or dashes joined ("B L I K", "B-L-I-K").
- */
+/** So a filter-dodger's spelling counts too: "BL1K", "BLlK", "B L I K", Cyrillic look-alikes. */
 const fold = (s: string) =>
   s
     .normalize("NFKD")
@@ -60,10 +53,7 @@ const fold = (s: string) =>
     )
     .replace(/\s+/g, " ");
 
-/**
- * A word or phrase to find in folded text: `*` is any ending, and `not` lists what may not follow it
- * ("kod z aplikacji" is a bank's, not InPost's).
- */
+/** `*` is any ending; `not` lists what may not follow ("kod z aplikacji" is a bank's, not InPost's). */
 type Term = string | { t: string; not: string[] };
 const stem = (t: string) =>
   t
@@ -87,7 +77,6 @@ const termOf = (terms: Term[], m: RegExpExecArray) => {
   return (typeof t === "string" ? t : t?.t)?.replace(/\*/g, "") ?? m[0];
 };
 
-/** What a parcel's or a delivery's own code is for: not a payment. */
 const PARCEL = [
   "inpost",
   "paczkomat*",
@@ -107,10 +96,6 @@ const PARCEL = [
   "wysylk*",
 ];
 
-/**
- * Paying off the platform, the apps scams move to and crypto, matched on folded text so the
- * disguised spellings count too.
- */
 const DISGUISED: Term[] = [
   "blik*",
   "przelew*",
@@ -188,7 +173,6 @@ const CARD: Term[] = [
   "card details",
 ].map((t) => ({ t, not: CARD_KINDS }));
 const CARD_RE = termsRe(CARD);
-/** Words that make a card's details a payment card's, asked for: "Podaj dane karty", "karty płatniczej". */
 const CARD_ASKED = termsRe([
   "podaj*",
   "przeslij*",
@@ -207,7 +191,6 @@ const CARD_ASKED = termsRe([
   "send",
 ]);
 
-/** The word a disguised spelling stands for, or null. */
 function disguised(text: string): string | null {
   const folded = fold(text);
   const m = DISGUISED_RE.exec(folded);
@@ -216,16 +199,12 @@ function disguised(text: string): string | null {
   return card && CARD_ASKED.test(folded) ? termOf(CARD, card) : null;
 }
 
-/**
- * A bank account number: a Polish one's 26 digits, with PL or without, or an IBAN with its country,
- * whose check digits add up. Not any long number: a parcel's is 24 digits, and a serial number can look
- * like an IBAN.
- */
+// Only numbers whose IBAN check digits add up: a parcel's number is 24 digits, and a serial number can
+// look like an IBAN.
 const ACCOUNT =
   /(?<![\p{L}\p{N}])(?:(?:PL ?)?\d{2}(?:[ -]?\d{4}){6}|[A-Z]{2}\d{2}(?: ?[A-Z\d]{4}){3,7}(?: ?[A-Z\d]{1,3})?)(?![\p{L}\p{N}])/gu;
 const digits = (s: string) => s.replace(/\D/g, "");
 
-/** IBAN's mod-97 check; a Polish account's 26 digits are checked as PL's. */
 function ibanChecks(raw: string): boolean {
   let s = raw.replace(/[\s-]/g, "").toUpperCase();
   if (/^\d{26}$/.test(s)) s = `PL${s}`;
@@ -249,7 +228,6 @@ function ownSite(link: string): boolean {
   }
 }
 
-/** What in a seller's message looks like a scam, a phrase each; empty when nothing does. */
 export function scamSignals(text: string, allow: MandateContact[]): string[] {
   const out: string[] = [];
   const off = OFF_PLATFORM.exec(text)?.[0] ?? disguised(text);

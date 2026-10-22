@@ -1,12 +1,10 @@
-// Photos and files on their way up: the composer's and the share extension's. Photos are scaled with
-// ImageIO straight from the file, never decoded whole, which keeps the share extension under its memory limit.
+// Photos are scaled with ImageIO straight from the file, never decoded whole, which keeps the share
+// extension under its memory limit.
 import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 
-/// What a picked photo or file becomes before it's uploaded.
 enum PickedFile {
-  /// A photo as it goes up, with a small preview for the composer.
   struct Photo: @unchecked Sendable {
     var data: Data
     var name: String
@@ -51,7 +49,6 @@ enum PickedFile {
     return out as Data
   }
 
-  /// A file from Files, read inside its security scope.
   static func file(_ url: URL) -> (data: Data, name: String, mediaType: String)? {
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }

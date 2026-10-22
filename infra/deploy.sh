@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: deploy the app to the brain, the desktop and the boxes guest (PLAN.md §9.4, §21.6).
+# Hatbot: deploy the app to the brain, the desktop and the boxes guest.
 # Run where you ran host-setup.sh (as root on the Proxmox host) or ssh-setup.sh. Each run installs a new
 # release; one that fails its health check is rolled back.
 #   ./deploy.sh ~/hatbot           deploy HEAD of a git checkout on this machine

@@ -1,8 +1,5 @@
-// What every chart kind shares: its width, the readout the pointer and arrow keys move, and the
-// frame around the svg (title, legend, readout, and the values as a table for screen readers).
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
-/** Rough width of an 11px digit or letter, for room beside the plot. */
 export const CHAR_W = 6.2;
 
 export const color = (i: number) => `var(--series-${i + 1})`;
@@ -25,7 +22,6 @@ export function useWidth(ref: React.RefObject<HTMLElement | null>): number {
   return width;
 }
 
-/** The plot's width, and the item the readout shows, moved by the arrow keys `back` and `fwd`. */
 export function usePlot(n: number, back: string, fwd: string) {
   const ref = useRef<HTMLDivElement>(null);
   const width = useWidth(ref);
@@ -36,7 +32,6 @@ export function usePlot(n: number, back: string, fwd: string) {
     const step = e.key === back ? -1 : 1;
     setAt((i) => clamp(i === null ? (step > 0 ? 0 : n - 1) : i + step, 0, n - 1));
   };
-  // The others fade while one shows.
   const dim = (i: number) => (at === null || at === i ? 1 : 0.45);
   return { ref, width, at, setAt, onKey, dim };
 }
@@ -44,18 +39,12 @@ export type PlotState = ReturnType<typeof usePlot>;
 
 export type LegendItem = {
   name: string;
-  /** "key" for lines, "swatch" for bars, "point" for points. */
   shape: "key" | "swatch" | "point";
   color: string;
 };
 
-/** What a screen reader gets instead of the picture. */
 export type ChartTable = { head: string[]; rows: string[][] };
 
-/**
- * Title and legend; the svg, which takes the pointer and the arrow keys, and its readout; and the
- * values as a table for screen readers.
- */
 export function Plot({
   title,
   legend,
@@ -71,9 +60,7 @@ export function Plot({
   legend?: LegendItem[];
   p: PlotState;
   height: number;
-  /** The item at a point in the svg; null for none. */
   pick: (x: number, y: number) => number | null;
-  /** Where the readout goes for an item. */
   tip: (i: number) => React.CSSProperties;
   readout: (i: number) => ReactNode;
   table: ChartTable;
@@ -162,7 +149,6 @@ function ChartTableView({ table }: { table: ChartTable }) {
   );
 }
 
-/** A readout row: the value first, then what it is, keyed by its mark's colour when that helps. */
 export function TipRow({
   value,
   name,

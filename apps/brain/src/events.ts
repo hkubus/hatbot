@@ -1,4 +1,3 @@
-// Live events for connected clients (PLAN.md §8, WS events).
 import type { HatbotEvent } from "@hatbot/shared";
 
 export type { HatbotEvent };

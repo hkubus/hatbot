@@ -147,7 +147,7 @@ export const migrations: string[] = [
   /* 4: chat moved from Sonnet 5.5 to Opus 5.5 at low effort */ `
   UPDATE settings SET value = json_set(value, '$.chatEffort', 'low') WHERE key = 'app';
   `,
-  /* 5: schedules and triggers (PLAN.md §5.6) */ `
+  /* 5: schedules and triggers */ `
   CREATE TABLE schedules (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -214,15 +214,15 @@ export const migrations: string[] = [
   /* 6: an episode is bound to the system prompt, tools and model it started with */ `
   ALTER TABLE episodes ADD COLUMN prefix TEXT;
   `,
-  /* 7: plugins (PLAN.md §4.5): background tasks from the chat, and untrusted content in the chat */ `
+  /* 7: plugins: background tasks from the chat, and untrusted content in the chat */ `
   ALTER TABLE tasks ADD COLUMN effort TEXT CHECK (effort IN ('low', 'medium', 'high'));
   -- The episode has read untrusted content; tasks it starts begin tainted.
   ALTER TABLE episodes ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;
   `,
-  /* 8: a schedule the chat made or changed after reading untrusted content runs tainted (PLAN.md §6.1) */ `
+  /* 8: a schedule the chat made or changed after reading untrusted content runs tainted */ `
   ALTER TABLE schedules ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;
   `,
-  /* 9: teach-by-showing (PLAN.md §1, §7.1): recordings, their drafts, and the skills they became */ `
+  /* 9: teach-by-showing: recordings, their drafts, and the skills they became */ `
   CREATE TABLE teach_sessions (
     id INTEGER PRIMARY KEY,
     status TEXT NOT NULL CHECK (status IN ('recording', 'drafting', 'draft', 'failed', 'saved', 'discarded')),
@@ -245,7 +245,7 @@ export const migrations: string[] = [
   /* 10: a finished conversation's recap, shown where it's folded up in the chat */ `
   ALTER TABLE episodes ADD COLUMN recap TEXT;
   `,
-  /* 11: what the owner said when they started a task from the chat, for the approval check (PLAN.md §6.2) */ `
+  /* 11: what the owner said when they started a task from the chat, for the approval check */ `
   ALTER TABLE tasks ADD COLUMN request TEXT;
   `,
   /* 12: an Uptime Kuma trigger can wait out a monitor's next checks before acting on a down alert */ `
@@ -315,7 +315,7 @@ export const migrations: string[] = [
     INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
   END;
   `,
-  /* 20: more than one bot (PLAN.md §14): bots, their conversations, and who each thing belongs to */ `
+  /* 20: more than one bot: bots, their conversations, and who each thing belongs to */ `
   CREATE TABLE bots (
     -- Fixed when it's made: its memory folder (bots/<id>/) and browser profile go by it.
     id TEXT PRIMARY KEY,
@@ -507,7 +507,7 @@ export const migrations: string[] = [
   );
   CREATE INDEX hook_deliveries_seen ON hook_deliveries (seen_at);
   `,
-  /* 27: negotiation (PLAN.md §16): wants, negotiations and their messages */ `
+  /* 27: negotiation: wants, negotiations and their messages */ `
   CREATE TABLE wants (
     id INTEGER PRIMARY KEY,
     bot_id TEXT NOT NULL,
@@ -571,13 +571,13 @@ export const migrations: string[] = [
   CREATE INDEX negotiation_tasks_message ON negotiation_tasks (message_id);
   ALTER TABLE messages ADD COLUMN negotiation_id INTEGER REFERENCES negotiations(id) ON DELETE SET NULL;
   `,
-  /* 28: the model a desktop task started on, when it carried on on another (PLAN.md §5.4) */ `
+  /* 28: the model a desktop task started on, when it carried on on another */ `
   ALTER TABLE tasks ADD COLUMN escalated_from TEXT;
   `,
   /* 29: memory files by section, for ranked search; refilled at startup and on every commit */ `
   CREATE VIRTUAL TABLE memory_fts USING fts5(path UNINDEXED, line UNINDEXED, text, tokenize='porter unicode61');
   `,
-  /* 30: proposals of a third kind: writes to skills and indexes from tainted work (PLAN.md §6.1) */ `
+  /* 30: proposals of a third kind: writes to skills and indexes from tainted work */ `
   ${REBUILD}
   CREATE TABLE proposals_new (
     id INTEGER PRIMARY KEY,
@@ -596,15 +596,12 @@ export const migrations: string[] = [
   ALTER TABLE proposals_new RENAME TO proposals;
   CREATE INDEX proposals_status ON proposals (status, id);
   `,
-  /* 31: research tasks and their reports (PLAN.md §17); the pages a reply cites */ `
+  /* 31: research tasks and their reports; the pages a reply cites */ `
   ALTER TABLE tasks ADD COLUMN research INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tasks ADD COLUMN report_path TEXT;
   ALTER TABLE messages ADD COLUMN sources TEXT;
   `,
-  /*
-   * 32: a note in the chat whose text came from untrusted content, and what; a conversation where
-   * something it read is suspected of being a prompt injection, and what (PLAN.md §6.1)
-   */ `
+  /* 32: what tainted a note in the chat; what in a conversation looks like a prompt injection */ `
   ALTER TABLE messages ADD COLUMN tainted_by TEXT;
   ALTER TABLE episodes ADD COLUMN injection_suspected TEXT;
   `,
@@ -646,8 +643,8 @@ export const migrations: string[] = [
   INSERT INTO messages_fts (rowid, text) SELECT id, text FROM messages WHERE incognito = 0;
   `,
   /*
-   * 37: what a conversation read itself, apart from what came with the summary or the messages before
-   * it: only that taints the running summary, so deleting the conversation clears it (PLAN.md §6.1)
+   * 37: what a conversation read itself, apart from what came with the summary: only that taints the
+   * running summary, so deleting the conversation clears it
    */ `
   ALTER TABLE episodes ADD COLUMN read_untrusted TEXT;
   ALTER TABLE episodes ADD COLUMN read_suspected TEXT;
@@ -658,10 +655,7 @@ export const migrations: string[] = [
     WHERE injection_suspected NOT LIKE 'The summary of earlier conversations%'
     AND injection_suspected NOT LIKE '%, which couldn''t be checked';
   `,
-  /*
-   * 38: questions (PLAN.md §20): a task waits for your answer, and a reply in the chat offers answers
-   * to tap. tasks again: its status gains waiting_answer.
-   */ `
+  /* 38: questions a task waits on; tasks' status gains waiting_answer */ `
   ${REBUILD}
   CREATE TABLE tasks_new (
     id INTEGER PRIMARY KEY,
@@ -729,11 +723,11 @@ export const migrations: string[] = [
 
   ALTER TABLE messages ADD COLUMN choices TEXT;
   `,
-  // 39: what a task had read when it asked you, as approvals keep (PLAN.md §20).
+  // 39: what a task had read when it asked you, as approvals keep.
   `ALTER TABLE questions ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';`,
-  // 40: the to-do item a task works on, ticked off when it ends done (PLAN.md §19).
+  // 40: the to-do item a task works on.
   `ALTER TABLE tasks ADD COLUMN todo TEXT;`,
-  // 41: boxes, small web apps a bot makes, with their versions and what their pages keep (PLAN.md §21).
+  // 41: boxes, their versions and what their pages keep.
   `
   CREATE TABLE boxes (
     id INTEGER PRIMARY KEY,
@@ -763,8 +757,8 @@ export const migrations: string[] = [
   );
   ALTER TABLE messages ADD COLUMN box_id INTEGER;
   `,
-  // 42: boxes with files, built on the boxes guest, and when a box's schedule last ran (PLAN.md §21.6).
-  // A box's number isn't given out again once it's deleted: the guest keeps a backend's data under it.
+  // 42: box files and schedules. A box's number isn't given out again once it's deleted: the guest
+  // keeps a backend's data under it.
   `
   CREATE TABLE box_files (
     box_id INTEGER NOT NULL,
@@ -778,7 +772,7 @@ export const migrations: string[] = [
   CREATE TABLE box_ids (id INTEGER PRIMARY KEY AUTOINCREMENT);
   INSERT INTO sqlite_sequence (name, seq) SELECT 'box_ids', COALESCE(MAX(id), 0) FROM boxes;
   `,
-  // 43: boxes' feeds, a plugin's read tool run for a box's page on a timer (PLAN.md §21.2, X4).
+  // 43: boxes' feeds.
   `
   CREATE TABLE box_feeds (
     id INTEGER PRIMARY KEY,
@@ -800,8 +794,7 @@ export const migrations: string[] = [
   );
   CREATE INDEX box_feeds_due ON box_feeds (next_run_at);
   `,
-  // 44: what boxes' backends notified you of, a few a day each, with the note each left in the chat
-  // (PLAN.md §21.6, X6).
+  // 44: what boxes' backends notified you of.
   `
   CREATE TABLE box_notices (
     id INTEGER PRIMARY KEY,
@@ -811,20 +804,18 @@ export const migrations: string[] = [
   );
   CREATE INDEX box_notices_box ON box_notices (box_id, created_at);
   `,
-  // 45: hand-offs answered in the other bot's chat (PLAN.md §14.7): each end of one links to the other,
-  // and a task keeps the hand-off whose answer asked for it, so hand-offs through chats nest 3 deep too.
+  // 45: hand-offs answered in the other bot's chat; a task keeps the hand-off whose answer asked for
+  // it, so hand-offs through chats nest 3 deep too.
   `
   ALTER TABLE messages ADD COLUMN link_conversation_id INTEGER;
   ALTER TABLE messages ADD COLUMN link_message_id INTEGER;
   ALTER TABLE tasks ADD COLUMN asked_in INTEGER;
   `,
-  // 46: a box made or changed by Claude Code (box_claude) is a task that runs it: what it was asked
-  // for, as JSON ({request, box?, title?}).
+  // 46: a Claude Code box job, as JSON ({request, box?, title?}).
   `
   ALTER TABLE tasks ADD COLUMN box_job TEXT;
   `,
-  // 47: approvals that go further than once (PLAN.md §6.2): for the rest of a task or conversation,
-  // or always for one exact call.
+  // 47: approvals for the rest of a task or conversation, or always for one exact call.
   `
   ALTER TABLE approvals ADD COLUMN tool TEXT;
   ALTER TABLE approvals ADD COLUMN input TEXT;
@@ -842,8 +833,8 @@ export const migrations: string[] = [
     UNIQUE (bot_id, tool, input)
   );
   `,
-  // 48: the unread messages, so the chats' counts and the unread list don't read every message. Its
-  // condition is UNREAD in agent/chats.ts, word for word: SQLite only uses it for a query that says so.
+  // 48: unread messages. Its condition is UNREAD in agent/chats.ts, word for word: SQLite only uses
+  // a partial index for a query that says so.
   `
   CREATE INDEX messages_unread ON messages (conversation_id, id) WHERE role = 'assistant'
     AND status != 'streaming' AND incognito = 0 AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at));

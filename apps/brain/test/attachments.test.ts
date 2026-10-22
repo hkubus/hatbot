@@ -50,7 +50,6 @@ test("you upload a photo, send it with a message, and the model sees it; it tain
   expect(episode?.tainted_by).toBe('Attached file "cat.png"');
   expect(t.thread.list()[0]?.attachments?.map((x) => x.id)).toEqual([a.id]);
 
-  // Already on a message: it can't be posted again.
   const again = await t.call(
     "POST",
     "/thread/messages",
@@ -105,7 +104,6 @@ test("what the model gets: text inline, PDFs as documents, images while a reques
     expect(last).toContain(`Attachment #${second.id}: \\"two.png\\"`);
     expect(last).toContain(`files: [${second.id}]`);
     expect(last).not.toContain(`files: [${first.id}]`);
-    // What the first two requests sent comes back the same in the third.
     const head = unmarked(chat.requests[1]?.messages.slice(0, 3));
     expect(unmarked(chat.requests[2]?.messages.slice(0, 3))).toEqual(head);
   } finally {
@@ -191,7 +189,6 @@ test("a sent picture is kept for good, smaller copies too; an unsent or incognit
   const shrunk = new Bun.Image(bytes);
   await shrunk.metadata();
   expect([shrunk.width, shrunk.height]).toEqual([720, 432]);
-  // No bigger than asked, or not a picture: the original.
   expect(await (await get(`${kept.id}?w=1080`)).bytes()).toEqual(photo);
 
   const secret = await send(true);
@@ -369,14 +366,12 @@ test("a background task hands the chat a JSON file; the bot reads it and the cha
     { name: "cpu.png", mediaType: "image/png", forChat: true },
   ]);
   expect(t.tasks.steps(task?.id as number).filter((s) => s.name === "send_to_chat").length).toBe(2);
-  // The bot gets them with the task's result, and writes its reply again with the chart.
   const told = JSON.stringify(chat.requests.at(-1)?.messages.at(-2));
   expect(told).toContain('handed you, below: #1 \\"cpu.json\\", #2 \\"cpu.png\\"');
   expect(told).toContain(JSON.stringify(series).slice(1, -1));
   expect(told).toContain('"type":"image"');
   const reply = t.thread.list().find((m) => m.taskId === task?.id);
   expect(reply?.text).toContain("```chart");
-  // Not yours: nothing under the reply, and no event that put them there.
   expect(reply?.attachments).toBeUndefined();
   expect(t.events.some((e) => e.type === "message.attachment")).toBe(false);
 });

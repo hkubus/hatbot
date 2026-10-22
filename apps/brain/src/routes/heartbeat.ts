@@ -8,7 +8,6 @@ export const heartbeatRoutes = new Hono<AppEnv>()
   .use("/report", requireAuth)
   .use("/report/*", requireAuth)
   .get("/heartbeat", (c) => c.json(c.var.heartbeat.info()))
-  // A look now, whether it's on or not.
   .post("/heartbeat/run", async (c) => {
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);
     return c.json(await c.var.heartbeat.run());

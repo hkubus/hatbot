@@ -1,4 +1,4 @@
-// Who controls the desktop: Hatbot, or you after Take over (PLAN.md §10.5).
+// Who controls the desktop: Hatbot, or you after Take over.
 import type { DesktopState } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
@@ -24,7 +24,6 @@ export class Desktop {
   };
   private paused = false;
   private waiters = new Set<() => void>();
-  /** Tasks asking for you, in turn. */
   private requests: { taskId: number; reason: string }[] = [];
   private served: number | null = null;
   private readying = new Map<number, Readying>();
@@ -53,7 +52,6 @@ export class Desktop {
     this.events.emit({ type: "desktop.state", state: this.get() });
   }
 
-  /** Checks desktop-agent answers; the brain calls it every 30 s. */
   async refresh() {
     if (!this.agent.configured) return this.set({ online: false });
     try {
@@ -68,15 +66,13 @@ export class Desktop {
     }
   }
 
-  /** The task using the screen, and its bot. */
   setActiveTask(taskId: number | null, botId: string | null = null) {
     this.set({ activeTaskId: taskId, botId: taskId === null ? null : botId });
   }
 
   /**
-   * You take control. `forRequest`: Take over, answering the first task that asked for you; that task gets
-   * the screen and its browser profile first, so you work where it needs you (B16). A second Take over
-   * while one is under way (a double tap, another device) is the same one: the task is readied once.
+   * `forRequest`: the first task that asked for you gets the screen and its browser profile first, so
+   * you work where it needs you. A second Take over while one is under way is the same one.
    */
   takeover(forRequest = false): Promise<void> {
     this.taking ??= this.take(forRequest).finally(() => {
@@ -112,7 +108,7 @@ export class Desktop {
     this.waiters.clear();
   }
 
-  /** A task asks for you. Requests wait in turn; the first is the one shown. */
+  /** Requests wait in turn; the first is the one shown. */
   requestTakeover(taskId: number, reason: string) {
     this.requests = [...this.requests.filter((r) => r.taskId !== taskId), { taskId, reason }];
     this.set({ request: this.requests[0] ?? null });
@@ -123,11 +119,6 @@ export class Desktop {
     this.set({ request: this.requests[0] ?? null });
   }
 
-  /**
-   * While a task waits for you: `ready` gives it the screen when you take over for it, and rejects when
-   * it can't in time; what it returns gives the screen back if Take over then fails. Returns the way to
-   * stop.
-   */
   onTakeover(taskId: number, ready: Readying): () => void {
     this.readying.set(taskId, ready);
     return () => {
@@ -135,7 +126,6 @@ export class Desktop {
     };
   }
 
-  /** Resolves once you hand the desktop back. */
   waitForHandback(signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       const done = () => {

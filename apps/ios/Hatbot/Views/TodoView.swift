@@ -1,5 +1,3 @@
-// To-do (PLAN.md §19): the list Hatbot keeps and reminds you of, with boxes to tick items off and a
-// task to work on one.
 import SwiftUI
 
 struct TodoView: View {
@@ -94,7 +92,6 @@ struct TodoView: View {
     }
   }
 
-  /// A task on the item, in Hatbot's chat.
   private func work(_ t: TodoItem) {
     Task {
       await attempt($error) {

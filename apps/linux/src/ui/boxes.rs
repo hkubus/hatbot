@@ -1,6 +1,5 @@
-// Boxes (PLAN.md §24.2 L6, BoxesView on iOS): the small web apps your bots made, each with its
-// versions, their code, Restore and Delete. The page itself opens in the web app in your browser:
-// a box's calls to Hatbot only work inside Hatbot, and this app has no web view.
+// As BoxesView on iOS. A box's page opens in the web app in your browser: its calls to Hatbot
+// only work inside Hatbot, and this app has no web view.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -158,7 +157,6 @@ impl List {
     }
 }
 
-/// A box: Open in Browser, its versions newest first with their code and Restore, and Delete.
 pub struct BoxPage {
     pub page: adw::NavigationPage,
     _inner: Rc<Page>,
@@ -372,7 +370,6 @@ impl Page {
     }
 }
 
-/// A version's code, to read.
 pub struct CodePage {
     pub page: adw::NavigationPage,
 }

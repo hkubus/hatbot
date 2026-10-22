@@ -1,7 +1,4 @@
-// Claude Code (`claude -p`) in the desktop's sandbox shell, on the owner's Claude subscription: the
-// claude plugin's claude_code tool and box_claude's tasks hand it code work. One run at a time across
-// the brain, each with its own home in the sandbox (its sessions, so a run can carry on). Everything it
-// says is untrusted: it reads code and pages strangers wrote.
+// Everything Claude Code says is untrusted: it reads code and pages strangers wrote.
 import { type DesktopAgent, DesktopError } from "./desktop/client";
 import { PluginError } from "./plugins/plugin";
 import { Pool } from "./tasks/lane";
@@ -11,21 +8,17 @@ export const CLAUDE = "/usr/local/bin/claude";
 export type ClaudeSettings = { token: string; model: string; minutes: number };
 
 export type ClaudeRun = {
-  /** Where it works: a folder in the sandbox's home, by a path relative to it. */
+  /** Relative to the sandbox's home. */
   dir: string;
   prompt: string;
-  /** Added to Claude Code's own system prompt. */
   system?: string;
-  /** The only tools it has, e.g. Read and Edit. */
   tools: string[];
   /** Bash, among `tools`, runs without asking. */
   bash?: boolean;
-  /** A session to carry on, from an earlier run with the same key. */
   resume?: string | null;
   /** Its home in the sandbox is .claude-runs/<key>: a task's runs share one. */
   key: string;
   signal: AbortSignal;
-  /** What it's doing now, in a short line: "Edit src/x.ts". */
   onActivity?: (line: string) => void;
   /** Instead of the plugin's settings. */
   model?: string;
@@ -73,7 +66,6 @@ const oneLine = (s: string, max: number) => {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 };
 
-/** Waits, or less once `signal` aborts. */
 const pause = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
     const done = () => {
@@ -85,25 +77,19 @@ const pause = (ms: number, signal: AbortSignal) =>
     signal.addEventListener("abort", done, { once: true });
   });
 
-/** What a run said, line by line. */
 type Seen = {
   sessionId: string | null;
   result: Fields | null;
   usage: ClaudeResult["usage"];
-  /** A request was refused for its sign-in, and retried. */
   authRetry: boolean;
 };
 
 export class ClaudeCode {
-  /** How often a run's output is read. */
   pollMs: number;
   private settings: ClaudeSettings | null = null;
   private queue = new Pool(1);
-  /** Runs waiting or running. */
   private runs = 0;
-  /** The last session by key and folder, for carrying on. */
   private sessions = new Map<string, string>();
-  /** Keys with a home in the sandbox. */
   private homes = new Set<string>();
 
   constructor(
@@ -113,7 +99,6 @@ export class ClaudeCode {
     this.pollMs = o.pollMs ?? 2000;
   }
 
-  /** The plugin's token and settings while it's on; null once it's off. */
   configure(s: ClaudeSettings | null) {
     this.settings = s;
   }
@@ -122,12 +107,10 @@ export class ClaudeCode {
     return this.settings !== null && this.desktop.configured;
   }
 
-  /** The session the last run with this key in `dir` left, to carry on. */
   last(key: string, dir: string): string | null {
     return this.sessions.get(`${key}\n${dir}`) ?? null;
   }
 
-  /** Removes a key's home and sessions from the sandbox, once its task has ended. */
   async forget(key: string) {
     for (const k of this.sessions.keys()) if (k.startsWith(`${key}\n`)) this.sessions.delete(k);
     if (!this.homes.delete(key)) return;
@@ -138,7 +121,6 @@ export class ClaudeCode {
     }
   }
 
-  /** Its version in the sandbox, e.g. "2.1.296 (Claude Code)". */
   async version(): Promise<string> {
     try {
       const r = await this.desktop.exec(`${CLAUDE} --version`, 30);
@@ -316,7 +298,6 @@ export class ClaudeCode {
     );
   }
 
-  /** One line of its stream-json output; anything else it prints is skipped. */
   private read(line: string, seen: Seen, r: ClaudeRun) {
     if (!line.startsWith("{")) return;
     let m: Fields;
@@ -351,7 +332,6 @@ export class ClaudeCode {
   }
 }
 
-/** A tool call in a short line: "Edit src/x.ts", "Bash: bun test". */
 function activity(name: string, input: Fields, dir: string): string {
   const what =
     str(input.file_path) ??
@@ -366,7 +346,6 @@ function activity(name: string, input: Fields, dir: string): string {
   return oneLine(name === "Bash" ? `Bash: ${short}` : `${name} ${short}`, 80);
 }
 
-/** The run in a line: "4 min, 12 turns, worth $0.80 at API prices; your plan: 5-hour 26%, week 43%". */
 export function runStats(r: ClaudeResult): string {
   const pct = (x: number) => `${Math.round(x * 100)}%`;
   const plan = [

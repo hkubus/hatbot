@@ -72,7 +72,6 @@ fn parse(data: &str) -> Vec<gsk::Path> {
 }
 
 impl Icon {
-    /// One of the app's icons, `size` pixels square.
     pub fn new(name: &str, size: i32) -> Icon {
         let icon: Icon = glib::Object::new();
         icon.imp().size.set(size);

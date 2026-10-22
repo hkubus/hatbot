@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: provision the desktop container (PLAN.md §4.2).
+# Hatbot: provision the desktop container.
 # Runs inside hatbot-desktop as root. host-setup.sh pushes and starts it; safe to re-run.
 #   DESKTOP_IP  this container's IP; Xvnc listens only there
 #   BRAIN_IP    the brain's IP; the only host allowed to connect in

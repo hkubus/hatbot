@@ -1,4 +1,4 @@
-// A box's backend (PLAN.md §21.6), run by hatbox@<id> as a user of its own, with no network and its own
+// A box's backend, run by hatbox@<id> as a user of its own, with no network and its own
 // folder for data (the working directory, for bun:sqlite). It serves the box's built server.ts on a Unix
 // socket the agent relays to, and its fetch goes to the agent, which lets through only box.json's hosts.
 // Its secrets come from the agent too, into its environment. What it prints is the box's log.

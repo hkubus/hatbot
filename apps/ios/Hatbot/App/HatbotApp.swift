@@ -1,6 +1,3 @@
-// The app: sign-in until there's a token, then chat, with the other sections in a sidebar (PLAN.md §10.3).
-// Notifications come from the ntfy app; hatbot:// links open tasks, approvals, schedules, triggers and
-// boxes, and quick actions and Spotlight results open theirs (App/Extras.swift).
 import CoreSpotlight
 import SwiftUI
 import UIKit
@@ -31,7 +28,7 @@ struct HatbotApp: App {
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
       .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
       .onChange(of: session.store == nil) { _, out in
-        // The widget and the control read the brain as you, or say to sign in.
+        // The widget reads the brain as you, or says to sign in.
         WidgetCenter.shared.reloadAllTimelines()
         ControlCenter.shared.reloadAllControls()
         if out {
@@ -59,7 +56,6 @@ struct MainView: View {
   @State private var chatPath: [Route] = []
   @State private var tasksPath: [Route] = []
   @State private var drafts = Drafts()
-  /// A message to show in the chat, from Search.
   @State private var focus: Int?
   @State private var settingsPath: [Route] = []
   @State private var memoryPath: [Route] = []
@@ -101,18 +97,15 @@ struct MainView: View {
       WidgetCenter.shared.reloadTimelines(ofKind: WidgetKinds.status)
     }
     .onChange(of: store.paused) { ControlCenter.shared.reloadControls(ofKind: WidgetKinds.pause) }
-    // What Spotlight finds, a little after launch.
     .task {
       try? await Task.sleep(for: .seconds(5))
       await Spotlight.index(store)
     }
     .overlay(alignment: .top) { Toast() }
     .environment(drafts)
-    // Hatbot needs you: an approval came in, or the desktop asks for you.
     .sensoryFeedback(.warning, trigger: store.needsYou) { old, new in new > old }
   }
 
-  /// The open section in front of the others, which stay as they were.
   private var sections: some View {
     ZStack {
       ForEach(AppTab.allCases.filter { opened.contains($0) || $0 == tab }, id: \.self) { t in
@@ -206,7 +199,6 @@ struct MainView: View {
   }
 }
 
-/// A short note, like "Memory: …", that fades after a moment.
 private struct Toast: View {
   @Environment(AppStore.self) private var store
 
@@ -230,7 +222,6 @@ private struct Toast: View {
   }
 }
 
-/// The time iOS gives the app to finish up once it's in the background.
 @MainActor
 final class Lingering {
   private var task = UIBackgroundTaskIdentifier.invalid

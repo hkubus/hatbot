@@ -1,4 +1,3 @@
-// Sign in with the address, password and a TOTP code; the app keeps a bearer token in the Keychain.
 import SwiftUI
 import UIKit
 

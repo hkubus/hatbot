@@ -1,14 +1,10 @@
-// What the app does outside itself, with no push: home-screen quick actions, Spotlight results for
-// memory, tasks and schedules, and the needs-you count on the app icon. Each opens a hatbot:// link.
-// And what the app switcher shows of it: nothing.
 import CoreSpotlight
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 import UserNotifications
 
-/// A quick action picked on the home screen, for MainView to open. Its type is its hatbot:// link
-/// (project.yml, UIApplicationShortcutItems).
+/// Its type is its hatbot:// link (project.yml's UIApplicationShortcutItems).
 @MainActor
 @Observable
 final class QuickActions {
@@ -25,7 +21,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     _ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession,
     options: UIScene.ConnectionOptions
   ) -> UISceneConfiguration {
-    // Launched by a quick action.
     if let item = options.shortcutItem { QuickActions.shared.pick(item) }
     let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
     config.delegateClass = SceneDelegate.self
@@ -34,7 +29,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 final class SceneDelegate: NSObject, UIWindowSceneDelegate {
-  /// A quick action while the app was running.
   func windowScene(
     _ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
     completionHandler: @escaping (Bool) -> Void
@@ -44,8 +38,8 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
   }
 }
 
-/// Covers the app while it isn't active, so the app switcher's picture of it shows no secrets, desktop or
-/// approvals. A window of its own, over sheets too.
+/// Covers the app while it isn't active, so the app switcher's snapshot shows no secrets. A window
+/// of its own, so it's over sheets too.
 @MainActor
 final class PrivacyCover {
   static let shared = PrivacyCover()
@@ -91,12 +85,11 @@ enum Spotlight {
   /// Hatbot's own index, readable only while the phone is unlocked.
   nonisolated(unsafe) private static let searchIndex = CSSearchableIndex(name: "Hatbot", protectionClass: .complete)
 
-  /// Memory files, tasks and schedules by name only, in place of what was indexed before.
+  /// Names only, replacing what was indexed before.
   @MainActor
   static func index(_ store: AppStore) async {
     guard CSSearchableIndex.isIndexingAvailable() else { return }
     var entries: [Entry] = []
-    // Memory's, if it has loaded them already.
     var files = store.memoryFilesLoaded ? store.memoryFiles : nil
     if files == nil { files = try? await store.memoryTree() }
     for f in files ?? [] {
@@ -127,13 +120,11 @@ enum Spotlight {
     try? await searchIndex.indexSearchableItems(entries.map(item))
   }
 
-  /// Signed out: nothing of Hatbot's stays searchable.
   static func clear() {
     CSSearchableIndex.default().deleteAllSearchableItems(completionHandler: nil)
     searchIndex.deleteAllSearchableItems(completionHandler: nil)
   }
 
-  /// The link of a Spotlight result that opened the app.
   static func link(_ activity: NSUserActivity) -> URL? {
     (activity.userInfo?[CSSearchableItemActivityIdentifier] as? String).flatMap(URL.init(string:))
   }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: provision the boxes guest (PLAN.md §21.6).
+# Hatbot: provision the boxes guest.
 # Runs inside hatbot-boxes as root. host-setup.sh or ssh-setup.sh pushes and starts it; safe to re-run.
 # The agent (apps/hatbox) and the boxes' units come later, from deploy.sh (boxes-deploy.sh).
 #   BOXES_IP    this guest's IP; the agent listens only there

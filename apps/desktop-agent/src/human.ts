@@ -32,7 +32,6 @@ export function path(from: Point, to: Point, rand: () => number = Math.random): 
   return out;
 }
 
-/** Milliseconds between `min` and `max`. */
 export const between = (min: number, max: number, rand: () => number = Math.random) =>
   Math.round(min + rand() * (max - min));
 

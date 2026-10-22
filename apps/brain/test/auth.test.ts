@@ -65,7 +65,6 @@ describe("sign-in", () => {
     const tokens = await t.call("GET", "/tokens", undefined, bearer);
     expect(((await tokens.json()) as { name: string }[]).map((x) => x.name)).toEqual(["iPhone"]);
 
-    // One made by hand works until it's revoked.
     const made = (await (await t.call("POST", "/tokens", { name: "cli" }, { cookie })).json()) as {
       id: number;
       token: string;
@@ -74,7 +73,6 @@ describe("sign-in", () => {
     expect((await t.call("GET", "/tokens", undefined, cli)).status).toBe(200);
     expect((await t.call("DELETE", `/tokens/${made.id}`, undefined, { cookie })).status).toBe(200);
     expect((await t.call("GET", "/tokens", undefined, cli)).status).toBe(401);
-    // A cookie write from another site is refused, saying where to make it.
     const csrf = await t.call(
       "POST",
       "/tokens",
@@ -241,7 +239,6 @@ describe("sign-in", () => {
   test("a session lasts 30 days from its last use, and its cookie moves on with it", async () => {
     const t = await testApp();
     const { cookie } = signIn(t);
-    // Within the day, nothing moves.
     expect((await t.call("GET", "/tokens", undefined, { cookie })).headers.get("set-cookie")).toBe(
       null,
     );
@@ -295,7 +292,6 @@ describe("your account", () => {
     const res = await change({});
     expect((await res.json()) as SignedOutOthers).toEqual({ ok: true, ended: 2 });
     expect(known(otherMark)).toBe(false);
-    // The browser that asked is marked again.
     expect(known(markOf(res))).toBe(true);
     expect(await works({ cookie })).toBe(true);
     expect(await works({ cookie: otherCookie })).toBe(false);

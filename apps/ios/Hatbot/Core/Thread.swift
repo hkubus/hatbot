@@ -1,4 +1,4 @@
-// The chat in folds (threadGroups in packages/shared): each finished conversation folds up under its recap.
+// The chat in folds (threadGroups in packages/shared).
 import Foundation
 
 /// The latest page, fetched again after a reconnect or on coming back to the chat, merged into what's loaded.
@@ -91,7 +91,6 @@ struct ChatCommand: Identifiable, Equatable, Sendable {
   /// The ones that work in incognito: the rest would outlast it.
   static let incognito: Set = ["new", "stop"]
 
-  /// The commands a composer's "/…" could mean, while you type the name.
   static func matching(_ text: String, incognito: Bool = false) -> [ChatCommand] {
     guard text.hasPrefix("/") else { return [] }
     let typed = text.dropFirst().lowercased()

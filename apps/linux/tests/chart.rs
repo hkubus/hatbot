@@ -1,4 +1,3 @@
-// L6: charts in replies and on the Spend page (PLAN.md §24.2).
 mod common;
 
 use common::*;

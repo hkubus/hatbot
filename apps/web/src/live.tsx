@@ -1,5 +1,3 @@
-// The desktop's live view (PLAN.md §10.5): JPEG frames over a WebSocket, drawn to a canvas.
-// While you have control, your pointer and keys go to the desktop.
 import { latestNoteOnly, type TaskStep } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { useEffect, useRef, useState } from "react";
@@ -297,13 +295,11 @@ const STEP_ICON: Record<TaskStep["kind"], Parameters<typeof Icon>[0]["name"]> = 
 };
 
 export function StepIcon({ kind, name }: { kind: TaskStep["kind"]; name?: string }) {
-  // A background task's tool calls.
   if (kind === "action" && name?.startsWith("memory_")) return <Icon name="book" />;
   if (kind === "action" && name === "search_history") return <Icon name="chat" />;
   return <Icon name={STEP_ICON[kind]} />;
 }
 
-/** The live screen with takeover controls, and what the task on it is doing. */
 export function LiveView({ taskId }: { taskId?: number }) {
   const desktop = useStore((s) => s.desktop);
   const activeId = taskId ?? desktop?.activeTaskId ?? desktop?.request?.taskId ?? null;

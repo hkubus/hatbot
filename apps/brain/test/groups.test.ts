@@ -59,16 +59,13 @@ test("in a group, @name picks who answers, else the last bot to speak, and a bot
     '<message from=\\"Hatbot\\" at=\\"Fri 2026-10-09 12:00\\">It is.</message>',
   );
   expect(chefSaw).not.toContain("Soup.");
-  // Each bot keeps its own turns.
   expect(model.requests[3]?.messages.length).toBe(3);
-  // Mentions are found by name or id, in order, and not inside an address or a longer word.
   const b = (id: string, name: string) => ({ id, name }) as Bot;
   const bots = [b("hatbot", "Hatbot"), b("home-lab", "Home Lab"), b("chef", "Chef")];
   expect(mentionsIn("@home lab then @CHEF", bots).map((x) => x.id)).toEqual(["home-lab", "chef"]);
   expect(mentionsIn("mail me@chef.com or @chefs", bots)).toEqual([]);
   expect(mentionsIn("ask @hatbot.", bots).map((x) => x.id)).toEqual(["hatbot"]);
 
-  // No incognito in a group.
   const secret = { text: "hi", incognito: true };
   expect((await t.call("POST", `/conversations/${g.id}/messages`, secret, { cookie })).status).toBe(
     400,

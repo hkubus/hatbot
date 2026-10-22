@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Hatbot: set up the brain, the desktop and the boxes guest on Debian 13 machines reached over SSH (PLAN.md
-# §9.2, §21.6), for when there's no Proxmox host. Any machines will do: VMs, Incus/LXD containers, cloud
+# Hatbot: set up the brain, the desktop and the boxes guest on Debian 13 machines reached over SSH,
+# for when there's no Proxmox host. Any machines will do: VMs, Incus/LXD containers, cloud
 # servers, spare boxes. Use fresh ones, since provisioning replaces their firewall rules. On Proxmox,
 # host-setup.sh does more: the containers themselves, a firewall the guests can't touch, snapshots and
 # backups.
@@ -94,7 +94,6 @@ save_state() {
 
 ((DRY_RUN)) && printf '%sDry run: nothing will be changed.%s\n' "$yel" "$rst"
 
-# ---------- 1. Preflight (read-only) ----------
 step "1/4 Preflight"
 command -v ssh >/dev/null || die "ssh not found"
 [[ -n $BRAIN_SSH ]] || ask BRAIN_SSH "Brain: SSH address (user@host)" ""
@@ -217,7 +216,6 @@ fi
 confirm "Continue?" || die "stopped"
 save_state
 
-# ---------- 2. Brain <-> guest secrets ----------
 step "2/4 Brain ↔ guest secrets"
 if [[ -z $DESKTOP_SSH ]]; then
   info "no desktop"
@@ -257,7 +255,6 @@ EOF
   unset hatbox_token
 fi
 
-# ---------- 3. Provision ----------
 step "3/4 Provision the machines"
 provision() { # provision GUEST SCRIPT ENV...
   local g=$1 script=$2
@@ -276,7 +273,6 @@ provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BO
 [[ -z $BOXES_SSH ]] ||
   provision "$BOXES_SSH" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
 
-# ---------- 4. Done ----------
 step "4/4 Done"
 backup="the brain's /var/lib/hatbot and /archive"
 [[ -z $BOXES_SSH ]] || backup+=", and the boxes guest's /var/lib/private/hatbox-data (what the boxes save)"

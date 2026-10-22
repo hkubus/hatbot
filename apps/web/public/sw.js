@@ -1,5 +1,4 @@
-// Hatbot's service worker: keeps the app shell and its fingerprinted files (scripts, styles, fonts)
-// so the app opens quickly and says plainly when Hatbot can't be reached. /api is never touched.
+// /api is never touched.
 // v2: v1 could hold the app's page kept as a script (an older build's chunk, answered with the app).
 const CACHE = "hatbot-v2";
 const OFFLINE = "/offline.html";
@@ -41,7 +40,6 @@ async function put(req, res, kind) {
   await trim(cache);
 }
 
-/** The last app shell, which says it can't reach Hatbot and keeps trying; else the offline page. */
 const offline = async () => (await caches.match("/")) ?? (await caches.match(OFFLINE));
 
 self.addEventListener("fetch", (e) => {
@@ -80,7 +78,6 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Icons, the manifest, theme.js: the cached copy now, a fresh one for next time.
   e.respondWith(
     caches.match(req).then((hit) => {
       const fresh = fetch(req).then((res) => {

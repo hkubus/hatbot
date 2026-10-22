@@ -1,4 +1,3 @@
-// The chat thread in folds (PLAN.md §5.3): each finished conversation folds up under its recap.
 import type { Episode, ThreadMessage } from "./index";
 
 export type ThreadGroup = {

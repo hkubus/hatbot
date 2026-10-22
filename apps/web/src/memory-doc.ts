@@ -3,7 +3,6 @@
 
 export type Doc = {
   path: string;
-  /** What's in the editor. */
   content: string;
   /** The file as saved; "" for one that isn't there yet. */
   saved: string;
@@ -22,7 +21,6 @@ export const loading = (path: string): Doc => ({
   state: "loading",
 });
 
-/** A new file, with a heading from its name. */
 export function newDoc(path: string): Doc {
   const title = path.split("/").pop()?.replace(/\.md$/, "").replace(/-/g, " ") ?? "";
   const content = `# ${title.charAt(0).toUpperCase()}${title.slice(1)}\n`;

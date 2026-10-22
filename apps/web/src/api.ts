@@ -11,17 +11,13 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * What went wrong, in a sentence for the page: the brain's own words, or `fallback` when it didn't
- * answer.
- */
 export const errorText = (err: unknown, fallback = "Couldn't reach Hatbot.") =>
   err instanceof ApiError ? err.message : fallback;
 
-/** JSON request to the brain. Session cookie auth; 401 sends the app back to the login screen. */
+/** 401 sends the app back to the login screen. */
 export async function api<T>(
   path: string,
-  /** `timeout`: in ms, after which it gives up and throws. */
+  /** In ms. */
   init: { method?: string; body?: unknown; timeout?: number } = {},
 ): Promise<T> {
   const res = await fetch(API_PREFIX + path, {
@@ -31,7 +27,6 @@ export async function api<T>(
     credentials: "same-origin",
     signal: init.timeout ? AbortSignal.timeout(init.timeout) : undefined,
   });
-  // 204: nothing to answer, e.g. no tidy-up to propose.
   const data = res.status === 204 ? null : await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith("/auth/"))
@@ -45,10 +40,7 @@ export async function api<T>(
   return data as T;
 }
 
-/**
- * Uploads a file for your next message. XMLHttpRequest rather than fetch, which can't tell how much has
- * been sent: `progress` hears that, from 0 to 1.
- */
+/** XMLHttpRequest rather than fetch, which can't report upload progress. */
 export function upload(
   file: File,
   signal?: AbortSignal,
@@ -78,6 +70,5 @@ export function upload(
   });
 }
 
-/** Where an attachment's file is served. */
 export const attachmentUrl = (id: number, download = false) =>
   `${API_PREFIX}/attachments/${id}${download ? "?download" : ""}`;

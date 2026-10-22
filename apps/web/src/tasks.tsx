@@ -1,4 +1,3 @@
-// Task status, screenshots and the approval card, shared by the chat and the Tasks page.
 import {
   API_PREFIX,
   type Approval,
@@ -56,7 +55,6 @@ export const isActive = (t: TaskCard) => t.finishedAt === null;
 export const screenUrl = (taskId: number, stepId: number) =>
   `${API_PREFIX}/tasks/${taskId}/screens/${stepId}`;
 
-/** A screenshot from the archive; opens full size in a new tab. */
 export function Shot({ taskId, stepId, alt }: { taskId: number; stepId: number; alt: string }) {
   const src = screenUrl(taskId, stepId);
   return (
@@ -66,7 +64,6 @@ export function Shot({ taskId, stepId, alt }: { taskId: number; stepId: number; 
   );
 }
 
-/** The last line Hatbot wrote or thought, for a running task, without its Markdown. */
 function lastLine(text?: string) {
   const lines = text?.split("\n") ?? [];
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -196,17 +193,13 @@ function TrustButton({ a, onError }: { a: Approval; onError: (error: string) => 
   );
 }
 
-/**
- * An approval waiting for you, with Deny and Approve: a card on its task's page, and in the chat's
- * tray. Every field is plain text, never Markdown, which could hide part of a command.
- */
+/** Every field is plain text, never Markdown, which could hide part of a command. */
 export function PendingApproval({
   a,
   links,
   compact = false,
 }: {
   a: Approval;
-  /** Buttons to where it came from: its task, or its negotiation. */
   links?: React.ReactNode;
   /** The chat's tray: the screenshot, the note and (unless it warns) why it asks wait behind More. */
   compact?: boolean;
@@ -317,10 +310,6 @@ export function PendingApproval({
   );
 }
 
-/**
- * A task's question waiting for you: tap an answer, or write your own. A card on its task's page, and in
- * the chat's tray. Plain text, like an approval.
- */
 export function PendingQuestion({ q, links }: { q: Question; links?: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

@@ -1,4 +1,3 @@
-// Push notifications through your ntfy server (PLAN.md §4.1, Notifier).
 import type { NtfyConfig } from "./secrets";
 
 export type NtfyAction =
@@ -16,10 +15,8 @@ export type NtfyAction =
 export type Notification = {
   title: string;
   message: string;
-  /** 1 (min) to 5 (urgent); 3 is the default. */
   priority?: 1 | 2 | 3 | 4 | 5;
   tags?: string[];
-  /** Opened when you tap the notification. */
   click?: string;
   actions?: NtfyAction[];
 };
@@ -57,7 +54,6 @@ export class NtfyNotifier implements Notifier {
     this.configure(config);
   }
 
-  /** From the host's env files, or as set in Settings later. */
   configure(config: NtfyConfig) {
     this.url = config.url.replace(/\/$/, "");
     this.topic = config.topic;
@@ -73,7 +69,6 @@ export class NtfyNotifier implements Notifier {
     return Boolean(this.token);
   }
 
-  /** The server's own health check, for the self-check. Throws with what went wrong. */
   async health(): Promise<void> {
     const res = await this.fetcher(`${this.url}/v1/health`, {
       signal: AbortSignal.timeout(10_000),
@@ -82,10 +77,7 @@ export class NtfyNotifier implements Notifier {
     if (!res.ok || body.healthy !== true) throw new Error(`ntfy answered ${res.status}`);
   }
 
-  /**
-   * Whether someone with no account can read the topic. Throws with what the server answered when
-   * that doesn't say. Asks only for messages from now on, so nothing that was sent comes back.
-   */
+  /** Asks only for messages from now on, so nothing that was sent comes back. */
   async readableByAnyone(): Promise<boolean> {
     const since = Math.floor(this.clock() / 1000);
     const res = await this.fetcher(
@@ -118,10 +110,6 @@ export class NtfyNotifier implements Notifier {
   }
 }
 
-/**
- * The web page a notification opens, as the iOS app's link (hatbot://), or null if the app has no
- * such page.
- */
 export function appLink(url: string, publicUrl: string): string | null {
   if (!url.startsWith(`${publicUrl}/`)) return null;
   const u = new URL(url);
@@ -132,7 +120,6 @@ export function appLink(url: string, publicUrl: string): string | null {
   return m ? `hatbot://${m[1]}/${m[2]}` : null;
 }
 
-/** Points notifications at the iOS app instead of the web app, when Settings say so. */
 export class LinkingNotifier implements Notifier {
   constructor(
     private inner: Notifier,

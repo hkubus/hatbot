@@ -138,10 +138,8 @@ export async function file(req: Request, home = process.env.HOME ?? "/tmp"): Pro
 const JOBS_DIR = process.env.HATBOT_SHELL_JOBS ?? join(tmpdir(), "hatbot-jobs");
 const MAX_JOBS = 2;
 const MAX_JOB_TIMEOUT_S = 2 * 60 * 60;
-/** The most of a job's output one read returns. */
 const JOB_READ_BYTES = 256 * 1024;
 const JOB_STDERR_BYTES = 4096;
-/** From SIGTERM to SIGKILL. */
 const KILL_GRACE_MS = 5000;
 /** How long a job that ended stays readable when nobody stops it. */
 const JOB_KEPT_MS = 60 * 60_000;
@@ -184,7 +182,6 @@ function forget(id: string) {
   rmSync(job.err, { force: true });
 }
 
-/** Up to `max` bytes of a file from byte `at`, and the file's size. */
 function readAt(path: string, at: number, max: number) {
   const fd = openSync(path, "r");
   try {

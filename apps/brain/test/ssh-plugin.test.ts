@@ -76,9 +76,7 @@ function ssh(opts: { hosts?: unknown[]; chat?: FakeModel; work?: FakeModel; unse
 const exec = (host: string, command: string) => ({
   content: [toolUse("ssh_exec", { host, command })],
 });
-/** The arguments of the last ssh run. */
 const lastArgs = () => readFileSync(join(dir, "ssh.log"), "utf8").trim().split("\n").at(-1) ?? "";
-/** A task from the chat, asked for in `request`. */
 const chatTask = (t: TestApp, request: string, taintedBy?: string) =>
   t.tasks.createBackgroundTask({
     title: request,
@@ -367,7 +365,6 @@ test("containers: ssh_pct_exec quotes the command for the wrapper, a host's own 
   await expect(pct.run({ host: "nas", guest: 105, command: "ls" }, call)).rejects.toThrow(
     "isn't set up as a Proxmox host",
   );
-  // The approval and the timeline show the whole command.
   const long = `${"echo checking; ".repeat(20)}systemctl restart ntfy`;
   expect(pct.describe?.({ host: "pve", guest: 105, command: long })).toBe(
     `In CT 105 on pve: ${long}`,
@@ -632,7 +629,6 @@ test("copy_file moves bytes between hosts, containers, the sandbox and the chat"
   await copy({ from: { attachment: a.id }, to: { host: "nas", path: `${dir}/copy/up/` } });
   expect(new Uint8Array(readFileSync(join(dir, "copy", "up", "it's.bin")))).toEqual(bin);
 
-  // In the chat, a host's file goes to you under the reply.
   await t.thread.post("send me the blob from nas").done;
   const reply = t.thread.list().at(-1);
   expect(reply?.text).toBe("Here it is.");

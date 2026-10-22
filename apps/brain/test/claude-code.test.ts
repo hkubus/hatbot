@@ -64,7 +64,6 @@ test("a task hands code work to Claude Code in the sandbox, its token kept out o
   expect(job?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN);
   expect(job?.argv.join(" ")).not.toContain(TOKEN);
   expect(job).toMatchObject({ cwd: "repos/app", home: `.claude-runs/task-${task?.id}` });
-  // Files and the shell, and nothing on the web.
   expect(argOf(job, "--tools")).toBe("Bash,Read,Edit,Write,Glob,Grep");
   const result = lastUserText(work.requests[1]);
   expect(result).toContain("Fixed the off-by-one");
@@ -73,7 +72,6 @@ test("a task hands code work to Claude Code in the sandbox, its token kept out o
   expect(t.events.some((e) => e.type === "task.progress" && e.text.includes("Edit src/x.ts"))).toBe(
     true,
   );
-  // Its sessions in the sandbox go with the task.
   expect(t.agent.commands).toContain(`rm -rf -- '.claude-runs/task-${task?.id}'`);
 });
 
@@ -124,7 +122,6 @@ test("box_claude: Claude Code writes a box as a task under the reply, a failed b
   expect(argOf(t.agent.jobs[1], "-p")).toContain("left-pad");
   expect(task).toMatchObject({ status: "done", tainted: true });
   expect(t.boxes.taintedBy(box?.id ?? 0)).not.toBeNull();
-  // Saved and shown under the reply, and the bot was told.
   expect(t.boxes.page(box?.id ?? 0)?.files?.map((f) => f.path)).toEqual(["app.ts", "index.html"]);
   const reply = t.db
     .query<{ box_id: number | null }, [number]>("SELECT box_id FROM messages WHERE task_id = ?")

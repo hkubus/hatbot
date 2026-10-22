@@ -1,5 +1,3 @@
-// What the Schedules, Watchers and Heartbeat pages share: who runs it, its runs, when, and loading
-// one for its edit page.
 import { HATBOT_ID } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
@@ -8,10 +6,7 @@ import { Link } from "./link";
 import { loadSchedules, loadTasks, useStore } from "./store";
 import { StatusChip } from "./tasks";
 
-/**
- * An edit page's item, loaded with the rest when it isn't in the store: `missing` once they've
- * loaded without it, or it's been deleted.
- */
+/** `missing` once everything has loaded without it, or it's been deleted. */
 export function useListed(
   kind: "schedules" | "triggers" | "watchers",
   id: number | null,
@@ -34,7 +29,6 @@ export function useListed(
   return { missing: stored === null || (notListed && !stored), error, load };
 }
 
-/** The runs a schedule, trigger or watcher started. */
 export function Runs({
   filter,
 }: {
@@ -47,7 +41,6 @@ export function Runs({
   useEffect(() => {
     loadTasks({ ...filter, view: "card" }).then(setIds, () => setIds([]));
   }, [key]);
-  // Runs that start while the page is open show up too.
   const shown = Object.values(tasks)
     .filter(
       (t) =>
@@ -73,7 +66,6 @@ export function Runs({
               {shown.map((t) => (
                 <tr key={t.id} className="link-row">
                   <td className="wrap">
-                    {/* The link covers the whole row, and the keyboard reaches it. */}
                     <Link to={`/tasks/${t.id}`}>{t.summary ? plainText(t.summary) : t.title}</Link>
                   </td>
                   <td>
@@ -90,7 +82,7 @@ export function Runs({
   );
 }
 
-/** Which bot runs it: its prompt, plugins and memory. Only when there's more than one. */
+/** Only shown when there's more than one bot. */
 export function BotPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   const ids = useStore((s) => s.botIds);
   const bots = useStore((s) => s.bots);

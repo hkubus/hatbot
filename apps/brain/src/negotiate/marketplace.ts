@@ -1,13 +1,11 @@
-// Messages to sellers go through a negotiation: its mandate, and the exact-text gate (PLAN.md §16.3).
-// A desktop task that isn't one asks first before a click or Enter that could send what's in a text box
-// on a marketplace, whatever the button is called; an icon-only Send has no label to catch.
+// Messages to sellers go through a negotiation's mandate and exact-text gate. A desktop task that isn't
+// one asks first before a click or Enter that could send what's in a text box on a marketplace, whatever
+// the button is called; an icon-only Send has no label to catch.
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { narrowingLabel, onHost } from "../tasks/policy";
 
-/** The marketplaces negotiations run on. */
 export const MARKETPLACE_HOSTS = ["olx.pl", "allegrolokalnie.pl", "vinted.pl"];
 
-/** The marketplace a page is on, or null. */
 export function marketplaceOf(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
@@ -18,12 +16,7 @@ export function marketplaceOf(url: string | null | undefined): string | null {
   }
 }
 
-/**
- * What a click or Enter outside a negotiation would act on, as the label confirm_intent must approve,
- * when it could send a message on a marketplace: a text box there holds text. Null when it can't: off
- * the marketplaces, a click into a text box or on a link, searching, filtering or opening a menu, or
- * nothing typed. desktop-agent leaves the site's search box out of what the boxes hold.
- */
+/** The label confirm_intent must approve. desktop-agent leaves the site's search box out of `fields`. */
 export function marketplaceSend(
   kind: "click" | "enter",
   el: AgentElement | null,

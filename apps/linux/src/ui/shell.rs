@@ -1,4 +1,3 @@
-// Signed in: the sidebar with your chats and the sections, beside what's open (PLAN.md §24.1).
 // Narrow, it's one pane at a time. A task opens over whatever you're on.
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -33,7 +32,6 @@ pub struct Shell {
     _listener: Listener,
 }
 
-/// What a sidebar row opens.
 #[derive(Clone, PartialEq)]
 enum Place {
     Chat(i64),
@@ -113,7 +111,6 @@ impl Shell {
         let sidebar = gtk::ListBox::builder()
             .css_classes(["navigation-sidebar"])
             .build();
-        // The sections under the chats, with a line between.
         sidebar.set_header_func(|row, _| {
             row.set_header(
                 (row.widget_name() == "sections")
@@ -466,7 +463,6 @@ impl Inner {
         self.split.set_show_content(true);
     }
 
-    /// Lets go of the pages that left `nav`.
     fn prune(&self) {
         let stack = self.nav.navigation_stack();
         let open: Vec<adw::NavigationPage> = (0..stack.n_items())
@@ -509,7 +505,6 @@ impl Inner {
         }
     }
 
-    /// The chats, each bot's own then groups, with what's unread in each; then the sections.
     fn sync_sidebar(&self) {
         self.syncing.set(true);
         let mut rows = self.rows.borrow_mut();

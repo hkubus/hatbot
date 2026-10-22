@@ -1,13 +1,10 @@
-// Search, watchers, Check everything, the heartbeat and weekly report, proposals, and running a
-// task again. These screens load what they show when they open, without live events.
+// These screens load what they show when they open, without live events.
 import Foundation
 
 extension AppStore {
   func search(_ query: String) async throws -> SearchResults {
     try await api.get("/search?q=" + API.query(query))
   }
-
-  // MARK: Watchers
 
   @discardableResult
   func loadWatchers() async throws -> [Watcher] {
@@ -42,7 +39,6 @@ extension AppStore {
     return keep(try await api.patch("/watchers/\(id)", body: w.render(on), timeout: API.watcherTimeout))
   }
 
-  /// Looks now; the watcher as it is after.
   func checkWatcher(_ id: Int) async throws -> Watcher {
     keep(try await api.post("/watchers/\(id)/check", body: Empty(), timeout: API.watcherTimeout))
   }
@@ -52,8 +48,6 @@ extension AppStore {
     watchers[id] = nil
     deletedWatchers.insert(id)
   }
-
-  // MARK: Check everything
 
   func loadChecks() async throws -> ChecksInfo {
     let info: ChecksInfo = try await api.get("/checks")
@@ -65,8 +59,6 @@ extension AppStore {
     try await api.post("/checks", body: Empty(), timeout: API.checksTimeout)
   }
 
-  // MARK: Heartbeat and weekly report
-
   func loadHeartbeat() async throws -> HeartbeatInfo {
     try await api.get("/heartbeat")
   }
@@ -75,21 +67,17 @@ extension AppStore {
     try await api.post("/heartbeat/run", body: Empty())
   }
 
-  /// Sends the week's report now; its text.
   func sendReport() async throws -> String {
     struct Sent: Decodable { let text: String }
     let r: Sent = try await api.post("/report/send", body: Empty())
     return r.text
   }
 
-  // MARK: Proposals
-
   func loadProposals() async throws {
     let list: [Proposal] = try await api.get("/proposals?status=pending")
     proposals = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
   }
 
-  /// The proposals waiting for you, oldest first.
   var pendingProposals: [Proposal] {
     proposals.values.filter { $0.status == .pending }.sorted { $0.id < $1.id }
   }
@@ -117,14 +105,10 @@ extension AppStore {
     try await api.get("/skills")
   }
 
-  /// Asks for a fix to a skill, like `proposeTidy`.
   func proposeSkillFix(_ name: String) async throws -> ProposalStarted {
     try await api.post("/skills/\(API.query(name))/fix", body: Empty())
   }
 
-  // MARK: Tasks
-
-  /// Starts an ended task anew, with its goal as given; the new task.
   func rerunTask(_ id: Int, goal: String?) async throws -> AgentTask {
     struct Body: Encodable { let goal: String? }
     let task: AgentTask = try await api.post("/tasks/\(id)/rerun", body: Body(goal: goal))

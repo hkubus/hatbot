@@ -1,10 +1,6 @@
-// Search, and what looks after things on its own: watchers, Check everything, the heartbeat, and
-// memory changes Hatbot proposes.
 import SwiftUI
 
-/// Chats, tasks, memory and what runs on its own, from one box. A message opens its chat.
 struct SearchView: View {
-  /// Opens a chat by conversation id, at a message.
   let openMessage: (_ conversationId: Int, _ messageId: Int) -> Void
   @Environment(AppStore.self) private var store
   @State private var query = ""
@@ -98,7 +94,6 @@ extension SearchResults.RoutineHit {
   }
 }
 
-/// A snippet with the matched words in bold.
 private struct Snippet: View {
   let text: String
 
@@ -154,15 +149,13 @@ struct WatchersView: View {
   }
 }
 
-/// A watcher: what it looks at, what it saw, its switch, Look now and Delete. It's made and changed
-/// in the chat or on the web.
+/// Watchers are made and changed in the chat or on the web.
 struct WatcherDetailView: View {
   let id: Int
   @Environment(AppStore.self) private var store
   @State private var values: [WatcherValue] = []
   @State private var notFound = false
 
-  /// Kept up to date by the event stream.
   private var watcher: Watcher? { store.watchers[id] }
   private var missing: Bool { notFound || store.deletedWatchers.contains(id) }
   @State private var busy = false
@@ -275,13 +268,11 @@ struct WatcherDetailView: View {
 
 // MARK: Check everything
 
-/// A quick, real try of each part Hatbot depends on.
 struct ChecksView: View {
   @Environment(AppStore.self) private var store
   @State private var report: CheckReport?
   @State private var running = false
   @State private var error: String?
-  /// The last test approval, kept up to date by the event stream.
   @State private var approvalId: Int?
   @State private var sending = false
 
@@ -473,7 +464,6 @@ struct HeartbeatView: View {
     }
   }
 
-  /// What a look found and did.
   static func line(_ run: HeartbeatInfo.Run) -> String {
     let found = run.found.isEmpty ? "Nothing" : run.found.joined(separator: ", ")
     switch run.action {
@@ -491,7 +481,6 @@ struct HeartbeatView: View {
 
 // MARK: Proposals
 
-/// A proposed change to memory as a diff per file: Apply commits it in your name, Dismiss drops it.
 struct ProposalView: View {
   let proposal: Proposal
   @Environment(AppStore.self) private var store
@@ -550,7 +539,6 @@ struct ProposalView: View {
     }
   }
 
-  /// Does it, then goes back to the list.
   private func act(_ work: () async throws -> Void) async {
     busy = true
     await attempt($error) {
@@ -561,7 +549,6 @@ struct ProposalView: View {
   }
 }
 
-/// Diff lines, green for added and red for removed, scrolling sideways.
 struct DiffLines: View {
   let lines: [DiffLine]
 

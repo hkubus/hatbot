@@ -1,5 +1,3 @@
-// hatbot:// links, which notifications open when Settings → Notifications says the app, and which the
-// home-screen quick actions and Spotlight results open.
 import Foundation
 
 enum AppLink: Equatable, Sendable {
@@ -8,14 +6,11 @@ enum AppLink: Equatable, Sendable {
   case schedule(Int)
   case trigger(Int)
   case box(Int)
-  /// The chat, to write in.
   case newMessage
   case live
   case tasks
   case memory(String)
 
-  /// hatbot://tasks/12, hatbot://approvals/5, hatbot://schedules/2, hatbot://triggers/3, hatbot://boxes/4;
-  /// hatbot://new, hatbot://live, hatbot://tasks; hatbot://memory/notes/servers.md.
   init?(url: URL) {
     guard url.scheme?.lowercased() == "hatbot", let host = url.host() else { return nil }
     let parts = url.pathComponents.filter { $0 != "/" }
@@ -38,8 +33,7 @@ enum AppLink: Equatable, Sendable {
     }
   }
 
-  /// Whether a tapped link may open: web pages, mail and the app's own links. A reply that quotes a page
-  /// can carry a shortcuts:, tel: or other app's link, which mustn't run on a tap.
+  /// A reply that quotes a page can carry a shortcuts:, tel: or other app's link, which mustn't run on a tap.
   static func opens(_ url: URL) -> Bool {
     ["http", "https", "mailto", "hatbot"].contains(url.scheme?.lowercased() ?? "")
   }

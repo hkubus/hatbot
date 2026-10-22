@@ -14,9 +14,7 @@ export type Scripted = {
   usage?: Partial<Anthropic.Beta.BetaUsage>;
   /** Streamed first, then dropped: the stream failed there and was tried again. */
   failedWith?: string;
-  /** What that failed attempt had used. */
   failedUsage?: Partial<Anthropic.Beta.BetaUsage>;
-  /** The code execution container the response ran in. */
   container?: string;
 };
 
@@ -37,11 +35,9 @@ export const toolUse = (
   input: unknown,
   id = `toolu_${Math.random().toString(36).slice(2)}`,
 ): Block => ({ type: "tool_use", id, name, input }) as Block;
-/** A computer toolset member call. */
 export const computer = (name: string, input: unknown = {}): Block =>
   ({ ...toolUse(name, input), toolset_name: "computer" }) as Block;
 
-/** A browser toolset member call. */
 export const browser = (name: string, input: unknown = {}): Block =>
   ({ ...toolUse(name, input), toolset_name: "browser" }) as Block;
 

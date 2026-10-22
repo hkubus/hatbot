@@ -1,4 +1,3 @@
-// MCP's settings: servers, and for each of their tools whether Hatbot may use it.
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { useLeaveGuard } from "../confirm";
@@ -32,10 +31,7 @@ type Status = {
   name: string;
   state: "connected" | "failed" | "off";
   error: string | null;
-  /**
-   * What the model reads of each tool (description, schema), and its hash. problem: why it can't be
-   * offered, e.g. a schema Claude's API wouldn't take.
-   */
+  /** problem: why it can't be offered, e.g. a schema Claude's API wouldn't take. */
   tools: {
     name: string;
     description: string;
@@ -118,7 +114,7 @@ const fromLines = (s: string) =>
       .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()]),
   );
 
-/** A server as edited: its list fields as text, and a key that stays with it when others are removed. */
+/** `key` stays with its row when others are removed. */
 type Row = Server & { key: number; headersText: string; argsText: string; envText: string };
 let nextKey = 0;
 const toRow = (s: Server): Row => ({

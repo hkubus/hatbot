@@ -1,4 +1,4 @@
-// hatbox-agent: runs on the boxes guest, takes orders only from the brain (PLAN.md §21.6). It keeps,
+// hatbox-agent: runs on the boxes guest, takes orders only from the brain. It keeps,
 // builds and runs boxes' backends; each runs as a unit of its own, with no network.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

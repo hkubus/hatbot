@@ -1,6 +1,6 @@
-// Which shell commands need your approval (PLAN.md §5.5: destructive patterns). A pattern list can't
-// prove a command safe; it catches the obvious ways to lose data, lock yourself out, or take a
-// host down, and every write still needs approval once a task has read untrusted content.
+// A pattern list can't prove a command safe; it catches the obvious ways to lose data, lock
+// yourself out, or take a host down, and every write still needs approval once a task has read
+// untrusted content.
 import type { ApprovalKind } from "@hatbot/shared";
 
 const REBOOT = /\breboot\b|\binit\s+6\b/;
@@ -133,10 +133,6 @@ const RULES: Rule[] = [
   { re: /\bmv\s+[^|;&]*\s(\/dev\/null|\/)\s*$/, why: "moves files away for good", kind: "delete" },
 ];
 
-/**
- * Roughly how many commands a shell line runs: one per part between ;, && and ||, and a loop or
- * xargs runs any number. Pipes are one command.
- */
 export function commandCount(command: string): number {
   if (
     /\b(for|while|until)\b[\s\S]*\bdo\b|\b(xargs|parallel)\b|\bfind\b[^|;&]*\s-exec/.test(command)
@@ -145,7 +141,7 @@ export function commandCount(command: string): number {
   return Math.max(1, command.split(/;|&&|\|\||\n/).filter((part) => part.trim()).length);
 }
 
-/** Why this command needs approval, or null. `where`: on a host, or inside a container (ssh_pct_exec). */
+/** `where`: "container" for ssh_pct_exec. */
 export function destructive(
   command: string,
   where: "host" | "container" = "host",
@@ -175,11 +171,6 @@ const ACCOUNT_READERS = new Set([
 /** What isn't read without the owner: shadow files and private keys. */
 const SECRET = /shadow|(^|\/)id_[\w-]+$|_key$|\.(pem|key|p12|pfx|ppk)$/;
 
-/**
- * Whether a command only reads accounts or public keys: each part one of the readers above, or
- * ssh-keygen showing a fingerprint (-l) or finding a host (-F), writing no file and naming no
- * private key or shadow file.
- */
 function readsAccounts(command: string): boolean {
   const parsed = pipelines(command);
   if (!parsed?.lines.length || parsed.files.some((f) => f !== "/dev/null")) return false;
@@ -248,11 +239,7 @@ const WRITES: Record<string, RegExp> = {
   ss: /^-[^-]*K|^--kill/,
 };
 
-/**
- * Whether a command only reads: a status command, or each part a reader above with its subcommand,
- * writing no file and with no option that writes or runs a command. On a Proxmox
- * host it may run while a container is careful: it can't reach one to change it.
- */
+/** On a Proxmox host this may run while a container is careful: it can't reach one to change it. */
 export function readOnly(command: string): boolean {
   if (statusOnly(command, { writes: false })) return true;
   const parsed = pipelines(command);
@@ -274,10 +261,9 @@ export function readOnly(command: string): boolean {
 }
 
 /**
- * Whether a host command runs something in a container: the wrapper ssh_pct_exec uses, pct exec or
- * lxc-attach, named even with quotes, escapes, variables, substitutions or globs in the way
- * (hatbot-$p-exec, hatbot-*-exec). A name built some other way still gets past this, so a careful
- * guest's safety is its host being marked "Proxmox host", where every change asks.
+ * Catches the container wrapper, pct exec and lxc-attach even through quotes, escapes, variables or
+ * globs (hatbot-$p-exec). A name built some other way still gets past this, so a careful guest's safety
+ * is its host being marked "Proxmox host", where every change asks.
  */
 export function inContainer(command: string): boolean {
   const bare = command.replace(/\$\([^)]*\)|`[^`]*`|\$\{[^}]*\}|\$\w+|['"\\]/g, "");
@@ -286,7 +272,7 @@ export function inContainer(command: string): boolean {
 
 /**
  * Commands whose output is the machine's own status, with nothing in it a stranger could have
- * written (PLAN.md §6.1). null: any arguments; otherwise the subcommands allowed ("" for none).
+ * written. null: any arguments; otherwise the subcommands allowed ("" for none).
  */
 const STATUS: Record<string, string[] | null> = {
   uptime: null,
@@ -323,11 +309,9 @@ const FLAGS: Record<string, string[]> = {
 const FILTERS: Record<string, number> = { head: 0, tail: 0, wc: 0, sort: 0, uniq: 0, grep: 1 };
 
 /**
- * Whether a command's output can be trusted: every part is a status command from the short list
- * above, piped at most into filters that read no files. Anything else (logs, files, a command
- * substitution, input from a file) may carry what strangers wrote, so its output is untrusted.
- * `writes: false`: it must also change nothing, so output to a file (other than /dev/null), sort -o
- * and ip's changes don't pass: a status command may then go where changes wait for the owner.
+ * Whether a command's output can be trusted: only status commands from the list above, piped at most
+ * into filters that read no files. `writes: false`: it must also change nothing, since a status
+ * command may then go where changes wait for the owner.
  */
 export function statusOnly(command: string, { writes = true } = {}): boolean {
   const parsed = pipelines(command);

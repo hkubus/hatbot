@@ -25,7 +25,6 @@ struct KeychainVault: TokenVault {
     return String(data: data, encoding: .utf8)
   }
 
-  /// The token is in the group already.
   var isShared: Bool {
     guard let accessGroup else { return false }
     var q = query

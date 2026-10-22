@@ -1,4 +1,4 @@
-// What the brain's click and Enter checks see of a page (PLAN.md §6.1), in a real headless Chromium.
+// What the brain's click and Enter checks see of a page, in a real headless Chromium.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Browser } from "../src/browser";
 import { inspect as inspectScreen } from "../src/cdp";

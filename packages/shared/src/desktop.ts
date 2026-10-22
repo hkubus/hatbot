@@ -1,4 +1,4 @@
-// The protocol between the brain and desktop-agent (PLAN.md §4.2). Types only: desktop-agent has no dependencies.
+// The protocol between the brain and desktop-agent. Types only: desktop-agent has no dependencies.
 
 /** Members of the computer toolset (computer_toolset_20260801), which desktop-agent runs. */
 export const COMPUTER_MEMBERS = [
@@ -42,7 +42,7 @@ export type RenderResult = {
 };
 
 /**
- * POST /render/box: a box's page as its owner would see it, for box_look (PLAN.md §21.12), in the same
+ * POST /render/box: a box's page as its owner would see it, for box_look, in the same
  * headless Chromium with no network at all.
  */
 export type BoxLook = {
@@ -115,7 +115,7 @@ export type AgentContext = {
   secretShown?: boolean;
 };
 
-/** POST /inspect: the element under a point, or the focused one, for the click policy (PLAN.md §6.1). */
+/** POST /inspect: the element under a point, or the focused one, for the click policy. */
 export type AgentElement = {
   tag: string;
   /** Its ARIA role; "clickable" for a div or icon the page made clickable without one. */
@@ -136,7 +136,7 @@ export type AgentElement = {
   /**
    * What the visible text boxes hold, whitespace collapsed, empty ones left out: the form's when the
    * element is in one that has any, otherwise the page's; search boxes left out. For the exact-text send
-   * check (PLAN.md §16.3). With the "fields" feature.
+   * check. With the "fields" feature.
    */
   fields?: string[];
   /** It opens or closes part of the page (aria-expanded, aria-pressed, a menu or a tab). With "gates". */
@@ -189,7 +189,7 @@ export type ShellJobStatus = {
   stderr: string;
 };
 
-/** Messages the brain sends on the /live socket while the owner has control (PLAN.md §10.5). */
+/** Messages the brain sends on the /live socket while the owner has control. */
 export type LiveInput =
   | { t: "move"; x: number; y: number }
   | { t: "button"; button: 1 | 2 | 3; down: boolean; x: number; y: number }

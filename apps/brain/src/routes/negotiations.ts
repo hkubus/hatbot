@@ -17,7 +17,6 @@ export const negotiationRoutes = new Hono<AppEnv>()
   .get("/negotiations/:id", (c) =>
     found(c, c.var.negotiations.detail(id(c)), "No such negotiation."),
   )
-  // Stop: abandoned, and its tasks cancelled.
   .post("/negotiations/:id/close", async (c) => {
     const n = id(c);
     if (!c.var.negotiations.get(n)) return c.json({ error: "No such negotiation." }, 404);

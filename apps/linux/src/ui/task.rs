@@ -1,6 +1,3 @@
-// A task's page: what waits on you for it, the desktop while it uses it, how it's doing or how it
-// ended, its details, and the timeline of what it did, with Cancel while it runs and Run Again once
-// it's ended.
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -20,7 +17,6 @@ use super::markdown::{Markdown, label};
 use super::route;
 use super::tray::{approval_body, question_body};
 
-/// "Running", "Needs approval", "Done", in its colour.
 pub fn status_label(s: TaskStatus) -> gtk::Label {
     let colour = match s {
         TaskStatus::WaitingApproval | TaskStatus::WaitingTakeover | TaskStatus::WaitingAnswer => {
@@ -409,7 +405,6 @@ impl Inner {
         dialog.present(Some(from));
     }
 
-    /// Asks for the goal, as it was or changed, then opens the new task.
     fn ask_rerun(self: &Rc<Self>, from: &gtk::Button) {
         let goal = self
             .store
@@ -514,8 +509,6 @@ impl Inner {
     }
 }
 
-/// Where it came from, the goal, the model, whether it read untrusted content, what it cost, and its
-/// report.
 fn details(store: &Store, t: &Task, files: &[hatbot::core::models::Attachment]) -> gtk::Grid {
     let grid = gtk::Grid::builder()
         .column_spacing(16)

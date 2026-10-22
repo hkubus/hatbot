@@ -1,6 +1,5 @@
-// The exact-text send gate (PLAN.md §16.3): in a negotiation's desktop task, a click or Enter goes through
-// as the send only while the text boxes hold exactly the approved message and the tab is that
-// negotiation's conversation. Pure, so desktop-run and the tests share it.
+// In a negotiation's desktop task, a click or Enter goes through as the send only while the text boxes
+// hold exactly the approved message and the tab is that negotiation's conversation.
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 import {
@@ -16,42 +15,29 @@ import {
 
 export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** What a negotiation's desktop task may do, from its record. */
 export type SendGate = {
-  /** send: may send `text` once. read: reads the conversation and sends nothing. */
   mode: "send" | "read";
   text: string | null;
   listingUrl: string;
-  /** The marketplace's id for the listing, from its key. */
   listingId: string;
   conversationUrl: string | null;
 };
 
-/** How the gate stands in one run. */
 export type GateState = {
   /** record_conversation has been called, so a seller message that came meanwhile has been seen. */
   recorded: boolean;
-  /** A send went through: nothing more is sent. */
   sent: boolean;
-  /** Why nothing may be sent any more, e.g. the seller wrote since the message was approved. */
   stopped?: string | null;
-  /** Something has been typed or pasted: from here a send needs a text box Hatbot can see. */
+  /** From here a send needs a text box Hatbot can see. */
   typed?: boolean;
 };
 
 export type GateCheck =
-  /** It's the send: let it through without confirm_intent, then see whether the text went. */
   | { action: "send" }
-  /** It can't send anything (a click in a text box): let it through. */
   | { action: "pass" }
-  /** The usual consequential-step check decides (PLAN.md §6.1). */
   | { action: "usual" }
   | { action: "hold"; why: string };
 
-/**
- * Text as the gate compares it and the policy reads it: NFKC (fullwidth and other compatibility forms
- * become plain ones), invisible format characters such as soft hyphens dropped, whitespace collapsed.
- */
 export const collapse = (s: string) =>
   s
     .normalize("NFKC")
@@ -59,11 +45,8 @@ export const collapse = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
-/**
- * A text box's text as the gate compares it with the approved message, which is collapsed already: only
- * spacing and zero-width characters are let go. A bidi override, a compatibility form (⑩) or any other
- * mark that could show the seller something else makes it a different text.
- */
+// Only spacing and zero-width characters are let go: a bidi override or a compatibility form (⑩)
+// could show the seller something other than the approved text.
 const exact = (s: string) => s.normalize("NFC").replace(/[​-‍⁠﻿]/g, "").replace(/\s+/g, " ").trim();
 
 export const sameHost = (a: string, b: string) => {
@@ -71,7 +54,6 @@ export const sameHost = (a: string, b: string) => {
   return h !== null && h === hostOf(b);
 };
 
-/** `tab` is `want`: the same host and path (a trailing slash aside), with `want`'s query values. */
 export function sameAddress(tab: string, want: string): boolean {
   if (!sameHost(tab, want)) return false;
   const a = new URL(tab);
@@ -81,34 +63,25 @@ export function sameAddress(tab: string, want: string): boolean {
   return true;
 }
 
-/**
- * The tab shows this negotiation's conversation: the listing (a first message is written there), the
- * conversation recorded for it, or another page on the listing's site whose path names the listing.
- */
 export function onConversation(tab: string, gate: SendGate): boolean {
   if (sameAddress(tab, gate.listingUrl)) return true;
   if (gate.conversationUrl && sameAddress(tab, gate.conversationUrl)) return true;
   return namesListing(tab, gate.listingUrl, gate.listingId);
 }
 
-/** A page on the listing's site whose path names the listing's id. */
 export function namesListing(tab: string, listingUrl: string, listingId: string): boolean {
   if (!sameHost(tab, listingUrl) || listingId.length < 5) return false;
   // In the path only: a query value is anything the model puts there.
   return new RegExp(`[/=-]${escapeRe(listingId)}(?:[/.-]|$)`, "i").test(new URL(tab).pathname);
 }
 
-/** Labels a send button has: these pass as the send. Anything else consequential is held. */
 const SEND_LIKE =
   /^(send|send message|reply|submit|post|wyślij|wyslij|wyślij wiadomość|odpowiedz|odeślij|odpowiedź|napisz|poslat|odeslat|odeslat zprávu|odpovědět)$/i;
-/** A send verb first, folded: "Wyślij wiadomość do sprzedającego", "Send a message". */
 const SEND_VERB =
   /^(?:send|reply|wyslij|odpowiedz|odeslij|poslat|odeslat|odpovedet)(?![\p{L}\p{N}])/u;
-/** Words that make a send something else: an offer, a price, money or a payment. */
 const NOT_A_MESSAGE =
   /(?<![\p{L}\p{N}])(?:offer|ofert|propozycj|nabid|price|cen[aeyu]?(?![\p{L}])|money|pieni|kwot|penize|castk|platb|przelew|blik|faktur|invoice|deposit|zaliczk)/u;
 
-/** A label that sends the message, and nothing else with it. */
 export function sendLabel(label: string): boolean {
   if (SEND_LIKE.test(collapse(label))) return true;
   const l = fold(collapse(label));
@@ -116,7 +89,6 @@ export function sendLabel(label: string): boolean {
   return rest !== l && !consequentialLabel(rest) && !NOT_A_MESSAGE.test(rest);
 }
 
-/** A link that opens another page: a web address that isn't this one ("#" and javascript: don't). */
 function opensPage(href: string, here: string | undefined): boolean {
   try {
     const to = new URL(href);
@@ -130,11 +102,7 @@ function opensPage(href: string, here: string | undefined): boolean {
   }
 }
 
-/**
- * Which way a click or Enter goes in a negotiation's desktop task. `held`: the ordinary check's answer
- * for this element. A pay or buy button, or any button at checkout, isn't the send, with the text in
- * place or not.
- */
+/** `held` is the ordinary check's answer for this element. */
 export function gateCheck(
   gate: SendGate,
   state: GateState,
@@ -163,13 +131,12 @@ export function gateCheck(
       action: "hold",
       why: `This link goes to ${el.href.slice(0, 120)}. A negotiation stays on ${hostOf(gate.listingUrl)}: never open a link from the seller.`,
     };
-  // Clicking into a text box, or on the page itself, sends nothing; Enter in a box may.
   if (kind === "click" && (el.editable || el.tag === "body")) return { action: "pass" };
   const text = gate.text ? exact(gate.text) : null;
   const fields = el.fields.map(exact).filter(Boolean);
   if (!fields.length) {
     // Typed text in a box Hatbot can't see into (a closed shadow root, another site's frame) would go
-    // without being compared. Only a link elsewhere on the listing's site needs no box.
+    // without being compared.
     if (
       gate.mode === "send" &&
       state.typed &&
@@ -226,10 +193,6 @@ export function gateCheck(
   return { action: "send" };
 }
 
-/**
- * What the model is told when a step in a negotiation's task would need confirm_intent: it never arms
- * there, so the step can't go.
- */
 export function gateHeld(gate: SendGate, press: Press, hold: Hold): string {
   const act = press === "click" ? "click" : press === "space" ? "Space" : "Enter";
   const only =
@@ -239,7 +202,6 @@ export function gateHeld(gate: SendGate, press: Press, hold: Hold): string {
   return `this ${act} ${heldWhat(hold)} would need the owner's approval, and this task can't ask for it: ${only}. If this is in the way, finish and say why.`;
 }
 
-/** Enter in a key press: any combo in the sequence, e.g. "shift+Return" or "a Return". */
 export const pressesEnter = (keys: string) =>
   keys
     .trim()
@@ -249,10 +211,7 @@ export const pressesEnter = (keys: string) =>
       return p === "enter" || p === "newline";
     });
 
-/**
- * Actions a negotiation's desktop task may not take at all: they could send without the brain seeing
- * the click or the Enter first. Null when it may.
- */
+/** Actions that could send without the brain seeing the click or the Enter first. */
 export function refused(
   gate: SendGate,
   name: string,
@@ -314,7 +273,6 @@ const UNSEEN_MOUSE = new Set([
   "right_click",
 ]);
 
-/** F6, ctrl+l, alt+d and the like, with any other modifiers and in any order. */
 function toAddress(c: Combo): boolean {
   const k = c.key?.toLowerCase() ?? "";
   if (k === "f6" || k === "f10" || k === "menu") return true;
@@ -323,7 +281,6 @@ function toAddress(c: Combo): boolean {
   return c.mods.includes("alt") && ["d", "f", "e", "t", "b", "home"].includes(k);
 }
 
-/** A combination that puts text in a box: a character or Space, alone or with Shift, or a paste. */
 function typedBy(c: Combo): boolean {
   const k = c.key;
   if (!k) return false;
@@ -332,7 +289,6 @@ function typedBy(c: Combo): boolean {
   return k === "insert" && c.mods.includes("shift") && !c.mods.includes("ctrl");
 }
 
-/** Whether an action puts text in a box: typing, form_input, keys that type, or a paste. */
 export function typesText(name: string, input: Record<string, unknown>): boolean {
   if (name === "type" || name === "form_input") return true;
   if ((name !== "key" && name !== "hold_key") || typeof input.text !== "string") return false;
@@ -342,7 +298,6 @@ export function typesText(name: string, input: Record<string, unknown>): boolean
   });
 }
 
-/** Where a link goes, when that's off the listing's site: another host, or another kind of address. */
 export function offSite(href: string, gate: SendGate): boolean {
   if (/^javascript:/i.test(href)) return false;
   if (!sameHost(href, gate.listingUrl)) return true;

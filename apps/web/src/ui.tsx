@@ -1,5 +1,3 @@
-// The pieces most pages are made of: a head with Back, a form's Save, Settings-style groups of
-// rows, and choices.
 import type { ReactNode } from "react";
 import { Icon } from "./icons";
 import { Link } from "./link";
@@ -14,7 +12,6 @@ export function BackButton({ to, label }: { to: string; label: string }) {
   );
 }
 
-/** A page's head: Back, and what the page can do over on the right. */
 export function BackHead({
   to,
   label,
@@ -37,7 +34,6 @@ export function BackHead({
   );
 }
 
-/** The end of a form: what went wrong, if anything, and its button. */
 export function SaveBar({
   error,
   disabled,
@@ -78,7 +74,6 @@ export function Group({
   );
 }
 
-/** A row of a group: its label with anything under it, and its controls on the right. */
 export function Row({
   label,
   sub,
@@ -99,7 +94,6 @@ export function Row({
   );
 }
 
-/** A row that's a link to its own page; `children` go before the chevron. */
 export function LinkRow({
   to,
   label,
@@ -120,7 +114,6 @@ export function LinkRow({
   );
 }
 
-/** One of a few choices, as buttons side by side. */
 export function Seg<T extends string | number | boolean>({
   value,
   options,
@@ -147,7 +140,6 @@ export function Seg<T extends string | number | boolean>({
   );
 }
 
-/** One of a list of choices, as a select; `className` "field" for a form's. */
 export function Select<T extends string>({
   label,
   value,

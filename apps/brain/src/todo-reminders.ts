@@ -1,6 +1,6 @@
-// Reminders from the to-do list (PLAN.md §19): each morning, what's due or overdue; and an item due at
-// a time, at that time. Without the model: a reminder you asked for mustn't hang on a triage calling it
-// noise, as the heartbeat's may.
+// Reminders from the to-do list: each morning, what's due or overdue; and an item due at a time, at
+// that time. Without the model: a reminder you asked for mustn't hang on a triage calling it noise,
+// as the heartbeat's may.
 import { HATBOT_ID, localDay, parseTodos, TODO_FILE, type Todo, todoLine } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import type { Db } from "./db";
@@ -13,7 +13,6 @@ const STATE_KEY = "todo:reminders";
 const LATE_MS = 6 * 3600_000;
 
 type State = {
-  /** The day the morning list last went out. */
   morning: string | null;
   /** Timed items already told, by key: an item moved to another time is a new one. */
   told: string[];
@@ -31,7 +30,6 @@ export type TodoRemindersDeps = {
 
 const keyOf = (t: Todo) => `${t.text}|${t.due} ${t.at}`;
 
-/** When a timed item is due, in local time. */
 const dueAt = (t: Todo) => {
   const [y, m, d] = (t.due ?? "").split("-").map(Number) as [number, number, number];
   const [h, min] = (t.at ?? "").split(":").map(Number) as [number, number];
@@ -46,7 +44,6 @@ export class TodoReminders {
     this.clock = d.clock ?? Date.now;
   }
 
-  /** Sends what's due; the brain calls it every minute. */
   async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -87,7 +84,6 @@ export class TodoReminders {
     this.save(state);
   }
 
-  /** In Hatbot's chat, and as a notification that opens the list. */
   private send(message: string) {
     this.d.chats.note(HATBOT_ID, `**To-do**: ${message}`);
     void this.d.notifier.send({

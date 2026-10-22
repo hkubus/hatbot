@@ -1,4 +1,3 @@
-// Proxmox's settings: guests where every change asks first (power, and commands and files over SSH).
 import type { PluginSettingsProps } from ".";
 import { IdListSettings } from "./id-list";
 

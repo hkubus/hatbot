@@ -1,6 +1,4 @@
-// Renders Hatbot's Markdown: blocks from Markdown.parse, inline formatting and links through
-// AttributedString, charts through ChartView (those drawn from a file once the brain sends their
-// values). Raw HTML is shown as text, never rendered.
+// Raw HTML is shown as text, never rendered.
 import SwiftUI
 import UIKit
 
@@ -10,7 +8,6 @@ struct MarkdownText: View {
   /// last finished block.
   var streaming = false
   @State private var throttle = Throttle()
-  /// Bumped when a held-back parse is due.
   @State private var due = 0
 
   var body: some View {
@@ -87,8 +84,7 @@ struct MarkdownText: View {
     return c
   }()
 
-  /// The blocks of a streaming reply: parsed when 100 ms have passed since the last time, otherwise the
-  /// last ones, with `due` called once the wait is over so the latest text gets parsed.
+  /// Parsed at most every 100 ms; `due` is bumped when the wait is over so the latest text gets parsed.
   @MainActor
   private final class Throttle {
     private var parsed: String?
@@ -124,8 +120,6 @@ private struct ChartPlaceholder: View {
   }
 }
 
-/// A chart whose values are in a file: the brain's thinned copy of them, or what it says is wrong with
-/// the file in the chart's place.
 private struct FileChart: View {
   let file: ChartFile
   @Environment(AppStore.self) private var store
@@ -162,7 +156,6 @@ private struct FileChart: View {
   private static let failed = "The chart's data didn't load."
 }
 
-/// A code block, with Copy in its corner.
 private struct CodeBlock: View {
   let code: String
   @State private var copied = false

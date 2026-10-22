@@ -15,7 +15,6 @@ import {
 
 stopPluginsAfterEach();
 
-/** Open pull requests on the stand-in Forgejo, by number. */
 let pulls: Record<number, { login: string; ref: string }> = {};
 const pull = (number: number) => {
   const p = pulls[number];

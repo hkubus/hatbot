@@ -7,9 +7,8 @@ export type Config = {
   dbPath: string;
   memoryDir: string;
   archiveDir: string;
-  /** Built web app to serve on the same origin. */
   webDir: string;
-  /** Public origin, e.g. https://hatbot.example.com. Cookie-authenticated writes must come from it. */
+  /** Cookie-authenticated writes must come from this origin. */
   publicUrl: string;
   /** Peers whose X-Forwarded-For is trusted (your reverse proxy). */
   trustedProxies: string[];
@@ -21,12 +20,11 @@ export type Config = {
   releaseFile: string;
 };
 
-/** A host as it goes in a URL: an IPv6 address in brackets. */
 export const urlHost = (host: string) => (host.includes(":") ? `[${host}]` : host);
 
 /**
- * The public address's origin, which is what a browser's Origin header is compared with: lower case,
- * no default port, no trailing slash. A path can't be honoured, so it's refused.
+ * Normalized as a browser's Origin header is, which it's compared with. A path can't be honoured,
+ * so it's refused.
  */
 function originOf(raw: string): string {
   let url: URL;

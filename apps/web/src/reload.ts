@@ -1,9 +1,6 @@
 const KEY = "hatbot:reloaded";
 
-/**
- * Reloads the page to load the new build (after an Update the old build's chunks are gone), unless
- * it did so in the last 30 s: a chunk that's really missing mustn't reload the page for ever.
- */
+/** Not again within 30 s: a chunk that's really missing mustn't reload the page for ever. */
 export function reloadOnce(
   storage: Pick<Storage, "getItem" | "setItem"> = sessionStorage,
   now = Date.now(),

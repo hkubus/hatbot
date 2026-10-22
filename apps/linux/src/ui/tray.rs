@@ -105,7 +105,6 @@ fn open_task(id: i64) -> gtk::Button {
     b
 }
 
-/// What it wants to do and why, the pages it read, a screenshot, then Deny and Approve.
 pub fn approval_body(store: &Store, a: &Approval, links_task: bool) -> gtk::Box {
     let root = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -194,7 +193,6 @@ pub fn approval_body(store: &Store, a: &Approval, links_task: bool) -> gtk::Box 
     root
 }
 
-/// A task's question: click an answer, or write your own.
 pub fn question_body(store: &Store, q: &Question, links_task: bool) -> gtk::Box {
     let root = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)

@@ -1,4 +1,3 @@
-// The to-do list in the apps (PLAN.md §19): its items, with checkboxes and a task to work on one.
 import {
   AddTodo,
   localDay,
@@ -15,11 +14,9 @@ import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { json } from "./util";
 
-/** Ticked-off items stay in the view this long. */
 const DONE_SHOWN_MS = 7 * 86400_000;
 const GONE = "That to-do isn't open any more.";
 
-/** Open items, and those ticked off this last week, each with the task working on it. */
 async function list(c: Context<AppEnv>): Promise<TodoList> {
   const { memory, tasks } = c.var;
   const since = localDay(new Date(tasks.clock() - DONE_SHOWN_MS));
@@ -46,7 +43,6 @@ export const todoRoutes = new Hono<AppEnv>()
     );
     return c.json(await list(c), 201);
   })
-  // A checkbox: ticked off as todo_done does, by you.
   .post("/todo/done", json(PickTodo), async (c) => {
     const { db, memory, events, settings, tasks } = c.var;
     const { text, line } = c.req.valid("json");

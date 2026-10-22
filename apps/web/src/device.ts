@@ -1,4 +1,3 @@
-/** "Firefox on Linux", from a browser's user agent, for the list of where you're signed in. */
 export function deviceName(ua: string | null): string {
   if (!ua) return "A browser";
   const browser = /Edg(e|iOS|A)?\//.test(ua)

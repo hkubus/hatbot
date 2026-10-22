@@ -1,6 +1,3 @@
-// Files in the chat: ones you attach to a message, and ones Hatbot or a task sends you. The bytes live in
-// the archive; the model reads images, PDFs and text directly, and code_run can copy any of them into
-// the desktop's sandbox.
 import { rename, rm } from "node:fs/promises";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
@@ -10,22 +7,17 @@ import { type DesktopAgent, DesktopError } from "./desktop/client";
 import type { EventBus } from "./events";
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
-/** A file in a stored turn, by id (see Attachments.refs). Never sent to the API as is. */
+/** Never sent to the API as is: `expand` replaces it. */
 const ATTACHMENT_REF = "hatbot_attachment";
 const isRef = (b: unknown): b is { type: typeof ATTACHMENT_REF; id: number } =>
   (b as { type?: string }).type === ATTACHMENT_REF;
 
-/** The most one file may be. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** The API's limit for an image, and a PDF's share of a request. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
-/** Text files the model reads whole; longer ones go through the sandbox. */
 const MAX_TEXT_BYTES = 400 * 1024;
-/**
- * What one conversation's files may add to every request, as base64 and text: well under the API's
- * 32 MB a request. Files past it go through the sandbox. Tests lower it.
- */
+/** Well under the API's 32 MB a request. Tests lower it. */
 export const inlineLimit = { bytes: 20 * 1024 * 1024 };
 
 const IMAGES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -49,7 +41,6 @@ const BY_EXTENSION: Record<string, string> = {
   log: "text/plain",
   zip: "application/zip",
 };
-/** Text that isn't text/*: configs, data and code. */
 const TEXT_TYPES = [
   "application/json",
   "application/yaml",
@@ -61,7 +52,6 @@ const TEXT_TYPES = [
 const CODE_EXTENSIONS =
   /\.(ts|tsx|js|jsx|py|sh|bash|go|rs|swift|c|h|cpp|java|kt|rb|php|sql|toml|ini|conf|cfg|env|nix|lua|dockerfile)$/i;
 
-/** The type to trust for a file: what the client said unless it's generic, else the extension's. */
 export function mediaTypeOf(name: string, claimed: string): string {
   const type = claimed.split(";")[0]?.trim().toLowerCase() ?? "";
   if (type && type !== "application/octet-stream") return type;
@@ -78,31 +68,26 @@ const isText = (a: Attachment) =>
 const labelOf = (a: Attachment) =>
   `Attachment #${a.id}: "${a.name}" (${a.mediaType}, ${sizeText(a.size)})`;
 
-/** What a file's blocks add to a request: their base64 and text documents. */
 const inlineBytes = (blocks: BlockParam[]) =>
   blocks.reduce((n, b) => {
     const source = (b as { source?: { type?: string; data?: unknown } }).source;
     return n + (typeof source?.data === "string" ? source.data.length : 0);
   }, 0);
 
-/** "2.1 MB", "340 KB". */
 export const sizeText = (n: number) =>
   n >= 1024 * 1024
     ? `${(n / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(n / 1024))} KB`;
 
-/**
- * The long sides a picture's smaller copy comes in: a request's `w` rounds up to one, so few are kept.
- * Bubbles are 240 points on 2x and 3x screens.
- */
+/** A request's `w` rounds up to one, so few are kept. Bubbles are 240 points on 2x and 3x screens. */
 export const THUMB_SIZES = [480, 720, 1080];
-/** Pictures that get smaller copies. A GIF's would lose its animation. */
+/** Not GIF: its copy would lose its animation. */
 const THUMBNAILED = ["image/jpeg", "image/png", "image/webp"];
 /** Bigger ones are sent whole rather than decoded on the brain. */
 const THUMB_MAX_PIXELS = 64_000_000;
 const thumbPath = (path: string, size: number) => `${path}.${size}.webp`;
 
-/** At most two pictures shrink at once, each on Bun's worker threads: the brain has two cores. */
+/** At most two pictures shrink at once: the brain has two cores. */
 let shrinking = 0;
 const queued: (() => void)[] = [];
 async function oneOfTwo<T>(f: () => Promise<T>): Promise<T> {
@@ -128,7 +113,7 @@ const plain = ({ path: _p, messageId: _m, taskId: _t, forChat, ...a }: Row): Att
   forChat ? { ...a, forChat: true } : a;
 
 export class Attachments {
-  /** Smaller copies being made, so two asks for one make it once. */
+  /** So two asks for one copy make it once. */
   private making = new Map<string, Promise<{ file: Bun.BunFile; size: number } | null>>();
 
   constructor(
@@ -137,9 +122,8 @@ export class Attachments {
   ) {}
 
   /**
-   * Stores a file. Yours wait unbound until the message they go with is posted; Hatbot's go straight
-   * onto a message or a task. One `forChat` isn't shown in the chat: a task's is for the bot there, and
-   * a message's is the data for a chart in it (chart-data.ts).
+   * A `forChat` file isn't shown in the chat: a task's is for the bot there, and a message's is the
+   * data for a chart in it (chart-data.ts).
    */
   async save(input: {
     bytes: Uint8Array;
@@ -175,7 +159,6 @@ export class Attachments {
     const a = this.get(row.id) as Attachment;
     if (input.messageId && !input.forChat)
       this.d.events.emit({ type: "message.attachment", id: input.messageId, attachment: a });
-    // A task's file shows on the messages that show the task.
     if (input.taskId && !input.forChat) {
       const shown = this.d.db
         .query<{ id: number }, [number]>("SELECT id FROM messages WHERE task_id = ?")
@@ -186,10 +169,7 @@ export class Attachments {
     return a;
   }
 
-  /**
-   * Sends the owner a file from the desktop: one in the sandbox shell (`path`), or a browser download.
-   * Errors are DesktopErrors, fine to show the model.
-   */
+  /** Errors are DesktopErrors, fine to show the model. */
   async fromDesktop(
     agent: DesktopAgent,
     src: { path?: string; download?: string; name?: string },
@@ -212,9 +192,8 @@ export class Attachments {
   }
 
   /**
-   * Whether the file may be kept in the browser's cache, for good: not one from an incognito
-   * conversation, nor one uploaded and not yet sent, which may be going to one. Once sent, its bytes
-   * never change and its id is never given out again (migration 34).
+   * Not an incognito conversation's file, nor an upload not yet sent, which may be going to one. Once
+   * sent, its bytes never change and its id is never given out again (migration 34).
    */
   cacheable(id: number): boolean {
     const row = this.d.db
@@ -230,17 +209,11 @@ export class Attachments {
     return row.message_id !== null ? row.incognito === 0 : row.task_id !== null;
   }
 
-  /** The file's bytes on disk, or null. */
   file(id: number) {
     const row = this.row(id);
     return row?.path ? this.d.archive.file(row.path) : null;
   }
 
-  /**
-   * A picture's copy at most `w` pixels on its long side (rounded up to THUMB_SIZES), as WebP, made once
-   * and kept next to the original. Null when the original should go instead: it isn't a picture that
-   * gets one, it's no bigger than that, or it doesn't decode.
-   */
   async thumbnail(id: number, w: number): Promise<{ file: Bun.BunFile; size: number } | null> {
     const size = THUMB_SIZES.find((s) => s >= w);
     const row = this.row(id);
@@ -284,7 +257,6 @@ export class Attachments {
     return f && (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : null;
   }
 
-  /** Puts your uploaded files on your message. Ones already on a message, or Hatbot's, are skipped. */
   bind(ids: number[], messageId: number): Attachment[] {
     if (!ids.length) return [];
     return this.d.db
@@ -296,7 +268,6 @@ export class Attachments {
       .map(plain);
   }
 
-  /** Deletes the files on these messages, rows and bytes and smaller copies, so the messages can go too. */
   async removeFor(messageIds: number[]) {
     if (!messageIds.length) return;
     const rows = this.d.db
@@ -310,7 +281,6 @@ export class Attachments {
     await Promise.all(paths.map((p) => this.d.archive.remove(p)));
   }
 
-  /** Each message with its files: its own, and those the task it shows sent you. */
   fill(messages: ThreadMessage[]): ThreadMessage[] {
     if (!messages.length) return messages;
     const ids = messages.map((m) => m.id);
@@ -328,7 +298,6 @@ export class Attachments {
     });
   }
 
-  /** Every file these tasks sent: you, or the bot in the chat. */
   ofTasks(taskIds: number[]): (Attachment & { taskId: number })[] {
     if (!taskIds.length) return [];
     return this.d.db
@@ -347,22 +316,14 @@ export class Attachments {
   }
 
   /**
-   * What the model gets for your files: images and PDFs as themselves, text inline, and for anything
-   * else a line saying how to reach it.
-   */
-  /**
-   * What a stored turn keeps for your files: their ids, not their bytes. `expand` turns them back
-   * into blocks for each request, the same every time, so the prompt cache still matches.
+   * Ids, not bytes: `expand` turns them back into blocks for each request, the same every time, so the
+   * prompt cache still matches.
    */
   refs(list: Attachment[]): BlockParam[] {
     return list.map((a) => ({ type: ATTACHMENT_REF, id: a.id }) as unknown as BlockParam);
   }
 
-  /**
-   * Turns with their file references made into what the model reads. `cache` lasts a reply. Files are
-   * read oldest first until inlineLimit is used up; later ones are named, for code_run. Earlier turns
-   * come out the same every time, so the prompt cache still matches.
-   */
+  /** Earlier turns must come out the same every time, so the prompt cache still matches. */
   async expand(
     turns: Anthropic.Beta.BetaMessageParam[],
     cache = new Map<number, BlockParam[]>(),

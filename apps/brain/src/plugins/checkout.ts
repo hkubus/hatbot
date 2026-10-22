@@ -1,9 +1,6 @@
-// Checking a repository out into the desktop's sandbox and pushing what changed there: Own code's way
-// (PLAN.md §18), which the GitHub and Forgejo plugins share. The brain keeps a bare clone and never runs
-// the code. A commit's files go into the sandbox as a fresh git repository whose one commit, tagged
-// base, says which commit and branch they came from; what changed since comes back as a diff, which git
-// applies to an index without running anything in it, and the brain commits it as the bot account and
-// pushes. The sandbox never sees the token: git sends it in a header, never in a URL or a file.
+// The brain keeps a bare clone and never runs the code: what changed in the sandbox comes back as a
+// diff, which git applies to an index without running anything in it. The sandbox never sees the
+// token: git sends it in a header, never in a URL or a file.
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
@@ -26,7 +23,6 @@ const gitEnv = (dir: string, env: Record<string, string> = {}) => ({
   ...env,
 });
 
-/** git with no config but its own, never asking for a password. */
 export async function git(
   dir: string,
   args: string[],
@@ -76,27 +72,20 @@ export const basicAuth = (user: string, password: string) => `Basic ${btoa(`${us
 /** A word for the shell, quoted: branch names may hold $, ; and the like. */
 const quoted = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
-/** One repository: its bare clone on the brain, its remote, and where it goes in the sandbox. */
 export type Checkout = {
-  /** The bare clone. */
   cache: string;
-  /** Where it's fetched from and pushed to. */
   url: string;
-  /** git's environment for `url`, with the token (remoteEnv). */
   remote: () => Promise<Record<string, string>>;
   /** The checkout, relative to the sandbox's home. */
   work: string;
-  /** The sandbox's folder for what goes in and out on the way: the files' parts, the diff. */
   scratch: string;
   /** The tool that checks it out, for when there's no checkout. */
   tool: string;
 };
 
-/** Goes into the checkout, or says there's none: what every command in it starts with. */
 export const intoCheckout = (c: Checkout) =>
   `cd ${c.work} 2>/dev/null || { echo "There's no checkout: call ${c.tool} first."; exit 2; }`;
 
-/** Runs one at a time what changes a bare clone. */
 export function serially() {
   let queue: Promise<unknown> = Promise.resolve();
   return <T>(f: () => Promise<T>): Promise<T> => {
@@ -115,7 +104,7 @@ const inSandbox = async <T>(f: () => Promise<T>): Promise<T> => {
   }
 };
 
-/** `branch`'s latest commit, fetched into the bare clone: only the branches checked out. */
+/** Fetches only the branches checked out. */
 export async function fetchBranch(c: Checkout, branch: string): Promise<string> {
   if (!existsSync(join(c.cache, "HEAD"))) {
     await mkdir(c.cache, { recursive: true });
@@ -126,7 +115,6 @@ export async function fetchBranch(c: Checkout, branch: string): Promise<string> 
   return (await gitText(c.cache, ["rev-parse", `refs/heads/${branch}^{commit}`])).trim();
 }
 
-/** The latest commit of `branch` on the remote, or null when it has no such branch. */
 export async function remoteHead(c: Checkout, branch: string): Promise<string | null> {
   const ref = `refs/heads/${branch}`;
   const out = await gitText(c.cache, ["ls-remote", c.url, ref], { env: await c.remote() });
@@ -147,7 +135,7 @@ export async function mustHave(c: Checkout, sha: string) {
     throw new PluginError("The checkout's commit isn't in the repository: check out again.");
 }
 
-/** The files at `sha` as a gzipped tarball. Past 200 MB it stops and refuses. */
+/** Past 200 MB it stops and refuses. */
 export async function archive(c: Checkout, sha: string): Promise<Uint8Array> {
   const p = Bun.spawn(["git", "archive", "--format=tar.gz", sha], {
     cwd: c.cache,
@@ -175,9 +163,8 @@ export async function archive(c: Checkout, sha: string): Promise<Uint8Array> {
 }
 
 /**
- * Puts `tar`, the files at `sha` of `branch`, in the sandbox at `c.work` in place of what was there, as
- * a fresh git repository whose one commit, tagged base, says the commit and branch. `before` is more of
- * the script, run before the old checkout goes; `after`, run in the new one. Returns what it printed.
+ * A fresh git repository whose one commit, tagged base, says the commit and branch the files came from.
+ * `before` runs before the old checkout goes; `after`, in the new one.
  */
 export async function putCheckout(
   shell: DesktopAgent,
@@ -219,7 +206,6 @@ export async function putCheckout(
   return r.output.trim();
 }
 
-/** Everything changed in the checkout since base, and the commit and branch base came from. */
 export async function checkoutDiff(shell: DesktopAgent, c: Checkout) {
   const patchPath = `${c.scratch}/change.patch`;
   const fromWork = (path: string) => posix.relative(c.work, path);
@@ -240,11 +226,7 @@ export async function checkoutDiff(shell: DesktopAgent, c: Checkout) {
   return { patch, from, branch };
 }
 
-/**
- * Applies `patch` on `from` as a commit by `who` and pushes it to `branch`, with no force. `prepare`
- * runs first: it fetches what the commit goes on, and refuses if it can't. Symlinks and submodules are
- * refused, and so is what `check` throws for, before anything is pushed. Run it serially.
- */
+/** Never forces. Symlinks and submodules are refused before anything is pushed. Run it serially. */
 export async function commitAndPush(
   c: Checkout,
   o: {
@@ -300,10 +282,7 @@ export async function commitAndPush(
   }
 }
 
-/**
- * After a push: base becomes what was pushed, `commit` on `branch`, so the next diff starts from it.
- * What the diff staged is what was pushed; what changed since stays a change.
- */
+/** After a push, so the next diff starts from it; what changed since stays a change. */
 export async function moveBase(shell: DesktopAgent, c: Checkout, commit: string, branch: string) {
   const r = await inSandbox(() =>
     shell.exec(

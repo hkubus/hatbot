@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, errorText } from "./api";
 
-/** A page or list that didn't load: one plain line with Retry. */
 export function LoadError({ error, retry }: { error: string; retry: () => void }) {
   return (
     <div className="load-error">
@@ -13,10 +12,6 @@ export function LoadError({ error, retry }: { error: string; retry: () => void }
   );
 }
 
-/**
- * Loads a page's one item into the store: `missing` once the brain says there's no such one, or
- * what went wrong, with `load` to try again.
- */
 export function useItem(id: number, fetch: (id: number) => Promise<unknown>) {
   const [missing, setMissing] = useState(false);
   const [error, setError] = useState("");

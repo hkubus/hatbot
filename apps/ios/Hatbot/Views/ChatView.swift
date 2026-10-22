@@ -1,24 +1,18 @@
-// The thread (PLAN.md §10.2, §10.4): Messages-style bubbles, grouped by sender with a tail on the
-// last, a centered time after a pause, Copy and Open in a long-press menu. A task shows under the reply
-// that started it, and a box under the reply that made or changed it; a box's notes show as from the
-// box. Approvals wait above the composer. Finished conversations fold up under their recap.
 import PhotosUI
 import SwiftUI
 import UIKit
 
 struct ChatView: View {
-  /// Kept in MainView, like the other sections', so it survives going to another section and back.
+  /// Kept in MainView so it survives going to another section and back.
   @Binding var path: [Route]
-  /// A message to scroll to, from Search: earlier pages load until it's there.
   @Binding var focus: Int?
   @Environment(AppStore.self) private var store
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var unfolded = Set<Int>()
-  /// The folded conversation you asked to delete, waiting for you to confirm.
   @State private var deleting: Int?
   @State private var rowCache = RowCache()
-  /// Today, so the rows' times are made again when it changes: "Today" becomes "Yesterday".
+  /// So the rows' times are made again when the day changes: "Today" becomes "Yesterday".
   @State private var today = Calendar.current.startOfDay(for: .now)
   @State private var router = OpenRoute()
   private var name: String { store.chatName(store.currentChat) }
@@ -28,14 +22,12 @@ struct ChatView: View {
   /// The first message when the page before it was last asked for, so scrolling asks once a page.
   @State private var earlierBefore: Int?
 
-  /// How far the list is from its top and its bottom, and the screen's height.
   private struct Scrolled: Equatable {
     var top: CGFloat
     var bottom: CGFloat
     var screen: CGFloat
   }
 
-  /// What the list shows: times, folds, and the messages that aren't folded away.
   fileprivate enum Row: Identifiable {
     case time(String, before: Int)
     case fold(ThreadGroup)
@@ -94,8 +86,7 @@ struct ChatView: View {
     return rowCache.rows
   }
 
-  /// Runs of messages from the same sender sit close together, with a tail on the last. In a group
-  /// each bot is a sender of its own. A box's notes are the box's, not its bot's.
+  /// In a group each bot is a sender of its own, and a box's notes are the box's, not its bot's.
   private static func grouped(_ rows: [Row]) -> [Row] {
     func sender(_ row: Row?) -> String? {
       if case let .message(m, _, _)? = row, !m.isNote { key(m) } else { nil }
@@ -111,13 +102,11 @@ struct ChatView: View {
     }
   }
 
-  /// A group's bots, for the names above their messages and @ in the composer.
   private var members: [Bot]? {
     guard let c = store.currentChat, c.kind == .group else { return nil }
     return c.botIds.compactMap { store.bots[$0] }
   }
 
-  /// Midnight, or the clock or time zone changed, or back in the app after either.
   private func newDay() {
     let day = Calendar.current.startOfDay(for: .now)
     if day != today { today = day }
@@ -165,7 +154,6 @@ struct ChatView: View {
               }
               .padding(.top, 10)
             case let .message(m, joined, tail):
-              // In a group, the bot's name above each run of its messages; a box's note isn't its words.
               let named = group && !joined && m.role == .assistant && !m.isNote && m.kind != .box
               if named {
                 Text(store.botName(m.botId))
@@ -186,7 +174,6 @@ struct ChatView: View {
         .padding(.vertical, 12)
         // So a search hit can be scrolled to by its row's id.
         .scrollTargetLayout()
-        // A column you can read across on an iPad or a Mac.
         .frame(maxWidth: Self.readingWidth)
         .frame(maxWidth: .infinity)
       }
@@ -205,7 +192,7 @@ struct ChatView: View {
         if nearBottom != (distance < 60) { nearBottom = distance < 60 }
         let far = distance > 400
         if far != farFromBottom { withAnimation(.snappy) { farFromBottom = far } }
-        // Within a screen and a half of the top: the page before loads while you're still reading.
+        // Within a screen and a half of the top, so the page before loads while you're still reading.
         if scrolled.top < scrolled.screen * 1.5, store.hasEarlier, let first = store.messages.first?.id,
           first != earlierBefore
         {
@@ -230,7 +217,6 @@ struct ChatView: View {
       .scrollDismissesKeyboard(.interactively)
       .edgeBar(.top) {
         VStack(spacing: 0) {
-          // The event stream has been down for a few seconds.
           if store.unreachable {
             Banner(text: "Can't reach Hatbot.", systemImage: "wifi.slash") {
               Button("Retry") { store.connect() }
@@ -239,7 +225,6 @@ struct ChatView: View {
             }
             .transition(.move(edge: .top).combined(with: .opacity))
           }
-          // The chat's latest messages didn't load: what's showing is what was kept, if anything.
           if let failed = store.threadError, !store.unreachable {
             Banner(text: message(for: failed), systemImage: "exclamationmark.triangle") {
               Button("Try again") { Task { await store.reloadThread() } }
@@ -273,7 +258,6 @@ struct ChatView: View {
             .accessibilityLabel("About \(name)")
           }
         }
-        // Groups have no incognito.
         if members == nil {
           ToolbarItem(placement: .topBarTrailing) {
             // Leaving deletes the incognito conversation.
@@ -302,7 +286,6 @@ struct ChatView: View {
       .environment(\.openRoute, router)
       .onAppear {
         router.open = { route in path.append(route) }
-        // As Search does: that chat, then the message in it.
         router.message = { link in
           Task {
             if store.conversations.contains(where: { $0.id == link.conversationId }) {
@@ -345,7 +328,6 @@ struct ChatView: View {
   }
 }
 
-/// Each chat's draft and files, kept while you're elsewhere in the app.
 @MainActor
 @Observable
 final class Drafts {
@@ -359,8 +341,7 @@ final class Drafts {
   }
 }
 
-/// Pushes a page on the chat's navigation stack, from a message's menu, or shows a message in another
-/// chat. A class, so the messages see the same one on every redraw.
+/// A class, so the messages see the same one on every redraw.
 @MainActor
 final class OpenRoute {
   var open: (Route) -> Void = { _ in }
@@ -371,8 +352,7 @@ extension EnvironmentValues {
   @Entry var openRoute: OpenRoute?
 }
 
-/// The approval waiting for you, then the files, the "@" and "/" suggestions and the field. Your draft
-/// lives here, so typing redraws only the composer.
+/// Your draft lives here, so typing redraws only the composer.
 private struct Composer: View {
   let name: String
   let members: [Bot]?
@@ -381,14 +361,13 @@ private struct Composer: View {
   @Environment(AppStore.self) private var store
   @Environment(Drafts.self) private var drafts
   @Environment(\.sectionShown) private var sectionShown
-  /// The draft as you type; kept in `drafts` when you leave the chat or switch to another.
   @State private var draft = ""
   @State private var photos: [PhotosPickerItem] = []
   @State private var pickingPhotos = false
   @State private var pickingFiles = false
   @State private var sending = false
 
-  /// Whose draft and files these are: each chat has its own, and its incognito conversation another.
+  /// Each chat has its own draft and files, and its incognito conversation another.
   private var key: String { "\(store.conversationId)\(store.incognito ? "i" : "")" }
 
   private var files: [ComposerFile] {
@@ -404,7 +383,6 @@ private struct Composer: View {
     return (hasText || hasFiles) && !sending && !uploading
   }
 
-  /// Adds a file to the composer and uploads it straight away.
   private func attach(_ data: Data, name: String, mediaType: String, preview: UIImage? = nil) {
     let f = ComposerFile(name: name, preview: preview)
     let key = key
@@ -423,8 +401,6 @@ private struct Composer: View {
 
   var body: some View {
     VStack(spacing: 6) {
-      // The oldest approval waiting for you, then the oldest question; the next shows once you've
-      // answered it.
       let waiting = store.pendingApprovals.count + store.pendingQuestions.count
       if waiting > 0 {
         VStack(alignment: .leading, spacing: 10) {
@@ -486,7 +462,6 @@ private struct Composer: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .photosPicker(isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
-    // A tap as it goes.
     .sensoryFeedback(.impact(weight: .light), trigger: sending) { _, sending in sending }
     .onAppear { draft = drafts.texts[key] ?? "" }
     .onDisappear { drafts.texts[key] = draft }
@@ -522,7 +497,7 @@ private struct Composer: View {
     }
   }
 
-  /// A picked photo, scaled from its file off the main thread; as data if the library won't give a file.
+  /// Scaled off the main thread; as data if the library won't give a file.
   private static func load(_ item: PhotosPickerItem, index: Int) async -> PickedFile.Photo? {
     if let file = try? await item.loadTransferable(type: PickedPhoto.self) {
       let url = file.url
@@ -537,7 +512,6 @@ private struct Composer: View {
 
   private var commands: [ChatCommand] { ChatCommand.matching(draft, incognito: store.incognito) }
 
-  /// In a group, the bots "@…" at the end of the draft could mean.
   private var mentionable: [Bot] {
     guard let members, let partial = Mention.partial(draft) else { return [] }
     return Mention.matching(partial, in: members)
@@ -550,7 +524,6 @@ private struct Composer: View {
     ) { b in draft = Mention.complete(draft, with: b.name) }
   }
 
-  /// What "/…" could mean. One that needs more goes in the composer to finish; the rest run at once.
   private var commandList: some View {
     suggestions(
       commands,
@@ -562,7 +535,6 @@ private struct Composer: View {
     ) { c in if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") } }
   }
 
-  /// A list over the field of what you could mean, each with a line about it; a tap picks one.
   private func suggestions<Item: Identifiable>(
     _ items: [Item], name: @escaping (Item) -> Text, about: @escaping (Item) -> String,
     pick: @escaping (Item) -> Void
@@ -588,7 +560,6 @@ private struct Composer: View {
     .glassSurface(in: .rect(cornerRadius: 22))
   }
 
-  /// Sends the composer, or `command` when you picked one from the list.
   private func send(_ command: String? = nil) {
     let typed = command ?? draft
     let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -597,7 +568,6 @@ private struct Composer: View {
     guard command != nil ? !sending : canSend else { return }
     sending = true
     error = nil
-    // Cleared before it's sent, and put back if sending fails.
     draft = ""
     drafts.texts[key] = nil
     if command == nil { files = [] }
@@ -620,7 +590,6 @@ private struct Composer: View {
   }
 }
 
-/// A round button's glyph, in a box that grows with Dynamic Type like the glyph.
 private struct RoundGlyph: View {
   let name: String
   @ScaledMetric(relativeTo: .body) private var width: CGFloat = 26
@@ -631,7 +600,6 @@ private struct RoundGlyph: View {
   }
 }
 
-/// A line across the top of the chat, with what you can do about it after.
 private struct Banner<Trailing: View>: View {
   let text: String
   let systemImage: String
@@ -652,7 +620,6 @@ private struct Banner<Trailing: View>: View {
   }
 }
 
-/// A finished conversation, folded up under its recap; a tap opens it in place.
 private struct FoldRow: View {
   let group: ThreadGroup
   let open: Bool
@@ -685,16 +652,13 @@ private struct FoldRow: View {
 /// reads from the store still redraws it.
 private struct MessageRow: View, Equatable {
   let m: ThreadMessage
-  /// The last of a run from the same sender, so its bubble has a tail.
   let tail: Bool
-  /// The latest message: its choices can be tapped.
   var answerable = false
   @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
 
   var body: some View {
     if m.isNote {
-      // What came of a command: a quiet line rather than a message.
       Text(m.text)
         .font(.footnote)
         .foregroundStyle(.secondary)
@@ -726,7 +690,7 @@ private struct MessageRow: View, Equatable {
           .contentShape(.contextMenuPreview, shape)
           .contextMenu { menu }
           .modifier(Spoken(label: speaker, text: spokenText, unread: m.id))
-        // Like Messages' "Edited": the task's result changed this message after it was sent.
+        // The task's result changed this message after it was sent.
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
             .font(.caption2)
@@ -755,7 +719,6 @@ private struct MessageRow: View, Equatable {
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
-  /// Who it's from: a box's note is the box's, and a hand-off the bot's that asked.
   private var speaker: String {
     switch m.kind {
     case .box: "From \(m.boxId.flatMap { store.boxes[$0]?.title } ?? "a box")"
@@ -764,8 +727,7 @@ private struct MessageRow: View, Equatable {
     }
   }
 
-  /// A plain reply, read as one: Markdown left out, and not word by word as it streams. Others, with
-  /// tasks, schedules, boxes or approvals to act on, keep their parts.
+  /// A plain reply is read as one, without Markdown and not word by word as it streams; others keep their parts.
   private var spokenText: String? {
     if m.kind == .box { return m.text }
     guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil else { return nil }
@@ -784,7 +746,6 @@ private struct MessageRow: View, Equatable {
     }
   }
 
-  /// What Copy copies, and what Open opens.
   @ViewBuilder
   private var menu: some View {
     switch m.kind {
@@ -795,7 +756,6 @@ private struct MessageRow: View, Equatable {
       }
     case .box:
       copyButton(m.text)
-      // Gone, or not loaded yet: nothing to open.
       if let id = m.boxId, store.boxes[id] != nil {
         Button("Open box", systemImage: "chevron.right") { open(.box(id)) }
       }
@@ -812,7 +772,6 @@ private struct MessageRow: View, Equatable {
       if m.kind == .task {
         if let task { copyButton(result ?? task.title) }
       } else {
-        // A finished or failed task's result in the reply's place.
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
       if let boxId = m.boxId { Button("Open box", systemImage: "chevron.right") { open(.box(boxId)) } }
@@ -855,9 +814,8 @@ private struct MessageRow: View, Equatable {
   }
 }
 
-/// Unread: an accent line at a message's edge, fading once you've seen it. Its own view, over the whole
-/// message, so the unread list changing, another section showing or the app coming to the front redraws
-/// only this, not every message's Markdown.
+/// Its own view, so the unread list changing, another section showing or the app coming to the front
+/// redraws only this, not every message's Markdown.
 private struct UnreadMark: View {
   let id: Int
   @Environment(AppStore.self) private var store
@@ -881,7 +839,6 @@ private struct UnreadMark: View {
         return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
           || (me.maxY > screen.minY && me.maxY <= screen.maxY)
       } action: { onScreen = $0 }
-      // On screen for a moment, with the app and the chat in front: seen.
       .task(id: unread && onScreen && scenePhase == .active && sectionShown) {
         guard unread && onScreen && scenePhase == .active && sectionShown else { return }
         try? await Task.sleep(for: .seconds(1.5))
@@ -890,9 +847,8 @@ private struct UnreadMark: View {
   }
 }
 
-/// A reply, with the task it started (if any) working under it. Once the task finishes or fails, its bot
-/// writes the reply again to say what came of it; if it doesn't, the task's result shows in the reply's
-/// place. A cancelled task leaves the reply.
+/// Once its task ends, the bot writes the reply again; if it doesn't, the task's result shows in the
+/// reply's place. A cancelled task leaves the reply.
 private struct ReplyMessage: View {
   let m: ThreadMessage
   @Environment(AppStore.self) private var store
@@ -901,7 +857,6 @@ private struct ReplyMessage: View {
     !task.isActive && task.status != .cancelled
   }
 
-  /// The task ended and its bot didn't write the reply again: told some other way, or it failed to.
   static func showsResult(_ m: ThreadMessage, _ task: AgentTask) -> Bool {
     ended(task) && m.status != .streaming && (m.status == .error || m.text.isEmpty)
   }
@@ -933,9 +888,7 @@ private struct ReplyMessage: View {
 /// A reply as it's written. Each delta changes only `reply`, so only this redraws.
 private struct StreamingReply: View {
   let reply: LiveReply
-  /// Working dots until the first words, unless its task's dots show instead.
   let dots: Bool
-  /// The chat is kept, hidden, while another section shows.
   @Environment(\.sectionShown) private var sectionShown
   @State private var last = Last()
 
@@ -975,7 +928,6 @@ private struct StreamingReply: View {
   }
 }
 
-/// A task under the reply that started it: working dots, then how it ended.
 private struct TaskResult: View {
   let taskId: Int
   @Environment(AppStore.self) private var store
@@ -1008,7 +960,6 @@ private struct TaskResult: View {
   }
 }
 
-/// The box a reply made or changed, with Open.
 private struct BoxResult: View {
   let boxId: Int
   @Environment(AppStore.self) private var store
@@ -1029,7 +980,6 @@ private struct BoxResult: View {
   }
 }
 
-/// A note a box's page sent (hatbox.send): the box's words, neither yours nor the bot's, as plain text.
 private struct BoxNote: View {
   let m: ThreadMessage
   @Environment(AppStore.self) private var store
@@ -1044,15 +994,12 @@ private struct BoxNote: View {
 }
 
 extension AppStore {
-  /// "Open in Coder's chat", for a hand-off's other end.
   fileprivate func openLabel(_ link: MessageLink) -> String {
     guard let c = conversations.first(where: { $0.id == link.conversationId }) else { return "Open the other chat" }
     return c.kind == .group ? "Open in \(chatName(c))" : "Open in \(chatName(c))'s chat"
   }
 }
 
-/// Another bot handing this chat's bot work: its request, and a way to where it asked, or to the task when
-/// a task asked.
 private struct HandoffMessage: View {
   let m: ThreadMessage
   @Environment(AppStore.self) private var store
@@ -1073,7 +1020,6 @@ private struct HandoffMessage: View {
   }
 }
 
-/// A background task (schedule, trigger), as a message: what it's doing, then how it ended.
 private struct TaskMessage: View {
   let taskId: Int
   @Environment(AppStore.self) private var store
@@ -1100,7 +1046,6 @@ private struct TaskMessage: View {
     }
   }
 
-  /// How it ended, under its title.
   private func result(_ task: AgentTask) -> String? {
     if task.isActive { return nil }
     switch task.status {
@@ -1117,9 +1062,7 @@ private struct TaskMessage: View {
   }
 }
 
-/// For VoiceOver, a bubble is one element: who it's from, then what it says. With no `text`, its parts
-/// stay their own, under who it's from. With `unread`, a message's id, "unread" after who it's from
-/// while it is: read here, so that changing redraws only this, not the message.
+/// "unread" is read here, so its changing redraws only this, not the message.
 private struct Spoken: ViewModifier {
   let label: String
   let text: String?
@@ -1137,13 +1080,10 @@ private struct Spoken: ViewModifier {
   }
 }
 
-/// What Hatbot wants to do and why, the page it read, a screenshot, then Deny and Approve.
 struct ApprovalBody: View {
   let approval: Approval
-  /// Off on the task's own page.
   var linksTask = true
   @Environment(AppStore.self) private var store
-  /// In the chat: the task opens on its stack.
   @Environment(\.openRoute) private var router
   @State private var busy = false
   @State private var error: String?
@@ -1240,10 +1180,8 @@ struct ApprovalBody: View {
   }
 }
 
-/// A task's question waiting for you: tap an answer, or write your own. Plain text, like an approval.
 struct QuestionBody: View {
   let question: Question
-  /// Off on the task's own page.
   var linksTask = true
   @Environment(AppStore.self) private var store
   @Environment(\.openRoute) private var router
@@ -1302,8 +1240,6 @@ struct QuestionBody: View {
   }
 }
 
-/// The answers the questions at the end of a reply offer. For one, a tap sends it as your message; for
-/// several, you pick or write each answer and send them together, numbered like the questions.
 private struct Choices: View {
   let lists: [[String]]
   @Environment(AppStore.self) private var store
@@ -1368,7 +1304,6 @@ private struct Choices: View {
   }
 }
 
-/// A schedule Hatbot made, as one line.
 private struct ScheduleMessage: View {
   let scheduleId: Int
   @Environment(AppStore.self) private var store
@@ -1386,14 +1321,12 @@ private struct ScheduleMessage: View {
   }
 }
 
-/// A Messages bubble: a rounded rectangle, with a tail curling out of the bottom corner on `side`.
 /// The tail's room is kept even without one, so a run of bubbles lines up.
 private struct Bubble: Shape {
   var tail: Bool
   var side: HorizontalEdge
   static let tailWidth: CGFloat = 6
 
-  /// The text's padding inside the bubble, with room for the tail.
   static func insets(_ side: HorizontalEdge) -> EdgeInsets {
     EdgeInsets(
       top: 7, leading: 12 + (side == .leading ? tailWidth : 0),
@@ -1427,7 +1360,6 @@ private struct Bubble: Shape {
   }
 }
 
-/// The pages a reply cites, in a line of links.
 private struct MessageSources: View {
   let list: [Source]
 

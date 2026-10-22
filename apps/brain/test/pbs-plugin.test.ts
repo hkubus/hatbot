@@ -21,7 +21,6 @@ beforeEach(() => {
   privs = FULL;
 });
 
-// A stand-in for the backup server's proxy, with a self-signed certificate.
 const api = fakeApi(
   (req, url) => {
     const path = url.pathname.replace("/api2/json", "");
@@ -90,7 +89,6 @@ test("it offers only what its token may do, and checks again when it couldn't or
   await waitFor(() => names(t).includes("pbs_delete_snapshot"));
   expect(t.plugins.get("pbs")?.message).toBeNull();
 
-  // The test button checks again, and Settings is told what it offers now.
   privs = { "Datastore.Audit": true };
   const before = t.events.length;
   await t.plugins.test("pbs");

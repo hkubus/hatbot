@@ -32,7 +32,6 @@ import {
 import { ApprovalCard, isActive, PendingQuestion, Shot, StatusChip, taskLine } from "../tasks";
 import { BackHead, Group, LinkRow, Seg } from "../ui";
 
-/** A page of finished tasks; the list pages back from the oldest shown. */
 const TASK_PAGE = 50;
 
 export function Tasks() {
@@ -168,7 +167,6 @@ export function Tasks() {
                 {shown.map((t) => (
                   <tr key={t.id} className="link-row">
                     <td className="wrap">
-                      {/* The link covers the whole row. */}
                       <Link className="task-title" to={`/tasks/${t.id}`}>
                         {t.title}
                       </Link>
@@ -199,7 +197,6 @@ export function Tasks() {
   );
 }
 
-/** Where a task came from, linked. */
 export function From({ task }: { task: TaskCard }) {
   // The chat it was started in, while it's still one of yours.
   const chat = useStore((s) => {
@@ -343,7 +340,6 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const full = isFullTask(task) ? task : null;
   const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
   const asked = Object.values(questions).filter((q) => q.taskId === id && q.status === "pending");
-  // Open the live view when Hatbot asks you to take over.
   const screen = task.lane === "screen";
   const showLive = screen && active && (watch || request?.taskId === id);
 

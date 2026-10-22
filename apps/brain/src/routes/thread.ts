@@ -49,7 +49,6 @@ export const threadRoutes = new Hono<AppEnv>()
   .use("/conversations/*", requireAuth)
   .use("/attachments", requireAuth)
   .use("/attachments/*", requireAuth)
-  // A file for your next message: uploaded first, then posted with it by id.
   .post("/attachments", async (c) => {
     if (Number(c.req.header("content-length") ?? 0) > MAX_ATTACHMENT_BYTES + 64 * 1024)
       return c.json({ error: "The file is over 25 MB." }, 413);
@@ -68,7 +67,6 @@ export const threadRoutes = new Hono<AppEnv>()
     });
     return c.json(attachment, 201);
   })
-  // `?w=` asks for a picture at most that many pixels on its long side, for the chat's bubbles.
   .get("/attachments/:id", async (c) => {
     const id = Number(c.req.param("id"));
     const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
@@ -101,7 +99,6 @@ export const threadRoutes = new Hono<AppEnv>()
       },
     });
   })
-  // A chart block's values from its file (chart-data.ts), thinned to what a chart draws.
   .get("/attachments/:id/chart", query(ChartQuery), async (c) => {
     const id = Number(c.req.param("id"));
     const a = Number.isInteger(id) ? c.var.attachments.get(id) : null;
@@ -122,7 +119,7 @@ export const threadRoutes = new Hono<AppEnv>()
     });
   })
   .get("/conversations", (c) => c.json(c.var.chats.list()))
-  // Group chats (PLAN.md §14.4): bots' own chats come and go with the bots.
+  // Bots' own chats come and go with the bots.
   .post("/conversations", json(CreateGroup), (c) => {
     const { title, botIds } = c.req.valid("json");
     return c.json(c.var.chats.createGroup(title, botIds), 201);
@@ -133,7 +130,6 @@ export const threadRoutes = new Hono<AppEnv>()
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
-  // Unread: your bots' messages sent or edited since you last saw them, each chat's newest.
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
     c.var.chats.markSeen(c.req.valid("json").ids);
@@ -156,11 +152,8 @@ for (const [at, threadOf] of [
     .get(`${at}/messages`, query(ListMessages), on(listMessages))
     // Earlier pages an app has loaded: which messages are still there, and which were edited.
     .get(`${at}/messages/changes`, query(MessageRange), on(messageChanges))
-    // The conversations messages belong to, for their recaps where they fold up.
     .get(`${at}/episodes`, query(EpisodeIds), on(episodes))
-    // Deleting a conversation from the chat for good.
     .delete(`${at}/episodes/:episodeId`, on(deleteEpisode))
-    // You trust what a conversation read: its changes no longer ask for that.
     .post(
       `${at}/episodes/:episodeId/trust`,
       on((c, t) =>
@@ -170,11 +163,9 @@ for (const [at, threadOf] of [
       ),
     )
     .post(`${at}/messages`, json(PostMessage), on(post))
-    // A reply that failed, written again in place from where it was.
     .post(`${at}/messages/:messageId/retry`, on(retry))
     // Shortcuts and Siri: posts like /thread/messages, then waits a while for the answer.
     .post(`${at}/ask`, json(PostMessage), on(ask))
-    // Leaving incognito: its conversation is deleted.
     .delete(
       `${at}/incognito`,
       on(async (c, t) => {
@@ -190,7 +181,6 @@ const closed = (c: Ctx, t: Thread) =>
     ? c.json({ error: "That bot was deleted, so its chat takes no new messages." }, 410)
     : null;
 
-/** Why `t` can't take this message, or null. */
 function refused(c: Ctx, t: Thread, { attachmentIds, incognito }: z.infer<typeof PostMessage>) {
   if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
     return c.json({ error: "unknown attachment" }, 400);
@@ -246,7 +236,6 @@ async function deleteEpisode(c: Ctx, t: Thread) {
   }
 }
 
-/** How long a message posted with a client id is remembered by it. */
 export const SENT_FOR_MS = 10 * 60_000;
 // Each chat's messages posted with a client id, by that id: one sent again because its answer was lost
 // gets the same answer, and isn't posted (and replied to) twice.
@@ -258,7 +247,6 @@ function post(c: Ctx, t: Thread) {
   const sent = sentIn.get(t) ?? new Map<string, { message: ThreadMessage; at: number }>();
   sentIn.set(t, sent);
   const now = Date.now();
-  // Oldest first: the expired ones, and any past 200.
   for (const [id, s] of sent) {
     if (now - s.at < SENT_FOR_MS && sent.size <= 200) break;
     sent.delete(id);
@@ -272,7 +260,6 @@ function post(c: Ctx, t: Thread) {
   return c.json(message, 202);
 }
 
-/** How long /ask waits for the reply before it answers with what's there. */
 export const ASK_WAIT_MS = 25_000;
 
 async function ask(c: Ctx, t: Thread) {

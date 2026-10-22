@@ -1,5 +1,5 @@
-// A background task's questions to you (PLAN.md §20): it waits, without the model, for your answer
-// from the chat or the task's page, until it runs out of time.
+// A background task's questions to you: it waits, without the model, for your answer from the chat
+// or the task's page, until it runs out of time.
 import { createHmac } from "node:crypto";
 import type { Question } from "@hatbot/shared";
 import { sameText, secretKey } from "./auth/keys";
@@ -115,7 +115,6 @@ export class Questions {
     return question;
   }
 
-  /** The question with a button for each choice, when they fit; else its choices, to answer in the app. */
   private async notify(q: Question) {
     const exp = Math.floor(Date.parse(q.expiresAt) / 1000);
     const buttons = q.choices.length <= MAX_BUTTONS;
@@ -158,7 +157,6 @@ export class Questions {
     return label === undefined ? undefined : this.answer(id, label);
   }
 
-  /** Resolves with the answer, or null when it expires or is dropped. */
   wait(id: number, signal: AbortSignal): Promise<Answer> {
     const current = this.get(id);
     if (current && current.status !== "pending") return Promise.resolve(current.answer);
@@ -190,7 +188,6 @@ export class Questions {
     for (const { id } of ids) this.resolve(id, "cancelled");
   }
 
-  /** Gives up on the ones whose time ran out; the brain calls it every minute. */
   expireDue() {
     const due = this.db
       .query<{ id: number }, [string]>(

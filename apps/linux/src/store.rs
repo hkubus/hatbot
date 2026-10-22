@@ -1,6 +1,5 @@
-// Live client state: the chats, tasks, approvals, the desktop, pause state and spend, fed by the
-// event stream. Same shape as iOS's AppStore.swift and apps/web/src/store.ts. No GTK here: views
-// listen for `Change`s and read what they show.
+// Same shape as iOS's AppStore.swift and apps/web/src/store.ts. No GTK here: views listen for
+// `Change`s and read what they show.
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::{Rc, Weak};
@@ -19,7 +18,6 @@ use crate::net::socket::{Frame, Socket};
 
 pub const PAGE: usize = 50;
 
-/// What changed, for the views showing it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     /// Messages came, went or changed in the open chat; or another chat opened.
@@ -30,33 +28,26 @@ pub enum Change {
     Chats,
     Unread,
     Task(i64),
-    /// A page of the task lists came.
     Tasks,
-    /// Approvals or questions waiting for you.
     NeedsYou,
     Desktop,
     Paused,
     Connection,
     Spend,
     Schedule(i64),
-    /// The lists of schedules and triggers came.
     Schedules,
     Trigger(i64),
     Box(i64),
-    /// The list of boxes came.
     Boxes,
     Memory,
-    /// Proposals came or changed.
     Proposals,
     Settings,
     Watcher(i64),
-    /// The list of watchers came.
     Watchers,
     Heartbeat,
     Toast(String),
 }
 
-/// What asking for a proposal got.
 pub enum Asked {
     /// It's being written; it comes as `proposal.updated`.
     Started,
@@ -76,7 +67,6 @@ fn pick(t: &Todo) -> serde_json::Value {
     serde_json::json!({"text": t.text, "line": t.line})
 }
 
-/// A reply as it's written: its text, latest progress and what it has used so far.
 #[derive(Debug, Clone, Default)]
 pub struct LiveReply {
     pub text: String,
@@ -91,7 +81,6 @@ pub struct State {
     /// The incognito conversation is showing instead of the chat. Kept while the app runs.
     pub incognito: bool,
     pub messages: Vec<ThreadMessage>,
-    /// The conversations the loaded messages belong to, for their recaps.
     pub episodes: HashMap<i64, Episode>,
     pub replies: HashMap<i64, LiveReply>,
     pub has_earlier: bool,
@@ -107,25 +96,20 @@ pub struct State {
     /// The event stream has been down a few seconds.
     pub unreachable: bool,
     pub tasks: HashMap<i64, Task>,
-    /// Steps of the tasks that have been opened.
     pub steps: HashMap<i64, Vec<TaskStep>>,
     pub task_files: HashMap<i64, Vec<Attachment>>,
-    /// Latest progress per running task.
     pub task_progress: HashMap<i64, String>,
     pub approvals: HashMap<i64, Approval>,
     pub questions: HashMap<i64, Question>,
     pub desktop: Option<DesktopState>,
     pub schedules: HashMap<i64, Schedule>,
-    /// Schedules a message points at that no longer exist.
     pub deleted_schedules: HashSet<i64>,
     pub triggers: HashMap<i64, Trigger>,
     pub watchers: HashMap<i64, Watcher>,
-    /// Watchers deleted while open.
     pub deleted_watchers: HashSet<i64>,
     pub proposals: HashMap<i64, Proposal>,
     pub boxes: HashMap<i64, AppBox>,
     pub boxes_loaded: bool,
-    /// Boxes a message points at that no longer exist.
     pub deleted_boxes: HashSet<i64>,
     /// Your bots, deleted ones too once seen: old messages still name them.
     pub bots: HashMap<String, Bot>,
@@ -187,7 +171,6 @@ impl State {
             })
     }
 
-    /// A group's title, or its bot's name.
     pub fn chat_name(&self, c: Option<&Conversation>) -> String {
         let Some(c) = c else { return "Hatbot".into() };
         if c.kind == ConversationKind::Group {
@@ -400,7 +383,6 @@ impl Store {
         weak.upgrade().map(Store)
     }
 
-    /// Calls `f` with every change until the returned listener is dropped.
     #[must_use]
     pub fn listen(&self, f: impl Fn(&Change) + 'static) -> Listener {
         let id = self.0.next_id.get() + 1;
@@ -409,7 +391,6 @@ impl Store {
         Listener(self.weak(), id)
     }
 
-    /// A line at the bottom of the window.
     pub fn toast(&self, text: &str) {
         self.emit(Change::Toast(text.into()));
     }
@@ -436,8 +417,6 @@ impl Store {
         glib::spawn_future_local(f(self.clone()));
     }
 
-    // Event stream
-
     pub fn connect(&self) {
         if self.0.stream.borrow().is_none() {
             self.0.stream.replace(Some(self.make_stream()));
@@ -448,7 +427,6 @@ impl Store {
         self.notice_if_down();
     }
 
-    /// Signed out or quitting: the stream stops.
     pub fn disconnect(&self) {
         if let Some(s) = self.0.stream.borrow().as_ref() {
             s.stop();
@@ -806,8 +784,6 @@ impl Store {
         }
     }
 
-    // Chats
-
     /// A chat deleted, here or elsewhere. If it's the one you're in, back to Hatbot's own chat.
     fn chat_gone(&self, id: i64) {
         let open = {
@@ -822,7 +798,6 @@ impl Store {
         }
     }
 
-    /// A bot deleted, here or elsewhere, and its own chat with it.
     fn bot_gone(&self, id: &str) {
         let gone: Vec<i64> = {
             let mut st = self.state_mut();
@@ -853,7 +828,6 @@ impl Store {
         self.emit(Change::Chats);
     }
 
-    /// The direct chat with a bot.
     pub fn bot_chat(&self, bot: &str) -> Option<i64> {
         self.state()
             .conversations
@@ -870,14 +844,12 @@ impl Store {
         self.0.api.get("/bot-templates").await.unwrap_or_default()
     }
 
-    /// The plugins a bot can be given, by name.
     pub async fn plugin_names(&self) -> Vec<PluginName> {
         let mut list: Vec<PluginName> = self.0.api.get("/plugins").await.unwrap_or_default();
         list.sort_by_key(|p| p.name.to_lowercase());
         list
     }
 
-    /// A new bot, with its own chat in the list.
     pub async fn create_bot(&self, change: &BotChange) -> Result<Bot> {
         let bot: Bot = self.0.api.post("/bots", change).await?;
         self.got_bot(bot.clone());
@@ -936,7 +908,6 @@ impl Store {
         Ok(())
     }
 
-    /// Hatbot's own chat: the direct one with Hatbot.
     pub fn hatbot_chat(&self) -> i64 {
         let st = self.state();
         st.conversations
@@ -1042,8 +1013,6 @@ impl Store {
         }
         let _ = self.load_thread().await;
     }
-
-    // Thread
 
     pub async fn load_thread(&self) -> Result<()> {
         let load = self.0.next_id.get() + 1;
@@ -1220,7 +1189,6 @@ impl Store {
         Ok(())
     }
 
-    /// Uploads a file for your next message.
     pub async fn upload(&self, name: &str, media_type: &str, data: &[u8]) -> Result<Attachment> {
         self.0
             .api
@@ -1270,8 +1238,6 @@ impl Store {
             }
         });
     }
-
-    // Tasks, approvals and questions
 
     pub async fn load_task(&self, id: i64) -> Result<()> {
         let res: TaskWithSteps = self.0.api.get(&format!("/tasks/{id}")).await?;
@@ -1376,7 +1342,6 @@ impl Store {
             }
         }
         self.spawn(move |s| async move {
-            // The box's fields, with its versions and secrets beside them.
             match s.0.api.get::<AppBox>(&format!("/boxes/{id}")).await {
                 Ok(b) => {
                     s.state_mut().boxes.insert(id, b);
@@ -1446,7 +1411,6 @@ impl Store {
         Ok(())
     }
 
-    /// Approves or denies, with what to do instead or how to go ahead.
     pub async fn decide(&self, id: i64, approve: bool, note: &str) -> Result<()> {
         #[derive(Serialize)]
         struct Body<'a> {
@@ -1480,7 +1444,6 @@ impl Store {
         Ok(())
     }
 
-    /// A page of active or finished tasks, newest first: their ids.
     pub async fn load_tasks(&self, done: bool, before: Option<i64>) -> Result<Vec<i64>> {
         let mut path = format!("/tasks?status={}", if done { "done" } else { "active" });
         if let Some(b) = before {
@@ -1498,7 +1461,6 @@ impl Store {
         Ok(ids)
     }
 
-    /// Runs an ended task again, with a new goal if you changed it: the new task.
     pub async fn rerun_task(&self, id: i64, goal: Option<&str>) -> Result<Task> {
         #[derive(Serialize)]
         struct Body<'a> {
@@ -1526,8 +1488,6 @@ impl Store {
     pub async fn cancel_task(&self, id: i64) -> Result<()> {
         self.0.api.post_empty(&format!("/tasks/{id}/cancel")).await
     }
-
-    // Admin
 
     pub async fn set_paused(&self, value: bool) -> Result<()> {
         self.0
@@ -1581,7 +1541,6 @@ impl Store {
         result.map(|_| ())
     }
 
-    /// Adds a schedule (`id` None) or changes one.
     pub async fn save_schedule(
         &self,
         id: Option<i64>,
@@ -1612,7 +1571,6 @@ impl Store {
         Ok(())
     }
 
-    /// Runs a schedule now; the task it started.
     pub async fn run_schedule(&self, id: i64) -> Result<Task> {
         let task: Task = self
             .0
@@ -1639,7 +1597,6 @@ impl Store {
         result.map(|_| ())
     }
 
-    /// Changes some of a trigger's fields: `change` has only those.
     pub async fn update_trigger(&self, id: i64, change: &serde_json::Value) -> Result<Trigger> {
         let t: Trigger = self.0.api.patch(&format!("/triggers/{id}"), change).await?;
         self.state_mut().triggers.insert(id, t.clone());
@@ -1721,7 +1678,6 @@ impl Store {
         Ok(())
     }
 
-    /// The latest changes, to one file or to all of memory.
     pub async fn memory_log(&self, path: Option<&str>) -> Result<Vec<MemoryCommit>> {
         let mut url = "/memory/log?limit=100".to_string();
         if let Some(p) = path {
@@ -1771,7 +1727,6 @@ impl Store {
         self.0.api.get("/skills").await.unwrap_or_default()
     }
 
-    /// Asks for a tidy-up of memory, or a fix to a skill.
     pub async fn ask_proposal(&self, skill: Option<&str>) -> Result<Asked> {
         let path = match skill {
             Some(name) => format!("/skills/{}/fix", query(name)),
@@ -1792,7 +1747,6 @@ impl Store {
         }
     }
 
-    /// Applies or dismisses a proposal.
     pub async fn resolve_proposal(&self, id: i64, apply: bool) -> Result<()> {
         let path = format!(
             "/proposals/{id}/{}",
@@ -1847,7 +1801,6 @@ impl Store {
         self.0.api.get("/settings").await
     }
 
-    /// Changes some settings: `change` has only those. The settings as they are now.
     pub async fn save_settings(&self, change: &serde_json::Value) -> Result<AppSettings> {
         self.0.api.put("/settings", change).await
     }
@@ -1883,7 +1836,6 @@ impl Store {
         })
     }
 
-    /// The weekly report, to the chat now.
     pub async fn send_report(&self) -> Result<()> {
         let _: serde_json::Value = self.0.api.post_slow("/report/send", &Empty {}).await?;
         Ok(())
@@ -1921,7 +1873,6 @@ impl Store {
         Ok(())
     }
 
-    /// What it read, newest first.
     pub async fn watcher_values(&self, id: i64) -> Result<Vec<WatcherValue>> {
         self.0
             .api
@@ -1942,7 +1893,6 @@ impl Store {
         Ok(())
     }
 
-    /// Looks now.
     pub async fn check_watcher(&self, id: i64) -> Result<()> {
         let w: Watcher = self
             .0
@@ -2006,7 +1956,6 @@ impl Store {
             .await
     }
 
-    /// Makes an old version the newest again.
     pub async fn restore_box(&self, id: i64, version: i64) -> Result<BoxDetail> {
         let d: BoxDetail = self
             .0
@@ -2069,7 +2018,6 @@ impl Store {
         self.0.api.get("/heartbeat").await
     }
 
-    /// Looks now, on or off.
     pub async fn run_heartbeat(&self) -> Result<HeartbeatInfo> {
         self.0.api.post_slow("/heartbeat/run", &Empty {}).await
     }
@@ -2093,7 +2041,6 @@ impl Store {
     }
 }
 
-/// The last `n` characters of `s`.
 fn last_chars(s: &str, n: usize) -> String {
     let count = s.chars().count();
     s.chars().skip(count.saturating_sub(n)).collect()

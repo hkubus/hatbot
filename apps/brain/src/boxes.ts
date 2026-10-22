@@ -1,6 +1,5 @@
-// Boxes (PLAN.md §21): small web apps a bot makes for you, every version kept, and what their pages
-// save. The brain never runs a box's code: it serves the page sandboxed, on an opaque origin with no
-// network, and keeps what the page saves through the app, which answers only that box's frame.
+// The brain never runs a box's code: it serves the page sandboxed, on an opaque origin with no network,
+// and keeps what the page saves through the app, which answers only that box's frame.
 import { createHash, createHmac } from "node:crypto";
 import {
   API_PREFIX,
@@ -38,7 +37,6 @@ import type { SettingsStore } from "./settings";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
 import { clip } from "./text";
 
-/** Why a box can't be made, changed or kept: the message is for the model, or for you. */
 export class BoxError extends UserError {}
 
 type Row = {
@@ -63,32 +61,22 @@ const toBox = (r: Row): Box => ({
 
 const VERSION_COLUMNS = "n, title, created_at AS createdAt, message_id AS messageId";
 
-/** Where a version came from: the reply that made it, and what the conversation had read. */
 export type Made = { messageId?: number | null; taintedBy?: string | null };
 
-/** Files in one order, to tell whether they changed. */
 const sorted = (files: BoxFile[] | undefined) =>
   files?.length ? [...files].sort((a, b) => (a.path < b.path ? -1 : 1)) : undefined;
 
-/** How long an address to open a box's page holds. */
 const OPEN_MS = 10 * 60_000;
 
-/** hatbox.ask's model, and what it may write when the page doesn't say, thinking included. */
 export const BOX_ASK_MODEL = "claude-haiku-5-5";
 const ASK_TOKENS = 4000;
-/** Notes a box's page may put in the chat in an hour (hatbox.send). */
 const NOTES_PER_HOUR = 5;
-/**
- * Notifications a box's backend may send in a day (scheduled() returning {notify}). Fewer than notes:
- * each one buzzes your phone, and a schedule runs up to 288 times a day.
- */
+/** Fewer than notes: each one buzzes your phone, and a schedule runs up to 288 times a day. */
 export const NOTIFY_PER_DAY = 10;
 
-/** What hatbox.ask, .send and .feed, and backends' notifications, need: given once the chats exist. */
 export type BoxDeps = {
   settings: SettingsStore;
   spend: Spend;
-  /** The background model, for hatbox.ask. */
   model: ModelClient;
   chats: Chats;
   feeds: BoxFeeds;
@@ -101,14 +89,13 @@ export class Boxes {
   private d: BoxDeps | null = null;
   /** What hatbox.ask's answers on their way may still cost, held against the boxes' daily limit. */
   private asking = 0;
-  /** Server boxes' backends, on the boxes guest (PLAN.md §21.6). */
   backends?: Backends;
 
   constructor(
     private db: Db,
     private events: EventBus,
     private clock: () => number = Date.now,
-    /** Where boxes' secrets are kept: with the brain's other secrets, out of the database. */
+    /** Boxes' secrets stay out of the database, with the brain's other secrets. */
     private vault?: Secrets,
   ) {
     this.key = secretKey(db, "box_key");
@@ -118,7 +105,6 @@ export class Boxes {
     return new Date(this.clock()).toISOString();
   }
 
-  /** Called once the chats exist: hatbox.ask, .send and .feed need them. */
   connect(d: BoxDeps) {
     this.d = d;
   }
@@ -127,7 +113,6 @@ export class Boxes {
     return this.d?.feeds ?? null;
   }
 
-  /** The latest changed first; only `botId`'s, when it's given. */
   list(botId?: string): Box[] {
     const where = botId === undefined ? "" : "WHERE bot_id = ?";
     return this.db
@@ -152,7 +137,6 @@ export class Boxes {
     return { ...box, versions, secrets: this.secrets(id) };
   }
 
-  /** A version's page, the current one unless `n` is given. */
   page(id: number, n?: number): BoxPage | null {
     const v =
       n ??
@@ -168,7 +152,6 @@ export class Boxes {
     return page && (files?.length ? { ...page, files } : page);
   }
 
-  /** A version's files, the current one's unless `n` is given; none for a box of one page. */
   files(id: number, n?: number): BoxFile[] {
     return this.db
       .query<BoxFile, [number, number | null, number]>(
@@ -178,7 +161,6 @@ export class Boxes {
       .all(id, n ?? null, id);
   }
 
-  /** What the current version's box.json says. */
   config(id: number): BoxConfig {
     try {
       return boxConfig(this.files(id).find((f) => f.path === BOX_CONFIG)?.content);
@@ -187,21 +169,16 @@ export class Boxes {
     }
   }
 
-  /** The hosts the box's backend may reach, from its box.json. */
   hosts(id: number): string[] {
     return this.config(id).hosts;
   }
 
-  /** The secrets the current version's box.json declares, and whether you've set each; no values. */
   secrets(id: number): BoxSecret[] {
     const set = this.vault?.box(id) ?? {};
     return this.config(id).secrets.map((name) => ({ name, set: name in set }));
   }
 
-  /**
-   * The secrets of the box you've set, whether its box.json declares them now or not: a later version
-   * could declare one again.
-   */
+  /** Declared by box.json now or not: a later version could declare one again. */
   setSecretNames(id: number): string[] {
     return Object.keys(this.vault?.box(id) ?? {});
   }
@@ -210,10 +187,7 @@ export class Boxes {
     return this.setSecretNames(id).length > 0;
   }
 
-  /**
-   * What the backend starts with: the secrets its box.json declares that you've set, and a name for
-   * that set of them, which tells the guest whether it has them.
-   */
+  /** `digest` tells the guest whether it already has these. */
   secretValues(id: number): BoxSecrets {
     const set = this.vault?.box(id) ?? {};
     const values = Object.fromEntries(
@@ -225,7 +199,6 @@ export class Boxes {
     return { values, digest };
   }
 
-  /** You set or (null) remove some of the box's secrets. Only names its box.json declares are set. */
   async setSecrets(id: number, changes: Record<string, string | null>): Promise<BoxSecret[]> {
     if (!this.vault) throw new BoxError("Boxes can't have secrets here.", 503);
     const declared = this.config(id).secrets;
@@ -236,10 +209,7 @@ export class Boxes {
     return this.secrets(id);
   }
 
-  /**
-   * `text` from the box's guest with every value of its secrets taken out, also as a URL or JSON
-   * would spell it: for what the model, the page or a log sees.
-   */
+  /** Each secret's value also as a URL or JSON would spell it. */
   redact(id: number, text: string): string {
     for (const [name, value] of Object.entries(this.vault?.box(id) ?? {}))
       for (const form of new Set([
@@ -251,12 +221,10 @@ export class Boxes {
     return text;
   }
 
-  /** Whether the current version has a backend. */
   server(id: number): boolean {
     return this.files(id).some((f) => f.path === BOX_SERVER);
   }
 
-  /** Boxes whose backend has a schedule, and when it last ran (or since when it's had none). */
   scheduled(): { id: number; cron: string; since: string; ranAt: string | null }[] {
     return this.db
       .query<{ id: number; since: string; ranAt: string | null }, []>(
@@ -270,19 +238,17 @@ export class Boxes {
       });
   }
 
-  /** The box's schedule ran at `at`. */
   ran(id: number, at: string) {
     this.db.query("UPDATE boxes SET ran_at = ? WHERE id = ?").run(at, id);
   }
 
-  /** A number for a new box, which nothing has had: one with files is built under it first. */
+  /** A box with files is built under its number before the box exists. */
   reserve(): number {
     return this.db
       .query<{ id: number }, []>("INSERT INTO box_ids DEFAULT VALUES RETURNING id")
       .get()?.id as number;
   }
 
-  /** The number the box's next version gets. */
   nextVersion(id: number): number {
     return (
       (this.db
@@ -294,8 +260,8 @@ export class Boxes {
   }
 
   /**
-   * What the first version tainted work wrote had read, or null. Its page may carry what that work
-   * read into every later version, so the whole box reads back as untrusted (PLAN.md §21.1).
+   * A tainted version's page may carry what its work read into every later version, so the whole box
+   * reads back as untrusted.
    */
   taintedBy(id: number): string | null {
     return (
@@ -313,7 +279,6 @@ export class Boxes {
       conversationId: number | null;
       title: string;
       html: string;
-      /** A box with files: the number it was built under, and the files. */
       id?: number;
       files?: BoxFile[];
     },
@@ -334,10 +299,6 @@ export class Boxes {
     return this.changed(id);
   }
 
-  /**
-   * A new version with this title and page (and files, for a box with them), which opens from now on;
-   * null when nothing changed.
-   */
   save(id: number, title: string, html: string, made: Made, files?: BoxFile[]): Box | null {
     const current = this.page(id);
     if (!current) throw new BoxError(`There's no box #${id}.`);
@@ -357,7 +318,6 @@ export class Boxes {
     return this.changed(id);
   }
 
-  /** A new version with an earlier one's title and page. */
   revert(id: number, n: number, made: Made): Box | null {
     const old = this.page(id, n);
     if (!old) throw new BoxError(`Box #${id} has no version ${n}.`);
@@ -400,13 +360,11 @@ export class Boxes {
     return gone;
   }
 
-  /** Shows the box under the reply that made or changed it; the last one it touched, if several. */
   attach(messageId: number, boxId: number) {
     this.db.query("UPDATE messages SET box_id = ? WHERE id = ?").run(boxId, messageId);
     this.events.emit({ type: "message.box", id: messageId, boxId });
   }
 
-  /** A deleted bot's boxes go to Hatbot (PLAN.md §21.1). */
   orphan(botId: string) {
     const ids = this.db
       .query<{ id: number }, [string, string]>(
@@ -422,7 +380,6 @@ export class Boxes {
     return box;
   }
 
-  /** A call from the box's page through the app (PLAN.md §21.2). */
   async call(id: number, c: BoxCall): Promise<BoxAnswer> {
     switch (c.op) {
       case "fetch":
@@ -491,10 +448,7 @@ export class Boxes {
     return this.d;
   }
 
-  /**
-   * Haiku's answer to the page, with no tools (hatbox.ask). The chat's model never sees it. Boxes have
-   * a daily limit of their own, besides the brain's, and nothing is asked while Hatbot is paused.
-   */
+  /** The chat's model never sees the answer. Boxes have a daily limit of their own, besides the brain's. */
   private async ask(box: Box, c: Extract<BoxCall, { op: "ask" }>): Promise<string> {
     const d = this.connected();
     const { paused, limits } = d.settings.get();
@@ -529,7 +483,6 @@ export class Boxes {
     }
   }
 
-  /** A note from the page in the box's chat (hatbox.send), a few an hour. */
   private send(box: Box, text: string) {
     const since = new Date(this.clock() - 3600_000).toISOString();
     const sent =
@@ -546,9 +499,8 @@ export class Boxes {
   }
 
   /**
-   * What the box's backend asked to tell you (scheduled() returning {notify}): a notification that
-   * opens the box, and a note in its chat, so it's kept and the bot reads it, as untrusted, with your
-   * next message. Why it wasn't sent, or null.
+   * Also a note in the box's chat, so it's kept and the bot reads it, as untrusted, with your next
+   * message. Returns why it wasn't sent, or null.
    */
   notify(id: number, text: string): string | null {
     const box = this.get(id);
@@ -575,7 +527,6 @@ export class Boxes {
     return null;
   }
 
-  /** Everything the box's page saved, by key. */
   data(id: number): Record<string, unknown> {
     const rows = this.db
       .query<{ key: string; value: string }, [number]>(
@@ -590,8 +541,8 @@ export class Boxes {
   }
 
   /**
-   * Where the app opens a version's page, for a while: the signature stands in for the session, which
-   * the page's opaque origin doesn't send, and which the iOS app doesn't have.
+   * The signature stands in for the session, which the page's opaque origin doesn't send, and which the
+   * iOS app doesn't have.
    */
   address(id: number, n: number, dark: boolean): string {
     const exp = Math.floor((this.clock() + OPEN_MS) / 1000);
@@ -600,7 +551,6 @@ export class Boxes {
     return `${API_PREFIX}/boxes/${id}/frame?${q}`;
   }
 
-  /** The page with Hatbox at its top, while the address holds; null once it doesn't. */
   frame(id: number, n: number, exp: number, sig: string, dark: boolean): string | null {
     if (exp * 1000 < this.clock() || !sameText(sig, this.sign(id, n, exp))) return null;
     const page = this.page(id, n);
@@ -608,23 +558,20 @@ export class Boxes {
   }
 }
 
-/** A box's page's Content-Security-Policy (PLAN.md §21.1), in the app and in box_look's render. */
+/** Used in the app and in box_look's render. */
 export const FRAME_CSP =
   "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
 
 /**
- * The app's colours, following light and dark (apps/web/src/styles.css), and its type, as defaults a
- * box's own styles override. Its fonts can't load here: the page reaches nothing outside itself.
+ * The app's colours (apps/web/src/styles.css) as defaults a box's own styles override. Its fonts can't
+ * load here: the page reaches nothing outside itself.
  */
 const BASE_CSS = `:root{--hb-bg:light-dark(#f5f5f7,#161617);--hb-surface:light-dark(#fff,#1e1e20);--hb-text:light-dark(#1d1d1f,#f5f5f7);--hb-muted:light-dark(#6e6e73,#98989d);--hb-line:light-dark(rgba(0,0,0,.09),rgba(255,255,255,.09));--hb-accent:light-dark(#e8820c,#ff9f2e);--hb-on-accent:#1d1d1f;--hb-attention:light-dark(#007aff,#0a84ff);--hb-danger:light-dark(#ff3b30,#ff453a);--hb-success:light-dark(#34c759,#30d158);--hb-font:system-ui,-apple-system,"Segoe UI",sans-serif;--hb-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}:where(:root){background:var(--hb-bg);color:var(--hb-text);font-family:var(--hb-font)}`;
 
 /**
- * window.hatbox (PLAN.md §21.2). Each call goes to the app, which passes it on to the brain for this
- * box only (POST /boxes/:id/call), so a new kind of call needs nothing new in the apps. In the web app
- * the page is a frame and calls are messages to its parent, which also sends the theme; in the iOS app
- * it's the web view's own page, and calls go to WebKit's `hatbox` handler, which replies. Links to
- * other pages open in a new tab, since the frame can't leave the box. In box_look's render there's no
- * app: the store is kept in memory for that render, and calls that would reach outside the page fail.
+ * Each call goes through the app to the brain for this box only, so a new kind of call needs nothing
+ * new in the apps. The web app's frame posts to its parent; the iOS app's web view uses WebKit's
+ * `hatbox` handler. Links open in a new tab, since the frame can't leave the box.
  */
 const HATBOX = `(() => {
   const root = document.documentElement;
@@ -724,15 +671,13 @@ const HATBOX = `(() => {
   });
 })();`;
 
-/** A box's page with Hatbox's styles and script first: after a doctype, so it keeps standards mode. */
+/** After any doctype, so the page keeps standards mode. */
 export function framed(html: string, dark: boolean): string {
   return withHatbox(html, dark, null).html;
 }
 
 /**
- * A box's page as box_look draws it (PLAN.md §21.12): hatbox.store starts with `store` and keeps what
- * the page saves in memory, for that render only. `lines`: how many lines Hatbox puts above the page's
- * own, which the line numbers of its errors count.
+ * `lines`: how many lines Hatbox puts above the page's own, which the line numbers of its errors count.
  */
 export function previewed(
   html: string,

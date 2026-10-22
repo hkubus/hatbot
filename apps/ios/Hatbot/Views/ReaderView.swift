@@ -1,12 +1,9 @@
-// A Markdown file to read, such as a research report: rendered as replies are, in a column that stays
-// readable on an iPad, with Edit for a note and Share for the file.
 import SwiftUI
 
 struct ReaderView: View {
   let target: ReadTarget
   @Environment(AppStore.self) private var store
   @State private var file: ReadFile?
-  /// The text as a file under its own name, for Share.
   @State private var shared: URL?
   @State private var gone = false
   @State private var failed = false

@@ -1,5 +1,3 @@
-// Lines, columns (grouped or stacked) or horizontal bars, with a hover readout (crosshair on
-// lines, the bar itself on bars) that also follows the arrow keys.
 import {
   chartValue,
   isStacked,
@@ -20,13 +18,11 @@ export function SeriesPlot({ spec }: { spec: SeriesChart }) {
   return spec.type === "bar" && spec.horizontal ? <Rows spec={spec} /> : <Columns spec={spec} />;
 }
 
-/** Every value drawn: a stack's ends, or each series' points. */
 const plotted = (spec: SeriesChart, spans: ([number, number] | null)[][]) =>
   isStacked(spec)
     ? spans.flat().flatMap((sp) => sp ?? [])
     : spec.series.flatMap((s) => s.data).filter((v): v is number => v !== null);
 
-/** Lines, or columns side by side or stacked. */
 function Columns({ spec }: { spec: SeriesChart }) {
   const labels = spec.x.map(String);
   const n = labels.length;
@@ -51,7 +47,6 @@ function Columns({ spec }: { spec: SeriesChart }) {
 
   const tickText = ticks.map((t) => fmt(t, true));
   const left = Math.max(...tickText.map((t) => t.length)) * CHAR_W + 8;
-  // One line gets its last value beside its end.
   const lastOf = (data: (number | null)[]) => {
     for (let i = data.length - 1; i >= 0; i--) if (data[i] !== null) return i;
     return -1;
@@ -195,7 +190,6 @@ function Columns({ spec }: { spec: SeriesChart }) {
 
 const ROW_GAP = 10;
 
-/** Horizontal bars, a row per x: names on the left, each bar's value (a stack's total) at its tip. */
 function Rows({ spec }: { spec: SeriesChart }) {
   const labels = spec.x.map(String);
   const n = labels.length;
@@ -214,7 +208,6 @@ function Rows({ spec }: { spec: SeriesChart }) {
   const values = plotted(spec, spans);
   const lo = Math.min(0, ...values);
   const hi = Math.max(0, ...values);
-  // The labels at the tips, and room for the widest beyond each end.
   const tips: (number | null)[][] = stacked
     ? totals.map((t) => [t])
     : labels.map((_, i) => spec.series.map((s) => s.data[i] ?? null));
@@ -314,7 +307,6 @@ function Rows({ spec }: { spec: SeriesChart }) {
  * outer ends rounded. One too thin to see is left out.
  */
 function segments(stack: ([number, number] | null)[], at: (v: number) => number) {
-  // Which way bigger values go on screen.
   const up = Math.sign(at(1) - at(0));
   return stack.flatMap((sp, si) => {
     if (!sp) return [];
@@ -325,7 +317,6 @@ function segments(stack: ([number, number] | null)[], at: (v: number) => number)
   });
 }
 
-/** The values at one x: value first, then the series; a stack adds its total. */
 function readout(spec: SeriesChart, i: number) {
   const names = seriesNames(spec);
   const single = spec.series.length === 1;
@@ -348,7 +339,6 @@ function readout(spec: SeriesChart, i: number) {
   );
 }
 
-/** Title, legend and the values as a table, for the frame. */
 function frame(spec: SeriesChart) {
   const names = seriesNames(spec);
   const fmt = (v: number | null) => (v === null ? "" : chartValue(v, spec.unit));
@@ -385,7 +375,6 @@ function linePath(data: (number | null)[], x: (i: number) => number, y: (v: numb
   return d;
 }
 
-/** A bar from the baseline to its value: rounded at the value's end, square at the baseline. */
 function barPath(x: number, w: number, base: number, end: number, radius = 4) {
   const up = end < base;
   const r = Math.min(radius, w / 2, Math.abs(base - end));
@@ -401,7 +390,6 @@ function barPath(x: number, w: number, base: number, end: number, radius = 4) {
   ].join(" ");
 }
 
-/** barPath turned on its side: from the baseline at x = base to x = end, at rows y to y + h. */
 function hbarPath(y: number, h: number, base: number, end: number, radius: number) {
   const right = end > base;
   const r = Math.min(radius, h / 2, Math.abs(base - end));

@@ -1,4 +1,3 @@
-// The Spend page's numbers (web Spend.tsx) and the charts made of them.
 import Foundation
 
 struct SpendHour: Codable, Equatable, Sendable {

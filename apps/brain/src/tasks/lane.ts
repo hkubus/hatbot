@@ -1,5 +1,3 @@
-// The lanes (PLAN.md §5.6). The screen lane: one task on the desktop at a time, first come first served.
-
 export class ScreenLane {
   private holder: number | null = null;
   private queue: { taskId: number; grant: () => void }[] = [];
@@ -10,14 +8,13 @@ export class ScreenLane {
     return this.holder;
   }
 
-  /** Someone is waiting for the screen. */
   get waiting() {
     return this.queue.length > 0;
   }
 
   /**
-   * Waits for the screen. Rejects if `signal` aborts first. `first`: ahead of the line, and the holder is
-   * asked to let go as soon as it can (a task you took over for).
+   * `first`: ahead of the line, and the holder is asked to let go as soon as it can (a task you took
+   * over for).
    */
   acquire(taskId: number, signal: AbortSignal, first = false): Promise<void> {
     if (signal.aborted) return Promise.reject(signal.reason);
@@ -45,7 +42,6 @@ export class ScreenLane {
     });
   }
 
-  /** The holder says how it lets go early when a task waits ahead of the line. */
   onYield(taskId: number, fn: () => void) {
     if (this.holder === taskId) this.yielder = fn;
   }
@@ -59,14 +55,13 @@ export class ScreenLane {
   }
 }
 
-/** The background lane: up to `size` tasks at once, the rest in order (PLAN.md §5.6). */
+/** The background lane: up to `size` tasks at once, the rest in order. */
 export class Pool {
   private active = 0;
   private queue: { grant: () => void }[] = [];
 
   constructor(readonly size: number) {}
 
-  /** Waits for a slot. Rejects if `signal` aborts first. */
   acquire(signal: AbortSignal): Promise<void> {
     if (signal.aborted) return Promise.reject(signal.reason);
     if (this.active < this.size) {
@@ -89,7 +84,6 @@ export class Pool {
     });
   }
 
-  /** Hands the slot to the next in line. */
   release() {
     const next = this.queue.shift();
     if (next) next.grant();

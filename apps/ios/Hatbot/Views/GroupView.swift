@@ -1,9 +1,7 @@
-// A group chat's page (PLAN.md §14.4): its name and bots. No id makes one.
 import SwiftUI
 
 struct GroupView: View {
   let id: Int?
-  /// After making one.
   var made: ((Conversation) -> Void)?
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss

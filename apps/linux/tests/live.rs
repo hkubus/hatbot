@@ -1,4 +1,3 @@
-// L4: the live desktop (PLAN.md §24.2).
 mod common;
 
 use std::cell::RefCell;

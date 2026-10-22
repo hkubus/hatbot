@@ -1,8 +1,6 @@
-// The times the chat shows between messages, like Messages.
 import Foundation
 
-/// "Today 14:05" over a message that comes an hour or more after the one before. Each is worked out
-/// once a day: at midnight "Today" becomes "Yesterday".
+/// Worked out once a day: at midnight "Today" becomes "Yesterday".
 final class TimeLabels {
   private var day: Date?
   private var labels: [Int: String] = [:]

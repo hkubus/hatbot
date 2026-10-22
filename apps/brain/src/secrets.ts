@@ -1,7 +1,5 @@
-// The Anthropic API key, the ntfy server and plugins' tokens, as set in Settings (PLAN.md §6.4), and
-// boxes' secrets, set on a box's page (§21.6). They're kept in a file of their own in the data
-// directory, mode 600, not in the database: the nightly snapshots and the settings every client is sent
-// don't carry them. Unset, the host's apply (/etc/hatbot, from deploy.sh and the env files).
+// Kept in a file of their own, mode 600, not in the database, so the nightly snapshots and the
+// settings every client is sent don't carry them. Unset, the host's apply (/etc/hatbot).
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ConnectionSource, Connections } from "@hatbot/shared";
@@ -11,11 +9,10 @@ type Values = Record<string, string>;
 type Stored = {
   anthropicApiKey?: string;
   ntfy?: NtfyConfig;
-  /** Plugins' environment, by name, in place of the host's /etc/hatbot/*.env. */
   env?: Values;
   /** Secrets a plugin takes by any name (MCP's ${NAME}), by plugin. */
   named?: Record<string, Values>;
-  /** Boxes' secrets, by box: only its backend reads them. */
+  /** Only the box's backend reads them. */
   boxes?: Record<string, Values>;
 };
 
@@ -32,7 +29,6 @@ const byId = (v: unknown): Record<string, Values> =>
     Object.entries(v && typeof v === "object" ? v : {}).map(([id, x]) => [id, values(x)]),
   );
 
-/** Throws, with the API's answer, when the API won't take the key. */
 export type KeyCheck = (key: string) => Promise<void>;
 
 /** The cheapest call that needs a working key. */
@@ -91,12 +87,10 @@ export class Secrets {
     );
   }
 
-  /** Plugins' environment variables set in Settings, which replace the host's. */
   pluginEnv(): Values {
     return this.stored.env ?? {};
   }
 
-  /** The secrets set in Settings for a plugin that takes them by any name. */
   named(plugin: string): Values {
     return this.stored.named?.[plugin] ?? {};
   }
@@ -106,12 +100,10 @@ export class Secrets {
     this.save({ ...this.stored, env: merge(this.stored.env, changes) });
   }
 
-  /** A box's secrets, by name. */
   box(id: number): Values {
     return this.stored.boxes?.[id] ?? {};
   }
 
-  /** Each value replaces the box's secret by that name; null removes it. */
   setBox(id: number, changes: Record<string, string | null>) {
     const boxes: Record<string, Values> = { ...this.stored.boxes };
     boxes[id] = merge(boxes[id], changes);
@@ -126,7 +118,7 @@ export class Secrets {
     });
   }
 
-  /** For the app: whether each is set and where from, never the key or the token. */
+  /** Never the key or the token. */
   view(): Connections {
     const key = this.apiKey();
     const ntfy = this.ntfy();
@@ -147,13 +139,12 @@ export class Secrets {
     };
   }
 
-  /** Tries the key first and throws if the API won't take it. Null goes back to the host's. */
   async setApiKey(key: string | null) {
     if (key) await this.checkKey(key);
     this.save({ ...this.stored, anthropicApiKey: key ?? undefined });
   }
 
-  /** A token left out stays as it is now, the host's included. Null goes back to the host's. */
+  /** A token left out stays as it is now, the host's included. */
   setNtfy(n: { url: string; topic: string; token?: string } | null) {
     this.save({
       ...this.stored,
@@ -161,7 +152,6 @@ export class Secrets {
     });
   }
 
-  /** Called after each change, to point the model client and the notifier at it. */
   onChange(fn: () => void) {
     this.listeners.push(fn);
   }

@@ -1,4 +1,4 @@
-// The agent's HTTP side, for the brain only (PLAN.md §21.6). A request about a box says which version
+// The agent's HTTP side, for the brain only. A request about a box says which version
 // of it the brain means (x-hatbox-version); one the guest hasn't built is answered 409 with `missing`,
 // and the brain sends it again. One that may start its backend also names its secrets
 // (x-hatbox-secrets); others than the agent holds are answered 409 with `secrets`, and the brain sends
@@ -21,7 +21,6 @@ const json = (body: unknown, status = 200) =>
   Response.json(body, { status, headers: status >= 400 ? { "x-hatbox-error": "1" } : {} });
 const versionOf = (req: Request) => Number(req.headers.get("x-hatbox-version")) || 0;
 const secretsOf = (req: Request) => req.headers.get("x-hatbox-secrets") ?? "";
-/** A small JSON body, or undefined. */
 const small = async (req: Request, max: number): Promise<unknown> => {
   const bytes = await readUpTo(req, max);
   try {
@@ -35,7 +34,8 @@ export function routes(
   guest: Guest,
   o: {
     token: string;
-    version?: string /** Where an update is dropped, when they're on. */;
+    version?: string;
+    /** Where an update is dropped, when they're on. */
     updates?: string;
   },
 ) {

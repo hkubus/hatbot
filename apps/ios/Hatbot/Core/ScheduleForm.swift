@@ -1,4 +1,3 @@
-// A schedule as its page edits it (Views/SchedulesView.swift), apart from the view so it can be tested.
 import Foundation
 
 struct ScheduleForm: Equatable {

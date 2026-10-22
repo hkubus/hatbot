@@ -12,7 +12,6 @@ const id = (raw: string) => {
   return n;
 };
 
-// Teach-by-showing (PLAN.md §8): record, draft a skill, review and save it.
 export const teachRoutes = new Hono<AppEnv>()
   .use("/teach", requireAuth)
   .use("/teach/*", requireAuth)

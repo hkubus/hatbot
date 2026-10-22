@@ -1,8 +1,3 @@
-// The desktop's live view (PLAN.md §10.5): JPEG frames over a WebSocket. Watch-only until you take
-// over; then a tap clicks, a drag drags, a long press right-clicks, two fingers scroll, and the
-// Keyboard button types. Pinching zooms in, and moving the pinch moves around; watching, one finger
-// moves around a zoomed screen and a double tap zooms back out. On its tab in landscape the screen
-// takes the whole height, with the controls beside it.
 import SwiftUI
 import UIKit
 
@@ -66,7 +61,6 @@ final class LiveFeed {
 
 struct LiveView: View {
   var taskId: Int?
-  /// The task on the screen and its latest steps, under the view.
   var showsTask = true
   /// On its own tab: in landscape the screen takes the whole height and the bars go.
   var fullScreen = false
@@ -122,7 +116,6 @@ struct LiveView: View {
     .onChange(of: landscape) { zoom = Zoom() }
   }
 
-  /// The banner, the buttons and the task; with `screen`, the screen goes between the banner and the buttons.
   @ViewBuilder
   private func controls(control: Bool, screen showsScreen: Bool = false) -> some View {
     let desktop = store.desktop
@@ -188,7 +181,6 @@ struct LiveView: View {
           .font(.subheadline)
           .foregroundStyle(.white.opacity(0.8))
       }
-      // Watching, it only zooms and moves around.
       TouchSurface(desktopSize: size, control: control, zoom: zoom, setZoom: { zoom = $0 }, send: { feed.send($0) })
     }
     .aspectRatio(size.width / size.height, contentMode: .fit)
@@ -205,7 +197,6 @@ struct LiveView: View {
   }
 }
 
-/// The task using the screen, and its last few steps.
 private struct ScreenTask: View {
   let taskId: Int
   @Environment(AppStore.self) private var store
@@ -239,7 +230,6 @@ private struct ScreenTask: View {
   }
 }
 
-/// Turns touches on the screen into the desktop's pointer events, in desktop pixels.
 private struct TouchSurface: UIViewRepresentable {
   let desktopSize: CGSize
   /// You're in control: touches go to the desktop. Otherwise they only zoom and move around.
@@ -304,7 +294,6 @@ private struct TouchSurface: UIViewRepresentable {
 
     init(parent: TouchSurface) { self.parent = parent }
 
-    /// Where a touch is on the desktop, in its pixels, through the zoom.
     private func point(_ g: UIGestureRecognizer) -> (x: Double, y: Double) {
       guard let view = g.view, view.bounds.width > 0, view.bounds.height > 0 else { return (0, 0) }
       let p = zoom.unzoomed(g.location(in: view))
@@ -370,7 +359,6 @@ private struct TouchSurface: UIViewRepresentable {
       }
     }
 
-    /// Watching: moves around the zoomed screen.
     private func move(_ g: UIPanGestureRecognizer) {
       guard let view = g.view else { return }
       let t = g.translation(in: view)

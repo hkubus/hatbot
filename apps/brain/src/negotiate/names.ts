@@ -1,4 +1,4 @@
-/** The negotiate tools' names, which no plugin may take (PLAN.md §16.3). */
+/** No plugin may take these names. */
 export const NEGOTIATE_TOOL_NAMES = [
   "negotiate_appraise",
   "negotiate_start",

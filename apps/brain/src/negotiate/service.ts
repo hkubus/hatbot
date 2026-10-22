@@ -1,6 +1,4 @@
-// Negotiation (PLAN.md §16): wants, negotiations and their messages, the tools that drive them, and the
-// desktop tasks that read a conversation or send one message in it. Scout's tools are called by name
-// through the MCP plugin, as watchers call plugin tools.
+// Scout's tools are called by name through the MCP plugin, as watchers call plugin tools.
 import {
   type Appraisal,
   type Approval,
@@ -48,7 +46,6 @@ export type NegotiationsDeps = {
   bots: Bots;
   memory: MemoryStore;
   desktop: Desktop;
-  /** Haiku, for a note on a mandate. */
   model: ModelClient;
   spend: Spend;
   clock?: () => number;
@@ -113,31 +110,23 @@ const toMessage = (r: MessageRow): NegotiationMessage => ({
   sentAt: r.sent_at,
 });
 
-/**
- * The mandate from its column, which also keeps the owner's note it was made from (see applyDecision):
- * the opening task follows that, and it isn't part of the mandate.
- */
+// The column also keeps the owner's note the mandate was made from, which isn't part of the mandate.
 const mandateOf = (json: string): Mandate => {
   const { note: _, ...mandate } = JSON.parse(json) as Mandate & { note?: string };
   return mandate;
 };
 
-/** A message's words as the record compares them: letters and digits only, lowercased. */
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
-/** What the desktop model read in a conversation, oldest first. */
 export type ConversationReport = { from: "seller" | "us"; text: string }[];
 
-/** Its outcome, for the desktop model: what it may do next. */
 export type Recorded = { text: string; stale: boolean; alreadySent: boolean };
 
 const FINAL_TASK = ["done", "failed", "cancelled"];
-/** Sends at most this long. */
 export const MAX_TEXT = 1000;
 
 export class Negotiations {
   readonly clock: () => number;
-  /** Mandate approvals whose decision is being applied now. */
   private applying = new Set<number>();
 
   constructor(readonly d: NegotiationsDeps) {
@@ -156,7 +145,7 @@ export class Negotiations {
     });
   }
 
-  /** The owner decided on a mandate or a hold: told by the event, or found by due(). */
+  /** Told by the event, or found by due(). */
   private decided(a: Approval) {
     const run =
       a.kind === "mandate"
@@ -178,7 +167,6 @@ export class Negotiations {
     );
   }
 
-  /** A bot's, or everyone's; newest first. */
   list(opts: { botId?: string; open?: boolean } = {}): Negotiation[] {
     const where: string[] = [];
     const args: string[] = [];
@@ -212,7 +200,6 @@ export class Negotiations {
     return r ? toMessage(r) : null;
   }
 
-  /** Negotiations from their rows, each with its last message that didn't fail, in one query. */
   private negotiations(rows: Row[]): Negotiation[] {
     const last = new Map(
       this.d.db
@@ -249,7 +236,6 @@ export class Negotiations {
     }));
   }
 
-  /** Changes columns of a negotiation and tells the clients. */
   update(id: number, set: Record<string, string | number | null>) {
     const cols = { ...set, updated_at: this.now() };
     this.d.db
@@ -267,23 +253,18 @@ export class Negotiations {
     if (negotiation) this.d.events.emit({ type: "negotiation.updated", negotiation });
   }
 
-  /**
-   * The negotiate tools for `bot`, given the plugin tools it has: none without Scout, whose
-   * scout_listing_detail every negotiation starts from.
-   */
+  /** None without Scout, whose scout_listing_detail every negotiation starts from. */
   tools(bot: Bot, available: PluginTool[], where: { conversationId: number | null }): PluginTool[] {
     if (!scoutTool(available, "scout_listing_detail")) return [];
     return negotiateTools(this, bot, available, where);
   }
 
-  /** One of the bot's own negotiations, or a PluginError the model can read. */
   mine(bot: Bot, id: number): Negotiation {
     const n = this.get(id);
     if (!n || n.botId !== bot.id) throw new PluginError(`There's no negotiation #${id}.`);
     return n;
   }
 
-  /** A want to file a new negotiation under: an open one of the bot's, or a new one. */
   wantFor(bot: Bot, want: number | string | undefined, title: string): number {
     if (typeof want === "number") {
       const w = this.d.db
@@ -304,7 +285,6 @@ export class Negotiations {
     return id;
   }
 
-  /** Makes a negotiation's record; its card goes under the reply that started it. */
   create(input: {
     bot: Bot;
     wantId: number;
@@ -342,7 +322,6 @@ export class Negotiations {
     return this.get(id) as Negotiation;
   }
 
-  /** Shows a negotiation under a chat reply, as a task shows. */
   private attach(messageId: number, negotiationId: number) {
     const done = this.d.db
       .query(
@@ -352,7 +331,6 @@ export class Negotiations {
     if (done) this.d.events.emit({ type: "message.negotiation", id: messageId, negotiationId });
   }
 
-  /** An open negotiation already on this listing, or on this want, which N4's several sellers allow. */
   busy(listingKey: string, wantId: number): Negotiation | null {
     const rows = this.d.db
       .query<Row, [string, number]>(
@@ -362,7 +340,6 @@ export class Negotiations {
     return this.negotiations(rows)[0] ?? null;
   }
 
-  /** The message being sent now, if any. */
   inFlight(id: number): { messageId: number; taskId: number | null } | null {
     const r = this.d.db
       .query<{ id: number; task_id: number | null }, [number]>(
@@ -373,7 +350,6 @@ export class Negotiations {
     return r ? { messageId: r.id, taskId: r.task_id } : null;
   }
 
-  /** A desktop task that's reading the conversation now, if any. */
   checking(id: number): number | null {
     const r = this.d.db
       .query<{ task_id: number }, [number]>(
@@ -385,7 +361,6 @@ export class Negotiations {
     return r?.task_id ?? null;
   }
 
-  /** What negotiate_send's policy reads besides the negotiation: the clock and the pace so far. */
   facts(n: Negotiation): SendFacts {
     const now = this.clock();
     const sent = "m.direction = 'out' AND m.status IN ('sending', 'sent', 'unconfirmed')";
@@ -444,7 +419,6 @@ export class Negotiations {
     };
   }
 
-  /** Asks the owner to approve the negotiation's mandate (PLAN.md §16.1); `before` says why again. */
   askMandate(n: Negotiation, before?: string): Approval {
     const reason = mandateReason(n, this.d.bots.nameOf(n.botId));
     const approval = this.d.approvals.create({
@@ -459,10 +433,6 @@ export class Negotiations {
     return approval;
   }
 
-  /**
-   * The owner decided on a mandate. Approved: the negotiation opens, with the note's numbers if it had
-   * one, and a task sends the opening message. Denied or cancelled: abandoned. Unanswered: expired.
-   */
   async mandateDecided(a: Approval) {
     if (a.kind !== "mandate" || this.applying.has(a.id)) return;
     const [n] = this.negotiations(
@@ -523,7 +493,6 @@ export class Negotiations {
     this.due();
   }
 
-  /** The owner's note the negotiation's mandate was made from, kept beside it. */
   private mandateNote(id: number): string | null {
     return (
       this.d.db
@@ -534,7 +503,6 @@ export class Negotiations {
     );
   }
 
-  /** Now, or the end of quiet hours if it's within them. */
   private nextSendAt(): string {
     const now = new Date(this.clock());
     const h = now.getHours();
@@ -545,12 +513,7 @@ export class Negotiations {
     return at.toISOString();
   }
 
-  /**
-   * Every minute: decisions on mandates the brain missed, mandates that ran out, and opening messages
-   * that are due. Nothing else wakes a negotiation until N3's inbox poller.
-   */
   due() {
-    // Paused: nothing starts, and what's due waits for Resume.
     if (this.d.tasks.paused()) return;
     // Decided while the brain was away. An approved hold needs nothing more.
     const waiting = this.d.db
@@ -584,7 +547,6 @@ export class Negotiations {
     }
   }
 
-  /** The background task that writes and sends the opening message, under the reply that started it. */
   private startOpening(n: Negotiation) {
     const approval = n.approvalId ? this.d.approvals.get(n.approvalId) : null;
     // Opened before the note was kept beside the mandate: the approval's own.
@@ -605,7 +567,7 @@ export class Negotiations {
     });
   }
 
-  /** Throws unless the desktop can run the exact-text check: an older desktop-agent can't. */
+  /** An older desktop-agent can't run the exact-text check. */
   async desktopReady() {
     const s = await this.d.desktop.agent.status().catch(() => null);
     if (!s) throw new PluginError("The desktop isn't answering, so nothing can be sent or read.");
@@ -615,15 +577,10 @@ export class Negotiations {
       );
   }
 
-  /**
-   * Starts the desktop task that sends `text` in the negotiation's conversation, and nothing else. From
-   * a task it waits for it; from the chat it shows under the reply.
-   */
   async send(
     n: Negotiation,
     input: SendInput,
     call: CallContext,
-    /** A message claimed for it already. */
     claimed: number | null = null,
   ): Promise<string> {
     const text = collapse(input.text);
@@ -641,10 +598,7 @@ export class Negotiations {
     return this.sendOutcome(n.id, msg, ended);
   }
 
-  /**
-   * Records a message as being sent, which blocks a second send in the negotiation from here on: call it
-   * right after the policy, before anything waits.
-   */
+  /** Blocks a second send in the negotiation: call it right after the policy, before anything waits. */
   claimSend(n: Negotiation, input: SendInput): number {
     const msg = this.d.db
       .query<{ id: number }, (string | number | null)[]>(
@@ -663,12 +617,10 @@ export class Negotiations {
     return msg;
   }
 
-  /** A claimed message that never got as far as its task. */
   dropSend(messageId: number) {
     this.setStatus(messageId, "failed");
   }
 
-  /** Starts the desktop task that reads the conversation and records the seller's messages. */
   async check(n: Negotiation, call: CallContext): Promise<string> {
     const task = this.desktopTask(n, call, {
       title: `Read the seller's messages: ${n.title}`.slice(0, 80),
@@ -719,7 +671,6 @@ export class Negotiations {
     return task;
   }
 
-  /** How a send went, for the task that waited for it. */
   private sendOutcome(negotiationId: number, messageId: number, ended: Task): string {
     const m = this.message(messageId);
     const fresh = this.messages(negotiationId).filter(
@@ -742,10 +693,6 @@ export class Negotiations {
     }
   }
 
-  /**
-   * What a negotiation's desktop task may do: send one message, or read. Null for other tasks. Once the
-   * negotiation isn't open or its mandate ran out, a send task only reads.
-   */
   gateFor(taskId: number): SendGate | null {
     const r = this.d.db
       .query<
@@ -774,7 +721,6 @@ export class Negotiations {
     };
   }
 
-  /** Why a negotiation's desktop task may send nothing now, or null while it may. */
   sendStopped(taskId: number): string | null {
     const row = this.taskRow(taskId);
     const n = row && this.get(row.negotiation_id);
@@ -785,10 +731,6 @@ export class Negotiations {
     return this.held(n);
   }
 
-  /**
-   * Why a negotiation is held for the owner, or null: a seller's message looked like a scam, and
-   * nothing goes to the seller until the owner says to carry on.
-   */
   held(n: Negotiation): string | null {
     if (n.status !== "open" || !n.approvalId) return null;
     const a = this.d.approvals.get(n.approvalId);
@@ -796,7 +738,6 @@ export class Negotiations {
     return `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
   }
 
-  /** Holds a negotiation on a seller's message that looks like a scam, and asks the owner. */
   private hold(n: Negotiation, text: string, signals: string[]) {
     const quoted = text.length > 500 ? `${text.slice(0, 499)}…` : text;
     const approval = this.d.approvals.create({
@@ -810,7 +751,6 @@ export class Negotiations {
     this.update(n.id, { approval_id: approval.id });
   }
 
-  /** The owner decided on a hold: carry on, or end the negotiation. */
   async holdDecided(a: Approval) {
     const [n] = this.negotiations(
       this.d.db
@@ -829,10 +769,7 @@ export class Negotiations {
     );
   }
 
-  /**
-   * Cancels a negotiation's unfinished tasks: the opening task and the desktop tasks that send or read.
-   * `except`: the task asking, with the tasks above it, which carry on.
-   */
+  /** `except` is the task asking, which carries on with the tasks above it. */
   stopTasks(id: number, except: number | null = null) {
     const keep = new Set<number>();
     for (let t = except === null ? null : this.d.tasks.get(except); t; ) {
@@ -859,22 +796,16 @@ export class Negotiations {
       .get(taskId);
   }
 
-  /**
-   * record_conversation: stores the seller's messages the desktop model read, and the conversation's
-   * address. `stale`: the seller wrote since the message was approved, so it mustn't go.
-   * `alreadySent`: the message is in the conversation already.
-   */
+  /** `stale`: the seller wrote since the message was approved, so it mustn't go. */
   record(
     taskId: number,
     tabUrl: string | null,
     report: ConversationReport,
     state: {
       sent: boolean;
-      /** Something was typed in this task: the approved text may be a draft in the box. */
+      /** The approved text may be a draft in the box. */
       typed?: boolean;
-      /** What the text boxes hold now. */
       drafts?: string[];
-      /** The page's text, which may name the listing. */
       pageText?: string | null;
     },
   ): Recorded {
@@ -907,7 +838,6 @@ export class Negotiations {
           outgoing.status !== "sent" &&
           !sentBefore.has(key)
         ) {
-          // The send went through the gate: it shows now.
           if (state.sent) this.setStatus(outgoing.id, "sent");
           // An earlier task's send shows, unless it's text typed here, or a draft still in the box.
           else if (!state.typed && !drafts.has(key)) {
@@ -936,8 +866,7 @@ export class Negotiations {
       const current = signals.length ? this.get(n.id) : null;
       if (current?.status === "open" && !this.held(current)) this.hold(current, text, signals);
     });
-    // The conversation's own address, once a read finds one that names this listing; a send records
-    // where it went in sendPassed.
+    // Only a read records the conversation's address here; a send records where it went in sendPassed.
     const mode = row.message_id ? "send" : "read";
     if (tabUrl && !n.conversationUrl && mode === "read" && this.conversationFor(n, tabUrl))
       this.update(n.id, { conversation_url: tabUrl.split("#")[0] ?? tabUrl });
@@ -966,10 +895,6 @@ export class Negotiations {
     return { text: `${got} ${next}`, stale, alreadySent };
   }
 
-  /**
-   * The gate let the send through: whether the text then left the box, and the tab's address then,
-   * which is the conversation it went to.
-   */
   sendPassed(taskId: number, confirmed: boolean, tabUrl: string | null = null) {
     const row = this.taskRow(taskId);
     if (!row?.message_id) return;
@@ -990,11 +915,8 @@ export class Negotiations {
     this.setStatus(row.message_id, confirmed ? "sent" : "unconfirmed");
   }
 
-  /**
-   * A page a read found is this negotiation's conversation: on the listing's site, not the listing, and
-   * naming the listing's id in its path. Not by its query, which the model can add to, nor by the page's
-   * text, where other conversations list their listings' titles; a send records where it went.
-   */
+  // By the listing's id in the path: not the query, which the model can add to, nor the page's text,
+  // where other conversations list their listings' titles.
   private conversationFor(n: Negotiation, url: string): boolean {
     return (
       !sameAddress(url, n.listingUrl) &&
@@ -1021,7 +943,6 @@ export class Negotiations {
     if (before) this.update(before.negotiationId, {});
   }
 
-  /** A send whose task ended without the gate passing it never went. */
   private taskEnded(task: Task) {
     const row = this.taskRow(task.id);
     if (!row) return;
@@ -1030,11 +951,7 @@ export class Negotiations {
     else this.emit(row.negotiation_id);
   }
 
-  /**
-   * Ends a negotiation that's still open or waiting for its mandate: its status and price, its
-   * unfinished tasks cancelled (but `from`, the task ending it), and a mandate or hold waiting for the
-   * owner withdrawn. False when it had ended already: a close approved after a Stop doesn't undo it.
-   */
+  /** False when it had ended already: a close approved after a Stop doesn't undo it. */
   private end(
     id: number,
     status: NegotiationStatus,
@@ -1058,10 +975,6 @@ export class Negotiations {
     return true;
   }
 
-  /**
-   * Closes a negotiation (see end), marks the want agreed when it is, and keeps notes on the seller and
-   * what worked in the bot's memory: the notes' path, or null when it had ended already.
-   */
   async close(
     n: Negotiation,
     outcome: "agreed" | "lost" | "abandoned",
@@ -1090,17 +1003,13 @@ export class Negotiations {
     return path;
   }
 
-  /** The owner stops a negotiation: abandoned, and nothing more goes. Null if it had ended already. */
   async stop(id: number): Promise<Negotiation | null> {
     const n = this.get(id);
     if (!n || !(await this.close(n, "abandoned", null, "Stopped by the owner."))) return null;
     return this.get(id);
   }
 
-  /**
-   * Tells Scout how it ended, through scout_record_outcome when Scout has it and lets it run without
-   * asking. The brain fills it in, not the model. What to tell the model, or null.
-   */
+  /** The brain tells Scout the outcome, not the model. */
   async recordOutcome(
     available: PluginTool[],
     n: Negotiation,
@@ -1124,7 +1033,6 @@ export class Negotiations {
   }
 }
 
-/** The send task's goal: the approved text, where, and the steps the gate expects. */
 function sendGoal(n: Negotiation, text: string): string {
   return [
     `Send one message to the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, in ${n.conversationUrl ? "its conversation" : "a new conversation from the listing page"}, then stop.`,
@@ -1146,7 +1054,6 @@ function sendGoal(n: Negotiation, text: string): string {
   ].join("\n");
 }
 
-/** The read task's goal. */
 function readGoal(n: Negotiation): string {
   return [
     `Read the conversation with the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, and record it. Don't type or send anything.`,
@@ -1163,7 +1070,6 @@ function readGoal(n: Negotiation): string {
   ].join("\n");
 }
 
-/** The opening task's goal, once the mandate is approved. */
 function openingGoal(n: Negotiation, note: string | null): string {
   return [
     `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
@@ -1176,7 +1082,6 @@ function openingGoal(n: Negotiation, note: string | null): string {
   ].join("\n");
 }
 
-/** The claims so far with a message's merged in: the newest says what stands. */
 export function mergeClaims(claims: Claims, stated: Stated | null): Claims {
   if (!stated) return claims;
   const other = stated.other?.trim();

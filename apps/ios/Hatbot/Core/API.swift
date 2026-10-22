@@ -1,4 +1,3 @@
-// JSON requests to the brain with the app's bearer token (PLAN.md §8).
 import Foundation
 
 #if canImport(FoundationNetworking)
@@ -13,10 +12,8 @@ struct APIError: LocalizedError, Sendable {
   var errorDescription: String? { message }
 }
 
-/// An empty or ignored response body.
 struct Empty: Codable, Sendable {}
 
-/// A file as multipart field "file", as POST /attachments reads it.
 struct Multipart: Sendable {
   let boundary: String
   let head: Data
@@ -33,7 +30,6 @@ struct Multipart: Sendable {
     tail = Data("\r\n--\(boundary)--\r\n".utf8)
   }
 
-  /// The whole body in a temporary file, `file` copied in a megabyte at a time.
   func write(_ file: URL) throws -> URL {
     let out = FileManager.default.temporaryDirectory.appendingPathComponent("upload-\(UUID().uuidString)")
     guard FileManager.default.createFile(atPath: out.path, contents: head) else { throw CocoaError(.fileWriteUnknown) }
@@ -58,7 +54,6 @@ struct Multipart: Sendable {
 final class API: Sendable {
   static let prefix = "/api/v1"
 
-  /// The server's root, like https://hatbot.example.com.
   let server: URL
   let token: String?
   private let session: URLSession
@@ -81,8 +76,7 @@ final class API: Sendable {
     onUnauthorized()
   }
 
-  /// "https://host/" or "host" → https://host; a pasted ".../api/v1" is dropped. Never plain http: the
-  /// token goes with every request, and a phone joins networks you don't control.
+  /// Never plain http: the token goes with every request, and a phone joins networks you don't control.
   static func serverURL(from input: String) -> URL? {
     var s = input.trimmingCharacters(in: .whitespacesAndNewlines)
     if s.isEmpty { return nil }
@@ -97,7 +91,6 @@ final class API: Sendable {
     return parts.url
   }
 
-  /// An address typed with http://, which the app won't use.
   static func isPlainHTTP(_ input: String) -> Bool {
     input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("http://")
   }
@@ -110,7 +103,6 @@ final class API: Sendable {
     try await call(path, method: "GET", body: nil as Empty?)
   }
 
-  /// `timeout`: for the calls that wait on the model or try every part, in seconds.
   @discardableResult
   func post<T: Decodable, B: Encodable>(_ path: String, body: B, timeout: TimeInterval? = nil) async throws -> T {
     try await call(path, method: "POST", body: body, timeout: timeout)
@@ -120,7 +112,7 @@ final class API: Sendable {
     let _: Empty = try await call(path, method: "POST", body: Empty())
   }
 
-  /// JSON as it is, and the answer as it came: a box's calls, which only the brain reads (PLAN.md §21.8).
+  /// A box's calls, which only the brain reads: JSON as it is, and the answer as it came.
   func post(_ path: String, json: Data) async throws -> Data {
     var req = request(path, method: "POST")
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -150,7 +142,6 @@ final class API: Sendable {
     return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
   }
 
-  /// Raw bytes, for screenshots.
   func data(_ path: String) async throws -> Data {
     let (data, response) = try await session.data(for: request(path, method: "GET"))
     try check(response, data: data, path: path)
@@ -160,7 +151,6 @@ final class API: Sendable {
   /// The most an attachment may be (MAX_ATTACHMENT_BYTES in apps/brain/src/attachments.ts).
   static let maxUpload = 25 * 1024 * 1024
 
-  /// A file as multipart field "file"; the answer is JSON.
   func upload<T: Decodable>(_ path: String, data: Data, name: String, mediaType: String) async throws -> T {
     let form = Multipart(name: name, mediaType: mediaType)
     var body = form.head
@@ -170,8 +160,7 @@ final class API: Sendable {
     return try await send(path) { try await self.session.upload(for: req, from: body) }
   }
 
-  /// A file on disk as multipart field "file", read and sent in pieces: the share extension can't hold a
-  /// big one in memory.
+  /// Sent from disk in pieces: the share extension can't hold a big file in memory.
   func upload<T: Decodable>(_ path: String, file: URL, name: String, mediaType: String) async throws -> T {
     let form = Multipart(name: name, mediaType: mediaType)
     let body = try form.write(file)
@@ -209,8 +198,7 @@ final class API: Sendable {
     }
   }
 
-  /// A WebSocket with the bearer token; the brain checks it before upgrading. Always wss: the token
-  /// never goes unencrypted, whatever the server's address looks like.
+  /// Always wss: the token never goes unencrypted, whatever the server's address looks like.
   func webSocket(_ path: String) -> URLSessionWebSocketTask {
     var req = request(path, method: "GET")
     var parts = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!

@@ -7,7 +7,6 @@ import { z } from "zod";
 export const CHART_MAX_SERIES = 3;
 /** Values typed into a block, or drawn from a file once the brain has thinned it. */
 export const CHART_MAX_POINTS = 500;
-/** Rows in a file a chart draws from (ChartFile). */
 export const CHART_FILE_MAX_ROWS = 100_000;
 /** Horizontal bars take a row each, so fewer of them. */
 export const CHART_MAX_ROWS = 40;
@@ -21,7 +20,6 @@ const title = z.string().max(120).optional();
 /** "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front. */
 const unit = z.string().max(12).optional();
 const label = z.string().min(1).max(60);
-/** 2024, 2024-03 or 2024-03-15. */
 const DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/;
 const date = z.string().regex(DATE, "a date is YYYY, YYYY-MM or YYYY-MM-DD");
 /** Values and a file together: which would it draw? */
@@ -239,7 +237,6 @@ export function parseChart(source: string): ChartSpec | null {
   return p.success ? p.data : null;
 }
 
-/** The file chart in a chart block, or null if it isn't one. */
 export function parseChartFile(source: string): ChartFile | null {
   let json: unknown;
   try {
@@ -319,7 +316,6 @@ export function brokenCharts(markdown: string) {
 export const seriesNames = (s: { series: { name?: string }[] }) =>
   s.series.map((se, i) => se.name || `Series ${i + 1}`);
 
-/** Whether the bars stack: asked for, and more than one series to stack. */
 export const isStacked = (s: SeriesChart) => s.type === "bar" && !!s.stacked && s.series.length > 1;
 
 /** Each x's stack of bars: [start, end] per series, positives up from 0 and negatives down. */
@@ -338,7 +334,6 @@ export function stackSpans(s: SeriesChart): ([number, number] | null)[][] {
   });
 }
 
-/** The sum at each x, or null where every series is a gap. */
 export const stackTotals = (s: SeriesChart) =>
   s.x.map((_, i) => {
     const vs = s.series.map((se) => se.data[i]).filter((v): v is number => v != null);

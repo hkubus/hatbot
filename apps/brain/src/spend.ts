@@ -1,4 +1,3 @@
-// Spend ledger and limits (PLAN.md §6.3).
 import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
@@ -7,9 +6,8 @@ import type { SettingsStore } from "./settings";
 type Price = { input: number; output: number; cacheRead: number };
 
 /**
- * USD per million tokens. Cache writes are priced from input: 1.25x for 5 minutes, 2x for 1 hour.
- * `longPrompt`: above that many prompt tokens (input + cache reads and writes), the whole request
- * is billed at the higher price.
+ * USD per million tokens. `longPrompt`: above that many prompt tokens (input + cache reads and
+ * writes), the whole request is billed at the higher price.
  */
 export const PRICES: Record<string, Price & { longPrompt?: { above: number } & Price }> = {
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
@@ -67,10 +65,7 @@ export const FALLBACK_MODELS: Record<string, string[]> = {
   "claude-sonnet-5-5": ["claude-sonnet-5"],
 };
 
-/**
- * A model with no price here: Claude Fable's rates, the highest of any model, so the API's charge is
- * still recorded and never under-counted.
- */
+// Unknown models get the highest rates (Claude Fable's), so spend is never under-counted.
 const UNKNOWN_PRICE: (typeof PRICES)[string] = { input: 10, output: 50, cacheRead: 1 };
 const unpriced = new Set<string>();
 
@@ -98,10 +93,6 @@ export function costOf(model: string, t: Tokens): number {
   );
 }
 
-/**
- * Rough prompt tokens in a conversation, for the estimate before a request: text by length, images at
- * their typical size, PDFs by their size. Base64 bytes don't count as text.
- */
 export function estimateTokens(messages: unknown): number {
   let chars = 0;
   let images = 0;
@@ -131,11 +122,9 @@ export function estimateTokens(messages: unknown): number {
   return chars / 3.5 + images * 1600 + pdfTokens;
 }
 
-/** Rough tokens in a request's system prompt and tools, which estimateTokens leaves out. */
 export const fixedTokens = (system: unknown, tools: unknown) =>
   JSON.stringify([system, tools]).length / 3;
 
-/** The most web searches a request with these tools may make: each search tool's max_uses. */
 export const searchesIn = (tools: readonly unknown[]) =>
   tools.reduce<number>((n, t) => {
     const tool = t as { name?: string; max_uses?: number };
@@ -143,23 +132,18 @@ export const searchesIn = (tools: readonly unknown[]) =>
   }, 0);
 
 /**
- * The most one request may cost, for the check before it's made (PLAN.md §6.3): the prompt not known
- * to be in the cache priced as a cache write (`write`, the TTL its breakpoints use) or plain input, the
- * part that is at the read price, all of max_tokens as output, and every web search it may make.
- * With `fallbacks`, a model that declines partway is billed for what it read, and one of
- * FALLBACK_MODELS answers at its own rates, with none of the prompt in its cache.
+ * The most one request may cost. With `fallbacks`, a model that declines partway is billed for what
+ * it read, then a fallback model answers at its own rates with nothing cached.
  */
 export function requestCeiling(
   model: string,
   r: {
-    /** Prompt tokens, estimated. */
     prompt: number;
     /** Of those, ones the last request left in the cache, still within its TTL. */
     cached?: number;
     write?: "5m" | "1h";
     maxTokens: number;
     webSearches?: number;
-    /** Sent with `fallbacks: "default"`. */
     fallbacks?: boolean;
   },
 ): number {
@@ -183,7 +167,6 @@ export function requestCeiling(
   return Math.max(own, declined + rescue) + searches;
 }
 
-/** Work that may spend the reserve kept at the end of the limits: alerts, and the heartbeat. */
 export const usesReserve = (origin: string) => origin === "alert" || origin === "heartbeat";
 
 export class BudgetError extends Error {
@@ -195,7 +178,6 @@ export class BudgetError extends Error {
   }
 }
 
-/** Every kind of token a request used. */
 const TOKENS =
   "input_tokens + cache_write_5m_tokens + cache_write_1h_tokens + cache_read_tokens + output_tokens";
 
@@ -218,7 +200,6 @@ const localDate = (d: Date) =>
 const WEB_SEARCH_USD = 0.01;
 
 export class Spend {
-  /** Requests in flight: the most each may cost, and its task's tree (the task that started it). */
   private held = new Map<symbol, { usd: number; root?: number }>();
   /** Today's and the month's spend, brought up to date from the rows added since, not summed again. */
   private totals = { day: "", month: "", lastId: 0, todayUsd: 0, monthUsd: 0 };
@@ -238,7 +219,6 @@ export class Spend {
     taskId?: number;
     /** The bot it was for; a task's when left out. */
     botId?: string;
-    /** Charges on top of tokens, like web searches. */
     extraUsd?: number;
   }): number {
     const t = tokensOf(entry.usage);
@@ -305,7 +285,6 @@ export class Spend {
     return { usd: row?.usd ?? 0, tokens: row?.tokens ?? 0 };
   }
 
-  /** The last `hours` hours, oldest first, including hours with nothing spent. */
   hourly(hours: number): { hour: string; usd: number; tokens: number }[] {
     const start = new Date(this.clock());
     start.setMinutes(0, 0, 0);
@@ -329,7 +308,6 @@ export class Spend {
     return out;
   }
 
-  /** Today's and this month's spend: summed once a day, then only the rows added since. */
   private spent(): { todayUsd: number; monthUsd: number } {
     const now = this.clock();
     const day = startOfLocalDay(now).toISOString();
@@ -385,15 +363,13 @@ export class Spend {
     };
   }
 
-  /** What a task's tree, which shares its limit, has spent: the task that started it and all under it. */
   treeSpend(taskId: number): number {
     return this.tree(taskId).usd;
   }
 
   /**
-   * A task's tree: the task that started it (or it), and every task started under that one, which
-   * share its limit; and what they have spent together. A task the ledger knows but the tasks table
-   * doesn't is on its own.
+   * A task's tree (the task that started it and every task under that one) shares its limit. A task
+   * the ledger knows but the tasks table doesn't is on its own.
    */
   private tree(taskId: number): { root: number; usd: number } {
     const row = this.db
@@ -412,10 +388,8 @@ export class Spend {
   }
 
   /**
-   * Throws BudgetError if a request estimated at `estimateUsd` would cross a limit, counting what the
-   * requests in flight may still cost. A task's limit (`limitUsd`, its tree's) covers the tasks it
-   * started and the task that started it. Only work with `reserve` may spend the last
-   * `alertReserveUsd` of the daily and monthly limits. Returns the task's tree's root, for hold().
+   * Throws BudgetError if a request would cross a limit, counting what requests in flight may still
+   * cost. Only `reserve` work may spend the last `alertReserveUsd` of the daily and monthly limits.
    */
   check(estimateUsd: number, task?: { id: number; limitUsd: number }, { reserve = false } = {}) {
     const limits = this.settings.get().limits;
@@ -455,9 +429,8 @@ export class Spend {
   }
 
   /**
-   * check(), then holds `estimateUsd` against the limits while the request is in flight, so requests
-   * made at once can't pass a limit together. Call what it returns once the request has ended and its
-   * cost is recorded.
+   * Holds the estimate while the request is in flight, so requests made at once can't pass a limit
+   * together. Call what it returns once the cost is recorded.
    */
   hold(
     estimateUsd: number,
@@ -476,12 +449,10 @@ export class Spend {
     return this.breakdown<{ model: string; usd: number }>("model, sum(cost_usd) AS usd", days);
   }
 
-  /** Spend per purpose (chat, task, heartbeat, tidy…), for Spend's breakdown. */
   byPurpose(days: number) {
     return this.breakdown<SpendByPurpose>("purpose, sum(cost_usd) AS costUsd", days);
   }
 
-  /** Spend per bot, for Spend's breakdown. */
   byBot(days: number) {
     return this.breakdown<{ botId: string; usd: number }>(
       "coalesce(bot_id, 'hatbot') AS botId, sum(cost_usd) AS usd",
@@ -489,7 +460,6 @@ export class Spend {
     );
   }
 
-  /** The last `days` days' spend grouped by the first of `columns`, the most first. */
   private breakdown<T>(columns: string, days: number): T[] {
     const from = startOfLocalDay(this.clock() - (days - 1) * 86400_000);
     return this.db

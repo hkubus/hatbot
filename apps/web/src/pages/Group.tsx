@@ -1,4 +1,3 @@
-// A group chat's page (PLAN.md §14.4): its name and bots. "new" makes one.
 import { MAX_GROUP_BOTS } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";

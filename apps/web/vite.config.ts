@@ -5,7 +5,6 @@ import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
-// In development the brain runs on :8080 (HATBOT_PUBLIC_URL=http://localhost:5173).
 export default defineConfig({
   plugins: [react(), precompress()],
   // @hatbot/shared's schemas would bring all of zod; the web checks nothing with them (zod-stub.ts).

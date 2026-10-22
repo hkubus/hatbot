@@ -1,6 +1,3 @@
-// Your bots (PLAN.md §14): each has its own role, chat, memory folder, plugins and browser profile.
-// Hatbot is the first, and can't be deleted.
-
 import type { CreateBot, UpdateBot } from "@hatbot/shared";
 import { BOT_COLORS, type Bot, HATBOT_ID } from "@hatbot/shared";
 import type { z } from "zod";
@@ -35,7 +32,7 @@ const toBot = (r: Row): Bot => ({
 
 export class BotError extends UserError {}
 
-/** What a deleted bot's schedules, triggers and watchers were: they're Hatbot's now, switched off. */
+/** A deleted bot's schedules, triggers and watchers, now Hatbot's and switched off. */
 export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
 
 /** Letters that don't decompose into a plain one and an accent. */
@@ -51,7 +48,6 @@ const FOLDED: Record<string, string> = {
   ı: "i",
 };
 
-/** Lowercase ASCII words joined by hyphens: "Głośny NAS" → "glosny-nas". */
 export function slugWords(text: string): string {
   return text
     .toLowerCase()
@@ -62,7 +58,6 @@ export function slugWords(text: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/** A bot's id from its name: "Home lab" → "home-lab". */
 export function slugOf(name: string): string {
   const slug = slugWords(name).slice(0, 24).replace(/-+$/, "");
   return /^[a-z]/.test(slug) ? slug : `bot-${slug}`.replace(/-+$/, "");
@@ -72,8 +67,8 @@ export function slugOf(name: string): string {
 const CODE_PLUGINS = ["code", "claude", "self"];
 
 /**
- * The bot all code and boxes go to (PLAN.md §14.7): the first made, other than Hatbot, whose plugins
- * name the Code plugin, as the Coder template's do. Null without one: then every bot writes its own.
+ * The bot all code and boxes go to: the first made, other than Hatbot, with the Code plugin. Null
+ * without one: then every bot writes its own.
  */
 export function codeBotOf(bots: Bot[]): Bot | null {
   return (
@@ -90,7 +85,6 @@ export class Bots {
     private clock: () => number = Date.now,
   ) {}
 
-  /** Bots that aren't deleted, Hatbot first, then in the order they were made. */
   list(): Bot[] {
     return this.db
       .query<Row, []>(
@@ -106,7 +100,6 @@ export class Bots {
     return r ? toBot(r) : null;
   }
 
-  /** A bot that isn't deleted. */
   active(id: string): Bot | null {
     const r = this.db
       .query<Row, [string]>("SELECT * FROM bots WHERE id = ? AND deleted_at IS NULL")
@@ -118,20 +111,18 @@ export class Bots {
     return this.get(HATBOT_ID) as Bot;
   }
 
-  /** The bot code and boxes go to, or null: see codeBotOf. */
   codeBot(): Bot | null {
     return codeBotOf(this.list());
   }
 
-  /** The bot `bot` hands its code and boxes to: the code bot, unless that's `bot` itself. */
   coderFor(bot: Bot): Bot | null {
     const coder = this.codeBot();
     return coder && coder.id !== bot.id ? coder : null;
   }
 
   /**
-   * The plugins `bot` leaves to the other bots, which have them. Hatbot hands the others their work
-   * (PLAN.md §14.8), so it gets no plugin another bot names; the rest leave the code bot its code.
+   * Hatbot hands the others their work, so it gets no plugin another bot names; the rest leave the
+   * code bot its code.
    */
   leftToOthers(bot: Bot): string[] {
     if (bot.id === HATBOT_ID)
@@ -140,12 +131,10 @@ export class Bots {
     return coder ? CODE_PLUGINS.filter((id) => coder.plugins?.includes(id)) : [];
   }
 
-  /** Its name, for notifications and transcripts; the id for one that's gone. */
   nameOf(id: string): string {
     return this.get(id)?.name ?? id;
   }
 
-  /** Who its memory commits are by. */
   author(id: string): Author {
     if (id === HATBOT_ID) return HATBOT;
     return { name: this.nameOf(id), email: `${id}@hatbot.local` };
@@ -204,10 +193,8 @@ export class Bots {
   }
 
   /**
-   * Deletes a bot. Its chat, tasks and memory folder stay; its schedules, triggers and watchers go to
-   * Hatbot switched off, since Hatbot may have plugins the bot didn't: you look them over and turn
-   * them back on. Hatbot can't be deleted. Null if there's no such bot; otherwise the ids of what
-   * moved, so their pages can be told.
+   * Its chat, tasks and memory folder stay; its schedules, triggers and watchers go to Hatbot switched
+   * off, since Hatbot may have plugins the bot didn't. Returns the ids of what moved.
    */
   delete(id: string): Moved | null {
     if (id === HATBOT_ID) throw new BotError("Hatbot can't be deleted.");
@@ -234,7 +221,6 @@ export class Bots {
     return moved;
   }
 
-  /** The first colour no bot has, so a new one stands apart; once they're all taken, the least used. */
   private freeColor(): Bot["color"] {
     const used = this.list().map((b) => b.color);
     const count = (c: Bot["color"]) => used.filter((u) => u === c).length;
@@ -248,7 +234,7 @@ export class Bots {
   }
 }
 
-/** Switched off, as a deleted bot's automations go to Hatbot. Turning one back on works out when it's next due. */
+/** Clearing next_*_at means turning one back on works out when it's next due. */
 const OFF = {
   schedules: "enabled = 0, next_run_at = NULL",
   triggers: "enabled = 0",
@@ -256,9 +242,8 @@ const OFF = {
 };
 
 /**
- * Whether an automation is a deleted bot's: one delete didn't move, made by the bot's reply as it was
- * deleted. It goes to Hatbot switched off as the others did, and doesn't run: Hatbot may have plugins
- * the bot didn't.
+ * An automation the bot's reply made as it was deleted, which delete didn't move: it goes to Hatbot
+ * switched off and doesn't run, since Hatbot may have plugins the bot didn't.
  */
 export function orphaned(db: Db, table: keyof typeof OFF, id: number, botId: string): boolean {
   if (botId === HATBOT_ID) return false;
@@ -268,37 +253,30 @@ export function orphaned(db: Db, table: keyof typeof OFF, id: number, botId: str
   return true;
 }
 
-/** Its own memory folder. Hatbot's notes are the shared memory itself, as they always were. */
+/** Hatbot's notes are the shared memory itself. */
 export const botFolder = (id: string) => (id === HATBOT_ID ? null : `bots/${id}`);
 
-/** A bot's own memory: INDEX.md of its folder. */
 export const botIndex = (id: string) => {
   const folder = botFolder(id);
   return folder ? `${folder}/INDEX.md` : null;
 };
 
-/** What a bot other than Hatbot is told about handing work to the others. */
 const HAND_OVER =
   "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: the other bot answers in its own chat, and the owner waits for it.";
 
-/** Hatbot with other bots, in the chat and in tasks: it hands them their work (PLAN.md §14.8). */
 const ROUTE =
   "Hand each piece of the owner's work to the bot whose role or plugins it falls under, with ask_bot, and pass on what came of it. That goes for work you have tools for too, like research when a bot's role is research. The plugins another bot has are its alone. Do yourself only what no other bot's role covers, like memory, the to-do list and quick lookups.";
 
-/** And in its chat. */
 const ROUTE_CHAT = [
   "You're the bot the owner talks to first, and the others can't see this chat: give a bot the owner's words and everything that bears on them. When it answers that it needs something only the owner can say, ask them with ask_owner, then hand it their answer; a follow-up on its work goes back to it too.",
   "A schedule or watcher for another bot's work is that bot's to make: ask it, so the runs have its tools.",
 ];
 
-/** "A, B and C". */
 const listed = new Intl.ListFormat("en-GB", { type: "conjunction" });
 
 /**
- * One of the stable prompts as `bot`: its name, its role, its memory and the other bots, each with
- * the plugins it has (`plugins`, their names). Hatbot on its own gets the prompt as it is, so the cache
- * and its conversation carry on. `chat`: for its chat rather than a task. `handOver`: what it's told
- * about asking the others, in place of the usual.
+ * Hatbot on its own gets `base` as it is, so the cache and its conversation carry on. `handOver`
+ * replaces what it's told about asking the others.
  */
 export function promptFor(
   base: string,
@@ -335,7 +313,6 @@ export function promptFor(
   return parts.length ? `${named}\n\n${parts.join("\n\n")}` : named;
 }
 
-/** Who writes code and makes boxes, when one bot does it for all of them. */
 function codeLine(bot: Bot, others: Bot[]): string[] {
   const coder = codeBotOf([bot, ...others]);
   if (!coder) return [];
@@ -348,10 +325,7 @@ function codeLine(bot: Bot, others: Bot[]): string[] {
       ];
 }
 
-/**
- * Another bot in a bot's prompt, with its plugins and its role in a line. Quoted: a role the owner
- * wrote as "You …" is addressed to that bot, not to this one.
- */
+// Quoted: a role the owner wrote as "You …" is addressed to that bot, not to this one.
 function rosterLine(o: Bot, plugins: string[]): string {
   const role = roleLine(o);
   return `- ${o.name} (${o.id})${plugins.length ? `, with ${listed.format(plugins)}` : ""}${
@@ -362,7 +336,6 @@ function rosterLine(o: Bot, plugins: string[]): string {
 /** A bot as lists show it, with only its role's first line: a role can be 8,000 characters. */
 export const briefBot = (b: Bot): Bot => ({ ...b, instructions: roleLine(b), brief: true });
 
-/** A bot's role in a line, for the others' prompts. */
 function roleLine(b: Bot): string {
   const line = b.instructions.trim().split("\n")[0]?.trim() ?? "";
   return line.length > 160 ? `${line.slice(0, 159)}…` : line;

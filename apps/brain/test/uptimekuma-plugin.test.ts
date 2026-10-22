@@ -22,7 +22,6 @@ monitor_status{${quoted}} 2 1760000000000
 process_cpu_user_seconds_total 0.5
 `;
 
-// A stand-in for Uptime Kuma's /metrics.
 const api = fakeApi((req, url) => {
   if (url.pathname !== "/metrics") return new Response("not found", { status: 404 });
   if (req.headers.get("authorization") !== `Basic ${btoa(":uk_key")}`)

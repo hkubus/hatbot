@@ -22,7 +22,6 @@ export function typed(code: string, i: number, raw: string): Step {
   if (digits.length > 2) return pasted(code, i, digits);
   const s = slots(code);
   const old = s[i] ?? "";
-  // Something that isn't a digit: nothing changes.
   if (/\D/.test(raw) && digits === old) return { code: join(s), focus: i };
   // Typed into a full box, with the caret before or after the digit that was there.
   const d = digits.length === 2 ? (digits[0] === old ? digits[1] : digits[0]) : digits;
@@ -30,7 +29,6 @@ export function typed(code: string, i: number, raw: string): Step {
   return { code: join(s), focus: d ? Math.min(5, i + 1) : i };
 }
 
-/** Backspace in an empty box: the one before it is cleared, and has the focus. */
 export function backspace(code: string, i: number): Step {
   if (i === 0) return { code, focus: 0 };
   const s = slots(code);

@@ -1,8 +1,5 @@
-// Server boxes' backends, on the boxes guest (PLAN.md §21.6): built there, asked through it, their
-// schedules started from here without the model, and all stopped by Pause all. The brain keeps every
-// version's files and built page, and the boxes' secrets; the guest only the running copies, and the
-// secrets in memory, sent again when it hasn't got them. What comes back from the guest has the box's
-// secrets taken out before the model, the page or a log sees it.
+// Server boxes' backends run on the boxes guest. The brain keeps the files and secrets, the guest only
+// the running copies and the secrets in memory. What comes back has the box's secrets taken out.
 import type { BoxAnswer, BoxCall } from "@hatbot/shared";
 import {
   type BoxBuild,
@@ -18,14 +15,12 @@ import { type BoxRequest, type HatboxAgent, HatboxError } from "./client";
 
 export const NO_GUEST = "Boxes can't have files or backends here: the boxes guest isn't set up.";
 const PAUSED = "Hatbot is paused, so box backends don't run.";
-/** A box's schedule runs at most this often. */
 export const BOX_CRON_GAP_MS = 5 * 60_000;
 /** How often the guest is told which boxes are gone (deleted while it was down, say). */
 const SYNC_MS = 60 * 60_000;
 const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
-/** Why a box.json cron can't be a box's schedule, or null if it can. */
 export function cronProblem(cron: string, now: number): string | null {
   let runs: Date[];
   try {
@@ -40,7 +35,6 @@ export function cronProblem(cron: string, now: number): string | null {
 }
 
 export class Backends {
-  /** Boxes whose scheduled() is running. */
   private running = new Set<number>();
   private synced = 0;
 
@@ -51,19 +45,16 @@ export class Backends {
     private clock: () => number,
   ) {}
 
-  /** Whether there's a guest to build and run boxes on. */
   get available(): boolean {
     return this.agent.configured;
   }
 
-  /** Builds a version's files on the guest; a backend in them is the one that runs from then on. */
   async build(id: number, version: number, files: BoxFile[]): Promise<BoxBuild> {
     if (!this.agent.configured) throw new BoxError(NO_GUEST, 503);
     const built = await this.guest(id, () => this.agent.build(id, version, files));
     return { ...built, output: this.boxes.redact(id, built.output) };
   }
 
-  /** The agent's failures, as what the model or the page is told. */
   private async guest<T>(id: number, fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
@@ -74,10 +65,6 @@ export class Backends {
     }
   }
 
-  /**
-   * `fn` with the box's current version and its secrets, which are sent to the guest again first if it
-   * hasn't got them.
-   */
   private async current<T>(
     id: number,
     fn: (version: number, secrets: string) => Promise<T>,
@@ -110,7 +97,6 @@ export class Backends {
     }
   }
 
-  /** A request to the box's backend, from its page or the model. */
   async request(id: number, r: BoxRequest): Promise<Response> {
     const method = r.method.toUpperCase();
     if (!METHODS.has(method)) throw new BoxError(`A box's backend doesn't take ${r.method}.`);
@@ -124,9 +110,8 @@ export class Backends {
   }
 
   /**
-   * The backend's answer without its secrets' values, which the page and the model never get: a text
-   * body and the headers. Its code could still hide one (in base64, say); this keeps one it prints by
-   * mistake from reaching them.
+   * Its code could still hide a secret (in base64, say); this keeps one it prints by mistake from
+   * reaching the page or the model.
    */
   private async redacted(id: number, res: Response): Promise<Response> {
     if (!this.boxes.hasSecrets(id)) return res;
@@ -144,7 +129,7 @@ export class Backends {
     });
   }
 
-  /** The box's secrets as you've just set them, to the guest, which restarts a running backend with them. */
+  /** The guest restarts a running backend with them. */
   async sendSecrets(id: number): Promise<void> {
     if (!this.agent.configured || !this.boxes.server(id)) return;
     // One the guest misses now, it gets with the backend's next request.
@@ -153,7 +138,6 @@ export class Backends {
       .catch((err) => console.error(`couldn't send box #${id}'s secrets to the guest`, err));
   }
 
-  /** hatbox.fetch, from the box's page. */
   async fetch(id: number, c: Extract<BoxCall, { op: "fetch" }>): Promise<BoxAnswer> {
     const res = await this.request(id, {
       method: c.method ?? "GET",
@@ -184,10 +168,6 @@ export class Backends {
     return this.boxes.redact(id, await this.guest(id, () => this.agent.logs(id)));
   }
 
-  /**
-   * Starts the scheduled() of each box whose box.json cron is due, at most every 5 minutes and one
-   * run at a time a box. Not while Hatbot is paused. Resolves when the runs it started have ended.
-   */
   async tick(): Promise<void> {
     if (!this.agent.configured || this.settings.get().paused) return;
     const now = this.clock();
@@ -222,10 +202,6 @@ export class Backends {
     await Promise.all(runs);
   }
 
-  /**
-   * What scheduled() returned as {notify}: a notification and a note in the box's chat, a few a day
-   * (Boxes.notify). One that isn't sent is noted in the box's log instead.
-   */
   private async notify(id: number, text: string) {
     const said = this.boxes.redact(id, text).trim();
     if (!said) return;
@@ -237,13 +213,12 @@ export class Backends {
         .catch(() => {});
   }
 
-  /** Removes from the guest the boxes the brain no longer has. */
   private async sync() {
     const have = new Set(this.boxes.list().map((b) => b.id));
     for (const g of await this.agent.boxes()) if (!have.has(g.id)) await this.agent.remove(g.id);
   }
 
-  /** Pause all: every backend stopped. They start again on a request once Hatbot is resumed. */
+  /** They start again on a request once Hatbot is resumed. */
   async stopAll(): Promise<void> {
     if (!this.agent.configured) return;
     try {
@@ -253,7 +228,7 @@ export class Backends {
     }
   }
 
-  /** A deleted box, gone from the guest too; one it misses now goes at the next sync. */
+  /** One the guest misses now goes at the next sync. */
   async remove(id: number): Promise<void> {
     if (!this.agent.configured) return;
     await this.agent.remove(id).catch(() => {});

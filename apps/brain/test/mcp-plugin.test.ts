@@ -63,7 +63,6 @@ type Listed = {
   description: string;
   schema: string;
 };
-/** What Settings shows of the server's tools. */
 const status = async (t: TestApp) =>
   ((await t.plugins.action("mcp", "status", {})) as { tools: Listed[] }[])[0]?.tools ?? [];
 
@@ -191,7 +190,6 @@ test("an untrusted server's tool descriptions taint every task offered them, unl
   const t = await mcp(fixture, new FakeModel([finish(), finish()]));
   const first = scheduled(t);
   expect((await ended(t, first.id)).tainted).toBe(true);
-  // What the owner reads before accepting: the description and the input schema.
   const shown = await status(t);
   expect(shown[0]).toMatchObject({ name: "echo", description: "Echo text back" });
   expect(JSON.parse(shown[0]?.schema ?? "{}")).toMatchObject({ properties: { text: {} } });
@@ -199,7 +197,6 @@ test("an untrusted server's tool descriptions taint every task offered them, unl
   await t.plugins.update("mcp", { config: { servers: [{ ...fixture, accepted }] } });
   const second = scheduled(t);
   expect((await ended(t, second.id)).tainted).toBe(false);
-  // Their output still is untrusted.
   expect((await runPluginTool(t.tool("mcp_fix_echo"), { text: "hi" }, call)).untrusted).toBe(true);
 
   // One whose definition changed since taints again.
@@ -224,7 +221,6 @@ test("Chat, Allow and Off hold for the definition they were chosen for; once it 
     ["mcp_fix_broken", "write"],
   ]);
   expect(verdictFor(t.tool("mcp_fix_broken"), {}, call).action).toBe("allow");
-  // A trusted server's output isn't labelled.
   const r = await runPluginTool(t.tool("mcp_fix_echo"), { text: "x" }, call);
   expect(r).toMatchObject({ content: "echo: x", untrusted: false });
 
@@ -315,7 +311,6 @@ test("definitions the API wouldn't take are left out with the reason; clashing o
   expect(long).toHaveLength(64);
   expect(long).not.toBe(toolName("srv", `${"x".repeat(79)}y`));
 
-  // Deeper in a schema too.
   const bad = (inputSchema: unknown) => problemOf({ name: "x", inputSchema });
   for (const schema of [
     { type: "object", properties: { q: { type: "string", required: true } } },
@@ -402,7 +397,6 @@ test("reconnecting: calls wait for it, only a call that can't have reached the s
     expect(unsent(err), String(err)).toBe(false);
     expect(callFailure("fix", err).message, String(err)).toMatch(/may (or may not )?have/);
   }
-  // A server's answer says what happened.
   for (const err of [
     new StreamableHTTPError(400, "Bad request"),
     new McpError(ErrorCode.InternalError, "It broke"),

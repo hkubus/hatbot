@@ -1,17 +1,14 @@
-// Boxes (PLAN.md §21): the small web apps your bots made, and one as large as the screen allows, under
-// Hatbot's navigation bar so it can't pass for the app's own screens. Its page runs in a web view of its
-// own, on an opaque origin with no network, and what it saves goes through the app to the brain.
+// A box shows under Hatbot's navigation bar so it can't pass for the app's own screens. Its page runs on
+// an opaque origin with no network, and what it saves goes through the app to the brain.
 import SwiftUI
 import UIKit
 import WebKit
 
-/// Every box, latest change first.
 struct BoxesView: View {
   @Binding var path: [Route]
   @Environment(AppStore.self) private var store
   @State private var error: String?
 
-  /// As loaded, then kept up to date by the event stream.
   private var boxes: [Box]? {
     store.boxesLoaded ? store.boxes.values.sorted { ($0.updatedAt, $0.id) > ($1.updatedAt, $1.id) } : nil
   }
@@ -45,8 +42,6 @@ struct BoxesView: View {
   }
 }
 
-/// A box: its page, the version menu when there's more than one, Restore on an older version, Code and
-/// Delete. The bot's changes show as they're made.
 struct BoxView: View {
   let id: Int
   @Environment(AppStore.self) private var store
@@ -144,7 +139,6 @@ struct BoxView: View {
     }
   }
 
-  /// The older version's page as a new version, which then shows.
   private func restore(_ version: Int) {
     Task {
       busy = true
@@ -157,7 +151,6 @@ struct BoxView: View {
   }
 }
 
-/// A version's page at the signed address the brain gives, asked for again on Reload.
 private struct BoxFrame: View {
   let id: Int
   let version: Int
@@ -165,13 +158,11 @@ private struct BoxFrame: View {
   @Environment(\.colorScheme) private var scheme
   @Environment(\.openURL) private var openURL
   @State private var opened: Opened?
-  /// Why the page isn't showing: it left, its address expired, or it couldn't be opened.
   @State private var problem: String?
   @State private var tries = 0
 
   struct Opened: Equatable {
     let address: URL
-    /// The appearance the address asked for.
     let dark: Bool
   }
 
@@ -216,13 +207,11 @@ private struct BoxFrame: View {
   }
 }
 
-/// The page in a web view with a data store of its own that keeps nothing. WebKit's `hatbox` handler
-/// answers the page's calls for this box only, and the web view never leaves the box's page: links to
-/// web pages open in Safari (PLAN.md §21.8).
+/// A data store that keeps nothing. The `hatbox` handler answers the page's calls for this box only, and
+/// the web view never leaves the box's page: links to web pages open in Safari.
 private struct BoxWebView: UIViewRepresentable {
   let id: Int
   let opened: BoxFrame.Opened
-  /// The app's appearance now, which the page follows.
   let dark: Bool
   let store: AppStore
   let openURL: OpenURLAction
@@ -266,7 +255,6 @@ private struct BoxWebView: UIViewRepresentable {
     private var loaded = false
     /// It has finished loading, so its script is there to take the appearance.
     private var ready = false
-    /// The appearance the page has.
     private var dark: Bool
 
     init(parent: BoxWebView) {
@@ -276,7 +264,6 @@ private struct BoxWebView: UIViewRepresentable {
 
     private var address: URL { parent.opened.address }
 
-    /// Tells the page the app's appearance changed.
     func followTheme() {
       guard ready, parent.problem == nil, parent.dark != dark else { return }
       dark = parent.dark
@@ -353,8 +340,8 @@ private struct BoxWebView: UIViewRepresentable {
       parent.problem = "Couldn't open this box."
     }
 
-    /// A call from `window.hatbox`, passed on as it is to the brain, which checks it: the answer's value,
-    /// or the brain's error. Only the box's own page is answered, and only while it's showing.
+    /// Passed on as it is to the brain, which checks it. Only the box's own page is answered, and only
+    /// while it's showing.
     func userContentController(
       _ controller: WKUserContentController, didReceive script: WKScriptMessage
     ) async -> (Any?, String?) {
@@ -372,7 +359,6 @@ private struct BoxWebView: UIViewRepresentable {
   }
 }
 
-/// A version's page as its source, read-only: a box with files shows them, one after another.
 struct BoxCodeView: View {
   let id: Int
   let version: Int
@@ -405,8 +391,7 @@ struct BoxCodeView: View {
   }
 }
 
-/// Selectable, read-only text, laid out as it scrolls: a box's page can be a megabyte, which a SwiftUI
-/// Text would lay out whole.
+/// Laid out as it scrolls: a box's page can be a megabyte, which a SwiftUI Text would lay out whole.
 private struct SourceText: UIViewRepresentable {
   let text: String
 

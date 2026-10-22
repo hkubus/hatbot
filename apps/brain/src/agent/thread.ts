@@ -1,4 +1,4 @@
-// A chat with your bots, run as episodes (PLAN.md §5.2, §5.3): one bot's own, or a group (§14).
+// A chat with your bots, run as episodes: one bot's own, or a group.
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
@@ -98,7 +98,6 @@ import {
 } from "./tools";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
-/** What ask_opus consults when the chat runs on Haiku 5.5. */
 export const EXPERT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
@@ -128,10 +127,6 @@ export type MessageRow = Omit<ThreadMessage, "incognito" | "sources" | "choices"
   linkConversation: number | null;
   linkMessage: number | null;
 };
-/**
- * A message as the app gets it: `incognito`, `sources`, `choices` and `link` only on the ones that
- * have them.
- */
 export const messageOf = ({
   incognito,
   sources,
@@ -148,7 +143,6 @@ export const messageOf = ({
     ? { link: { conversationId: linkConversation, messageId: linkMessage } }
     : {}),
 });
-/** How a task ended, in the place of the reply that started it when its bot doesn't write that again. */
 export const resultText = (t: Pick<Task, "status" | "summary">) =>
   t.status === "failed" ? `**Didn't finish.** ${t.summary ?? ""}`.trim() : t.summary || "Done.";
 
@@ -161,9 +155,8 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 ];
 const hash16 = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 /**
- * What an episode's thinking blocks are bound to: the system prompt, the tools and the model. The API
- * rejects replayed thinking when these change, so an update or a plugin switched on or off that changes
- * them starts a new episode.
+ * The API rejects replayed thinking when the system prompt, tools or model change, so a change here
+ * starts a new episode.
  */
 const prefixOf = (model: string, system: string, tools: Anthropic.Beta.BetaToolUnion[]) =>
   hash16(JSON.stringify([model, system, tools]));
@@ -189,7 +182,6 @@ const AskOpus = z.object({
     ),
 });
 
-/** Offered only when the chat runs on Haiku 5.5. */
 const ASK_OWNER = toolParam({
   name: "ask_owner",
   description: CHAT_ASK_DESCRIPTION,
@@ -210,8 +202,6 @@ type Effort = NonNullable<Anthropic.Beta.BetaOutputConfig["effort"]>;
 type EffortMark = { effort: Effort };
 /** Stored among a bot's turns: a note from the app, sent as a system message, not as the owner. */
 type NoteMark = { note: string };
-/** How a reply ended: its text, for the @names that bring other bots in. */
-/** A hand-off being answered: its request's message, its task, and the episodes its answer was written again in. */
 type Handoff = { messageId: number; task: Task; episodes: number[] };
 export type Said = { id: number; text: string; status: "done" | "error"; stopped?: boolean };
 
@@ -224,7 +214,6 @@ export type ThreadDeps = {
   approvals?: Approvals;
   negotiations?: Negotiations;
   proposals?: Proposals;
-  /** Files in the chat, and the desktop whose sandbox send_file takes them from. */
   attachments?: Attachments;
   desktop?: DesktopAgent;
   db: Db;
@@ -239,7 +228,6 @@ export type ThreadDeps = {
   clock?: () => number;
 };
 
-/** The two parts of Haiku's answer; an answer without the tags is all running summary. */
 export function parseSummary(out: string): { recap: string | null; summary: string } {
   const tag = (name: string) =>
     new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(out)?.[1]?.trim();
@@ -252,18 +240,13 @@ export class Thread {
   private chain: Promise<void> = Promise.resolve();
   /** Summaries being written, so the sweep and a new message don't write one twice. */
   private summarizing = new Map<number, Promise<void>>();
-  /** How long a new conversation waits for the one before it to be summarized. */
   summaryWaitMs = 3000;
   /** Summaries and deletions take turns: each rewrites the running summary from the last one. */
   private summaryTurn: Promise<unknown> = Promise.resolve();
-  /** Summaries that failed, by episode, so the sweep gives up on one after a few tries. */
   private summaryFailures = new Map<number, number>();
   private current: AbortController | null = null;
-  /** The bot writing the reply in progress. */
   private currentBot: string | null = null;
-  /** The reply in progress is in the incognito conversation. */
   private currentIncognito = false;
-  /** The hand-off the reply in progress answers: its request's message, and its task. */
   private currentHandoff: Handoff | null = null;
   /** Hand-offs still open, by their answer: a rewrite of the answer goes on answering them. */
   private handoffAnswers = new Map<number, Handoff>();
@@ -274,8 +257,8 @@ export class Thread {
   /** When each bot's last chat request was sent, and in which episode: its cache entry's hour runs from then. */
   private sentAt = new Map<string, { episodeId: number; at: number }>();
   /**
-   * What each episode read, being screened (PLAN.md §6.1). Kept across replies: a verdict the last
-   * reply didn't wait for still holds back a change the next one makes.
+   * What each episode read, being screened. Kept across replies: a verdict the last reply didn't
+   * wait for still holds back a change the next one makes.
    */
   private screeners = new Map<number, Screener>();
   private clock: () => number;
@@ -287,7 +270,7 @@ export class Thread {
     this.clock = d.clock ?? Date.now;
   }
 
-  /** The bots in it, in their order: one for a bot's own chat. A group's deleted bots have left it. */
+  /** A group's deleted bots have left it. */
   members(): Bot[] {
     const group = this.group();
     return this.d.db
@@ -299,7 +282,6 @@ export class Thread {
       .filter((b): b is Bot => b !== null);
   }
 
-  /** A group chat's title, or null for a bot's own chat. */
   group(): { title: string | null } | null {
     const c = this.d.db
       .query<{ kind: string; title: string | null }, [number]>(
@@ -309,10 +291,6 @@ export class Thread {
     return c?.kind === "group" ? { title: c.title } : null;
   }
 
-  /**
-   * Who answers your message in a group: the bots you @mention, in order; with none, the last bot to
-   * speak; else the first.
-   */
   private responders(text: string): Bot[] {
     const members = this.members();
     const named = mentionsIn(text, members);
@@ -327,12 +305,10 @@ export class Thread {
     return [speaker ?? members[0] ?? this.d.bots.hatbot()];
   }
 
-  /** The bot a bot's own chat is with; a group's first bot. */
   bot(): Bot {
     return this.members()[0] ?? this.d.bots.hatbot();
   }
 
-  /** The chat's messages, or with `incognito`, its incognito conversation's. */
   list(before?: number, limit = 50, incognito = false): ThreadMessage[] {
     return this.shown(
       this.d.db
@@ -345,10 +321,7 @@ export class Thread {
     );
   }
 
-  /**
-   * Of the messages from `from` up to `before`, the ids still there, and the ones a task's result
-   * edited since `since`: an app's earlier pages brought up to date without loading them again.
-   */
+  /** An app's earlier pages brought up to date without loading them again. */
   changes(from: number, before: number, since: string, incognito = false): MessageChanges {
     const range = "conversation_id = ? AND incognito = ? AND id >= ? AND id < ?";
     const args = [this.conversationId, incognito ? 1 : 0, from, before] as const;
@@ -366,7 +339,6 @@ export class Thread {
     return { ids, changed: this.shown(changed) };
   }
 
-  /** Rows as the apps get them: a reply being written with its text so far, and files. */
   private shown(rows: MessageRow[]): ThreadMessage[] {
     const list = rows.map(messageOf).map((m) => {
       const text = m.status === "streaming" ? this.live.get(m.id) : undefined;
@@ -376,9 +348,8 @@ export class Thread {
   }
 
   /**
-   * Adds a message to the chat, and tells the apps. A bot's (`botId`, by default this chat's) unless
-   * `role` is "user". `text` is what search and summaries see, e.g. a task or schedule card's.
-   * `taintedBy`: its text came from untrusted content, this. `seen`: you just did what it answers.
+   * `text` is what search and summaries see, e.g. a task or schedule card's. `taintedBy`: its text
+   * came from untrusted content, this.
    */
   add(m: {
     role?: "user" | "assistant";
@@ -390,12 +361,10 @@ export class Thread {
     incognito?: boolean;
     taskId?: number;
     scheduleId?: number;
-    /** The box a note is from (kind "box"). */
     boxId?: number;
     taintedBy?: string | null;
     seen?: boolean;
     attachmentIds?: number[];
-    /** A hand-off's other end. */
     link?: MessageLink;
   }): ThreadMessage {
     const role = m.role ?? "assistant";
@@ -432,7 +401,6 @@ export class Thread {
     return message;
   }
 
-  /** The bots' messages here sent or edited since you last saw them, oldest first. */
   unread(): number[] {
     return this.d.db
       .query<{ id: number }, [number]>(
@@ -443,11 +411,7 @@ export class Thread {
       .map((r) => r.id);
   }
 
-  /**
-   * Stores the owner's message and queues Hatbot's reply, which streams over the event bus. A command
-   * ("/new", "/task …") runs in the brain instead, without the model. `incognito`: in the incognito
-   * conversation, which sees no history and is deleted when it ends.
-   */
+  /** A command ("/new", "/task …") runs in the brain instead, without the model. */
   post(
     text: string,
     attachmentIds: number[] = [],
@@ -478,7 +442,6 @@ export class Thread {
     return { message, done };
   }
 
-  /** Runs `turn` once the turns queued before it are done; one that fails doesn't hold up the rest. */
   private enqueue<T>(turn: () => Promise<T>): Promise<T> {
     const done = this.chain.then(turn);
     this.chain = done.then(
@@ -489,8 +452,8 @@ export class Thread {
   }
 
   /**
-   * A group's bots answer in turn: those first, then any bot one of them brings in with @name, up to
-   * MAX_GROUP_REPLIES. `user` null: a task ended, and the bot that started it tells you.
+   * Bots one of them brings in with @name answer too. `user` null: a task ended, and the bot that
+   * started it tells you.
    */
   private async round(user: ThreadMessage | null, first: Bot[]) {
     const queue = [...first];
@@ -504,8 +467,8 @@ export class Thread {
   }
 
   /**
-   * The episode has read untrusted content, `by`: tasks and schedules it makes from here on start
-   * tainted. The first `by` is kept. It ends with the episode: the next one starts clean (PLAN.md §6.1).
+   * Tasks and schedules the episode makes from here on start tainted. The first `by` is kept; the
+   * next episode starts clean.
    */
   private taint(episodeId: number, by: string) {
     this.d.db
@@ -514,9 +477,8 @@ export class Thread {
   }
 
   /**
-   * A new episode carries recent messages over, still labelled untrusted where they were, but not
-   * their taint: it starts clean. Only what the earlier conversation was suspected of reading comes
-   * along, and taints it (PLAN.md §6.1).
+   * Carried-over messages keep their untrusted labels but not their taint; only what the earlier
+   * conversation was suspected of reading comes along, and taints it.
    */
   private inheritSuspicion(episodeId: number, beforeMessageId: number) {
     const carried = [
@@ -531,10 +493,6 @@ export class Thread {
     this.taint(episodeId, suspected);
   }
 
-  /**
-   * Which of these messages have untrusted text in them, by id: what it came from (UNTRUSTED_SOURCE),
-   * and what their conversation was suspected of reading.
-   */
   private untrusted(ids: number[]): Map<number, { source: string; suspected: string | null }> {
     if (!ids.length) return new Map();
     const rows = this.d.db
@@ -550,9 +508,8 @@ export class Thread {
   }
 
   /**
-   * Your messages in this conversation as you wrote them, the newest OWNER_SAID_CHARS, and the notes
-   * you gave on its approvals. Answering a hand-off, also what you had said to the bot that asked: its
-   * request is its own words, not yours.
+   * Answering a hand-off, also what you had said to the bot that asked: its request is its own
+   * words, not yours.
    */
   private ownerSaid(episodeId: number): string {
     const said: string[] = [];
@@ -593,9 +550,8 @@ export class Thread {
   }
 
   /**
-   * Something the episode read may be a prompt injection, `what`: the first kept. `own`: Haiku found
-   * it in what the episode read itself, so the running summary carries it on; a suspicion carried in
-   * from elsewhere doesn't.
+   * `own`: Haiku found it in what the episode read itself, so the running summary carries it on; a
+   * suspicion carried in from elsewhere doesn't.
    */
   private suspect(episodeId: number, what: string, own = false) {
     this.d.db
@@ -607,7 +563,6 @@ export class Thread {
       .run(what, own ? 1 : 0, episodeId);
   }
 
-  /** A plugin tool the reply was offered, as it is now (see liveTool). */
   private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
     const { plugins, bots } = this.d;
     // Negotiation's tools aren't a plugin's.
@@ -621,7 +576,6 @@ export class Thread {
     });
   }
 
-  /** The episode's screener, made on first use. */
   private screenerFor(episodeId: number): Screener {
     let screener = this.screeners.get(episodeId);
     if (!screener) {
@@ -635,10 +589,6 @@ export class Thread {
     return screener;
   }
 
-  /**
-   * What the episode first read that was untrusted, and what it read that may be a prompt injection,
-   * or null: its own reads and what it carried over.
-   */
   private trust(episodeId: number): { tainted: string | null; suspected: string | null } {
     const e = this.d.db
       .query<{ tainted: number; by: string | null; suspected: string | null }, [number]>(
@@ -651,10 +601,6 @@ export class Thread {
     };
   }
 
-  /**
-   * A change that asks (`verdict`): the review (it isn't destructive or dangerous), then your approval,
-   * which the reply waits for (PLAN.md §6.1). Your note if it may go ahead; why not if not.
-   */
   private async approve(
     episodeId: number,
     bot: Bot,
@@ -666,7 +612,6 @@ export class Thread {
     const { approvals, settings } = this.d;
     const { tainted: taintedBy, suspected } = this.trust(episodeId);
     const reviewable = mayReview(verdict, suspected !== null);
-    // What you allowed beyond once (PLAN.md §6.2).
     if (
       reviewable &&
       approvals?.granted({
@@ -735,10 +680,6 @@ export class Thread {
     return { content, isError: true };
   }
 
-  /**
-   * A plugin tool that changes something, called from the chat: its policy and the untrusted-content
-   * rule, then `approve` if it asks.
-   */
   private async gatedCall(
     episodeId: number,
     bot: Bot,
@@ -794,8 +735,8 @@ export class Thread {
   }
 
   /**
-   * Files your message under its conversation, now that it has one. False if it's gone: you left
-   * incognito before its turn came. `activity`: false for one that doesn't carry the conversation on.
+   * False if the message is gone: you left incognito before its turn came. `activity`: false for one
+   * that doesn't carry the conversation on.
    */
   private file(message: ThreadMessage, episodeId: number, activity = true): boolean {
     const filed = this.d.db
@@ -814,12 +755,10 @@ export class Thread {
       .run(this.now(), episodeId);
   }
 
-  /** What came of a command, as a line in the chat. You just did it, so it's already seen. */
   private commandNote(text: string, episodeId: number | null, incognito: boolean) {
     return this.add({ kind: "command", text, episodeId, incognito, seen: true });
   }
 
-  /** /stop: the reply being written, or with a number, that task. */
   private stop(arg: string, message: ThreadMessage) {
     const incognito = !!message.incognito;
     const episodeId = this.latest(incognito)?.id ?? null;
@@ -837,7 +776,6 @@ export class Thread {
     note(this.d.tasks?.cancel(id) ? `Stopping task #${id}.` : `Task #${id} isn't running.`);
   }
 
-  /** /new, /task, /remember and /todo, in turn with replies. */
   private async command(c: ChatCommand, message: ThreadMessage, bot: Bot) {
     const { tasks, memory, settings } = this.d;
     const incognito = !!message.incognito;
@@ -905,14 +843,9 @@ export class Thread {
     }
   }
 
-  /**
-   * What a reply is bound to: the prompt, the tools and the model. Incognito gets only lookups, and no
-   * history search.
-   */
   private turnSetup(bot: Bot, incognito = false) {
     const { settings, plugins, bots, negotiations } = this.d;
-    // Fixed for the turn; a plugin switched on or off shows from the next one. A bot only gets its own,
-    // less those it leaves to the others.
+    // Fixed for the turn; a plugin switched on or off shows from the next one.
     const left = bots.leftToOthers(bot);
     const guidance = plugins.guidance(bot.plugins, left);
     const others = bots.list().filter((b) => b.id !== bot.id);
@@ -931,7 +864,7 @@ export class Thread {
     const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
     const own = plugins.tools(bot.plugins, left);
-    // Negotiation's tools come with Scout's (PLAN.md §16.3).
+    // Negotiation's tools come with Scout's.
     const pluginTools = [
       ...own,
       ...(negotiations?.tools(bot, own, { conversationId: this.conversationId }) ?? []),
@@ -946,7 +879,6 @@ export class Thread {
         .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name))
         // Boxes are code: with a code bot, it makes and changes them all.
         .filter((t) => !bots.coderFor(bot) || !BOX_CHANGE_TOOLS.includes(t.name))
-        // Claude Code makes boxes only for a bot that has it.
         .filter((t) => t.name !== "box_claude" || plugins.readyFor("claude", bot.plugins, left)),
       ASK_OWNER,
       ...(onHaiku ? [ASK_OPUS] : []),
@@ -964,7 +896,6 @@ export class Thread {
     };
   }
 
-  /** What an episode is bound to: the prompt, tools and model of each bot in it. */
   private prefixFor(bot: Bot, incognito: boolean): string {
     if (!this.group()) return this.turnSetup(bot, incognito).prefix;
     return hash16(
@@ -974,10 +905,7 @@ export class Thread {
     );
   }
 
-  /**
-   * Notes from boxes (hatbox.send, and their backends' notifications) here since `bot` last replied,
-   * before message `before`: the latest few.
-   */
+  /** Notes from boxes since `bot` last replied, before message `before`: the latest few. */
   private boxNotes(bot: Bot, before: number) {
     return this.d.db
       .query<
@@ -1027,7 +955,6 @@ export class Thread {
       .join("\n");
   }
 
-  /** Waits for queued replies (tests, shutdown). */
   idle(): Promise<void> {
     return this.chain;
   }
@@ -1049,15 +976,13 @@ export class Thread {
       .run(episodeId, botId, role, JSON.stringify(content), this.now());
   }
 
-  /** A note from the app to the bot, e.g. that a task ended: a system message, after a user turn. */
   private appendNote(episodeId: number, botId: string, note: string) {
     this.appendTurn(episodeId, botId, "user", { note });
   }
 
   /**
-   * A bot's own API conversation in the episode: in a group, each bot keeps its own. `files`: the
-   * reply's files, read once; older turns hold the bytes themselves. `effort`: the episode's first,
-   * for the request; a later change is a message where it was made, so the cache stays.
+   * In a group, each bot keeps its own turns. `effort`: the episode's first, for the request; a later
+   * change is a message where it was made, so the cache stays.
    */
   private async loadTurns(
     episodeId: number,
@@ -1088,7 +1013,6 @@ export class Thread {
     };
   }
 
-  /** The effort the bot's next reply in the episode runs at, set where it changed. */
   private setEffort(episodeId: number, botId: string, effort: Effort) {
     const last = this.d.db
       .query<{ content: string }, [number, string]>(
@@ -1099,7 +1023,6 @@ export class Thread {
     this.appendTurn(episodeId, botId, "user", { effort });
   }
 
-  /** Whether the model has seen the episode yet: any bot, or with `botId` that one. */
   private hasTurns(episodeId: number, botId?: string): boolean {
     return !!this.d.db
       .query<unknown, [number, string | null, string | null]>(
@@ -1109,9 +1032,8 @@ export class Thread {
   }
 
   /**
-   * Continues the current episode, or starts a new one after 30 minutes idle, when an update changed
-   * the system prompt, tools or model, or when you asked for one (/new, `fresh`). `isNew`: the model
-   * hasn't seen it yet, so it opens with the context. Incognito conversations run apart from the rest.
+   * A new episode after 30 minutes idle, when the system prompt, tools or model changed, or on /new
+   * (`fresh`). `isNew`: the model hasn't seen it yet, so it opens with the context.
    */
   private async episodeFor(
     prefix: string,
@@ -1155,7 +1077,6 @@ export class Thread {
     return { id: row.id, isNew: true, fresh, long };
   }
 
-  /** The conversation's latest episode, or the latest incognito one. */
   private latest(incognito: boolean) {
     return this.d.db
       .query<
@@ -1174,9 +1095,8 @@ export class Thread {
   }
 
   /**
-   * Prompt tokens the bot's last request in the episode left in the cache, while its hour lasts. The
-   * hour runs from when the request was sent; the ledger has when it ended, so after a restart it's
-   * taken to have run as long as a turn may.
+   * Prompt tokens the bot's last request left in the cache, while its hour lasts. The ledger has when
+   * a request ended, so after a restart it's taken to have run as long as a turn may.
    */
   private cachedTokens(episodeId: number, botId: string): number {
     const last = this.d.db
@@ -1193,7 +1113,6 @@ export class Thread {
     return this.clock() - at < 3600_000 ? last.tokens : 0;
   }
 
-  /** How long the episode's last chat request was, in prompt tokens. */
   private promptTokens(episodeId: number): number {
     return (
       this.d.db
@@ -1240,11 +1159,7 @@ export class Thread {
       .all(...ids);
   }
 
-  /**
-   * Summarizes the last episode once it has been idle for 30 minutes, so it folds up in the chat
-   * without waiting for the next message, and ends an incognito conversation idle that long. The brain
-   * calls it every minute.
-   */
+  /** Folds up episodes idle for 30 minutes and ends an idle incognito conversation. */
   async sweep() {
     const incognitoAt = this.d.db
       .query<{ at: string | null }, [number, number]>(
@@ -1288,16 +1203,15 @@ export class Thread {
     }
   }
 
-  /** Leaving incognito: stops its reply and deletes the conversation. The brain does it on start too. */
+  /** Leaving incognito: stops its reply and deletes the conversation. */
   async endIncognito() {
     if (this.current && this.currentIncognito) this.current.abort(STOPPED);
     await this.deleteIncognito();
   }
 
   /**
-   * Deletes the incognito conversation: its messages, files and model turns. What it cost stays in the
-   * ledger, without it. `onlyFiled` keeps your messages still waiting for their turn, which start the
-   * next one.
+   * What it cost stays in the ledger. `onlyFiled` keeps your messages still waiting for their turn,
+   * which start the next one.
    */
   private async deleteIncognito(onlyFiled = false) {
     const ids = this.d.db
@@ -1310,9 +1224,8 @@ export class Thread {
   }
 
   /**
-   * Deletes messages with their files, and an episode with its turns (null: the incognito ones), for
-   * good: out of the write-ahead log too, not only the tables. What they cost stays in the ledger,
-   * without them. `also` runs in the same transaction.
+   * For good: out of the write-ahead log too, not only the tables. `episodeId` null: the incognito
+   * ones. `also` runs in the same transaction.
    */
   private async purge(ids: number[], episodeId: number | null, also?: () => void) {
     const { db } = this.d;
@@ -1352,7 +1265,6 @@ export class Thread {
     clearTimeout(timer);
   }
 
-  /** Folds a finished episode into the rolling thread summary with Haiku, and writes its recap. */
   summarize(episodeId: number): Promise<void> {
     const running = this.summarizing.get(episodeId);
     if (running) return running;
@@ -1370,10 +1282,8 @@ export class Thread {
   }
 
   /**
-   * Deletes a conversation from the chat for good: its messages and the cards among them, their files,
-   * the model's turns, its place in search, and what the running summary kept of it. Tasks it started
-   * stay on Tasks; what it cost stays in the ledger, without it. False if there's no such one. Throws,
-   * deleting nothing, if Haiku can't rewrite the summary.
+   * Tasks it started stay on Tasks. Throws, deleting nothing, if Haiku can't rewrite the running
+   * summary.
    */
   async deleteEpisode(episodeId: number): Promise<boolean> {
     if (!this.ownEpisode(episodeId)) return false;
@@ -1386,7 +1296,7 @@ export class Thread {
 
   /**
    * You trust what a conversation read (2026-10-20, the owner's choice): it's no longer tainted or
-   * suspected, and the summary doesn't carry a suspicion from it. False if there's no such one.
+   * suspected, and the summary doesn't carry a suspicion from it.
    */
   trustEpisode(episodeId: number): boolean {
     if (!this.ownEpisode(episodeId)) return false;
@@ -1446,7 +1356,6 @@ export class Thread {
     return true;
   }
 
-  /** The running summary with what a deleted conversation put in it taken out, by Haiku. */
   private async summaryWithout(
     episodeId: number,
     rows: {
@@ -1473,7 +1382,6 @@ export class Thread {
     return summary.trim();
   }
 
-  /** A request to Haiku about the running summary, with the chat's bots named in the prompt. */
   private summaryRequest(prompt: string, content: string): CreateParams {
     const names = this.members().map((b) => b.name);
     return {
@@ -1530,11 +1438,6 @@ export class Thread {
     if (episode) this.d.events.emit({ type: "episode.updated", episode });
   }
 
-  /**
-   * Opening context for a new episode: memory index, summary, the last few messages. One you started
-   * with /new (`fresh`) gets only its own; an incognito one only the incognito conversation's, and no
-   * summary.
-   */
   private async episodeContext(
     bot: Bot,
     beforeMessageId: number,
@@ -1574,7 +1477,6 @@ export class Thread {
     ].join("\n");
   }
 
-  /** Commands you ran in the episode since your last message, for the model to know about. */
   private commandsSince(episodeId: number, userId: number): string {
     return this.d.db
       .query<
@@ -1597,12 +1499,10 @@ export class Thread {
       .join("\n");
   }
 
-  /** "Owner", or the bot that wrote it. */
   private speaker(m: { role: string; bot_id: string | null }): string {
     return m.role === "user" ? "Owner" : this.d.bots.nameOf(m.bot_id ?? HATBOT_ID);
   }
 
-  /** A message in a transcript the model reads (`messageTag`). A box's note is from the box. */
   private transcript(
     m: {
       role: string;
@@ -1622,9 +1522,8 @@ export class Thread {
   }
 
   /**
-   * A task you started from the chat ended: the bot that started it (`botId`) writes the reply that
-   * started it again, to tell you what came of it with the conversation in mind. In turn with replies.
-   * A bot deleted since doesn't: the task's result takes that reply's place.
+   * The bot that started the task writes the reply that started it again, with the conversation in
+   * mind. A bot deleted since doesn't: the task's result takes that reply's place.
    */
   taskEnded(botId = this.bot().id) {
     return this.enqueue(async () => {
@@ -1640,10 +1539,8 @@ export class Thread {
   }
 
   /**
-   * Another bot hands this chat's bot work (ask_bot, PLAN.md §14.7): its request shows here as its
-   * message, linked to where it asked (`link`), and this chat's bot answers it in turn with replies, as
-   * it would you, though the words aren't yours. `answer` resolves with the answer, or with nothing:
-   * the hand-off was stopped (`signal`) before its turn came, or the bot was deleted.
+   * Another bot hands this chat's bot work (ask_bot): it answers in turn with replies, though the
+   * words aren't yours. `answer` resolves with nothing if stopped before its turn or the bot was deleted.
    */
   handoff(
     task: Task,
@@ -1670,12 +1567,10 @@ export class Thread {
     return { message, answer };
   }
 
-  /** A hand-off was cancelled: its answer stops, if it's being written. */
   stopHandoff(messageId: number) {
     if (this.currentHandoff?.messageId === messageId) this.current?.abort(STOPPED);
   }
 
-  /** One of this chat's messages as it is now, a reply being written included. */
   message(id: number): ThreadMessage | null {
     const row = this.d.db
       .query<MessageRow, [number, number]>(
@@ -1688,10 +1583,9 @@ export class Thread {
     return text === undefined ? m : { ...m, text };
   }
 
-  /** What the conversation a message is in had read: see `trust`. */
   /**
-   * A hand-off has ended: what the episodes its answer was written in read, once their screening is
-   * done. The answer is written again in a new episode when the chat moved on before its task ended.
+   * What the episodes a hand-off's answer was written in read, once screened. The answer is written
+   * again in a new episode when the chat moved on before its task ended.
    */
   async endHandoff(
     answerId: number | null,
@@ -1708,10 +1602,6 @@ export class Thread {
     };
   }
 
-  /**
-   * Writes a reply that failed again, in place, from the turns it had: no new message of yours. Null
-   * when it can't be: see `retryable`.
-   */
   retry(messageId: number): Promise<void> | null {
     if (this.current || !this.retryable(messageId)) return null;
     return this.enqueue(async () => {
@@ -1746,7 +1636,6 @@ export class Thread {
     return messageOf(row);
   }
 
-  /** The reply that started one of these tasks, the latest: what a bot telling you about them rewrites. */
   private taskReply(tasks: { id: number }[]): ThreadMessage | null {
     if (!tasks.length) return null;
     const row = this.d.db
@@ -1758,7 +1647,6 @@ export class Thread {
     return row ? messageOf(row) : null;
   }
 
-  /** Writes a reply again: emptied, and shown as being written. */
   private rewriteMessage(m: ThreadMessage): ThreadMessage {
     this.d.db.query("UPDATE messages SET text = '', status = 'streaming' WHERE id = ?").run(m.id);
     this.d.events.emit({ type: "message.rewrite", id: m.id });
@@ -1785,9 +1673,8 @@ export class Thread {
   }
 
   /**
-   * `bot` replies to your message, or with `user` null to tasks that ended since it last heard. In a
-   * group, `nudged`: another bot or your message mentioned it after the first answered; `round`: your
-   * message the bots are answering.
+   * `user` null: tell of tasks that ended since it last heard. `nudged`: mentioned after the first
+   * bot answered; `round`: your message the group's bots are answering.
    */
   private async reply(
     user: ThreadMessage | null,
@@ -1817,7 +1704,6 @@ export class Thread {
     }
   }
 
-  /** The reply itself, which `abort` stops: see `reply`. */
   private async write(
     user: ThreadMessage | null,
     bot: Bot,
@@ -1921,7 +1807,6 @@ export class Thread {
           type: "text",
           text: `<task_updates>\n${lines.join("\n")}\n</task_updates>`,
         });
-        // Data a task handed over for this reply, e.g. a series to draw. What it holds came from the task.
         const handed = files.filter((a) => a.forChat);
         if (handed.length && this.d.attachments)
           userBlocks.push(...this.d.attachments.refs(handed));
@@ -1979,7 +1864,7 @@ export class Thread {
           text: `[${localStamp(new Date(user.createdAt))}]\n${user.text || "(no text, only files)"}`,
         });
       else note = taskNews;
-      // Your files: what's in them was written by whoever made them, so they're untrusted (PLAN.md §6.1).
+      // Your files were written by whoever made them, so they're untrusted.
       if (user?.attachments?.length && this.d.attachments) {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
@@ -2023,7 +1908,6 @@ export class Thread {
     let text = "";
     let separate = false;
     let savedAt = this.clock();
-    /** Keeps the text as it is now: in memory for the apps, and every few seconds in the database. */
     const keep = () => {
       this.live.set(out.id, text);
       if (this.clock() - savedAt < SAVE_TEXT_MS) return;
@@ -2036,7 +1920,6 @@ export class Thread {
     /** Charts in the reply that don't draw, while the model writes them again, out of view. */
     let chartFix: { broken: { start: number; end: number }[]; text: string } | null = null;
     let fixedCharts = false;
-    /** This reply's model calls so far, shown under the working dots. */
     const used = { tokens: 0, costUsd: 0 };
     const progress = (line: string) =>
       events.emit({ type: "message.progress", id: out.id, text: `\n${line}\n` });
@@ -2055,10 +1938,8 @@ export class Thread {
       text += delta;
       keep();
     };
-    /** The pages the reply cites, and the titles of those it fetched (`addSources`). */
     const cited: Source[] = [];
     const fetched = new Map<string, string>();
-    /** The answers the questions that end the reply offer, a list for each (ask_owner). */
     let choices: string[][] = [];
     const finish = (status: "done" | "error", note?: string): Said => {
       // A chart being fixed is out of view; the reply ends with what's shown.
@@ -2124,7 +2005,6 @@ export class Thread {
       };
     };
 
-    /** Records what a request cost, failed attempts too, and shows what the reply has used so far. */
     const bill = (model: string, purpose: string, usage: Anthropic.Beta.BetaUsage) => {
       used.costUsd += spend.recordResponse({
         model,
@@ -2138,7 +2018,6 @@ export class Thread {
     };
 
     let askedOpus = false;
-    /** ask_opus: one Opus 5.5 call, its answer streamed into this reply as is. */
     const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
       const result = (content: string, isError = false) => toolResult(call.id, content, isError);
       const p = AskOpus.safeParse(call.input);
@@ -2202,8 +2081,7 @@ export class Thread {
     let waited = 0;
     let commands = 0;
     let container: string | undefined;
-    // What the reply reads from outside, screened for prompt injection while it goes on (PLAN.md
-    // §6.1). Incognito can't change anything, so there's nothing to screen for.
+    // Incognito can't change anything, so there's nothing to screen for.
     const screener = incognito ? null : this.screenerFor(episode.id);
     const screen = (source: string, text: Readable) => screener?.add(source, text);
     /** A change waits for what the reply read so far to be screened, then for you. */
@@ -2315,7 +2193,7 @@ export class Thread {
             `episode ${episode.id}: the cache missed (read ${read} of ${cached} tokens; wrote ${res.usage.cache_creation_input_tokens ?? 0})`,
           );
         addSources(cited, fetched, content);
-        // Web pages are untrusted (PLAN.md §6.1).
+        // Web pages are untrusted.
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);
         for (const page of webTexts(res.content)) screen(page.source, page.text);
@@ -2490,10 +2368,8 @@ export class Thread {
   }
 }
 
-/** `s` as a regex matching it literally. */
 export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The bots `text` brings in with @name (or @id), in the order it names them. */
 export function mentionsIn(text: string, bots: Bot[]): Bot[] {
   return bots
     .map((b) => ({
@@ -2555,7 +2431,6 @@ export function markPrevious(turns: Turn[]): Turn[] {
   return out;
 }
 
-/** A tool call's result, for the turn after the call, with the picture it gave if any (box_look). */
 const toolResult = (
   id: string,
   content: string,
@@ -2650,7 +2525,6 @@ function toolLabel(name: string, plugins: Plugins): string {
   return labels[name] ?? `Using ${plugin?.name ?? name}`;
 }
 
-/** A task's title from what you typed: its first line, cut at a word. */
 export function titleOf(text: string, max = 80): string {
   const line = text.split("\n")[0]?.trim() ?? "";
   if (line.length <= max) return line;
@@ -2659,7 +2533,6 @@ export function titleOf(text: string, max = 80): string {
   return `${space > max / 2 ? cut.slice(0, space) : cut}…`;
 }
 
-/** INDEX.md with `fact` added at the end of its Notes section, which is made if it's missing. */
 export function withNote(index: string, fact: string): string {
   const line = `- ${fact.trim().replace(/\s*\n\s*/g, " ")}`;
   const lines = index.replace(/\s+$/, "").split("\n");
@@ -2672,7 +2545,6 @@ export function withNote(index: string, fact: string): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** Inputs worth naming in a working line, in this order. */
 const SHOWN_INPUTS = [
   "path",
   "query",
@@ -2705,10 +2577,6 @@ export function localStamp(d: Date): string {
   return `${day} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/**
- * The memory a bot opens a conversation or task with: INDEX.md, its own folder's INDEX.md when it has
- * one, and the to-do list's open items.
- */
 export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
   const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);
@@ -2718,7 +2586,6 @@ export async function memoryIndex(memory: MemoryStore, botId: string): Promise<s
 
 const TODOS_SHOWN = 20;
 
-/** The to-do list's open items, the first TODOS_SHOWN of them, as a conversation or task opens with them. */
 async function openTodos(memory: MemoryStore): Promise<string> {
   const open = parseTodos((await memory.readOrNull(TODO_FILE)) ?? "").filter((t) => !t.done);
   if (!open.length) return "";

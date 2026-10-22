@@ -1,4 +1,3 @@
-// Tasks (PLAN.md §5.1): storage, cards in the thread, the timeline, and starting runs.
 import {
   ACTIVE_TASK_STATUSES as ACTIVE,
   type Bot,
@@ -51,7 +50,6 @@ export type TasksDeps = {
   questions: Questions;
   notifier: Notifier;
   archive: Archive;
-  /** Files tasks send the owner. */
   attachments?: Attachments;
   chats: Chats;
   bots: Bots;
@@ -59,18 +57,14 @@ export type TasksDeps = {
   memory: MemoryStore;
   plugins: Plugins;
   skills: Skills;
-  /** Where box tasks save what Claude Code made. */
   boxes?: Boxes;
-  /** Claude Code in the sandbox, for box tasks. */
   claude?: ClaudeCode;
   /** Set once it exists; it needs the tasks too. */
   proposals?: Proposals;
   clock?: () => number;
 };
 
-/** Background tasks at once (PLAN.md §5.6). */
 const BACKGROUND_SLOTS = 3;
-/** Bots handing work to bots that hand it on: at most this many in a row. */
 export const MAX_HANDOFFS = 3;
 
 type Row = {
@@ -163,7 +157,6 @@ const UNREPORTED = `t.reported_at IS NULL AND t.status IN ('done', 'failed', 'ca
   AND EXISTS (SELECT 1 FROM messages m WHERE m.kind IN ('task', 'text', 'command') AND m.task_id = t.id)`;
 
 const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
-/** SQL for a status among these. */
 const among = (statuses: TaskStatus[]) => `IN (${statuses.map((s) => `'${s}'`).join(", ")})`;
 const STEP = `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
   FROM task_steps`;
@@ -172,10 +165,8 @@ const errorText = (err: unknown) =>
   err instanceof Error ? err.message.slice(0, 200) : "unknown error";
 /** ntfy takes up to 4,096 bytes of message; a summary with long links is cut, whole on the task. */
 const NOTIFY_BYTES = 3500;
-/** A tool's progress lines on a task's card, at most one this often. */
 const PROGRESS_MS = 3000;
 
-/** `text` in at most `max` bytes of UTF-8, cut with "…" if it's longer. */
 function clipBytes(text: string, max: number): string {
   const bytes = Buffer.from(text);
   if (bytes.length <= max) return text;
@@ -188,12 +179,11 @@ function clipBytes(text: string, max: number): string {
 export class Tasks {
   readonly lane = new ScreenLane();
   readonly pool = new Pool(BACKGROUND_SLOTS);
-  /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks (PLAN.md §16). */
+  /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks. */
   negotiations?: Negotiations;
   private running = new Map<number, AbortController>();
   /** Events for running tasks, delivered with their next tool results. */
   private inbox = new Map<number, string[]>();
-  /** Wakes a task waiting for its inbox. */
   private wakers = new Map<number, () => void>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
@@ -259,20 +249,17 @@ export class Tasks {
       triggerId?: number;
       watcherId?: number;
       limit?: number;
-      /** Only tasks older than this one: the next page. */
       before?: number;
       botId?: string;
       origin?: string;
       /** A LIKE pattern, backslash-escaped, for the title, goal or summary: Search. */
       like?: string;
-      /** Just these: a chat's task cards. */
       ids?: number[];
     } = {},
   ): Task[] {
     return this.query(opts, SELECT).map(toTask);
   }
 
-  /** As `list`, as cards: what a chat's card or a list's row shows. */
   cards(opts: Parameters<Tasks["list"]>[0] = {}): TaskCard[] {
     return this.query(opts, CARD_SELECT).map(toCard);
   }
@@ -337,16 +324,14 @@ export class Tasks {
   }
 
   /**
-   * Starts a desktop task, then a run that waits for the screen lane. It shows under the chat reply that
-   * started it (`message`), or as its own card. One started by a background task (`parent`) shows
-   * nowhere in the thread; its parent reports.
+   * Shows under the chat reply that started it (`message`), or as its own card. One started by a
+   * background task (`parent`) shows nowhere in the thread; its parent reports.
    */
   createDesktopTask(input: {
     title: string;
     goal: string;
     successCriteria: string;
     origin: Task["origin"];
-    /** A skill to follow, from skills/<name>.md. */
     skill?: string;
     parent?: Task;
     message?: number;
@@ -397,12 +382,10 @@ export class Tasks {
     return this.get(id) as Task;
   }
 
-  /** A bot's own chat. */
   private home(botId: string): number {
     return this.d.chats.direct(botId).conversationId;
   }
 
-  /** The chat a task reports to. */
   conversationOf(id: number | undefined): number | null {
     if (id === undefined) return null;
     return (
@@ -414,15 +397,14 @@ export class Tasks {
     );
   }
 
-  /** The bot doing a task. */
   botOf(task: Task): Bot {
     return this.d.bots.get(task.botId) ?? this.d.bots.hatbot();
   }
 
   /**
-   * Starts a background task (PLAN.md §5.6). One the chat starts (`run_task`) shows under the reply that
-   * started it (`message`). A schedule's or trigger's card goes in the thread when it ends, if there's
-   * something to tell. Null if the same `runKey` is still running: one run at a time.
+   * One the chat starts (`run_task`) shows under the reply that started it (`message`); a schedule's or
+   * trigger's card goes in the thread when it ends, if there's something to tell. Null if the same
+   * `runKey` is still running.
    */
   createBackgroundTask(input: {
     title: string;
@@ -453,7 +435,6 @@ export class Tasks {
     parent?: Task;
     /** The hand-off whose answer asked for it, so hand-offs through chats count towards the cap. */
     askedIn?: Task;
-    /** A research task (PLAN.md §17): Haiku at xhigh effort with helpers, ending in a report. */
     research?: boolean;
     /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
     todo?: string;
@@ -553,10 +534,9 @@ export class Tasks {
   }
 
   /**
-   * ask_bot: another bot answers `request` in its own chat, as a task the asker can follow, with what
-   * the asker had read (PLAN.md §14.7). From the chat it shows under the asker's reply (`message`), and
-   * the asker hears the answer; from a task (`parent`), that task waits for it. `answering`: the
-   * hand-off the asking reply answers. A string says why it couldn't start.
+   * ask_bot: another bot answers `request` in its own chat, as a task, with what the asker had read.
+   * From a task (`parent`), that task waits for it. `answering`: the hand-off the asking reply answers.
+   * A string says why it couldn't start.
    */
   askBot(input: {
     from: Bot;
@@ -650,13 +630,11 @@ export class Tasks {
     });
   }
 
-  /** Where a research task saved its report. */
   setReportPath(id: number, path: string) {
     this.d.db.query("UPDATE tasks SET report_path = ? WHERE id = ?").run(path, id);
     this.emit(id);
   }
 
-  /** The box Claude Code makes or changes in a box task (box_claude), or null for any other task. */
   boxJobOf(id: number): BoxJob | null {
     const r = this.d.db
       .query<{ box_job: string | null }, [number]>("SELECT box_job FROM tasks WHERE id = ?")
@@ -664,7 +642,6 @@ export class Tasks {
     return r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : null;
   }
 
-  /** What you said in the chat when you started it, or null. */
   requestOf(id: number): string | null {
     return (
       this.d.db
@@ -673,7 +650,6 @@ export class Tasks {
     );
   }
 
-  /** The unfinished task for a schedule, trigger or monitor. */
   activeFor(runKey: string): Task | null {
     const r = this.d.db
       .query<Row, [string]>(
@@ -683,7 +659,6 @@ export class Tasks {
     return r ? toTask(r) : null;
   }
 
-  /** Resolves with the task once it has ended. */
   waitFor(id: number, signal: AbortSignal): Promise<Task> {
     return new Promise((resolve, reject) => {
       const ended = () => {
@@ -736,7 +711,6 @@ export class Tasks {
     };
   }
 
-  /** Pause all is on: no task runs, and none starts. */
   paused(): boolean {
     return this.d.settings.get().paused;
   }
@@ -779,7 +753,6 @@ export class Tasks {
     this.runs.add(run);
   }
 
-  /** Waits for every run to end (tests, shutdown). */
   async idle() {
     while (this.runs.size) await Promise.all([...this.runs]);
   }
@@ -837,7 +810,7 @@ export class Tasks {
     this.emit(id);
   }
 
-  /** A desktop task carrying on on another model after the first one failed (PLAN.md §5.4). */
+  /** A desktop task carrying on on another model after the first one failed. */
   setModel(id: number, model: string, from: string) {
     this.d.db
       .query("UPDATE tasks SET model = ?, escalated_from = ? WHERE id = ?")
@@ -847,7 +820,7 @@ export class Tasks {
 
   /**
    * The task that started this one's tree, or itself. Its limit covers the whole tree, so a task that
-   * starts others can't spend a limit in each (PLAN.md §6.3).
+   * starts others can't spend a limit in each.
    */
   rootOf(id: number): number {
     for (let at = id; ; ) {
@@ -859,7 +832,6 @@ export class Tasks {
     }
   }
 
-  /** The limit a task spends against: its tree's, which is the root's. */
   budget(id: number): number {
     return this.d.db
       .query<{ budget_usd: number }, [number]>("SELECT budget_usd FROM tasks WHERE id = ?")
@@ -878,7 +850,6 @@ export class Tasks {
     return this.get(this.rootOf(id))?.research ? limits.researchUsd : limits.taskUsd;
   }
 
-  /** What a task at its tree's limit asks you, to raise it by `extra`. */
   budgetAsk(id: number, extra: number): { summary: string; reason: string } {
     const root = this.rootOf(id);
     const title = (n: number) => `"${this.get(n)?.title ?? `Task #${n}`}"`;
@@ -918,16 +889,11 @@ export class Tasks {
     return row;
   }
 
-  /** Tells a running task about something that happened, e.g. its monitor came back up. */
   tell(id: number, event: string) {
     this.inbox.set(id, [...(this.inbox.get(id) ?? []), event]);
     this.wakers.get(id)?.();
   }
 
-  /**
-   * Waits up to `ms` for a task to be told something. True if it was (or already had been), false
-   * when the time ran out.
-   */
   nextEvent(id: number, ms: number, signal: AbortSignal): Promise<boolean> {
     if (this.inbox.get(id)?.length) return Promise.resolve(true);
     signal.throwIfAborted();
@@ -957,7 +923,6 @@ export class Tasks {
     });
   }
 
-  /** What a task has been told since it last looked. */
   takeInbox(id: number): string[] {
     const events = this.inbox.get(id) ?? [];
     this.inbox.delete(id);
@@ -1049,7 +1014,6 @@ export class Tasks {
     void run.finally(() => this.runs.delete(run));
   }
 
-  /** The tasks working on to-do items now, by the item's text. */
   onTodos(): Map<string, number> {
     const rows = this.d.db
       .query<{ id: number; todo: string }, []>(
@@ -1072,12 +1036,10 @@ export class Tasks {
     return true;
   }
 
-  /** Pause all: stops every task (PLAN.md §6.5). */
   cancelAll() {
     for (const c of this.running.values()) c.abort(new Error("paused"));
   }
 
-  /** Whether takeUnreported has anything for this chat and bot. */
   hasUnreported(conversationId: number, botId: string): boolean {
     return !!this.d.db
       .query<unknown, [number, string]>(`SELECT 1 FROM tasks t WHERE ${UNREPORTED}`)

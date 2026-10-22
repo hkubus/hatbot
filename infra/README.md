@@ -1,6 +1,6 @@
 # infra
 
-Scripts that set up Hatbot on a Proxmox host, or on any two or three Debian 13 machines over SSH (PLAN.md §9).
+Scripts that set up Hatbot on a Proxmox host, or on any two or three Debian 13 machines over SSH.
 
 | Script | Runs | Does |
 |---|---|---|
@@ -48,7 +48,7 @@ On Proxmox (without it, see "Without Proxmox" below):
 
 Re-running `host-setup.sh` is safe. It finds the containers by name and skips what already exists.
 
-The third container, `hatbot-boxes`, is optional. It runs the server side of boxes, the small web apps the chat makes (PLAN.md §21): each box's backend in a unit of its own, with no network. Without it, boxes are only pages. `host-setup.sh` asks for its VMID; answer `none` (or run with `BOXES_ID=none`) to leave it out. To add it later, remove `BOXES_ID=none` from `/etc/hatbot/host.env`, then run `host-setup.sh` and `deploy.sh` again.
+The third container, `hatbot-boxes`, is optional. It runs the server side of boxes, the small web apps the chat makes: each box's backend in a unit of its own, with no network. Without it, boxes are only pages. `host-setup.sh` asks for its VMID; answer `none` (or run with `BOXES_ID=none`) to leave it out. To add it later, remove `BOXES_ID=none` from `/etc/hatbot/host.env`, then run `host-setup.sh` and `deploy.sh` again.
 
 If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop or the boxes guest could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if either can reach the web app's public URL.
 
@@ -130,7 +130,7 @@ This makes Hatbot root inside your other containers. Leave it out if you'd rathe
 
 ## Plugins
 
-Integrations are plugins you switch on in the web app, under **Settings → Plugins** (PLAN.md §4.5). Each plugin's page has fields for the addresses and tokens it needs; save them and the plugin restarts with them. Tokens are kept in `/var/lib/hatbot/secrets.json` on the brain (mode 600) and never shown again, only whether they're set.
+Integrations are plugins you switch on in the web app, under **Settings → Plugins**. Each plugin's page has fields for the addresses and tokens it needs; save them and the plugin restarts with them. Tokens are kept in `/var/lib/hatbot/secrets.json` on the brain (mode 600) and never shown again, only whether they're set.
 
 Env files in `/etc/hatbot/` on the brain still work, for ones written before or by a script; a value set on the page wins until **Use the host's**. A new env file needs a redeploy of the brain before its unit loads it.
 

@@ -1,5 +1,4 @@
-// Boxes' feeds (PLAN.md §21.2): a plugin's read tool the brain runs for a box's page on a timer, as
-// watchers do, without the model. The page reads the latest result with hatbox.feed(name).
+// A plugin's read tool the brain runs for a box's page on a timer, without the model.
 import { type BoxFeedValue, MAX_BOX_VALUE } from "@hatbot/shared";
 import type { Bots } from "./bots";
 import { BoxError } from "./boxes";
@@ -8,11 +7,10 @@ import { PluginError } from "./plugins/plugin";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
 
-/** A box has at most this many feeds; this many run at once. */
 export const MAX_BOX_FEEDS = 10;
 const PARALLEL = 4;
 
-/** Why a feed can never run as it is: it stops, until its bot adds it again. */
+/** The feed can never run as it is: it stops until its bot adds it again. */
 class Stopped extends BoxError {}
 
 export type BoxFeed = {
@@ -20,10 +18,8 @@ export type BoxFeed = {
   tool: string;
   input: unknown;
   everyMinutes: number;
-  /** The latest result, and when it came: null before the first. */
   value: unknown;
   at: string | null;
-  /** Why the last run failed, or why it stopped. */
   error: string | null;
   stopped: boolean;
 };
@@ -53,7 +49,6 @@ const toFeed = (r: Row): BoxFeed => ({
   stopped: r.next_run_at === null,
 });
 
-/** A tool's output as the page gets it: parsed when it's JSON, else the text. */
 function parsed(out: string): unknown {
   if (!/^\s*[[{]/.test(out)) return out;
   try {
@@ -97,7 +92,6 @@ export class BoxFeeds {
       .map(toFeed);
   }
 
-  /** What hatbox.feed(name) gives the page; null when there's no such feed. */
   latest(boxId: number, name: string): BoxFeedValue | null {
     const r = this.row(boxId, name);
     if (!r?.value_at) return null;
@@ -105,10 +99,6 @@ export class BoxFeeds {
     return { value: f.value, at: r.value_at, ...(f.error ? { error: f.error } : {}) };
   }
 
-  /**
-   * Adds the feed, or changes the one with its name, and runs it once now: one that can't run isn't
-   * added (BoxError says why). It runs with `botId`'s tools.
-   */
   async set(
     boxId: number,
     botId: string,
@@ -154,7 +144,6 @@ export class BoxFeeds {
     );
   }
 
-  /** Runs the feeds that are due; the brain calls it every few seconds. Resolves once they've run. */
   async tick(): Promise<void> {
     if (this.d.settings.get().paused) return;
     const due = this.d.db
@@ -203,7 +192,6 @@ export class BoxFeeds {
     }
   }
 
-  /** The tool's output now. Throws Stopped when the feed can't run as it is, BoxError when this run failed. */
   private async read(botId: string, tool: string, input: unknown): Promise<unknown> {
     const bot = this.d.bots.active(botId);
     if (!bot) throw new Stopped("The bot that added it was deleted.");

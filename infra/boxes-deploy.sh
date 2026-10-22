@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hatbot: install the boxes agent (apps/hatbox) inside hatbot-boxes (PLAN.md §21.6). deploy.sh pushes and
+# Hatbot: install the boxes agent (apps/hatbox) inside hatbot-boxes. deploy.sh pushes and
 # runs it, and it installs itself as /usr/local/sbin/hatbox-agent-deploy for updates from the brain: the
 # agent drops an archive in its state directory, and hatbox-agent-update.path runs this.
 #   $1        archive of apps/hatbox, with packages/shared in node_modules/@hatbot/shared

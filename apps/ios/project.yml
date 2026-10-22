@@ -59,7 +59,7 @@ targets:
     dependencies:
       - target: HatbotShare
       - target: HatbotWidgets
-  # The share sheet's Hatbot. It's a second App ID in SideStore.
+  # A second App ID in SideStore.
   HatbotShare:
     type: app-extension
     platform: iOS
@@ -94,7 +94,7 @@ targets:
       path: Share/HatbotShare.entitlements
       properties:
         com.apple.security.application-groups: ["group.$(BUNDLE_PREFIX).hatbot"]
-  # The home-screen widget and the Pause all control. A third App ID in SideStore.
+  # A third App ID in SideStore.
   HatbotWidgets:
     type: app-extension
     platform: iOS

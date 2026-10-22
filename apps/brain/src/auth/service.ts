@@ -5,7 +5,6 @@ import { sameText, secretKey } from "./keys";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp";
 
 export const SESSION_DAYS = 30;
-/** A token's last use is written at most this often, not on every request. */
 const LAST_USED_MS = 5 * 60_000;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base64url");
@@ -13,12 +12,11 @@ const randomToken = (prefix: string) => prefix + randomBytes(32).toString("base6
 export type Principal = { kind: "session"; id: number } | { kind: "token"; id: number };
 
 const keyOf = (p: Principal) => `${p.kind} ${p.id}`;
-/** How long a new authenticator has to be confirmed. */
 const TOTP_CHANGE_MS = 10 * 60_000;
 
 type OwnerRow = { password_hash: string; totp_secret: string; totp_last_step: number };
 
-/** Argon2id's cost, in KiB and passes. Left out, Bun's defaults: only tests pass a cheaper one. */
+/** Argon2id's cost; left out, Bun's defaults. Only tests pass a cheaper one. */
 export type PasswordCost = { memoryCost: number; timeCost: number };
 
 export class AuthService {
@@ -27,15 +25,11 @@ export class AuthService {
   private pendingSecret: string | null = null;
   private deviceKey: Buffer | null = null;
   /**
-   * The last private address that passed on X-Forwarded-For without being in HATBOT_TRUSTED_PROXIES,
-   * and when: your reverse proxy, most likely, which makes every sign-in count as coming from one
-   * address. Anyone on your network can send the header too, so Check everything only goes by its own
-   * request through the public address.
+   * An untrusted proxy makes every sign-in count as coming from one address. Anyone on your network can
+   * send the header too, so Check everything only goes by its own request through the public address.
    */
   untrustedProxy: { ip: string; at: number } | null = null;
-  /** Live sockets, by the session or token that opened them, to close when it ends. */
   private sockets = new Map<string, Set<() => void>>();
-  /** A new authenticator secret waiting for its first code, and who asked for it. */
   private totpChange: { secret: string; for: string; until: number; tries: number } | null = null;
 
   constructor(
@@ -48,7 +42,6 @@ export class AuthService {
     return Bun.password.hash(password, { algorithm: "argon2id", ...this.passwordCost });
   }
 
-  /** A request `ip` passed on, though it isn't a trusted proxy. */
   forwardedBy(ip: string) {
     if (this.untrustedProxy?.ip !== ip)
       console.warn(
@@ -81,7 +74,7 @@ export class AuthService {
     return true;
   }
 
-  /** Checks password and TOTP. A TOTP code can't be used twice. */
+  /** A TOTP code can't be used twice. */
   async checkCredentials(password: string, totp: string): Promise<boolean> {
     const owner = this.db
       .query<OwnerRow, []>(
@@ -103,15 +96,15 @@ export class AuthService {
     return res.changes === 1;
   }
 
-  /** A new password. Check the old one and a code first (checkCredentials). */
+  /** Callers check the old password and a code first (checkCredentials). */
   async changePassword(password: string) {
     const hash = await this.hash(password);
     this.db.query("UPDATE owner SET password_hash = ? WHERE id = 1").run(hash);
   }
 
   /**
-   * A new authenticator secret for `p` to scan. It takes over only once a code from it comes back
-   * (finishTotpChange), so a mistyped scan doesn't lock you out. Check the password and a code first.
+   * The secret takes over only once a code from it comes back (finishTotpChange), so a mistyped scan
+   * doesn't lock you out. Callers check the password and a code first.
    */
   startTotpChange(p: Principal): { secret: string; uri: string } {
     const secret = newTotpSecret();
@@ -135,7 +128,6 @@ export class AuthService {
     return true;
   }
 
-  /** Signed-in browsers, newest first. */
   listSessions(current?: Principal): Session[] {
     return this.db
       .query<Omit<Session, "current">, [string]>(
@@ -153,9 +145,8 @@ export class AuthService {
   }
 
   /**
-   * Signs out every browser and app but the one asking, and forgets which ones signed in here before:
-   * one that isn't yours would keep a sign-in limit of its own. A change of password or authenticator
-   * comes here too. Returns how many.
+   * Also forgets which devices signed in here before: one that isn't yours would keep a sign-in limit
+   * of its own. A change of password or authenticator comes here too.
    */
   endOthers(keep: Principal): number {
     this.db.query("DELETE FROM settings WHERE key = 'device_key'").run();
@@ -182,13 +173,12 @@ export class AuthService {
       : this.db.query("SELECT 1 FROM api_tokens WHERE id = ?").get(p.id) !== null;
   }
 
-  /** A browser or app that has signed in here: a random id, signed so one can't be made up. */
+  /** A random device id, signed so one can't be made up. */
   newDevice(): string {
     const id = randomBytes(16).toString("base64url");
     return `${id}.${this.signDevice(id)}`;
   }
 
-  /** The id in a cookie newDevice() made, or null. */
   knownDevice(cookie: string | undefined): string | null {
     const [id, sig, ...rest] = cookie?.split(".") ?? [];
     return id && sig && !rest.length && sameText(sig, this.signDevice(id)) ? id : null;
@@ -199,7 +189,6 @@ export class AuthService {
     return createHmac("sha256", this.deviceKey).update(id).digest("base64url");
   }
 
-  /** Closes a live socket when the session or token it was opened with ends. Returns how to forget it. */
   onEnd(p: Principal, close: () => void): () => void {
     const key = keyOf(p);
     const set = this.sockets.get(key) ?? new Set();
@@ -240,7 +229,6 @@ export class AuthService {
     );
   }
 
-  /** Deletes expired sessions; the brain calls it hourly. */
   prune() {
     const rows = this.db
       .query<{ id: number }, [string]>("DELETE FROM sessions WHERE expires_at <= ? RETURNING id")
@@ -251,7 +239,7 @@ export class AuthService {
     );
   }
 
-  /** The session, and whether its expiry moved on, so its cookie should too. */
+  /** `renewed`: the expiry moved on, so the cookie should too. */
   resolveSession(token: string, renew = true): (Principal & { renewed?: true }) | null {
     const row = this.db
       .query<{ id: number; expires_at: string }, [string]>(
@@ -315,10 +303,8 @@ export class AuthService {
   }
 }
 
-/** How often onBlocked may be told about one key. */
 const TELL_EVERY_MS = 3600_000;
 
-/** Counts failed logins per key in a sliding window. */
 export class FailureLimiter {
   private failures = new Map<string, number[]>();
   private toldAt = new Map<string, number>();
@@ -327,7 +313,6 @@ export class FailureLimiter {
     private max: number,
     private windowMs: number,
     private clock: () => number = Date.now,
-    /** Told when a failure that stood brings a key to the limit, at most once an hour. */
     private onBlocked?: (key: string) => void,
   ) {}
 

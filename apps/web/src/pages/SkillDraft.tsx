@@ -1,4 +1,3 @@
-// Teach-by-showing's review step (PLAN.md §10.5): the skill Opus drafted from your recording, to edit and save.
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { ApiError } from "../api";

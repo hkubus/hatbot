@@ -1,4 +1,3 @@
-// Claude Code's settings: the model it works with and how long one run may take.
 import { useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";

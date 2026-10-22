@@ -1,4 +1,3 @@
-// A negotiation's state in a line, shared by the chat, the Tasks page and its own page (PLAN.md §16).
 import type { Negotiation, NegotiationStatus } from "@hatbot/shared";
 import { time } from "./format";
 
@@ -18,13 +17,12 @@ export function NegotiationChip({ status }: { status: NegotiationStatus }) {
   return <span className={`chip ${cls}`}>{label}</span>;
 }
 
-/** 1,250 zł. */
 export const money = (n: number, currency = "PLN") =>
   `${n.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${currency === "PLN" ? "zł" : currency}`;
 
 const quote = (text: string) => `“${text.length > 200 ? `${text.slice(0, 199)}…` : text}”`;
 
-/** Where it stands, in a sentence. A seller's words are shown as text, never as markdown. */
+/** A seller's words are shown as text, never as markdown. */
 export function negotiationText(n: Negotiation): string {
   const c = n.mandate.currency;
   const last = n.lastMessage;

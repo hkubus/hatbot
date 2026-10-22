@@ -1,6 +1,6 @@
 # Hatbot for Linux
 
-A native GTK 4 and libadwaita app for Hatbot, written in Rust (PLAN.md §24). It talks to the brain's
+A native GTK 4 and libadwaita app for Hatbot, written in Rust. It talks to the brain's
 API with a bearer token. Notifications still come from the ntfy app.
 
 - `src/core`: the API types, the address rule, streamed text, the chat's pages and folds,

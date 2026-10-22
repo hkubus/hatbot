@@ -1,4 +1,3 @@
-// Dates from the brain, task status lines, and cron in words (describeCron in packages/shared).
 import Foundation
 
 enum Format {
@@ -49,7 +48,6 @@ enum Format {
     return text == amountText(value, locale: locale) ? value : amount
   }
 
-  /// 950, 12.4k, 3.1M.
   /// 1000 or 12.5: no ".0" on whole numbers.
   static func number(_ n: Double) -> String {
     n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n)
@@ -64,7 +62,6 @@ enum Format {
     text?.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.last { !$0.isEmpty }
   }
 
-  /// What a task is doing, or how it ended.
   static func taskLine(_ t: AgentTask, progress: String?) -> String {
     if let summary = t.summary, !t.isActive { return summary }
     switch t.status {

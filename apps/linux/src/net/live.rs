@@ -1,5 +1,5 @@
-// The live desktop (PLAN.md §24.2 L4). Its frames come one JPEG per binary message on /desktop/live.
-// While you have control, your mouse, wheel and keys go back as text (`LiveInput` in packages/shared).
+// Frames come one JPEG per binary message on /desktop/live. While you have control, your mouse,
+// wheel and keys go back as text (`LiveInput` in packages/shared).
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;

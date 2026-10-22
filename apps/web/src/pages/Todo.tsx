@@ -1,5 +1,3 @@
-// To-do: the list Hatbot keeps and reminds you of (PLAN.md §19), with boxes to tick items off and a
-// task to work on one.
 import { localDay, type Task, type TodoItem, type TodoList } from "@hatbot/shared";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useAction } from "../action";

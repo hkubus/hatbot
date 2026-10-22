@@ -10,7 +10,6 @@ import { json } from "./util";
 
 /** Holds the screen lane while the desktop rolls back, so no task starts on it. */
 const ROLLBACK = -1;
-/** A viewer that falls this far behind skips frames instead of seeing the desktop late. */
 const LIVE_BUFFER_BYTES = 512 * 1024;
 
 const LIVE_INPUT = new Set(["move", "button", "wheel", "key"]);
@@ -73,7 +72,7 @@ export const desktopRoutes = new Hono<AppEnv>()
       c.set("principal", principal);
       await next();
     },
-    // The live view (PLAN.md §10.5): JPEG frames from desktop-agent out, your input in while you have control.
+    // JPEG frames from desktop-agent out, your input in while you have control.
     upgradeWebSocket((c) => {
       const { desktop, teach, auth, principal } = (c as Context<AppEnv>).var;
       let upstream: WebSocket | null = null;
@@ -147,7 +146,7 @@ export const desktopRoutes = new Hono<AppEnv>()
       return c.json({ error: err instanceof PluginError ? err.message : "Proxmox failed" }, 502);
     }
   })
-  // "Roll back desktop" in Settings (PLAN.md §8): back to a nightly snapshot, then started again.
+  // Back to a nightly snapshot, then started again.
   .post("/desktop/rollback", json(z.object({ name: z.string().min(1).max(40) })), async (c) => {
     const { tasks, desktop } = c.var;
     const proxmox = c.var.proxmox();

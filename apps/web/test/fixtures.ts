@@ -1,4 +1,3 @@
-// What the brain sends, filled in for tests to change only what they're about.
 import type { Conversation, ThreadMessage } from "@hatbot/shared";
 
 export const msg = (id: number, patch: Partial<ThreadMessage> = {}): ThreadMessage => ({

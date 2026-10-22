@@ -1,4 +1,3 @@
-// Settings → Check everything: tries each part Hatbot depends on, and a test approval for the phone.
 import type { Approval, CheckReport, CheckState, ChecksInfo } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { useAction } from "../action";

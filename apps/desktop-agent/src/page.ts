@@ -22,7 +22,7 @@ export const WALK = `
 `;
 
 /**
- * The text boxes a click or Enter could send, for the brain's exact-text check (PLAN.md §16.3): what each
+ * The text boxes a click or Enter could send, for the brain's exact-text check: what each
  * visible one holds, whitespace collapsed, in the element's form when that has any, otherwise in its page,
  * open shadow roots and same-origin frames included. A box inside another (an editable region in a
  * role=textbox) counts once. A site's search box isn't one: its query stays in it on every page.
@@ -51,7 +51,7 @@ export const FIELDS = `
 `;
 
 /**
- * What the brain's click and Enter checks look at (PLAN.md §6.1), shared by the browser toolset's inspect
+ * What the brain's click and Enter checks look at, shared by the browser toolset's inspect
  * and the screen's (cdp.ts): `elementInfo(el)` for the control at or around `el`.
  */
 export const ELEMENT = `
@@ -437,7 +437,6 @@ export const RESOLVE_REF = `(o) => {
   return { x, y };
 }`;
 
-/** scroll_to: { ok } or { error }. */
 export const SCROLL_TO = `(o) => {
   ${COMMON}
   const el = byRef(o.ref);

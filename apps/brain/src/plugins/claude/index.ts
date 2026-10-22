@@ -1,7 +1,5 @@
-// Claude Code: a task hands code work to Claude Code (`claude -p`), which runs on its own in a folder of
-// the desktop's sandbox shell, on the owner's Claude subscription (src/claude-code.ts). It leaves its
-// changes in the folder; the task checks them and pushes them with a forge's tools. Boxes it makes go
-// through box_claude instead.
+// Claude Code leaves its changes in the folder; the task checks them and pushes them with a forge's
+// tools. Boxes go through box_claude instead.
 import { z } from "zod";
 import { type ClaudeCode, runStats } from "../../claude-code";
 import { type DesktopAgent, DesktopError } from "../../desktop/client";
@@ -12,10 +10,8 @@ const TOOLS = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"];
 const SYSTEM =
   "You run in a sandbox: a throwaway Linux user with no secrets. Leave your changes in the working tree; don't commit or push, since whoever asked checks them first. Run the tests if there are any. End with a short summary of what you changed and what's left.";
 
-/** A shell word, quoted. */
 const sh = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
-/** A folder in the sandbox's home, by a path relative to it. */
 const Folder = z
   .string()
   .min(1)

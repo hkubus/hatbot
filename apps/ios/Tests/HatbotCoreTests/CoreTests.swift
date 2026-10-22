@@ -17,7 +17,6 @@ func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
   try JSONDecoder().decode(type, from: Data(json.utf8))
 }
 
-/// What the brain sends, from this brain, an older one and a newer one.
 final class DecodingTests: XCTestCase {
   /// Where a delta starts and the pages a reply cites are new: an older brain sends neither.
   func testDecodesTheStreamsMessageEvents() throws {
@@ -38,7 +37,6 @@ final class DecodingTests: XCTestCase {
     else { return XCTFail("an older brain's done") }
   }
 
-  /// A newer brain's events and values, and values an older one leaves out, don't fail what they're in.
   func testUnknownEventsAndValuesFallBack() throws {
     guard case .unknown("teach.updated") = try decode(HatbotEvent.self, #"{"type":"teach.updated","session":{}}"#)
     else { return XCTFail("not unknown") }
@@ -90,7 +88,6 @@ final class DecodingTests: XCTestCase {
     XCTAssertFalse(sent.contains(#""name""#) || sent.contains(#""icon""#))
   }
 
-  /// Uptime Kuma's Post URL carries the secret that comes with a new trigger.
   func testATriggersSecretGoesInItsPostURL() throws {
     let trigger = try decode(
       TriggerWithSecret.self,
@@ -143,7 +140,6 @@ final class SafetyTests: XCTestCase {
     }
   }
 
-  /// A link in a reply opens only if it can't start something: no shortcut, call or other app.
   func testOpensOnlySafeLinks() {
     for s in ["https://pve.proxmox.com/wiki", "mailto:me@example.com", "hatbot://tasks/3", "HTTPS://A.B"] {
       XCTAssertTrue(AppLink.opens(URL(string: s)!), s)
@@ -192,8 +188,6 @@ final class SafetyTests: XCTestCase {
     }
   }
 
-  /// Text shared from another app is someone else's words: it goes as a file the brain treats as
-  /// untrusted, and only your note and the links are your message.
   func testSharedTextGoesAsAFileNotAsYourWords() {
     let url = URL(string: "https://example.com/a")!
     let draft = ShareDraft(
@@ -286,7 +280,6 @@ final class ChatTests: XCTestCase {
     }
   }
 
-  /// The same note twice is a new note: it gets its full time again.
   func testARepeatedToastIsANewOne() async {
     await MainActor.run {
       let store = Self.store()
@@ -444,7 +437,6 @@ final class ChatTests: XCTestCase {
   }
 }
 
-/// Save turns on for a change you made, and only then.
 final class FormTests: XCTestCase {
   /// A limit is read as it's typed, in the phone's own format, so Save knows about it before Return.
   func testReadsMoneyAsItsTyped() {
@@ -551,14 +543,11 @@ final class SignOutAndCacheTests: XCTestCase {
       let store = AppStore(api: api, cache: cache)
       XCTAssertEqual(store.conversations, [chat])
       XCTAssertEqual(store.bots["hatbot"]?.name, "Hatbot")
-      // Not the one still being written.
       XCTAssertEqual(store.messages.map(\.id), [5])
-      // Its answers to tap too.
       XCTAssertEqual(store.messages.first?.choices, [["Yes", "No"]])
     }
   }
 
-  /// A page still being written when you sign out doesn't come back after the cache is cleared.
   func testClearingWaitsForWritesOnTheirWay() throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -571,7 +560,6 @@ final class SignOutAndCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
-  /// Signing out deletes the chat cache and the files opened from the chat, and forgets the token.
   func testSigningOutLeavesNothingBehind() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -597,7 +585,6 @@ final class SignOutAndCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
-  /// A chat still loading when you sign out doesn't write its page back afterwards.
   func testALoadThatEndsAfterSigningOutKeepsNothing() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -621,7 +608,6 @@ final class SignOutAndCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
-  /// A 401 that answers a request the old token made, after you've signed in again, leaves you signed in.
   func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
     SlowBrain.reset([
       "/auth/me": #"{"setupDone":true,"authenticated":false}"#,
@@ -649,18 +635,14 @@ final class SignOutAndCacheTests: XCTestCase {
 final class SlowBrain: URLProtocol, @unchecked Sendable {
   static let delay: TimeInterval = 0.01
   nonisolated(unsafe) static var routes: [String: String] = [:]
-  /// Paths that answer more slowly than `delay`.
   nonisolated(unsafe) static var slower: [String: TimeInterval] = [:]
-  /// Paths that answer with another status than 200.
   nonisolated(unsafe) static var statuses: [String: Int] = [:]
   private static let lock = NSLock()
   nonisolated(unsafe) private static var paths: [String] = []
   nonisolated(unsafe) private static var bodies: [String: Data] = [:]
 
   static var requested: [String] { lock.withLock { paths } }
-  /// The last body sent to a path.
   static func sent(_ path: String) -> Data? { lock.withLock { bodies[path] } }
-  /// Starts again with these routes, none slower or failing, and nothing requested yet.
   static func reset(_ routes: [String: String] = [:]) {
     self.routes = routes
     slower = [:]
@@ -813,7 +795,6 @@ final class NetworkTests: XCTestCase {
     ]
   }
 
-  /// An earlier page that arrives after you've gone to another chat stays out of that one.
   func testAnEarlierPageForAChatYouLeftIsDropped() async throws {
     let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/conversations/1/messages?limit=50&before=60"] = "[\(Self.message(5, in: 1))]"
@@ -1032,8 +1013,6 @@ final class NetworkTests: XCTestCase {
     }
   }
 
-  /// The group you're in, or the bot whose chat you're in, deleted elsewhere: the chat goes back to
-  /// Hatbot's own.
   func testAChatDeletedElsewhereCloses() async throws {
     let group = Conversation(id: 2, kind: .group, title: "Home", botIds: ["hatbot", "chef"], unread: 0)
     let chefs = Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0)
@@ -1064,7 +1043,6 @@ final class NetworkTests: XCTestCase {
     }
   }
 
-  /// A group you delete takes the page kept of it along, and the chat goes back to Hatbot's own.
   func testDeletingAGroupForgetsItsPage() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -1106,7 +1084,6 @@ extension Session {
   }
 }
 
-/// The token in memory, where the app keeps it in the Keychain.
 final class MemoryVault: TokenVault, @unchecked Sendable {
   private let lock = NSLock()
   private var token: String?

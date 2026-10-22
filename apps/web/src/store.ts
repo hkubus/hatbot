@@ -1,4 +1,3 @@
-// Live client state: the thread, tasks, approvals, the desktop, pause state and spend, fed by the WebSocket.
 import {
   API_PREFIX,
   type Approval,
@@ -35,16 +34,11 @@ import { withDelta } from "./delta";
 import type { Toast } from "./toast";
 
 type State = {
-  /** The chat that's showing: a bot's own, or a group. */
   conversationId: number;
-  /** The incognito conversation is showing instead of the chat. */
   incognito: boolean;
   messages: ThreadMessage[];
-  /** The conversations the loaded messages belong to, for their recaps. */
   episodes: Record<number, Episode>;
-  /** Latest progress note per streaming message. */
   progress: Record<number, string>;
-  /** What each streaming reply has used so far. */
   usage: Record<number, { tokens: number; costUsd: number }>;
   hasEarlier: boolean;
   /** Hatbot's messages sent or edited since you last saw them. */
@@ -59,32 +53,26 @@ type State = {
   connected: boolean;
   /** Cards (TaskCard) until a task's page or an event brings the whole task. */
   tasks: Record<number, Task | TaskCard>;
-  /** Steps of the tasks that have been opened or shown as a card. */
   steps: Record<number, TaskStep[]>;
-  /** Files the tasks that have been opened attached, like a research report. */
   taskFiles: Record<number, Attachment[]>;
-  /** Latest progress note per running task. */
   taskProgress: Record<number, string>;
   approvals: Record<number, Approval>;
-  /** Background tasks' questions to you. */
   questions: Record<number, Question>;
   desktop: DesktopState | null;
   /** null: deleted, or never existed. */
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
   watchers: Record<number, Watcher | null>;
-  /** Negotiations with sellers (PLAN.md §16): the open ones, and any a chat or page has shown. */
+  /** The open ones, and any a chat or page has shown. */
   negotiations: Record<number, Negotiation>;
-  /** The messages of negotiations whose page has been opened. */
   negotiationMessages: Record<number, NegotiationMessage[]>;
-  /** Boxes (PLAN.md §21): all of them once Boxes has been opened, and any a chat has shown. null: deleted. */
+  /** All of them once Boxes has been opened, and any a chat has shown. null: deleted. */
   boxes: Record<number, Box | null>;
   plugins: Record<string, PluginInfo>;
   /** Memory changes waiting for you, and ones you've answered this session. */
   proposals: Record<number, Proposal>;
-  /** Teach-by-showing: the recording in progress and drafts, by id. */
   teach: Record<number, TeachSession>;
-  /** Your bots, deleted ones too once seen: old messages still name them. Brief (`Bot.brief`) as listed. */
+  /** Deleted ones too once seen: old messages still name them. Brief (`Bot.brief`) as listed. */
   bots: Record<string, Bot>;
   /** Bots that aren't deleted, Hatbot first. */
   botIds: string[];
@@ -94,7 +82,7 @@ type State = {
 
 /** Hatbot's own chat: the first one, made with the database. */
 export const HATBOT_CHAT = 1;
-/** A chat's address. Hatbot's chat is the app's front page. */
+/** Hatbot's chat is the app's front page. */
 export const chatPath = (id: number) => (id === HATBOT_CHAT ? "/" : `/chat/${id}`);
 
 /** The chat that's incognito in this tab, so a reload stays incognito in it and only in it. */
@@ -147,7 +135,6 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-/** The parts of the state that are maps by id. */
 type MapKey = {
   [K in keyof State]: State[K] extends unknown[]
     ? never
@@ -158,11 +145,9 @@ type MapKey = {
 type Id<K extends MapKey> = keyof State[K];
 type Entry<K extends MapKey> = State[K][Id<K>];
 
-/** Sets one entry of a map. */
 function put<K extends MapKey>(key: K, id: Id<K>, v: Entry<K>) {
   set({ [key]: { ...state[key], [id]: v } });
 }
-/** Adds or replaces each of `list` in a map, by its id. */
 function merge<K extends MapKey>(key: K, list: (NonNullable<Entry<K>> & { id: Id<K> })[]) {
   set({ [key]: { ...state[key], ...Object.fromEntries(list.map((x) => [x.id, x])) } });
 }
@@ -182,7 +167,6 @@ const upsert = (list: ThreadMessage[], m: ThreadMessage) =>
     ? list.map((x) => (x.id === m.id ? { ...x, ...m, episodeId: m.episodeId ?? x.episodeId } : x))
     : [...list, m].sort((a, b) => a.id - b.id);
 
-/** Fetches the conversations of `messages` we don't have yet. */
 async function loadEpisodes(messages: ThreadMessage[]) {
   const ids = [...new Set(messages.map((m) => m.episodeId))].filter(
     (id): id is number => id !== null && !state.episodes[id],
@@ -201,7 +185,6 @@ const page = (before?: number) =>
 // put onto it again, or a reply that finished meanwhile would stay streaming.
 const missed = new Set<HatbotEvent[]>();
 
-/** A page of the showing chat's messages, and the message events that came while it loaded. */
 async function messagesPage(before?: number) {
   const events: HatbotEvent[] = [];
   missed.add(events);
@@ -214,7 +197,7 @@ async function messagesPage(before?: number) {
   }
 }
 
-/** A page with the events that came while it loaded. Deltas still waiting for a frame are among them. */
+/** Deltas still waiting for a frame are among the events. */
 function caughtUp(list: ThreadMessage[], events: HatbotEvent[]) {
   flushDeltas();
   return events.reduce(onMessages, list);
@@ -233,7 +216,7 @@ export async function loadThread() {
 }
 
 let earlier: Promise<void> | null = null;
-/** The page before the first message showing. Asked for again while it loads, it's the same load. */
+/** Asked for again while it loads, it's the same load. */
 export function loadEarlier(): Promise<void> {
   earlier ??= (async () => {
     const first = state.messages[0];
@@ -256,10 +239,7 @@ export function loadEarlier(): Promise<void> {
   return earlier;
 }
 
-/**
- * Posts your message. `clientId` is the send's own id: sent again with it after the answer was lost,
- * the brain posts it once.
- */
+/** `clientId`: sent again with it after the answer was lost, the brain posts it once. */
 export async function sendMessage(text: string, attachmentIds: number[] = [], clientId?: string) {
   const m = await api<ThreadMessage>(`/conversations/${state.conversationId}/messages`, {
     body: { text, attachmentIds, incognito: state.incognito, clientId },
@@ -269,23 +249,22 @@ export async function sendMessage(text: string, attachmentIds: number[] = [], cl
     set({ messages: upsert(state.messages, m) });
 }
 
-/** Has an errored reply written again; it's rewritten in place, through the usual events. */
+/** It's rewritten in place, through the usual events. */
 export async function retryReply(m: ThreadMessage) {
   await api(`/conversations/${m.conversationId}/messages/${m.id}/retry`, { body: {} });
 }
 
-/** Deletes a conversation from the chat for good; message.deleted takes it off the screen. */
+/** message.deleted takes it off the screen. */
 export async function deleteEpisode(id: number) {
   await api(`/conversations/${state.conversationId}/episodes/${id}`, { method: "DELETE" });
 }
 
-/** Into incognito, or out of it, which deletes its conversation. */
+/** Out of incognito deletes its conversation. */
 export async function setIncognito(on: boolean) {
   if (on === state.incognito) return;
   if (on) sessionStorage.setItem(INCOGNITO_KEY, String(state.conversationId));
   else sessionStorage.removeItem(INCOGNITO_KEY);
   set({ incognito: on, messages: [], hasEarlier: false });
-  // The chat loads the conversation it switched to.
   if (!on)
     await api(`/conversations/${state.conversationId}/incognito`, { method: "DELETE" }).catch(
       () => {},
@@ -317,7 +296,6 @@ function takeBots(bots: Bot[], conversations: Conversation[]) {
   merge("bots", bots);
   set({ botIds: bots.map((b) => b.id), conversations });
 }
-/** A bot with all of its role, for its page. */
 export async function loadBot(id: string) {
   const bot = await api<Bot>(`/bots/${id}`);
   putBot(bot);
@@ -325,7 +303,7 @@ export async function loadBot(id: string) {
 }
 
 let refreshing: ReturnType<typeof setTimeout> | null = null;
-/** The chats' unread counts and order, soon: news comes in bursts. */
+/** Debounced: news comes in bursts. */
 function refreshConversations() {
   if (refreshing) return;
   refreshing = setTimeout(() => {
@@ -353,7 +331,6 @@ export async function deleteBot(id: string) {
   set({ botIds: state.botIds.filter((b) => b !== id) });
   await loadBots();
 }
-/** A group chat of `botIds` and you. */
 export async function createGroup(body: { title: string; botIds: string[] }) {
   const c = await api<Conversation>("/conversations", { body });
   putConversation(c);
@@ -379,10 +356,8 @@ const putBot = (b: Bot) => {
   if (!state.botIds.includes(b.id)) set({ botIds: [...state.botIds, b.id] });
 };
 
-/** A bot's name; the id for one we don't know. */
 export const botName = (s: State, id: string | null | undefined) =>
   id ? (s.bots[id]?.name ?? id) : "";
-/** A chat's name: a group's title, or its bot's name. */
 export const chatName = (s: State, c: Conversation | undefined) =>
   !c
     ? "Chat"
@@ -398,7 +373,7 @@ const addUnread = (id: number) =>
     ? state.unread
     : [...state.unread, id].sort((a, b) => a - b);
 
-/** You've seen these messages: they stop counting as unread here and on your other devices. */
+/** They stop counting as unread here and on your other devices. */
 export function markSeen(ids: number[]) {
   const seen = ids.filter((id) => state.unread.includes(id));
   if (!seen.length) return;
@@ -443,7 +418,7 @@ function once(key: string, have: boolean, load: () => Promise<unknown>) {
   load().catch(() => requested.delete(key));
 }
 let wanted: number[] = [];
-/** Loads a task the first time something shows it. A chat's task cards come in one request. */
+/** A chat's task cards come in one request. */
 export function ensureTask(id: number) {
   if (state.tasks[id] || requested.has(`t${id}`)) return;
   requested.add(`t${id}`);
@@ -460,7 +435,6 @@ function loadWanted() {
     });
   }
 }
-/** A task with its steps, for the live view. */
 export const ensureSteps = (id: number) => once(`st${id}`, !!state.steps[id], () => loadTask(id));
 export const ensureApproval = (id: number) =>
   once(`a${id}`, !!state.approvals[id], () => loadApproval(id));
@@ -479,9 +453,7 @@ export async function loadTasks(
     scheduleId?: number;
     triggerId?: number;
     watcherId?: number;
-    /** Just these, whatever their age. */
     ids?: number[];
-    /** As cards: what a chat's card shows. */
     view?: "card";
   } = {},
 ) {
@@ -564,16 +536,13 @@ async function refreshProposals() {
 export const putSchedule = (s: Schedule) => put("schedules", s.id, s);
 export const putTrigger = (t: Trigger) => put("triggers", t.id, t);
 export const putWatcher = (w: Watcher) => put("watchers", w.id, w);
-/** A negotiation with its messages, for its page. */
 export async function loadNegotiation(id: number) {
   const d = await api<NegotiationDetail>(`/negotiations/${id}`);
   put("negotiations", id, d.negotiation);
   put("negotiationMessages", id, d.messages);
 }
-/** Loads a negotiation the first time a chat shows it. */
 export const ensureNegotiation = (id: number) =>
   once(`n${id}`, !!state.negotiations[id], () => loadNegotiation(id));
-/** The open negotiations: the Tasks page lists them. */
 export async function loadNegotiations() {
   const list = await api<Negotiation[]>("/negotiations?status=open");
   merge("negotiations", list);
@@ -596,7 +565,6 @@ export async function loadBoxes() {
     },
   });
 }
-/** Loads a box the first time a chat shows it. */
 export const ensureBox = (id: number) =>
   once(`x${id}`, id in state.boxes, () =>
     api<Box>(`/boxes/${id}`).then(putBox, (err) => {
@@ -604,7 +572,6 @@ export const ensureBox = (id: number) =>
       put("boxes", id, null);
     }),
   );
-/** The negotiation a mandate approval is for. */
 export const negotiationOf = (s: Pick<State, "negotiations">, approvalId: number) =>
   Object.values(s.negotiations).find((n) => n.approvalId === approvalId);
 
@@ -652,7 +619,6 @@ async function loadLive(snapshot: Snapshot | null) {
   const [live, teach] = await Promise.all([
     snapshot ?? askLive(),
     api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
-    // Mandate approvals link to their negotiations.
     loadNegotiations().catch(() => null),
   ]);
   const { approvals: pending, questions: asked, desktop, unread } = live;
@@ -710,14 +676,12 @@ export async function handback() {
 
 const putTeach = (s: TeachSession) => put("teach", s.id, s);
 
-/** Takes the desktop for you and starts recording. */
 /** `replaces`: a skill to record again; the draft keeps its name. */
 export async function startTeach(replaces?: string) {
   putTeach(await api<TeachSession>("/teach/start", { body: replaces ? { replaces } : {} }));
   // Your input only reaches the desktop once the live view knows you have control.
   set({ desktop: await api<DesktopState>("/desktop/status") });
 }
-/** Stops recording; the skill is drafted next. */
 export async function stopTeach() {
   const s = await api<TeachSession>("/teach/stop", { body: {} });
   putTeach(s);
@@ -747,7 +711,6 @@ export const recording = (s: State) =>
 export const unreadCount = (s: State) =>
   s.conversations.length ? s.conversations.reduce((n, c) => n + c.unread, 0) : s.unread.length;
 
-/** Approvals and questions waiting for you, plus a takeover request. */
 export const needsYou = (s: State) =>
   Object.values(s.approvals).filter((a) => a.status === "pending").length +
   Object.values(s.questions).filter((q) => q.status === "pending").length +
@@ -778,7 +741,6 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
     patchMessages((m) => (m.id === id ? fn(m) : m), list);
   switch (e.type) {
     case "message.created":
-      // Only the conversation that's showing.
       return !!e.message.incognito === state.incognito &&
         e.message.conversationId === state.conversationId
         ? upsert(list, e.message)
@@ -1098,7 +1060,6 @@ async function catchUp(reconnected: boolean) {
   if (active && ended.length) void loadTasks({ ids: ended, view: "card" }).catch(() => {});
 }
 
-/** One of the brain's WebSockets, by its path: wss: on an https: page. */
 export const openSocket = (path: string) =>
   new WebSocket(`${location.origin.replace(/^http/, "ws")}${API_PREFIX}${path}`);
 
@@ -1109,7 +1070,6 @@ let stopped = false;
 let opened = false;
 let listening = false;
 
-/** Opens the event stream and keeps it open, catching up after a reconnect. */
 export function connect() {
   stopped = false;
   if (retryTimer) clearTimeout(retryTimer);
@@ -1162,7 +1122,6 @@ async function checkSignedIn() {
   if (me && !me.authenticated) window.dispatchEvent(new Event("hatbot:unauthorized"));
 }
 
-/** Reconnects now if the stream is down and waiting to try again. */
 export function reconnectNow() {
   if (stopped || socket) return;
   retry = 0;

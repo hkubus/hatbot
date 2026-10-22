@@ -7,7 +7,6 @@ const { Composer, fileDrops, follows, sendError } = await import("../src/pages/C
 const { ApiError } = await import("../src/api");
 const drafts = await import("../src/drafts");
 
-/** The upload's other end, driven by the test. */
 class FakeXhr {
   static all: FakeXhr[] = [];
   upload: { onprogress: ((e: object) => void) | null } = { onprogress: null };

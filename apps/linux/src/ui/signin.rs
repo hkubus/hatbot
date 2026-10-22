@@ -1,4 +1,3 @@
-// Sign in: the brain's https address, your password and a code from your authenticator.
 use std::rc::Rc;
 
 use adw::prelude::*;

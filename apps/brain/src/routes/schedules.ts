@@ -5,7 +5,6 @@ import type { AppEnv } from "../context";
 import type { Received } from "../triggers";
 import { found, id, json, knownBot } from "./util";
 
-/** Webhook bodies bigger than this are refused. */
 const MAX_HOOK_BYTES = 256 * 1024;
 
 export const scheduleRoutes = new Hono<AppEnv>()
@@ -144,7 +143,7 @@ const kumaHook = async (c: Context<AppEnv>) => {
   return c.json(a.body, a.status);
 };
 
-// No session: the signature or the trigger's secret is the authority (PLAN.md §8).
+// No session: the signature or the trigger's secret is the authority.
 export const hookRoutes = new Hono<AppEnv>()
   .post("/hooks/kuma/:id", kumaHook)
   .get("/hooks/kuma/:id", kumaHook)

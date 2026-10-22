@@ -1,7 +1,5 @@
-// Charts in replies: a ```chart fenced block holding this JSON (packages/shared/src/chart.ts).
-// Line and bar keep their values in `x` and `series`; scatter, range, matrix and timeline each in
-// their own part, set for that kind only. ChartView draws all six; one that doesn't check out stays
-// a code block. A line, bar or scatter block can name an attachment for its values instead (ChartFile).
+// A ```chart block's JSON (packages/shared/src/chart.ts). Line and bar keep their values in `x` and
+// `series`; the other kinds each in their own part. One that doesn't check out stays a code block.
 import Foundation
 
 struct ChartSpec: Decodable, Equatable, Sendable {
@@ -15,7 +13,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     var data: [Double?]
   }
 
-  /// Points on two measured axes, for trade-offs (price against noise).
   struct Scatter: Decodable, Equatable, Sendable {
     struct Point: Decodable, Equatable, Sendable {
       var x: Double
@@ -34,11 +31,9 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     var yUnit: String?
     var series: [Series]
 
-    /// Series names, with "Series 2" for one Hatbot left unnamed.
     var names: [String] { ChartSpec.names(series.map(\.name)) }
   }
 
-  /// A span from low to high for each row (prices across shops), with an optional mark inside it.
   struct Ranges: Decodable, Equatable, Sendable {
     struct Row: Decodable, Equatable, Sendable {
       var label: String
@@ -52,7 +47,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     var rows: [Row]
   }
 
-  /// Options against criteria, a value in each cell; each column is shaded from its worst to its best.
   struct Matrix: Decodable, Equatable, Sendable {
     enum Better: String, Decodable, Sendable {
       case high, low
@@ -81,7 +75,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     }
   }
 
-  /// Dated events, or spans with an end, in order along one axis; lanes split them into rows.
   struct Timeline: Decodable, Equatable, Sendable {
     struct Event: Decodable, Equatable, Sendable {
       /// 2024, 2024-03 or 2024-03-15.
@@ -108,7 +101,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
       return n.count > 2 ? "\(n[2]) \(months[n[1] - 1]) \(n[0])" : "\(months[n[1] - 1]) \(n[0])"
     }
 
-    /// An event's date, or its span: "Mar 2024 – Jun 2024".
     static func when(_ e: Event) -> String {
       e.end.map { "\(dateText(e.date)) – \(dateText($0))" } ?? dateText(e.date)
     }
@@ -133,7 +125,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   var stacked = false
   /// Bars: one row per x, for rankings and long names.
   var horizontal = false
-  /// Line and bar.
   var x: [String] = []
   var series: [Series] = []
   var scatter: Scatter?
@@ -186,7 +177,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     }
   }
 
-  /// The spec in a chart block, or nil if it isn't one.
   static func parse(_ source: String) -> ChartSpec? { parse(Data(source.utf8)) }
 
   static func parse(_ json: Data) -> ChartSpec? {
@@ -249,7 +239,6 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     }
   }
 
-  /// Whether the bars stack: asked for, and more than one series to stack.
   var isStacked: Bool { type == .bar && stacked && series.count > 1 }
 
   /// Each x's stack of bars: (start, end) per series, positives up from 0 and negatives down.
@@ -368,7 +357,6 @@ struct ChartFile: Equatable, Sendable {
     var title: String?
   }
 
-  /// The file block in a chart block, or nil if it isn't one.
   static func parse(_ source: String) -> ChartFile? {
     let json = Data(source.utf8)
     guard let head = try? JSONDecoder().decode(Head.self, from: json), head.data > 0,

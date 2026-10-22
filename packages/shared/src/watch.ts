@@ -3,11 +3,9 @@
 import { z } from "zod";
 import { BOT_ID } from "./bot-id";
 
-/** Where the value comes from, and how it's picked out. */
 export type WatchSource = {
   /** page: fetched from the desktop, which can only reach the internet. tool: a plugin's read tool. */
   kind: "page" | "tool";
-  /** page: the address. */
   url?: string;
   /**
    * page: loaded in a headless Chromium on the desktop, so what its scripts write is there. Slower and
@@ -55,7 +53,6 @@ export type Watcher = {
   lastValue: string | null;
   lastChangedAt: string | null;
   lastFiredAt: string | null;
-  /** Why the last check failed; null when it worked. */
   lastError: string | null;
   /** Failed checks in a row. */
   errors: number;
@@ -70,12 +67,10 @@ export type WatchPreview = { ok: true; value: string } | { ok: false; error: str
 
 /** Watchers look at most this often, in minutes. */
 export const MIN_WATCH_MINUTES = 5;
-/** A watcher looks at least once a week. */
 export const MAX_WATCH_MINUTES = 7 * 24 * 60;
 /** Watchers that run a page's scripts look at most this often: each look is a Chromium on the desktop. */
 export const MIN_RENDER_WATCH_MINUTES = 15;
 
-/** How often a watcher on this source may look, at most, in minutes. */
 export const minWatchMinutes = (s: Pick<WatchSource, "kind" | "render">) =>
   s.kind === "page" && s.render ? MIN_RENDER_WATCH_MINUTES : MIN_WATCH_MINUTES;
 

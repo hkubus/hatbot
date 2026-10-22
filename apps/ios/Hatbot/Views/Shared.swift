@@ -1,10 +1,9 @@
-// Colors, navigation routes and small views the screens share.
 import ImageIO
 import SwiftUI
 import UIKit
 
 extension Color {
-  /// Hatbot's amber (PLAN.md §10.2), for fills. Blue means "needs you", red destructive, green done.
+  /// Hatbot's amber, for fills. Blue means "needs you", red destructive, green done.
   /// Amber as text, and the app's tint, is the AccentColor asset (`accentColor`): the brand's amber gives
   /// only 2.75:1 on white, and that one reads at 4.5:1 or better on white, grey bubbles and the sidebar's
   /// selected row.
@@ -49,7 +48,6 @@ extension UIColor {
   }
 }
 
-/// Pages pushed on a tab's navigation stack.
 enum Route: Hashable {
   case task(Int)
   case live(taskId: Int?)
@@ -189,7 +187,6 @@ extension String {
   }
 }
 
-/// Three dots that pulse while Hatbot works.
 struct TypingDots: View {
   var body: some View {
     Image(systemName: "ellipsis")
@@ -227,7 +224,6 @@ enum Picture {
     return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
   }
 
-  /// What keeping it costs, in bytes, for a cache's limit.
   static func cost(_ image: UIImage) -> Int {
     image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
   }
@@ -310,7 +306,6 @@ final class ImageCache {
     return result.image
   }
 
-  /// Signed out.
   func clear() {
     generation += 1
     loading = [:]
@@ -319,7 +314,6 @@ final class ImageCache {
   }
 }
 
-/// A task's screenshot; a tap opens it full screen.
 struct Screenshot: View {
   let taskId: Int
   let stepId: Int
@@ -356,15 +350,12 @@ struct Screenshot: View {
   }
 }
 
-/// A picture full screen: pinch to zoom where your fingers are, drag to move around a zoomed one,
-/// double tap to zoom in where you tap or back out, and swipe down to close. It zooms like the live
-/// view (Core/Zoom.swift), so it never moves off the screen.
+/// Zooms like the live view (Core/Zoom.swift), so it never moves off the screen.
 struct ImageViewer: View {
   let image: UIImage
   var label = "Picture"
   @Environment(\.dismiss) private var dismiss
   @State private var zoom = Zoom()
-  /// The zoom a pinch or a drag started from.
   @State private var pinchStart: Zoom?
   @State private var dragStart: Zoom?
   /// Pulled down, not zoomed in: let go far enough and it closes.
@@ -415,7 +406,6 @@ struct ImageViewer: View {
       .onEnded { _ in pinchStart = nil }
   }
 
-  /// Moves around a zoomed picture; on one that isn't, pulls it down to close.
   private func drag(_ size: CGSize) -> some Gesture {
     DragGesture()
       .onChanged { value in

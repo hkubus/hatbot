@@ -1,5 +1,3 @@
-// Which brain the app talks to, and its bearer token. Signing in trades password + TOTP for a
-// token named after the device (POST /auth/login with client "app").
 import Foundation
 import Observation
 
@@ -7,7 +5,6 @@ import Observation
   import FoundationNetworking
 #endif
 
-/// Where the token lives: the Keychain on iOS, memory in tests.
 protocol TokenVault: Sendable {
   func load() -> String?
   func save(_ token: String)
@@ -71,7 +68,6 @@ final class Session {
     store = AppStore(api: makeAPI(url, token: token), cache: cache)
   }
 
-  /// Ends the token on the brain too, when it's reachable.
   func signOut() async {
     guard let store else { return }
     store.disconnect()
@@ -79,7 +75,6 @@ final class Session {
     forget()
   }
 
-  /// The brain no longer accepts the token.
   private func forget() {
     store?.close()
     store = nil

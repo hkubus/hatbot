@@ -1,5 +1,3 @@
-// Starts the plugins you've switched on, keeps their settings, and hands their tools to the chat and
-// to tasks (PLAN.md §4.5).
 import { join } from "node:path";
 import type { PluginEnvInfo, PluginInfo, PluginState } from "@hatbot/shared";
 import { z } from "zod";
@@ -20,10 +18,8 @@ import {
   type Verdict,
 } from "./plugin";
 
-/** What a model gets to see of one tool's output. */
 const MAX_OUTPUT_CHARS = 30_000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
-/** A plugin in error is started again after these, then every last one; a part down, recovered. */
 const RETRY_MS = [60_000, 5 * 60_000, 15 * 60_000];
 
 type Slot = {
@@ -35,7 +31,6 @@ type Slot = {
   instance: PluginInstance | null;
   /** Bumped on every (re)start, so a slow start that was overtaken is thrown away. */
   generation: number;
-  /** Tries since it last worked, for the backoff. */
   retries: number;
   retry: ReturnType<typeof setTimeout> | null;
 };
@@ -43,21 +38,16 @@ type Slot = {
 export type PluginsDeps = {
   db: Db;
   events: EventBus;
-  /** The host's environment: /etc/hatbot/*.env, as systemd loads them. */
   env?: Record<string, string | undefined>;
-  /** What's set in Settings in place of the host's. */
   secrets: Secrets;
   files?: PluginFiles;
-  /** The brain's data folder: each plugin gets one of its own in it. */
   dataDir: string;
-  /** The core's own tool names; plugin tools can't take them. */
   reserved: string[];
 };
 
 export class Plugins {
   private slots = new Map<string, Slot>();
   private hostEnv: Record<string, string | undefined>;
-  /** Waits between tries for a plugin that's down; tests shorten them. */
   retryMs = RETRY_MS;
 
   constructor(
@@ -83,7 +73,6 @@ export class Plugins {
     }
   }
 
-  /** Starts every plugin that's switched on. */
   async startAll() {
     await Promise.all(
       [...this.slots.values()].filter((s) => s.enabled).map((s) => this.restart(s)),
@@ -103,7 +92,6 @@ export class Plugins {
     return s ? this.info(s) : null;
   }
 
-  /** Switches a plugin on or off, or changes its settings; it restarts with them. */
   async update(id: string, patch: { enabled?: boolean; config?: unknown }): Promise<PluginInfo> {
     const s = this.slots.get(id);
     if (!s) throw new PluginError(`No plugin "${id}".`);
@@ -120,15 +108,11 @@ export class Plugins {
     return this.info(s);
   }
 
-  /** The environment plugins start with: the host's, and over it what's set in Settings. */
   env(): Record<string, string | undefined> {
     return { ...this.hostEnv, ...this.d.secrets.pluginEnv() };
   }
 
-  /**
-   * Sets a plugin's environment variables, or for one that takes them its secrets by name; null goes
-   * back to the host's. Every plugin that reads one restarts with it.
-   */
+  /** null goes back to the host's value. Every plugin that reads one restarts with it. */
   async setSecrets(id: string, values: Record<string, string | null>): Promise<PluginInfo> {
     const s = this.slots.get(id);
     if (!s) throw new PluginError(`No plugin "${id}".`);
@@ -157,7 +141,6 @@ export class Plugins {
     return this.info(s);
   }
 
-  /** Settings' Test button. */
   async test(id: string): Promise<string> {
     const s = this.slots.get(id);
     if (!s) throw new PluginError(`No plugin "${id}".`);
@@ -173,7 +156,6 @@ export class Plugins {
     }
   }
 
-  /** What the ready plugins find wrong now, for the heartbeat. One that can't be asked says so. */
   async signals(): Promise<PluginSignal[]> {
     const found = await Promise.all(
       [...this.slots.values()]
@@ -201,7 +183,6 @@ export class Plugins {
     return found.flat();
   }
 
-  /** A call from the plugin's settings form. Works while it's starting up or needs setup, too. */
   async action(id: string, name: string, args: unknown): Promise<unknown> {
     const s = this.slots.get(id);
     const actions = s?.instance?.actions;
@@ -211,11 +192,7 @@ export class Plugins {
     return fn(args);
   }
 
-  /**
-   * The ready plugins in a stable order: it's part of the prompt cache. With `only`, just those a
-   * bot may use; without those in `except` (what it leaves to other bots). `ready` false: every one
-   * switched on, running or not.
-   */
+  /** A stable order: it's part of the prompt cache. */
   private readyOnes(only: string[] | null, except: string[], ready = true) {
     return [...this.slots.values()]
       .filter(
@@ -227,25 +204,19 @@ export class Plugins {
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
   }
 
-  /** Whether a plugin is ready for a bot that may use `only`, less what it leaves to the others. */
   readyFor(id: string, only: string[] | null = null, except: string[] = []): boolean {
     return this.readyOnes(only, except).some((s) => s.plugin.id === id);
   }
 
-  /**
-   * The names of the plugins switched on, as `tools` picks them: what a bot has, for the other bots'
-   * prompts. Running or not, so a restart doesn't change those prompts.
-   */
+  /** Running or not, so a restart doesn't change the other bots' prompts. */
   names(only: string[] | null = null, except: string[] = []): string[] {
     return this.readyOnes(only, except, false).map((s) => s.plugin.name);
   }
 
-  /** Tools of the ready plugins, for the chat and tasks. */
   tools(only: string[] | null = null, except: string[] = []): PluginTool[] {
     return this.readyOnes(only, except).flatMap((s) => s.instance?.tools ?? []);
   }
 
-  /** The ready plugins' paragraphs for the system prompt. */
   guidance(only: string[] | null = null, except: string[] = []): string {
     return this.readyOnes(only, except)
       .flatMap((s) =>
@@ -254,7 +225,6 @@ export class Plugins {
       .join("\n\n");
   }
 
-  /** The plugin a tool belongs to, by its name prefix. */
   pluginOf(toolName: string): Plugin | null {
     return this.slots.get(toolName.split("_")[0] ?? "")?.plugin ?? null;
   }
@@ -300,7 +270,6 @@ export class Plugins {
         console.error(`plugin ${s.plugin.id} failed to start`, err);
     }
     if (generation !== s.generation) {
-      // Switched off or restarted while starting.
       await instance?.stop?.();
       return;
     }
@@ -311,7 +280,6 @@ export class Plugins {
     this.later(s);
   }
 
-  /** Tries again later if it's in error or a part of it is down; forgets the tries once it works. */
   private later(s: Slot) {
     if (s.retry) clearTimeout(s.retry);
     s.retry = null;
@@ -344,7 +312,7 @@ export class Plugins {
     await this.restart(s);
   }
 
-  /** What a ready plugin offers now is checked like what it started with: a bad tool would fail every request. */
+  /** A bad tool would fail every request. */
   private async recheck(s: Slot, instance: PluginInstance, after: string): Promise<boolean> {
     try {
       this.checkTools(s.plugin, instance.tools);
@@ -410,7 +378,6 @@ export class Plugins {
     };
   }
 
-  /** What Settings is told of one variable: never a secret's value. */
   private envInfo(v: NonNullable<Plugin["env"]>[number]): PluginEnvInfo {
     const app = this.d.secrets.pluginEnv()[v.name];
     const value = app ?? this.hostEnv[v.name] ?? "";
@@ -430,24 +397,15 @@ export class Plugins {
   }
 }
 
-/** A plugin's row in settings as saved: whether it's on, and its settings, unchecked. */
 export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown } {
   const row = getSetting(db, `plugin:${id}`);
   return row === null ? {} : JSON.parse(row);
 }
 
-/**
- * Whether a call's output is untrusted content. `input` is the parsed input; with `output`, once the
- * call has returned it.
- */
 export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>
   typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
 
-/**
- * Runs a plugin tool: checks its input, and labels untrusted output so it can't pose as instructions
- * (PLAN.md §6.1). Policy is the caller's job; this only runs it. `text`: the output without its label,
- * for screening.
- */
+/** Labels untrusted output so it can't pose as instructions. Policy is the caller's job. */
 export async function runPluginTool(
   t: PluginTool,
   input: unknown,
@@ -485,10 +443,6 @@ export async function runPluginTool(
   return { content: label(out, untrusted), isError: false, untrusted, text: out };
 }
 
-/**
- * What taints a prompt that has these tools in it, or null: descriptions from untrusted MCP servers
- * that the owner hasn't accepted, or that changed since.
- */
 export function untrustedDefinitions(tools: PluginTool[]): string | null {
   const servers = new Set(
     tools.filter((t) => t.untrustedDefinition).map((t) => t.name.split("_")[1]),
@@ -498,7 +452,6 @@ export function untrustedDefinitions(tools: PluginTool[]): string | null {
     : null;
 }
 
-/** A tool call in a line, for the timeline and approvals. */
 export function describeCall(t: PluginTool, input: unknown): string {
   const parsed = t.schema.safeParse(input);
   if (parsed.success && t.describe) return t.describe(parsed.data);
@@ -506,9 +459,8 @@ export function describeCall(t: PluginTool, input: unknown): string {
 }
 
 /**
- * Whether a call may run: the tool's own policy, made stricter by the untrusted-content rule. Once a
- * task or a conversation has read untrusted content, every write needs your approval (PLAN.md §6.1),
- * unless Haiku's review lets it through, or the tool's policy says an approval you gave covers it.
+ * Once a task or conversation has read untrusted content, every write needs approval, unless Haiku's
+ * review lets it through or the tool's policy says an approval you gave covers it.
  */
 export function verdictFor(
   t: PluginTool,

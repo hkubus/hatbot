@@ -1,10 +1,7 @@
 import { useState } from "react";
 import { errorText } from "./api";
 
-/**
- * What a button does: `busy` while it runs, and what went wrong as `error`, cleared each time it
- * starts. `fail` takes what went wrong instead, e.g. to say it in a toast.
- */
+/** `error` clears each time it starts; `fail` takes errors instead, e.g. to say them in a toast. */
 export function useAction() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

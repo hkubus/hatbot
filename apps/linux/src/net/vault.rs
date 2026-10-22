@@ -42,7 +42,6 @@ fn config_path() -> PathBuf {
     glib::user_config_dir().join("hatbot").join("hatbot.conf")
 }
 
-/// The brain's address saved at sign-in, if any.
 pub fn saved_server() -> Option<String> {
     let file = glib::KeyFile::new();
     file.load_from_file(config_path(), glib::KeyFileFlags::NONE)

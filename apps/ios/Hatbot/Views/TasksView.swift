@@ -1,5 +1,3 @@
-// Tasks: what needs you first, then Active or Finished. A task's page has its approvals, the live
-// view while it uses the screen, details and the timeline.
 import SwiftUI
 
 struct TasksView: View {
@@ -10,7 +8,6 @@ struct TasksView: View {
   @State private var finishedIds: [Int]?
   /// Running tasks shown so far may be only the ones the chat brought, until the list loads.
   @State private var activeLoaded = false
-  /// Finished tasks go back further than the pages loaded so far.
   @State private var moreFinished = false
   @State private var error: String?
 
@@ -53,7 +50,6 @@ struct TasksView: View {
           ForEach(shown) { t in
             NavigationLink(value: Route.task(t.id)) { TaskRow(task: t) }
           }
-          // Scrolled to the end: the page before.
           if filter == .done && moreFinished && error == nil {
             ProgressView()
               .frame(maxWidth: .infinity)
@@ -254,7 +250,6 @@ struct TaskDetailView: View {
   }
 }
 
-/// The goal being edited before a task runs again.
 private struct Goal: Identifiable {
   let text: String
   var id: Int { 0 }

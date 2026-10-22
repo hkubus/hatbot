@@ -19,7 +19,6 @@ type Selection =
 type History = { path: string; log: Commit[]; older: boolean; error: string };
 
 const enc = encodeURIComponent;
-/** Commits in a page of History. */
 const PAGE = 50;
 
 function DiffView({ diff }: { diff: string }) {
@@ -49,7 +48,6 @@ function DiffView({ diff }: { diff: string }) {
   );
 }
 
-/** A proposal's changes, file by file, with why. */
 function ProposalView({ p }: { p: Proposal }) {
   return (
     <div style={{ padding: "16px 20px" }}>
@@ -100,14 +98,12 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   );
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
-  /** The file in the editor, with any unsaved edits. */
   const [doc, setDoc] = useState<Doc | null>(null);
   /** Someone else saved the file while you were editing it. */
   const [conflict, setConflict] = useState<{ sha: string; content: string } | null>(null);
   const [diff, setDiff] = useState("");
   /** History is the last file you opened's. */
   const [histPath, setHistPath] = useState(open || "INDEX.md");
-  /** Its commits, whether there are older ones, and why they didn't load. */
   const [hist, setHist] = useState<History | null>(null);
   const [histAttempt, setHistAttempt] = useState(0);
   // Another file's commits never show, while this one's load or if they don't.
@@ -184,7 +180,6 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
         ),
     );
   }, []);
-  // The file you chose, once.
   useEffect(() => {
     if (sel.kind === "file" && doc?.path !== sel.path) read(sel.path);
   }, [sel, doc?.path, read]);

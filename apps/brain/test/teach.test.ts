@@ -148,7 +148,6 @@ test("no screenshot is kept on a page after hidden typing there, however its add
   input(r, click(40, 40));
   r.page("https://bank.example/pay?step=confirm", "Pay");
   input(r, click(50, 50));
-  // A new address is.
   r.page("https://bank.example/done", "Done");
   input(r, click(60, 60));
   secretShown = true;
@@ -201,7 +200,6 @@ async function teachApp() {
 
 type Call = (method: string, path: string, body?: unknown) => Response | Promise<Response>;
 
-/** The recording's screenshots in the archive. */
 function screensOf(t: TestApp, id: number): string[] {
   const root = join(t.archive.dir, "screens");
   if (!existsSync(root)) return [];
@@ -288,7 +286,6 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   expect(
     (await call("POST", `/teach/${session.id}/save`, { name: "x", content: "y" })).status,
   ).toBe(409);
-  // Saved: the screenshots are gone.
   expect(screensOf(t, session.id)).toEqual([]);
 });
 

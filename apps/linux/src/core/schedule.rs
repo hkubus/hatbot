@@ -33,7 +33,6 @@ pub struct ScheduleChange {
     pub bot_id: String,
 }
 
-/// An hour from now, on the minute.
 fn in_an_hour() -> DateTime {
     let now = DateTime::now_local().expect("the time");
     let d = now.add_hours(1).expect("an hour on");

@@ -1,5 +1,5 @@
-// Lists every installed dependency's licence, and fails on a copyleft or unknown one: Hatbot takes no
-// copyleft dependencies, not even MPL (PLAN.md §2). Run after `bun install`: `bun run licenses`.
+// Lists every installed dependency's licence, and fails on a copyleft or unknown one, MPL included.
+// Run after `bun install`: `bun run licenses`.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

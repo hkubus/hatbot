@@ -21,7 +21,6 @@ export const botRoutes = new Hono<AppEnv>()
   .get("/bot-templates", (c) => c.json(BOT_TEMPLATES))
   .post("/bots", json(CreateBot), (c) => {
     const bot = c.var.bots.create(c.req.valid("json"));
-    // Its own chat, so it's in the list straight away.
     c.var.chats.changed(c.var.chats.direct(bot.id).conversationId);
     return c.json(bot, 201);
   })

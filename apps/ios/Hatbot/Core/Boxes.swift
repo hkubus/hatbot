@@ -1,6 +1,3 @@
-// Boxes (PLAN.md §21): small web apps your bots made. A box's page runs in a web view of its own at
-// the signed address the brain gives, and what it asks of `window.hatbox` goes through the app to the
-// brain for that one box.
 import Foundation
 
 extension AppStore {
@@ -29,12 +26,10 @@ extension AppStore {
     return d
   }
 
-  /// A version's page as its source.
   func boxPage(_ id: Int, version: Int) async throws -> BoxPage {
     try await api.get("/boxes/\(id)/versions/\(version)")
   }
 
-  /// An older version's page as a new version.
   func revertBox(_ id: Int, to version: Int) async throws -> BoxDetail {
     struct Body: Encodable { let version: Int }
     return keep(try await api.post("/boxes/\(id)/revert", body: Body(version: version)))
@@ -68,7 +63,6 @@ extension AppStore {
   }
 }
 
-/// The two ends of a box's calls in the web view: what WebKit gives the app, and what it takes back.
 enum BoxBridge {
   /// A call from the page as JSON, as the web app's JSON.stringify would send it: dates as ISO strings,
   /// NaN and infinities as null. Nil for anything but an object, which JSONSerialization would crash on.
@@ -106,9 +100,8 @@ enum BoxBridge {
   }
 }
 
-/// Where a box's web view may go (PLAN.md §21.8). Its main frame stays on the box's page: links to web
-/// pages open outside the app, and anything else that would take it away is refused, and the box shows
-/// Reload instead.
+/// Where a box's web view may go. Its main frame stays on the box's page: links to web pages open
+/// outside the app, and anything else that would take it away is refused, and the box shows Reload.
 enum BoxNavigation: Equatable, Sendable {
   case allow
   /// A web page the box links to, opened outside the app.

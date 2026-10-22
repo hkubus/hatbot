@@ -49,7 +49,7 @@ export class WeeklyReport {
     this.clock = d.clock ?? Date.now;
   }
 
-  /** Sends it once it's due; the brain calls it every few seconds. A day late at most. */
+  /** A day late at most. */
   tick() {
     const s = this.d.settings.get();
     if (s.paused || !s.weeklyReport.enabled || this.sending) return;
@@ -89,7 +89,6 @@ export class WeeklyReport {
     return v ? Date.parse(v) : null;
   }
 
-  /** The report in Markdown, and a line for the notification. */
   async make(): Promise<{ text: string; line: string }> {
     const db = this.d.db;
     const since = new Date(this.clock() - WEEK).toISOString();

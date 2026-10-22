@@ -8,7 +8,7 @@ import { found, id, json } from "./util";
 /**
  * A box's page runs on an opaque origin (the CSP's sandbox, whether framed or opened on its own), so it
  * has neither the app's session nor its storage, and it reaches nothing outside itself: hatbox.store
- * goes through the app (PLAN.md §21.1). Popups escape the sandbox, so the pages a box links to work.
+ * goes through the app. Popups escape the sandbox, so the pages a box links to work.
  */
 const FRAME_HEADERS = {
   "content-type": "text/html; charset=utf-8",
@@ -21,7 +21,6 @@ const FRAME_HEADERS = {
 
 const GONE = "That box is gone.";
 
-// Boxes (PLAN.md §21): the list, a box's versions, its page, and what its page saves.
 export const boxRoutes = new Hono<AppEnv>()
   // The page: no session, the signed address is the authority, for a while.
   .get("/boxes/:id/frame", (c) => {
@@ -67,7 +66,6 @@ export const boxRoutes = new Hono<AppEnv>()
     if (!boxes.get(id(c))) return c.json({ error: GONE }, 404);
     return c.json(await boxes.setSecrets(id(c), c.req.valid("json").values));
   })
-  // Whatever the box's page asks of window.hatbox, passed on as it is by the app.
   .post("/boxes/:id/call", json(BoxCall), async (c) => {
     const { boxes } = c.var;
     if (!boxes.get(id(c))) return c.json({ error: GONE }, 404);

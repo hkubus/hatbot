@@ -1,16 +1,12 @@
-// The app's own dialog, for asking before something that can't be undone and for a line of text: the
-// browser's confirm() can't show a red button, and looks like the page went wrong.
+// Not the browser's confirm(): it can't show a red button, and looks like the page went wrong.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { setLeaveGuard } from "./router";
 
 type Question = {
   text: string;
-  /** The button that goes ahead, e.g. "Delete". */
   ok: string;
   cancel: string;
-  /** It deletes, discards or replaces something: the button is red. */
   danger: boolean;
-  /** Asks for a line of text, with this placeholder. */
   input?: string;
   answer: (value: string | null) => void;
 };
@@ -46,7 +42,7 @@ function put(q: Omit<Question, "answer">): Promise<string | null> {
   });
 }
 
-/** Asks before going ahead; true to go. Red unless `danger` is false. */
+/** Red unless `danger` is false. */
 export async function ask(o: {
   text: string;
   ok: string;
@@ -57,7 +53,6 @@ export async function ask(o: {
   return r !== null;
 }
 
-/** Asks for a line of text; null when you cancel. */
 export function askText(o: {
   text: string;
   ok: string;
@@ -66,8 +61,7 @@ export function askText(o: {
   return put({ text: o.text, ok: o.ok, cancel: "Cancel", danger: false, input: o.placeholder });
 }
 
-/** Asks before leaving while `dirty`: the app's links, Back, and closing the tab. Its result drops the
- * guard at once, for leaving right after a save or a delete. */
+/** Its result drops the guard at once, for leaving right after a save or a delete. */
 export function useLeaveGuard(dirty: boolean): () => void {
   const off = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -116,7 +110,6 @@ export function Dialogs() {
       className="ask"
       aria-label={q?.text}
       onCancel={(e) => {
-        // Escape.
         e.preventDefault();
         q?.answer(null);
       }}

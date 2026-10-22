@@ -1,6 +1,6 @@
 # Hatbot for iOS
 
-A native SwiftUI app for Hatbot (PLAN.md §4.7), installed with SideStore. It talks to the brain's
+A native SwiftUI app for Hatbot, installed with SideStore. It talks to the brain's
 API with a bearer token. Notifications still come from the ntfy app.
 
 - `Hatbot/Core`: Foundation only. API types, the API client, the reconnecting WebSocket, the live

@@ -1,5 +1,4 @@
-// Search (PLAN.md §24.2 L6, SearchView on iOS): messages, tasks, memory and routines. A message opens
-// in its chat, out of incognito.
+// As SearchView on iOS. A message opens in its chat, out of incognito.
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -205,7 +204,6 @@ fn link_row(title: &str, subtitle: Option<&str>, open: impl Fn() + 'static) -> a
     row
 }
 
-/// The snippet with its matches in bold.
 fn snippet_markup(snippet: &str) -> String {
     search::parts(snippet)
         .into_iter()

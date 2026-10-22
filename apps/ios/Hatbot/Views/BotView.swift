@@ -1,9 +1,7 @@
-// A bot's page (PLAN.md §14): its name, role, model and plugins. No id makes one, from a template or not.
 import SwiftUI
 
 struct BotView: View {
   let id: String?
-  /// After making one.
   var made: ((Bot) -> Void)?
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
@@ -214,13 +212,11 @@ struct BotView: View {
     }
   }
 
-  /// A template picked, waiting for an answer.
   struct Pick: Identifiable {
     let key: String?
     var id: String { key ?? "" }
   }
 
-  /// Fills the form from a template, or blank with a colour no other bot has.
   private func fill(_ key: String?) {
     template = key
     if let t = templates.first(where: { $0.id == key }) {
@@ -232,7 +228,6 @@ struct BotView: View {
     filled = form
   }
 
-  /// A new bot starts in a colour none of the others has yet.
   private var freeColor: Bot.Tint {
     let used = store.botIds.compactMap { store.bots[$0]?.color }
     return Bot.Tint.allCases.min { a, b in

@@ -1,5 +1,4 @@
-// Dates from the brain, task status lines, and cron in words (describeCron in packages/shared), as
-// iOS's Format.swift has them.
+// As iOS's Format.swift has them; cron in words is describeCron in packages/shared.
 use gtk::glib::DateTime;
 
 use super::models::{Task, TaskStatus};
@@ -120,7 +119,6 @@ pub fn last_line(text: &str) -> Option<&str> {
     text.lines().map(str::trim).rfind(|l| !l.is_empty())
 }
 
-/// What a task is doing, or how it ended.
 pub fn task_line(t: &Task, progress: Option<&str>) -> String {
     if let Some(summary) = &t.summary
         && !t.status.is_active()

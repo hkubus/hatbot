@@ -1,4 +1,3 @@
-// HTTP client for the boxes guest's agent, apps/hatbox (PLAN.md §21.6).
 import type {
   BoxBuild,
   BoxFile,
@@ -30,28 +29,19 @@ export type BoxRequest = {
   body?: Uint8Array;
 };
 
-/** What the brain needs from the boxes guest; tests substitute a fake. */
 export interface HatboxAgent {
   readonly configured: boolean;
   status(): Promise<HatboxStatus>;
-  /** Each backend the guest has built, at its version. */
   boxes(): Promise<GuestBox[]>;
-  /** Sends a version's files, then builds them: the page inlined into one file, and the backend. */
+  /** The page inlined into one file, and the backend. */
   build(id: number, version: number, files: BoxFile[]): Promise<BoxBuild>;
-  /**
-   * A request to the backend, started if it isn't; its answer as it is, whatever the status. `secrets`
-   * names the set of secrets it starts with (BoxSecrets' digest), "" for none.
-   */
+  /** `secrets` is BoxSecrets' digest, "" for none. */
   http(id: number, version: number, secrets: string, req: BoxRequest): Promise<Response>;
-  /** Runs the backend's scheduled(): why it failed, or what it asked to tell you. */
   scheduled(id: number, version: number, secrets: string): Promise<BoxRun>;
-  /** The box's secrets, which its backend starts with from then on. */
   secrets(id: number, s: BoxSecrets): Promise<void>;
-  /** A line in the box's log, from the brain. */
   note(id: number, line: string): Promise<void>;
   logs(id: number): Promise<string>;
   stop(id: number): Promise<void>;
-  /** The box and its backend's data, gone from the guest. */
   remove(id: number): Promise<void>;
 }
 

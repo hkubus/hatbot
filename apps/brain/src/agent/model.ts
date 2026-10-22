@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "../spend";
 
-/** A model failure in a line, for the owner: the API's own message when there is one. */
 export function modelErrorText(err: unknown): string {
   if (err instanceof Anthropic.APIError) {
     const detail = (err.error as { error?: { message?: string } } | undefined)?.error?.message;
@@ -15,19 +14,13 @@ export type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreami
 export type StreamHandlers = {
   onText?: (delta: string) => void;
   onThinking?: (delta: string) => void;
-  /** A tool the API runs itself, like web search, once its input is complete. */
   onServerTool?: (name: string, input: Record<string, unknown>) => void;
-  /** The stream failed partway and is tried again: what it streamed so far is void. */
   onRetry?: () => void;
-  /**
-   * What an attempt that failed after it started had used, for the ledger: it may still be billed.
-   * Required, so no caller leaves it out of the ledger.
-   */
+  /** A failed attempt may still be billed. Required, so no caller leaves it out of the ledger. */
   onFailedUsage: (model: string, usage: Anthropic.Beta.BetaUsage) => void;
   signal?: AbortSignal;
 };
 
-/** The slice of the SDK the brain uses; tests substitute a scripted fake. */
 export interface ModelClient {
   stream(
     params: Omit<StreamParams, "stream">,
@@ -43,7 +36,6 @@ export class AnthropicModelClient implements ModelClient {
     this.client = new Anthropic(apiKey ? { apiKey } : {});
   }
 
-  /** A key set in Settings: calls from now on use it, ones under way finish on the old one. */
   setApiKey(apiKey: string) {
     this.client = new Anthropic(apiKey ? { apiKey } : {});
   }
@@ -58,9 +50,7 @@ export class AnthropicModelClient implements ModelClient {
       signal: handlers.signal,
       maxRetries: 0,
     });
-    /** Server tool calls by block index, with their input so far. */
     const server = new Map<number, { name: string; json: string }>();
-    /** What the attempt has used so far, once it has started. */
     let used: { model: string; usage: Anthropic.Beta.BetaUsage } | null = null;
     try {
       for await (const event of stream) {
@@ -100,9 +90,8 @@ export class AnthropicModelClient implements ModelClient {
 }
 
 /**
- * One request that isn't streamed, its text. What it may cost is held against the limits until it's
- * recorded (PLAN.md §6.3): past one, it throws BudgetError and isn't sent. `reserve`: it may use
- * what's kept for alerts. `task`: its own limit counts too. A reply that didn't end its turn throws.
+ * What it may cost is held against the limits until it's recorded: past one, it throws BudgetError
+ * and isn't sent. `reserve`: it may use what's kept for alerts.
  */
 export async function oneShot(
   d: { model: ModelClient; spend: Spend },
@@ -128,17 +117,11 @@ export async function oneShot(
   }
 }
 
-/** Waits before each try after the first, or longer when the API's retry-after asks. Tests shorten them. */
 export const retryDelays = { ms: [1000, 4000] };
-/** A retry-after longer than this isn't waited out: the request fails now. */
 const MAX_RETRY_AFTER_MS = 60_000;
 const RETRYABLE_TYPES = ["overloaded_error", "api_error", "timeout_error"];
 const NETWORK_CODES = ["ECONNRESET", "ETIMEDOUT", "EPIPE", "ECONNREFUSED", "UND_ERR_SOCKET"];
 
-/**
- * Whether trying the same request again may work: the API overloaded, rate-limited or failing, or the
- * connection dropped, before the stream started or partway through it.
- */
 export function retryable(err: unknown): boolean {
   if (err instanceof Anthropic.APIUserAbortError) return false;
   if (err instanceof Anthropic.APIConnectionError) return true;
@@ -155,14 +138,12 @@ export function retryable(err: unknown): boolean {
   );
 }
 
-/** A response that stopped at a length limit: its text, and its last tool call's input, may be cut short. */
 export const cutOff = (res: Pick<Anthropic.Beta.BetaMessage, "stop_reason">) =>
   res.stop_reason === "max_tokens" || res.stop_reason === "model_context_window_exceeded";
 
 /**
- * A response that fell back to another model partway, as it's kept and acted on. Before the last
- * fallback block only text, and server tool calls with their results, stay: the declined model's
- * thinking and tool calls are dropped, as the API asks, so none of its calls run.
+ * Before the last fallback block only text, and server tool calls with their results, stay: the
+ * declined model's thinking and tool calls are dropped, as the API asks, so none of its calls run.
  */
 export function afterFallback(
   content: Anthropic.Beta.BetaContentBlock[],
@@ -184,7 +165,6 @@ export function afterFallback(
   return [...kept, ...content.slice(at)];
 }
 
-/** How long the API asked to wait before trying again (retry-after-ms or retry-after), or null. */
 export function retryAfterMs(err: unknown, now = Date.now()): number | null {
   const headers = err instanceof Anthropic.APIError ? err.headers : undefined;
   const ms = Number.parseFloat(headers?.get("retry-after-ms") ?? "");
@@ -196,11 +176,7 @@ export function retryAfterMs(err: unknown, now = Date.now()): number | null {
   return wait > 0 ? wait : null;
 }
 
-/**
- * Runs a streamed request, trying it again up to twice when it fails (the SDK doesn't retry streams
- * itself), after the API's retry-after when it gives one. `onRetry` tells the caller to drop what that
- * attempt streamed. Tests pass their own `wait`.
- */
+/** The SDK doesn't retry streams itself. `onRetry` tells the caller to drop what that attempt streamed. */
 export async function withRetries<T>(
   attempt: () => Promise<T>,
   handlers: Pick<StreamHandlers, "onRetry" | "signal">,
@@ -223,7 +199,6 @@ export async function withRetries<T>(
   }
 }
 
-/** Waits `ms`, or throws as soon as `signal` aborts. */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason);

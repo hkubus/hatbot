@@ -1,4 +1,3 @@
-// Settings → Heartbeat: a look every few minutes at what went wrong; only news goes to Haiku.
 import { type AppSettings, describeEvery, type HeartbeatInfo } from "@hatbot/shared";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";

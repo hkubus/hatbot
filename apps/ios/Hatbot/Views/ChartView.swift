@@ -1,6 +1,3 @@
-// A ```chart block in a reply, drawn with Swift Charts in Hatbot's colours (the web's chart.tsx):
-// lines, columns (grouped or stacked), horizontal bars, scatter plots, ranges and timelines, and a
-// matrix as a grid of shaded cells. Touch and drag for the values at a point.
 import Charts
 import SwiftUI
 
@@ -9,7 +6,7 @@ struct ChartView: View {
   @State private var selectedPoint: Int?
   @State private var selectedBar: String?
 
-  /// Series colours, in order; checked for colour-blind separation on the bot bubble (web: --series-N).
+  /// Checked for colour-blind separation on the bot bubble (web: --series-N).
   static let palette = [
     Color(light: 0xC96F0A, dark: 0xD87A12),
     Color(light: 0x2A78D6, dark: 0x3987E5),
@@ -43,14 +40,13 @@ struct ChartView: View {
     return out
   }
 
-  /// A bar from start to end; stacked ones keep a gap from the one below and round only the stack's ends.
+  /// Stacked segments keep a gap from the one below and round only the stack's ends.
   private struct Segment: Identifiable {
     var series: Int
     var index: Int
     var start: Double
     var end: Double
     var outer: Bool
-    /// The value (a stack's total) at its tip, on horizontal bars.
     var tip: String?
     var id: String { "\(series)-\(index)" }
   }
@@ -82,7 +78,6 @@ struct ChartView: View {
     return out
   }
 
-  /// The values the bars span, for the gap's size.
   private var barRange: Double {
     let ends = spec.isStacked
       ? spec.stackSpans.flatMap { $0.compactMap { $0?.end } }
@@ -97,7 +92,6 @@ struct ChartView: View {
     return i.flatMap { spec.x.indices.contains($0) ? $0 : nil }
   }
 
-  /// Horizontal bars: one row per x, its bars side by side.
   private var rowBars: Int { spec.isStacked ? 1 : spec.series.count }
   private var rowThickness: CGFloat { rowBars == 1 ? 14 : 10 }
   private var rowHeight: CGFloat { CGFloat(rowBars) * rowThickness + CGFloat(2 * (rowBars - 1)) + 10 }
@@ -168,7 +162,6 @@ struct ChartView: View {
           .accessibilityHidden(true)
           .symbol { Self.dot(Self.palette[p.series]) }
           .annotation(position: .trailing, spacing: 4, overflowResolution: .init(x: .padScale, y: .disabled)) {
-            // One line gets its last value beside its end.
             if single && selected == nil {
               Text(spec.format(p.value)).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
             }
@@ -307,7 +300,6 @@ struct ChartView: View {
     return spec.x.indices.filter { $0 % step == 0 }
   }
 
-  /// What VoiceOver reads for a value: the value, then its series when there's more than one.
   private func spoken(_ series: Int, _ value: Double) -> String {
     single ? spec.format(value) : "\(spec.format(value)), \(spec.names[series])"
   }
@@ -321,7 +313,6 @@ struct ChartView: View {
       .background(Circle().fill(Color.botBubble))
   }
 
-  /// The values at one x: value first, then the series.
   private func readout(_ i: Int) -> some View {
     Readout {
       Text(spec.x[i]).foregroundStyle(.secondary)
@@ -342,7 +333,6 @@ struct ChartView: View {
     }
   }
 
-  /// What both kinds share: the colours, the legend, and the value axis.
   private struct Styled: ViewModifier {
     let spec: ChartSpec
 
@@ -363,7 +353,6 @@ struct ChartView: View {
   }
 }
 
-/// The box a touch's values show in, over the chart: value first, then what it is.
 private struct Readout<Content: View>: View {
   @ViewBuilder var content: Content
 
@@ -377,7 +366,6 @@ private struct Readout<Content: View>: View {
   }
 }
 
-/// A measured axis: about four round values, compact and with their unit, on hairline grid lines.
 private func valueMarks(unit: String?, position: AxisMarkPosition = .automatic) -> some AxisContent {
   AxisMarks(position: position, values: .automatic(desiredCount: 4)) { value in
     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
@@ -389,7 +377,6 @@ private func valueMarks(unit: String?, position: AxisMarkPosition = .automatic) 
 
 // MARK: Scatter
 
-/// Points on two measured axes. A few points are named beside them; a touch reads out the nearest.
 private struct ScatterPlot: View {
   let scatter: ChartSpec.Scatter
   @State private var selectedX: Double?
@@ -414,7 +401,6 @@ private struct ScatterPlot: View {
 
   private var single: Bool { scatter.series.count == 1 }
 
-  /// The point nearest the touch along x, with any others at that same x.
   private func picked(_ points: [Point]) -> [Point] {
     guard let at = selectedX, let near = points.min(by: { abs($0.x - at) < abs($1.x - at) }) else { return [] }
     return points.filter { $0.x == near.x }
@@ -501,7 +487,6 @@ private struct ScatterPlot: View {
 
 // MARK: Range
 
-/// A span from low to high for each row, its mark a dot inside; touch a row for its numbers.
 private struct RangePlot: View {
   let spec: ChartSpec
   let ranges: ChartSpec.Ranges
@@ -602,8 +587,6 @@ private struct RangePlot: View {
 
 // MARK: Matrix
 
-/// Options against criteria, the value in every cell. Each column is shaded in one hue from its worst
-/// (light) to its best (dark); wider than the bubble, it scrolls sideways.
 private struct MatrixGrid: View {
   let matrix: ChartSpec.Matrix
 
@@ -666,8 +649,6 @@ private struct MatrixGrid: View {
 
 // MARK: Timeline
 
-/// Dated events along one axis, a row per lane: dots for dates, bars for spans, each named where its
-/// name has room; touch for the one nearest.
 private struct TimelinePlot: View {
   let timeline: ChartSpec.Timeline
   @State private var selectedDate: Date?
@@ -776,8 +757,8 @@ private struct TimelinePlot: View {
     return lo.addingTimeInterval(-pad)...hi.addingTimeInterval(pad)
   }
 
-  /// The events named beside their mark: in each lane, one whose name would run into the last one
-  /// named is left to the readout. Widths are a caption's, roughly.
+  /// In each lane, an event whose name would run into the last one named is left to the readout.
+  /// Widths are a caption's, roughly.
   private func named(_ events: [Event], domain: ClosedRange<Date>, width: CGFloat) -> Set<Int> {
     let span = domain.upperBound.timeIntervalSince(domain.lowerBound)
     var named: Set<Int> = []
@@ -793,7 +774,6 @@ private struct TimelinePlot: View {
     return named
   }
 
-  /// How far a date is from an event: 0 inside a span.
   private func distance(_ e: Event, _ at: Date) -> TimeInterval {
     at < e.start ? e.start.timeIntervalSince(at) : max(0, at.timeIntervalSince(e.last))
   }

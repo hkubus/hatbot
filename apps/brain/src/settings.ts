@@ -5,28 +5,25 @@ import type { Db } from "./db";
 export const Settings = z.object({
   limits: z.object({
     taskUsd: z.number().positive(),
-    /** A research task's: its lead and helpers cost more than most tasks (PLAN.md §17). */
+    /** A research task's lead and helpers cost more than most tasks. */
     researchUsd: z.number().positive(),
     dailyUsd: z.number().positive(),
     monthlyUsd: z.number().positive(),
-    /** The last of the daily and monthly limits, which only alerts and the heartbeat spend (PLAN.md §6.3). */
+    /** The last of the daily and monthly limits, which only alerts and the heartbeat spend. */
     alertReserveUsd: z.number().min(0),
-    /** What boxes' pages may spend asking Haiku in a day (PLAN.md §21.2); 0 stops them. */
+    /** What boxes' pages may spend asking Haiku in a day; 0 stops them. */
     boxesUsd: z.number().min(0),
   }),
-  /** Effort for the chat thread. Heavier work runs as tasks, at their own effort. */
   chatEffort: z.enum(CHAT_EFFORTS),
-  /** The chat's model. On Haiku 5.5 the chat can ask Opus 5.5 once per reply (ask_opus). */
+  /** On Haiku 5.5 the chat can ask Opus 5.5 once per reply (ask_opus). */
   chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
   /** Name and email on memory commits you make from the UI. */
   owner: z.object({ name: z.string().min(1), email: z.string().min(1) }),
-  /** Pause all (PLAN.md §6.5). */
   paused: z.boolean(),
-  /** Changes Haiku finds safe go ahead without asking (PLAN.md §6.1). */
+  /** Changes Haiku finds safe go ahead without asking. */
   reviewChanges: z.boolean(),
-  /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: z.enum(["web", "app"]),
-  /** The model that drives the desktop (PLAN.md §5.4): Haiku 5.5 is far cheaper, Opus 5.5 fails less. */
+  /** Haiku 5.5 is far cheaper, Opus 5.5 fails less. */
   desktopModel: z.enum(["claude-opus-5-5", "claude-haiku-5-5"]),
   /** A desktop task Haiku fails at carries on once on Opus. */
   desktopEscalate: z.boolean(),
@@ -38,18 +35,17 @@ export const Settings = z.object({
     botId: z.string().regex(BOT_ID),
     instructions: z.string().trim().min(1).max(4000),
   }),
-  /** A tidy-up of memory proposed weekly, with the report. */
   memoryTidy: z.boolean(),
   weeklyReport: z.object({
     enabled: z.boolean(),
     weekday: z.number().int().min(0).max(6),
     hour: z.number().int().min(0).max(23),
   }),
-  /** The to-do list's morning reminder goes out at this local hour (PLAN.md §19). */
+  /** The local hour of the to-do list's morning reminder. */
   todoHour: z.number().int().min(0).max(23),
 });
 export type Settings = z.infer<typeof Settings>;
-/** A change to settings: limits may change one at a time. */
+/** Limits may change one at a time. */
 export const SettingsPatch = Settings.extend({ limits: Settings.shape.limits.partial() }).partial();
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
@@ -83,12 +79,10 @@ export const DEFAULT_SETTINGS: Settings = {
   todoHour: 9,
 };
 
-/** What the settings table keeps under `key`, or null. */
 export const getSetting = (db: Db, key: string): string | null =>
   db.query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?").get(key)
     ?.value ?? null;
 
-/** Keeps `value` in the settings table under `key`, in place of what was there. */
 export function setSetting(db: Db, key: string, value: string) {
   db.query(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",

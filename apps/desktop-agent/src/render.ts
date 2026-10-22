@@ -6,7 +6,7 @@
 // firewall, and off Chromium's DevTools and desktop-agent the loopback rule for the DynamicUser range
 // (desktop-deploy.sh).
 //
-// It also draws boxes' pages for box_look (POST /box, PLAN.md §21.12), from the page the brain sends and
+// It also draws boxes' pages for box_look (POST /box), from the page the brain sends and
 // with no network at all: CSP doesn't stop a page leaving itself (location.href = "https://…/?" + data),
 // and this user may reach the internet, which watchers need. So that Chromium gets a proxy that refuses
 // every connection, loopback included, a resolver that resolves nothing, and WebRTC kept to the proxy,

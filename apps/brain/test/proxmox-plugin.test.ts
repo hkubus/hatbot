@@ -23,7 +23,6 @@ const GUESTS = [
   { vmid: 900, name: "debian-template", type: "lxc", node: "pve", status: "stopped", template: 1 },
 ];
 
-// A stand-in for pveproxy with a self-signed certificate.
 const api = fakeApi(
   (req, url) => {
     const path = url.pathname.replace("/api2/json", "");
@@ -98,7 +97,6 @@ test("power: careful guests, shutdowns and the desktop ask; the brain is refused
   expect(posts()).toEqual([]);
   expect(verdictFor(movedPower, { vmid: 125, action: "reboot" }, call).action).toBe("block");
 
-  // Without HATBOT_BRAIN_ID nothing is powered.
   const unknown = await pluginApp(proxmoxPlugin, env(null));
   expect(unknown.plugins.tools().some((x) => x.name === "proxmox_power")).toBe(false);
 });

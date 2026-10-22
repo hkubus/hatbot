@@ -28,7 +28,6 @@ test("loopback, private and link-local addresses are refused in every form; the 
     ...["::ffff:127.0.0.1", "::ffff:7f00:1", "::127.0.0.1", "64:ff9b::7f00:1"],
     // 6to4 and Teredo, which carry an IPv4 address, and link-local with a zone id.
     ...["2002:7f00:1::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "fe80::1%eth0"],
-    // A name isn't an address.
     "localhost",
   ])
     expect([ip, privateAddress(ip)]).toEqual([ip, true]);

@@ -1,6 +1,4 @@
-// Settings (PLAN.md §24.2 L6, SettingsView and SpendView on iOS): spend, limits, looking after
-// things, models and effort, what notifications open, safety and signed-in devices. Each switch and
-// picker saves on its own; limits save together.
+// Each switch and picker saves on its own; limits save together.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -184,7 +182,6 @@ impl Settings {
             .build();
 
         let root = Rc::new_cyclic(|weak: &std::rc::Weak<Root>| {
-            // Each picker saves its own key.
             let pick = |key: &'static str, number: bool| {
                 let weak = weak.clone();
                 move |v: &str| {
@@ -501,7 +498,6 @@ impl Root {
     }
 }
 
-/// The spending limits, saved together.
 pub struct LimitsPage {
     pub page: adw::NavigationPage,
     _inner: Rc<LimitsForm>,
@@ -698,7 +694,6 @@ impl LimitsForm {
     }
 }
 
-/// Spend in detail: by hour and day, and what it went on.
 pub struct SpendPage {
     pub page: adw::NavigationPage,
 }
@@ -775,7 +770,6 @@ fn show_spend(prefs: &adw::PreferencesPage, store: &Store, d: &SpendDetail) {
     }
 }
 
-/// What's signed in with a token, to revoke.
 pub struct DevicesPage {
     pub page: adw::NavigationPage,
     _inner: Rc<Devices>,

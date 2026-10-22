@@ -1,4 +1,3 @@
-// Settings → Spend in detail (web Spend.tsx), the spending limits, and the signed-in devices.
 import SwiftUI
 import UIKit
 
@@ -40,7 +39,6 @@ struct SpendView: View {
   }
 }
 
-/// What a task, a day and a month may cost; past one, Hatbot stops and asks.
 struct LimitsView: View {
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
@@ -166,7 +164,6 @@ private struct MoneyField: View {
   }
 }
 
-/// The apps and scripts signed in with a token; revoking one signs it out.
 struct DevicesView: View {
   @Environment(AppStore.self) private var store
   @State private var tokens: [ApiToken]?

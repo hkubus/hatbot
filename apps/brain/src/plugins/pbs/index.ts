@@ -1,6 +1,3 @@
-// Proxmox Backup Server: datastores, backups and their verification, and recent tasks. Where its token
-// may, it starts a verify or a garbage collection, and deletes a backup after asking you. Restores
-// happen in Proxmox VE, not here.
 // The certificate is self-signed, so the connection is pinned like Proxmox VE's (src/proxmox.ts).
 import { z } from "zod";
 import { pinnedRequest } from "../../proxmox";
@@ -317,7 +314,6 @@ export const pbsPlugin = definePlugin({
         await check();
         current = offered();
       },
-      // Failed tasks of the last day, and datastores nearly full.
       signals: async () => {
         const since = Math.floor(Date.now() / 1000) - 86400;
         const [failed, usage] = await Promise.all([
@@ -343,7 +339,6 @@ export const pbsPlugin = definePlugin({
   },
 });
 
-/** The privilege each write tool needs on a datastore: verify Datastore.Verify, the rest Modify. */
 const NEEDS: Record<string, "verify" | "modify"> = {
   pbs_verify: "verify",
   pbs_garbage_collect: "modify",

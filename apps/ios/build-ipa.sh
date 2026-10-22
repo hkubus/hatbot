@@ -10,7 +10,6 @@ prefix=${BUNDLE_PREFIX:-$(sed -n 's/^ *BUNDLE_PREFIX: *//p' project.yml | head -
 command -v xcodegen >/dev/null || { echo "XcodeGen is missing: brew install xcodegen" >&2; exit 1; }
 xcodegen generate --quiet
 
-# xcbeautify tidies the log when it's installed.
 if command -v xcbeautify >/dev/null; then log=xcbeautify; else log=cat; fi
 
 rm -rf build

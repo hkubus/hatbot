@@ -1,6 +1,5 @@
-// Stands in for zod in the web build (vite.config.ts). @hatbot/shared defines its request schemas at
-// the top of its modules, which would bring all of zod along; the web never checks a request, so
-// here they're built out of nothing. Using one says so rather than passing everything.
+// Stands in for zod in the web build (vite.config.ts): @hatbot/shared builds its request schemas at
+// module top level, and the web never checks a request. Using one throws rather than passing.
 const fail = () => {
   throw new Error("zod isn't in the web build; check by hand (see chartspec.ts)");
 };

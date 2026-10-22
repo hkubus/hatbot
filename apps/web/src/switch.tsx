@@ -1,9 +1,8 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 
 /**
- * An on/off switch. Screen readers hear it as a switch named by its row's label (a settings row's
- * title, a form row's label, or the text it starts with), found in the page around it; `label`
- * names it where there's none.
+ * Screen readers name it by its row's label (a settings row's title, a form row's label, or the
+ * text it starts with); `label` names it where there's none.
  */
 export function Switch({
   on,

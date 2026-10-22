@@ -1,11 +1,8 @@
-// Files in the chat: the ones on messages (pictures inline, Markdown in the reader, the rest in Quick
-// Look) and the ones waiting in the composer while they upload.
 import PhotosUI
 import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// A message's files, aligned to its side.
 struct MessageFiles: View {
   let list: [Attachment]
   let alignment: HorizontalAlignment
@@ -26,7 +23,6 @@ struct MessageFiles: View {
   }
 }
 
-/// A picture on a message, in a copy the brain made for the bubble; a tap opens it full screen.
 private struct PictureFile: View {
   static let side: CGFloat = 240
   let attachment: Attachment
@@ -89,7 +85,6 @@ private struct FullPicture: View {
   }
 }
 
-/// Any other file: its name; a tap opens it in Quick Look, which can share or save it.
 private struct FileRow: View {
   let attachment: Attachment
   @Environment(AppStore.self) private var store
@@ -111,7 +106,6 @@ private struct FileRow: View {
     .quickLookPreview($url)
   }
 
-  /// The file saved where Quick Look can open it, under its own name.
   private func file() async throws -> URL {
     let dir = DiskCache.openedFiles.appendingPathComponent("\(attachment.id)", isDirectory: true)
     let url = dir.appendingPathComponent(attachment.name.replacingOccurrences(of: "/", with: "_"))
@@ -123,7 +117,6 @@ private struct FileRow: View {
   }
 }
 
-/// A file's name on a message.
 private struct FileChip: View {
   let name: String
   var loading = false
@@ -153,7 +146,6 @@ struct PickedPhoto: Transferable {
   }
 }
 
-/// A file in the composer: uploading, uploaded, or failed.
 struct ComposerFile: Identifiable {
   let id = UUID()
   let name: String
@@ -162,7 +154,6 @@ struct ComposerFile: Identifiable {
   var error: String?
 }
 
-/// The files waiting in the composer, with a button to take each out.
 struct ComposerFiles: View {
   let files: [ComposerFile]
   let remove: (UUID) -> Void

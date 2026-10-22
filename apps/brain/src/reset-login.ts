@@ -1,6 +1,4 @@
-// Forgets the owner's password and authenticator, for when you've lost them; infra/reset-login.sh runs
-// it as the brain's user. Every browser and app is signed out and forgotten, and the brain prints a new
-// setup code when it next starts.
+// infra/reset-login.sh runs this as the brain's user; the brain prints a new setup code when it next starts.
 import { loadConfig } from "./config";
 import { type Db, openDb } from "./db";
 
