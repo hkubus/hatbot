@@ -405,10 +405,7 @@ export function LiveView({ taskId }: { taskId?: number }) {
                 .slice(-6)
                 .reverse()
                 .map((s) => (
-                  <li
-                    key={s.id}
-                    className={s.kind === "approval" || s.kind === "takeover" ? "attn" : ""}
-                  >
+                  <li key={s.id}>
                     <span className="t">{time(s.createdAt)}</span>
                     <StepIcon kind={s.kind} />
                     <span>

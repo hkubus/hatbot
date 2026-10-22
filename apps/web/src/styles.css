@@ -73,7 +73,10 @@
   --font-text: "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  --bg: light-dark(#f5f5f7, #161617);
+  /* Copied into index.html, offline.html, theme.js and the manifest, which run before this loads. */
+  --bg-light: #f5f5f7;
+  --bg-dark: #161617;
+  --bg: light-dark(var(--bg-light), var(--bg-dark));
   --surface: light-dark(#ffffff, #1e1e20);
   --surface-2: light-dark(#f2f2f4, #2a2a2d);
   --surface-3: light-dark(#e8e8ed, #343438);
@@ -113,7 +116,6 @@
   --disabled: 0.45;
   --shadow-color: light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.5));
   --shadow-pop: 0 4px 16px var(--shadow-color);
-  --backdrop: light-dark(rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0.55));
   --screen: #2b2d31;
   --on-screen: #d0d0d4;
 
@@ -358,8 +360,13 @@ textarea:disabled {
   border-radius: var(--r-md);
   display: grid;
   place-items: center;
-  background: linear-gradient(160deg, #ffb24d, var(--accent) 55%, var(--accent-strong));
-  color: #fff;
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--accent), #fff 25%),
+    var(--accent) 55%,
+    var(--accent-strong)
+  );
+  color: var(--on-accent);
 }
 .brand-mark svg.i {
   width: 19px;
@@ -421,7 +428,7 @@ textarea:disabled {
 }
 .nav-item .count.attn {
   background: var(--attention);
-  color: #fff;
+  color: var(--on-attention);
 }
 .nav-item .count.unread {
   background: var(--accent);
@@ -521,8 +528,11 @@ textarea:disabled {
 }
 .btn.primary {
   background: var(--attention);
-  color: #fff;
+  color: var(--on-attention);
   border-color: transparent;
+}
+.btn[aria-pressed="true"] {
+  background: var(--fill-active);
 }
 .btn.accent {
   background: var(--accent);
@@ -531,7 +541,7 @@ textarea:disabled {
 }
 .btn.danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
   border-color: transparent;
 }
 .btn.tint-attn {
@@ -606,10 +616,6 @@ textarea:disabled {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
-.chip.warn {
-  background: var(--danger-soft);
-  color: var(--danger-text);
-}
 
 .seg {
   display: inline-flex;
@@ -629,7 +635,7 @@ textarea:disabled {
   color: var(--text-2);
 }
 .seg button.active {
-  background: light-dark(var(--surface), #4a4a4f);
+  background: var(--control-active);
   color: var(--text);
 }
 
@@ -1563,7 +1569,7 @@ a.btn:hover {
     height: 16px;
     border-radius: var(--r-pill);
     background: var(--attention);
-    color: #fff;
+    color: var(--on-attention);
     font-size: 10px;
     font-weight: var(--fw-semibold);
     display: grid;
@@ -1987,7 +1993,7 @@ a.btn:hover {
   width: 100%;
   border-radius: var(--r-lg);
   overflow: hidden;
-  background: #2b2d31;
+  background: var(--screen);
   border: 0.5px solid var(--line-strong);
   outline: 2px solid transparent;
   outline-offset: 2px;
@@ -1997,7 +2003,7 @@ a.btn:hover {
   aspect-ratio: 16 / 10;
 }
 .screen.control {
-  outline-color: var(--attention);
+  outline-color: var(--accent);
 }
 .screen canvas {
   display: block;
@@ -2014,7 +2020,7 @@ a.btn:hover {
   inset: 0;
   display: grid;
   place-items: center;
-  color: #d0d0d4;
+  color: var(--on-screen);
   font-size: var(--fs-md);
 }
 .live-keys {
@@ -2105,14 +2111,6 @@ a.btn:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.log li.attn,
-.log li.attn svg.i,
-.tl-step.tl-approval,
-.tl-step.tl-approval > svg.i,
-.tl-step.tl-takeover,
-.tl-step.tl-takeover > svg.i {
-  color: var(--attention);
 }
 .tl-step.tl-error,
 .tl-step.tl-error > svg.i {
@@ -2864,7 +2862,7 @@ dialog.ask {
   color: var(--text);
 }
 dialog.ask::backdrop {
-  background: rgba(0, 0, 0, 0.32);
+  background: light-dark(rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0.55));
 }
 dialog.ask form {
   display: grid;

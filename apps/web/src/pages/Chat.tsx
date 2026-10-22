@@ -517,7 +517,7 @@ function Choices({ lists }: { lists: string[][] }) {
                   <button
                     key={c}
                     type="button"
-                    className={`btn ${answers[i] === c ? "primary" : ""}`}
+                    className="btn"
                     aria-pressed={answers[i] === c}
                     disabled={busy}
                     onClick={() => set(i, c)}
