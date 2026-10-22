@@ -28,7 +28,7 @@ import {
 import { Switch } from "../switch";
 import { whenText } from "../tasks";
 import type { Toast } from "../toast";
-import { BackHead, Group, LinkRow, SaveBar, Seg } from "../ui";
+import { BackHead, Group, LinkRow, Panel, SaveBar, Seg } from "../ui";
 import { BuiltInGroup } from "./BuiltIn";
 import { HeartbeatPage } from "./Heartbeat";
 import { patchWatcher, trouble, WatcherEdit } from "./Watchers";
@@ -413,8 +413,7 @@ function Setup({ t }: { t: TriggerWithSecret }) {
     </div>
   );
   return (
-    <div className="panel attn-panel">
-      <h3 className="section-title">Set it up</h3>
+    <Panel title="Set it up" className="attn-panel">
       {t.kind === "kuma" ? (
         <>
           <p className="muted">
@@ -437,7 +436,7 @@ function Setup({ t }: { t: TriggerWithSecret }) {
           {field("Secret", t.secret)}
         </>
       )}
-    </div>
+    </Panel>
   );
 }
 

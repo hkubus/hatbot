@@ -10,6 +10,7 @@ export function HomeAssistantSettings(props: PluginSettingsProps<{ access: strin
     <IdListSettings
       {...props}
       field="access"
+      title="Entities"
       label="Always ask before changing these entities, such as scripts or scenes that open a door"
       placeholder="e.g. switch.gate, script.open_garage"
       // Home Assistant reads ids in any case as lowercase.

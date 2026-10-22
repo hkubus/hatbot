@@ -176,6 +176,61 @@ function SpendCard({ title, points, limit }: { title: string; points: Point[]; l
   );
 }
 
+/** With `of`, a meter of how much of it is used. */
+function Kpi({ label, usd: v, of }: { label: string; usd: number; of?: number }) {
+  return (
+    <div className="tile">
+      <div className="label">{label}</div>
+      <div className="value tnum">
+        {usd(v)}
+        {of !== undefined && (
+          <>
+            {" "}
+            <small>of {usd(of)}</small>
+          </>
+        )}
+      </div>
+      {of !== undefined && (
+        <div className={`meter ${v >= of ? "hot" : ""}`}>
+          <span style={{ width: `${Math.min(100, (v / of) * 100)}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HBars({
+  title,
+  bars,
+}: {
+  title: string;
+  bars: { key: string; label: string; usd: number }[];
+}) {
+  const max = Math.max(0.0001, ...bars.map((b) => b.usd));
+  return (
+    <div className="chart-card">
+      <div className="chart-head">
+        <h3>{title}</h3>
+      </div>
+      {bars.length ? (
+        <div className="hbars">
+          {bars.map((b) => (
+            <div className="hbar" key={b.key}>
+              <span>{b.label}</span>
+              <div className="track">
+                <div className="fill" style={{ width: `${(b.usd / max) * 100}%` }} />
+              </div>
+              <span className="v">{usd(b.usd)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="muted">Nothing spent yet.</div>
+      )}
+    </div>
+  );
+}
+
 /** The value, changing at most every `ms`: the latest one once the time is up. */
 function useThrottled<T>(value: T, ms: number): T {
   const [out, setOut] = useState(value);
@@ -245,9 +300,6 @@ export function Spend() {
   const [monthDays = [], models = [], byBot = [], byPurpose = []] = month.data ?? [];
   const days = withToday(monthDays, today);
   const { todayUsd, monthUsd, limits } = summary;
-  const mMax = Math.max(0.0001, ...models.map((m) => m.usd));
-  const bMax = Math.max(0.0001, ...byBot.map((b) => b.usd));
-  const pMax = Math.max(0.0001, ...byPurpose.map((p) => p.costUsd));
   const hourPoints: Point[] = hours.map((h, i) => ({
     key: h.hour,
     usd: h.usd,
@@ -273,94 +325,38 @@ export function Spend() {
           </button>
         </div>
         <div className="kpis">
-          <div className="tile">
-            <div className="label">Today</div>
-            <div className="value tnum">
-              {usd(todayUsd)} <small>of {usd(limits.dailyUsd)}</small>
-            </div>
-            <div className={`meter ${todayUsd >= limits.dailyUsd ? "hot" : ""}`}>
-              <span style={{ width: `${Math.min(100, (todayUsd / limits.dailyUsd) * 100)}%` }} />
-            </div>
-          </div>
-          <div className="tile">
-            <div className="label">This month</div>
-            <div className="value tnum">
-              {usd(monthUsd)} <small>of {usd(limits.monthlyUsd)}</small>
-            </div>
-            <div className={`meter ${monthUsd >= limits.monthlyUsd ? "hot" : ""}`}>
-              <span style={{ width: `${Math.min(100, (monthUsd / limits.monthlyUsd) * 100)}%` }} />
-            </div>
-          </div>
-          <div className="tile">
-            <div className="label">Last hour</div>
-            <div className="value tnum">{usd(summary.lastHour.usd)}</div>
-          </div>
-          <div className="tile">
-            <div className="label">Last minute</div>
-            <div className="value tnum">{usd(summary.lastMinute.usd)}</div>
-          </div>
+          <Kpi label="Today" usd={todayUsd} of={limits.dailyUsd} />
+          <Kpi label="This month" usd={monthUsd} of={limits.monthlyUsd} />
+          <Kpi label="Last hour" usd={summary.lastHour.usd} />
+          <Kpi label="Last minute" usd={summary.lastMinute.usd} />
         </div>
 
         <SpendCard title="Last 24 hours" points={hourPoints} />
         <SpendCard title="Last 30 days" points={dayPoints} limit={limits.dailyUsd} />
 
-        <div className="chart-card">
-          <div className="chart-head">
-            <h3>By model, last 30 days</h3>
-          </div>
-          {models.length ? (
-            <div className="hbars">
-              {models.map((m) => (
-                <div className="hbar" key={m.model}>
-                  <span>{modelName(m.model)}</span>
-                  <div className="track">
-                    <div className="fill" style={{ width: `${(m.usd / mMax) * 100}%` }} />
-                  </div>
-                  <span className="v">{usd(m.usd)}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="muted">Nothing spent yet.</div>
-          )}
-        </div>
-
+        <HBars
+          title="By model, last 30 days"
+          bars={models.map((m) => ({ key: m.model, label: modelName(m.model), usd: m.usd }))}
+        />
         {byBot.length > 1 && (
-          <div className="chart-card">
-            <div className="chart-head">
-              <h3>By bot, last 30 days</h3>
-            </div>
-            <div className="hbars">
-              {byBot.map((b) => (
-                <div className="hbar" key={b.botId}>
-                  <span>{botNames[b.botId]?.name ?? b.botId}</span>
-                  <div className="track">
-                    <div className="fill" style={{ width: `${(b.usd / bMax) * 100}%` }} />
-                  </div>
-                  <span className="v">{usd(b.usd)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <HBars
+            title="By bot, last 30 days"
+            bars={byBot.map((b) => ({
+              key: b.botId,
+              label: botNames[b.botId]?.name ?? b.botId,
+              usd: b.usd,
+            }))}
+          />
         )}
-
         {byPurpose.length > 0 && (
-          <div className="chart-card">
-            <div className="chart-head">
-              <h3>By purpose, last 30 days</h3>
-            </div>
-            <div className="hbars">
-              {byPurpose.map((p) => (
-                <div className="hbar" key={p.purpose}>
-                  <span>{purposeName(p.purpose)}</span>
-                  <div className="track">
-                    <div className="fill" style={{ width: `${(p.costUsd / pMax) * 100}%` }} />
-                  </div>
-                  <span className="v">{usd(p.costUsd)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <HBars
+            title="By purpose, last 30 days"
+            bars={byPurpose.map((p) => ({
+              key: p.purpose,
+              label: purposeName(p.purpose),
+              usd: p.costUsd,
+            }))}
+          />
         )}
       </div>
     </section>

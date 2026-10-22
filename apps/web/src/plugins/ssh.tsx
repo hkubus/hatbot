@@ -4,7 +4,7 @@ import { errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { Switch } from "../switch";
-import { Disclosure, SaveBar } from "../ui";
+import { Disclosure, Panel, SaveBar } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Host = {
@@ -74,7 +74,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
   return (
     <>
       {publicKey && (
-        <div className="panel form">
+        <Panel title="Hatbot's key" className="form">
           <span className="label">Add to ~hatbot/.ssh/authorized_keys on each host</span>
           <div className="copyable">
             <code>{publicKey}</code>
@@ -87,10 +87,10 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
               <Icon name="copy" />
             </button>
           </div>
-        </div>
+        </Panel>
       )}
 
-      <div className="panel form">
+      <Panel title="Hosts" className="form">
         {hosts.map((h, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: rows are edited in place
           <div className="host-edit" key={i}>
@@ -166,7 +166,7 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
             Add host
           </button>
         </SaveBar>
-      </div>
+      </Panel>
     </>
   );
 }

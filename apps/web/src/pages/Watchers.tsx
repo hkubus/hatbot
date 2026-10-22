@@ -29,7 +29,7 @@ import { navigate } from "../router";
 import { loadPlugins, putWatcher, trustWatcher, useStore } from "../store";
 import { Switch } from "../switch";
 import type { Toast } from "../toast";
-import { BackHead, SaveBar, Seg, Select } from "../ui";
+import { BackHead, Panel, SaveBar, Seg, Select } from "../ui";
 
 const EVERY = [5, 15, 30, 60, 180, 360, 720, 1440];
 const WHEN: [WatchCondition["when"], string][] = [
@@ -529,14 +529,12 @@ export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) 
         </div>
 
         {stored && history.error && !history.data && (
-          <div className="panel">
-            <h3 className="section-title">Values</h3>
+          <Panel title="Values">
             <LoadError error={history.error} retry={history.retry} />
-          </div>
+          </Panel>
         )}
         {stored && values.length > 0 && (
-          <div className="panel">
-            <h3 className="section-title">Values</h3>
+          <Panel title="Values">
             <div className="table-wrap">
               <table className="table">
                 <tbody>
@@ -550,7 +548,7 @@ export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) 
                 </tbody>
               </table>
             </div>
-          </div>
+          </Panel>
         )}
         {stored?.prompt && <Runs filter={{ watcherId: stored.id }} />}
       </div>

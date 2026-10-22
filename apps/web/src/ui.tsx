@@ -3,9 +3,22 @@ import { Icon } from "./icons";
 import { Link } from "./link";
 import { navigate } from "./router";
 
-export function BackButton({ to, label }: { to: string; label: string }) {
+/** `historyBack` goes back where you came from, and to `to` only when there's nowhere to go back to. */
+export function BackButton({
+  to,
+  label,
+  historyBack,
+}: {
+  to: string;
+  label: string;
+  historyBack?: boolean;
+}) {
+  const back = () => {
+    if (historyBack && history.length > 1) history.back();
+    else navigate(to);
+  };
   return (
-    <button type="button" className="btn sm ghost back" onClick={() => navigate(to)}>
+    <button type="button" className="btn sm ghost back" onClick={back}>
       <Icon name="chevron" />
       {label}
     </button>
@@ -68,6 +81,24 @@ export function SaveBar({
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/** Every panel's title looks the same. */
+export function Panel({
+  title,
+  className,
+  children,
+}: {
+  title?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className ? `panel ${className}` : "panel"}>
+      {title && <h3 className="section-title">{title}</h3>}
+      {children}
+    </div>
+  );
 }
 
 /** `empty` is said in a row of its own, for a list with nothing in it. */

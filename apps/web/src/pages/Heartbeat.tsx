@@ -10,7 +10,7 @@ import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, SaveBar } from "../ui";
+import { BackHead, Panel, SaveBar } from "../ui";
 
 const EVERY = [5, 10, 15, 30, 60, 120, 360];
 const DID: Record<string, string> = {
@@ -119,8 +119,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
         </div>
         {looked.error && !info && <LoadError error={looked.error} retry={looked.retry} />}
         {info?.at && (
-          <div className="panel">
-            <h3 className="section-title">Last look</h3>
+          <Panel title="Last look">
             <dl className="kv">
               <dt>When</dt>
               <dd>{stamp(info.at)}</dd>
@@ -150,11 +149,10 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                 </>
               )}
             </dl>
-          </div>
+          </Panel>
         )}
         {info?.recent && info.recent.length > 0 && (
-          <div className="panel">
-            <h3 className="section-title">Recent finds</h3>
+          <Panel title="Recent finds">
             <dl className="kv">
               {info.recent.map((r) => (
                 <Fragment key={r.at}>
@@ -168,7 +166,7 @@ export function HeartbeatPage({ toast }: { toast: (t: string) => void }) {
                 </Fragment>
               ))}
             </dl>
-          </div>
+          </Panel>
         )}
       </div>
     </section>

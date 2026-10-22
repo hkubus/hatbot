@@ -1,12 +1,11 @@
 import { type ReactNode, useEffect, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import { ApiError, api, attachmentUrl } from "../api";
-import { Icon } from "../icons";
 import { LoadError } from "../load";
 import { MD_COMPONENTS, type Node, REMARK, textOf } from "../markdown";
 import { navigate } from "../router";
 import { useStore } from "../store";
-import { Empty } from "../ui";
+import { BackButton, Empty } from "../ui";
 
 type Read = { text: string; name: string; from: "memory" | "file" };
 type Shown =
@@ -114,10 +113,6 @@ export function Reader({ path, file }: { path: string; file: number }) {
     };
   }, [path, file, attempt, version]);
 
-  const back = () => {
-    if (history.length > 1) history.back();
-    else navigate(path ? `/memory?path=${enc(path)}` : "/");
-  };
   const ready = shown.state === "ready" ? shown : null;
   const name = ready?.name ?? (path ? baseName(path) : "");
 
@@ -125,10 +120,7 @@ export function Reader({ path, file }: { path: string; file: number }) {
     <section className="view">
       <div className="page narrow reader">
         <div className="page-head reader-head">
-          <button type="button" className="btn sm ghost back" onClick={back}>
-            <Icon name="chevron" />
-            Back
-          </button>
+          <BackButton to={path ? `/memory?path=${enc(path)}` : "/"} label="Back" historyBack />
           <span className="reader-name" title={ready?.from === "memory" ? path : undefined}>
             {name}
           </span>

@@ -3,7 +3,7 @@ import { useAction } from "../action";
 import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
 import { navigate, useRoute } from "../router";
-import { SaveBar, Seg } from "../ui";
+import { Panel, SaveBar, Seg } from "../ui";
 import type { PluginSettingsProps } from ".";
 
 type Model = "opus" | "haiku";
@@ -64,7 +64,7 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
     );
 
   return (
-    <div className="panel form">
+    <Panel title="T3 Code" className="form">
       <label>
         <span className="label">T3 Code's address</span>
         <input
@@ -101,6 +101,6 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
           Connect
         </button>
       </div>
-    </div>
+    </Panel>
   );
 }

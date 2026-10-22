@@ -6,7 +6,7 @@ import { LoadError, useLoad } from "./load";
 import { loadSchedules, loadTasks, useStore } from "./store";
 import { Switch } from "./switch";
 import { TaskTable } from "./tasks";
-import { Select } from "./ui";
+import { Panel, Select } from "./ui";
 
 /** `missing` once everything has loaded without it, or it's been deleted. */
 export function useListed(
@@ -53,8 +53,7 @@ export function Runs({
     .slice(0, 20);
   if (!loaded.data && !loaded.error) return null;
   return (
-    <div className="panel">
-      <h3 className="section-title">Runs</h3>
+    <Panel title="Runs">
       {!loaded.data ? (
         <LoadError error={loaded.error} retry={loaded.retry} />
       ) : !shown.length ? (
@@ -62,7 +61,7 @@ export function Runs({
       ) : (
         <TaskTable tasks={shown} name={(t) => (t.summary ? plainText(t.summary) : t.title)} />
       )}
-    </div>
+    </Panel>
   );
 }
 
