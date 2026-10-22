@@ -1,16 +1,18 @@
 // As BoxesView on iOS. A box's page opens in the web app in your browser: its calls to Hatbot
 // only work inside Hatbot, and this app has no web view.
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gdk, gio, glib};
 use hatbot::core::format;
 use hatbot::core::links::Link;
-use hatbot::core::models::BoxDetail;
+use hatbot::core::models::{AppBox, BoxDetail};
 use hatbot::store::{Change, Listener, Store};
 
 use super::form::{confirm, error_label, note};
+use super::icon::Icon;
 use super::route;
 use super::shell::Banners;
 
@@ -45,29 +47,80 @@ pub struct Boxes {
     pub page: adw::NavigationPage,
     _inner: Rc<List>,
     _listener: Listener,
+    dark: Option<glib::SignalHandlerId>,
 }
+
+impl Drop for Boxes {
+    fn drop(&mut self) {
+        if let Some(id) = self.dark.take() {
+            adw::StyleManager::default().disconnect(id);
+        }
+    }
+}
+
+/// A preview is of one version of a box, in light or dark.
+type Key = (i64, i64, bool);
 
 struct List {
     store: Store,
-    prefs: adw::PreferencesPage,
+    grid: gtk::FlowBox,
+    empty: gtk::Label,
     error: gtk::Label,
     spinner: adw::Spinner,
-    groups: RefCell<Vec<adw::PreferencesGroup>>,
+    /// None when the brain has no picture.
+    previews: RefCell<HashMap<Key, Option<gdk::Texture>>>,
+    fetching: RefCell<HashSet<Key>>,
+    shown: RefCell<HashMap<Key, (gtk::Picture, Icon)>>,
 }
 
 impl Boxes {
     pub fn new(store: &Store, banners: &Banners) -> Boxes {
         let error = error_label();
         let spinner = adw::Spinner::builder().height_request(32).build();
-        let top = adw::PreferencesGroup::new();
-        top.add(&error);
-        top.add(&spinner);
-        let prefs = adw::PreferencesPage::new();
-        prefs.add(&top);
+        let empty =
+            note("No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.");
+        empty.set_visible(false);
+        let grid = gtk::FlowBox::builder()
+            .min_children_per_line(3)
+            .max_children_per_line(3)
+            .homogeneous(true)
+            .selection_mode(gtk::SelectionMode::None)
+            .row_spacing(18)
+            .column_spacing(18)
+            .valign(gtk::Align::Start)
+            .css_classes(["box-grid"])
+            .build();
+        grid.connect_child_activated(|_, child| {
+            if let Ok(id) = child.widget_name().parse() {
+                route::go(Link::Box(id));
+            }
+        });
+        let column = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(12)
+            .margin_top(18)
+            .margin_bottom(24)
+            .margin_start(18)
+            .margin_end(18)
+            .build();
+        column.append(&error);
+        column.append(&spinner);
+        column.append(&empty);
+        column.append(&grid);
+        let scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .child(
+                &adw::Clamp::builder()
+                    .maximum_size(1100)
+                    .child(&column)
+                    .build(),
+            )
+            .build();
         let view = adw::ToolbarView::new();
         view.add_top_bar(&adw::HeaderBar::new());
         banners.add(&view);
-        view.set_content(Some(&prefs));
+        view.set_content(Some(&scroll));
         let page = adw::NavigationPage::builder()
             .title("Boxes")
             .tag("boxes")
@@ -75,10 +128,13 @@ impl Boxes {
             .build();
         let inner = Rc::new(List {
             store: store.clone(),
-            prefs,
+            grid,
+            empty,
             error,
             spinner,
-            groups: RefCell::default(),
+            previews: RefCell::default(),
+            fetching: RefCell::default(),
+            shown: RefCell::default(),
         });
         let weak = Rc::downgrade(&inner);
         page.connect_showing(move |_| {
@@ -94,11 +150,18 @@ impl Boxes {
                 l.render();
             }
         });
+        let weak = Rc::downgrade(&inner);
+        let dark = adw::StyleManager::default().connect_dark_notify(move |_| {
+            if let Some(l) = weak.upgrade() {
+                l.render();
+            }
+        });
         inner.render();
         Boxes {
             page,
             _inner: inner,
             _listener: listener,
+            dark: Some(dark),
         }
     }
 }
@@ -120,7 +183,7 @@ impl List {
         });
     }
 
-    fn render(&self) {
+    fn render(self: &Rc<Self>) {
         let mut list: Vec<_> = {
             let st = self.store.state();
             if !st.boxes_loaded {
@@ -129,32 +192,142 @@ impl List {
             st.boxes.values().cloned().collect()
         };
         self.spinner.set_visible(false);
+        self.empty.set_visible(list.is_empty());
         list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.id.cmp(&a.id)));
-        let g = adw::PreferencesGroup::new();
-        if list.is_empty() {
-            g.add(&note(
-                "No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.",
-            ));
-        }
+        let dark = adw::StyleManager::default().is_dark();
+        self.grid.remove_all();
+        let mut shown = HashMap::new();
         for b in list {
-            let row = adw::ActionRow::builder()
-                .title(&b.title)
-                .use_markup(false)
-                .activatable(true)
-                .build();
-            row.add_suffix(
-                &gtk::Label::builder()
-                    .label(format::stamp(&b.updated_at))
-                    .css_classes(["dim-label"])
-                    .build(),
-            );
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-            let id = b.id;
-            row.connect_activated(move |_| route::go(Link::Box(id)));
-            g.add(&row);
+            let key = (b.id, b.version, dark);
+            let (child, picture, placeholder) = card(&b);
+            self.grid.append(&child);
+            match self.previews.borrow().get(&key) {
+                Some(Some(texture)) => {
+                    picture.set_paintable(Some(texture));
+                    placeholder.set_visible(false);
+                }
+                Some(None) => {}
+                None => self.fetch(key),
+            }
+            shown.insert(key, (picture, placeholder));
         }
-        replace(&self.prefs, &self.groups, vec![g]);
+        self.shown.replace(shown);
     }
+
+    fn fetch(self: &Rc<Self>, key: Key) {
+        if !self.fetching.borrow_mut().insert(key) {
+            return;
+        }
+        let (weak, store) = (Rc::downgrade(self), self.store.clone());
+        glib::spawn_future_local(async move {
+            let (id, version, dark) = key;
+            let result = store.box_preview(id, version, dark).await;
+            let texture = match result {
+                Ok(Some(bytes)) => gio::spawn_blocking(move || top(&bytes))
+                    .await
+                    .ok()
+                    .flatten(),
+                Ok(None) => None,
+                // Tried again on the next render.
+                Err(_) => {
+                    if let Some(l) = weak.upgrade() {
+                        l.fetching.borrow_mut().remove(&key);
+                    }
+                    return;
+                }
+            };
+            let Some(l) = weak.upgrade() else { return };
+            l.fetching.borrow_mut().remove(&key);
+            if let (Some(t), Some((picture, placeholder))) = (&texture, l.shown.borrow().get(&key))
+            {
+                picture.set_paintable(Some(t));
+                placeholder.set_visible(false);
+            }
+            l.previews.borrow_mut().insert(key, texture);
+        });
+    }
+}
+
+/// The top of a page's picture, cut to the card's 16:10.
+fn top(png: &glib::Bytes) -> Option<gdk::Texture> {
+    let texture = gdk::Texture::from_bytes(png).ok()?;
+    let (w, h) = (texture.width(), texture.height());
+    let cut = (w * 10 / 16).max(1);
+    if h <= cut {
+        return Some(texture);
+    }
+    let mut downloader = gdk::TextureDownloader::new(&texture);
+    downloader.set_format(gdk::MemoryFormat::R8g8b8a8Premultiplied);
+    let (data, stride) = downloader.download_bytes();
+    let rows = glib::Bytes::from_bytes(&data, ..stride * cut as usize);
+    Some(
+        gdk::MemoryTexture::new(
+            w,
+            cut,
+            gdk::MemoryFormat::R8g8b8a8Premultiplied,
+            &rows,
+            stride,
+        )
+        .upcast(),
+    )
+}
+
+fn card(b: &AppBox) -> (gtk::FlowBoxChild, gtk::Picture, Icon) {
+    // An empty 16:10 paintable gives the preview its height for the card's width.
+    let frame = gtk::Picture::builder()
+        .paintable(&gdk::Paintable::new_empty(16, 10))
+        .can_shrink(true)
+        .content_fit(gtk::ContentFit::Fill)
+        .build();
+    let placeholder = Icon::new("box", 28);
+    placeholder.set_halign(gtk::Align::Center);
+    placeholder.set_valign(gtk::Align::Center);
+    placeholder.add_css_class("dim-label");
+    let picture = gtk::Picture::builder()
+        .can_shrink(true)
+        .content_fit(gtk::ContentFit::Cover)
+        .build();
+    let preview = gtk::Overlay::builder()
+        .child(&frame)
+        .overflow(gtk::Overflow::Hidden)
+        .css_classes(["box-preview"])
+        .build();
+    preview.add_overlay(&placeholder);
+    preview.add_overlay(&picture);
+    let title = gtk::Label::builder()
+        .label(&b.title)
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .css_classes(["heading"])
+        .build();
+    let stamp = gtk::Label::builder()
+        .label(format::stamp(&b.updated_at))
+        .xalign(0.0)
+        .css_classes(["caption", "dim-label"])
+        .build();
+    let text = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .margin_top(10)
+        .margin_bottom(12)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    text.append(&title);
+    text.append(&stamp);
+    let card = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .overflow(gtk::Overflow::Hidden)
+        .css_classes(["box-card"])
+        .build();
+    card.append(&preview);
+    card.append(&text);
+    let child = gtk::FlowBoxChild::builder()
+        .name(b.id.to_string())
+        .child(&card)
+        .build();
+    child.update_property(&[gtk::accessible::Property::Label(&b.title)]);
+    (child, picture, placeholder)
 }
 
 pub struct BoxPage {

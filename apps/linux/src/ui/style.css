@@ -226,3 +226,24 @@ button.pick.picked .swatch {
   outline: 1.5px solid alpha(@window_fg_color, 0.55);
   outline-offset: 2px;
 }
+
+flowbox.box-grid > flowboxchild {
+  padding: 0;
+  border-radius: 12px;
+  background: none;
+}
+
+.box-card {
+  border-radius: 12px;
+  border: 1px solid alpha(currentColor, 0.12);
+  background-color: var(--card-bg-color);
+}
+
+flowbox.box-grid > flowboxchild:hover .box-card {
+  border-color: alpha(currentColor, 0.24);
+}
+
+.box-preview {
+  background-color: alpha(currentColor, 0.05);
+  border-bottom: 1px solid alpha(currentColor, 0.08);
+}

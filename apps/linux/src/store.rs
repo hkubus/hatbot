@@ -1956,6 +1956,26 @@ impl Store {
             .await
     }
 
+    /// A PNG of the top of a version's page; None when the brain has no picture of it.
+    pub async fn box_preview(
+        &self,
+        id: i64,
+        version: i64,
+        dark: bool,
+    ) -> Result<Option<glib::Bytes>> {
+        let theme = if dark { "&dark=1" } else { "" };
+        match self
+            .0
+            .api
+            .bytes(&format!("/boxes/{id}/preview?v={version}{theme}"))
+            .await
+        {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.status == 404 => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn restore_box(&self, id: i64, version: i64) -> Result<BoxDetail> {
         let d: BoxDetail = self
             .0
