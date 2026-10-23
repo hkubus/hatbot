@@ -50,6 +50,20 @@ test("a change that fails puts the files back as they were", async () => {
   expect((await mem.log(1))[0]?.files).toEqual(["other.md"]);
 });
 
+test("memory inside another repo that ignores it keeps its own", async () => {
+  const outer = mkdtempSync(join(tmpdir(), "hatbot-outer-"));
+  try {
+    Bun.spawnSync(["git", "init", "-q"], { cwd: outer });
+    writeFileSync(join(outer, ".gitignore"), "/data/\n");
+    const inner = new MemoryStore(join(outer, "data", "memory"), openDb(":memory:"));
+    await inner.init();
+    await inner.write("prefs.md", "tea", YOU, "prefs");
+    expect((await inner.log(1))[0]?.files).toEqual(["prefs.md"]);
+  } finally {
+    rmSync(outer, { recursive: true, force: true });
+  }
+});
+
 test("a file made by hand and never committed can be deleted", async () => {
   writeFileSync(join(dir, "hand.md"), "by hand\n");
   expect(await mem.delete("hand.md", YOU, "Delete hand.md")).toBeNull();

@@ -84,9 +84,12 @@ export class MemoryStore {
       console.warn(`memory: removed a stale ${lock}`);
       await rm(lock, { force: true });
     }
-    if ((await this.git(["rev-parse", "--is-inside-work-tree"], { allowFail: true })).code !== 0) {
+    // Its own repo, not one it happens to sit in, like a dev checkout's data/ (ignored there, so every
+    // write failed).
+    if (!existsSync(join(this.dir, ".git"))) {
       await this.git(["init", "-q", "-b", "main"]);
-      await writeFile(join(this.dir, "INDEX.md"), "# Memory index\n");
+      const index = join(this.dir, "INDEX.md");
+      if (!existsSync(index)) await writeFile(index, "# Memory index\n");
       await this.git(["add", "-A"]);
       await this.commitAs(HATBOT, "Start memory");
     }
