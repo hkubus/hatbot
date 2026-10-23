@@ -16,6 +16,7 @@ impl Markdown {
         let root = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(8)
+            .css_classes(["markdown"])
             .build();
         let md = Markdown {
             root,

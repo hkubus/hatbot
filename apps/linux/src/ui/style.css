@@ -44,6 +44,12 @@ button.attention {
   padding: 7px 12px;
 }
 
+.bubble.mine,
+.bubble .markdown,
+.composer {
+  font-size: 1.15em;
+}
+
 .bubble.mine {
   background-color: #b05a00;
   color: white;
