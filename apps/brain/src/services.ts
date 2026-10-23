@@ -22,6 +22,7 @@ import { EventBus } from "./events";
 import { Backends } from "./hatbox/backends";
 import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
 import { Heartbeat } from "./heartbeat";
+import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
 import { Negotiations } from "./negotiate/service";
@@ -186,6 +187,8 @@ export async function createServices(o: Outside) {
   const report = new WeeklyReport({ ...core });
   const negotiations = new Negotiations({ ...core, tasks });
   tasks.negotiations = negotiations;
+  const listings = new Listings({ ...core, tasks });
+  tasks.listings = listings;
   chats.attach({
     tasks,
     schedules,
@@ -242,6 +245,7 @@ export async function createServices(o: Outside) {
     proposals,
     report,
     negotiations,
+    listings,
     updates,
     ping,
     proxmox,

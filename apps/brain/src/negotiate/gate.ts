@@ -47,7 +47,8 @@ export const collapse = (s: string) =>
 
 // Only spacing and zero-width characters are let go: a bidi override or a compatibility form (⑩)
 // could show the seller something other than the approved text.
-const exact = (s: string) => s.normalize("NFC").replace(/[​-‍⁠﻿]/g, "").replace(/\s+/g, " ").trim();
+export const exact = (s: string) =>
+  s.normalize("NFC").replace(/[​-‍⁠﻿]/g, "").replace(/\s+/g, " ").trim();
 
 export const sameHost = (a: string, b: string) => {
   const h = hostOf(a);
@@ -265,7 +266,7 @@ export function refused(
   return null;
 }
 
-const UNSEEN_MOUSE = new Set([
+export const UNSEEN_MOUSE = new Set([
   "left_mouse_down",
   "left_mouse_up",
   "left_click_drag",
@@ -273,7 +274,7 @@ const UNSEEN_MOUSE = new Set([
   "right_click",
 ]);
 
-function toAddress(c: Combo): boolean {
+export function toAddress(c: Combo): boolean {
   const k = c.key?.toLowerCase() ?? "";
   if (k === "f6" || k === "f10" || k === "menu") return true;
   if (c.mods.includes("ctrl") && ["l", "t", "n", "k", "e", "h", "j"].includes(k)) return true;

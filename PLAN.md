@@ -46,33 +46,17 @@ For N6, Scout's handoff is `../scout/docs/hatbot-listing-plan.md`. In short:
 - `scout_flips_to_list` (read): flips marked ready, each with `id, updatedAt, channels[]` and each channel's `{status, url?, error?}`.
 - `scout_flip {id}` (read): `title, description, condition, category, delivery, prices{channel}, photos[].id`.
 - `scout_flip_photo {id}` (read): one photo, `{mime: "image/jpeg", base64}`, as text, since the MCP plugin drops image content.
-- `scout_flip_listed {flipId, channel, url?, error?}` (write): the outcome of one channel.
+- `scout_flip_listed {flipId, channel, status, url?, error?}` (write): the outcome of one channel, `listed`, `failed` or `declined`. Haggler needs it on Allow.
 - No word for selling in their descriptions: the MCP plugin's money words would make them purchases, and the brain couldn't read them.
 
 ### 3.3 N6, listing
 You mark a flip ready in Scout and pick channels; Hatbot asks once; Haggler posts it on each channel and Scout gets the URLs back. Haggler only, since it holds the marketplace logins. Blocked live on the same thing as N1: Haggler's own accounts.
 
-**L1, Scout** (in Scout's repo, from its handoff): the ready state, the four tools above, the button on the web and iOS, and delivery details (Vinted's parcel size, OLX and Allegro Lokalnie delivery and pickup) in the listing draft.
+**L1, Scout** (in Scout's repo, from its handoff; started in Scout's own T3 thread on 2026-10-24): the ready state, the four tools above, the button on the web and iOS, and delivery details (Vinted's parcel size, OLX and Allegro Lokalnie delivery and pickup) in the listing draft.
 
-**L2, uploads on the desktop.** desktop-agent refuses file inputs (`page.ts`), and the browser can't see the shell's files. A new `upload` feature:
-- The brain stages files for one task (`stageFiles(taskId, files)`); desktop-agent writes them where the browser user can read them, and deletes them when the task ends or after an hour.
-- `set_files {ref, fileIds}` puts them on a file input with CDP's `DOM.setFileInputFiles`.
-- Only on the add-listing pages (`olx.pl/adding/`, `allegrolokalnie.pl/o/oferty/wystaw`, `vinted.pl/items/new`), only with files staged for that task. Anything else is still refused.
-- `desktopReady()` for listing also needs the `upload` feature.
-- Tests: an allow and a refuse (another page; a file not staged for the task), and a Chromium test that a staged file lands on a real file input.
+L2 (photo uploads on the add-listing pages) and L3 (the lister, `apps/brain/src/listings/`) are built (2026-10-24) and tested against a stand-in Scout and desktop-agent, not live. Not checked yet: the add-listing pages' addresses (`UPLOAD_PAGES` in `packages/shared/src/desktop.ts`) and their publish buttons' labels (`listings/gate.ts`).
 
-**L3, the lister** (`apps/brain/src/listings/`, in the core next to `negotiate/`, for the same reason: it starts tasks and drives the desktop).
-- *Poller:* every 5 minutes, without the model, the brain reads `scout_flips_to_list` (like `watch/service.ts`'s `read()`). Nothing to list, nothing happens. Scout's tools are found by suffix as in `appraise.ts`, and need Haggler to have them.
-- *Table* `flip_listings (flip_id, channel, flip_updated_at, status, approval_id, task_id, url, error)`, unique on flip and channel, so a restart or a second tick never asks or posts twice. Statuses: `asking, queued, posting, listed, failed, declined, cancelled`.
-- *One tap:* a new flip raises one approval of the new kind `listing`, in plain text, for all its channels: "List 'RTX 3070 Gaming OC' on OLX for 1199 zł and Vinted for 1149 zł? 6 photos." with the title, description, condition and delivery below. A phone notification may approve it (add `listing` to `approvals.ts`'s phone kinds); it's never left to Haiku's review. Marking a flip in Scout doesn't count as approving it: Scout's MCP output is untrusted, and a listing draft can come from the seller's own text. Declining records `declined` in Scout and drops it.
-- *Changes after the tap:* if the flip's `updatedAt` moves before it's posted, the approval is asked again with the new text. If it's no longer ready (you cancelled in Scout), its queued tasks are dropped and nothing is posted.
-- *Posting:* one desktop task per channel, as Haggler, `runKey listing:<flip>:<channel>`, one at a time per marketplace. The brain fetches the photos with `scout_flip_photo` and stages them (L2). The task's brief holds the approved listing as data, and the site's playbook skill.
-- *The gate:* like negotiation's exact-text gate (`negotiate/gate.ts`), a `listing_tasks` row makes `desktop-run.ts` allow, on that channel's add-listing page only, typing exactly the approved title, description and price, setting the staged photos, picking category, condition and delivery, and pressing Publish once, without asking again. Anything else consequential (paying for promotion, "wyróżnij", a phone or address change) still asks, and payment hosts are refused as now.
-- *After Publish:* the task finishes with the new listing's URL; the brain checks it's on that marketplace's host and records it with `scout_flip_listed`. A failure is recorded there too, with a plain sentence, and said in Haggler's chat.
-- *Types:* `ListingStatus` and the `listing` approval kind in `packages/shared`, mirrored in `Models.swift` and `models.rs`. No new screens: the approval and tasks show where they already do.
-- *Tests:* end to end, a ready flip against a stand-in Scout and desktop-agent goes from one approval to two tasks to two URLs in Scout. A test each for: no second approval on the next tick; a changed flip asks again; a cancelled flip posts nothing; the gate refuses text that isn't the approved text, and a second Publish.
-
-**L4, live.** Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after the tap.
+**L4, live.** Once L1 is in Scout, connect it to Haggler with its three read tools on Chat and `scout_flip_listed` on Allow. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after the tap.
 
 **Not in N6:** answering buyers (N5), taking a sold flip off its other channels (Scout already has the checklist), editing or relisting a live listing, and paid promotion.
 

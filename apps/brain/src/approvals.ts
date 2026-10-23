@@ -14,7 +14,13 @@ import type { Notifier } from "./notify";
 
 const TTL_MS = 24 * 3600_000;
 /** Kinds a notification may approve from a locked phone; the rest are approved in the app. */
-const NOTIFY_APPROVES: ApprovalKind[] = ["send", "submit_personal_data", "delete", "other"];
+const NOTIFY_APPROVES: ApprovalKind[] = [
+  "send",
+  "submit_personal_data",
+  "delete",
+  "listing",
+  "other",
+];
 export const approvableFromNotification = (kind: ApprovalKind) => NOTIFY_APPROVES.includes(kind);
 
 export type Outcome = "approved" | "denied" | "expired" | "cancelled";
@@ -121,9 +127,9 @@ export class Approvals {
   ) {
     this.key = secretKey(db, "approval_key");
     // Nothing waits on approvals from before a restart: their tasks were stopped. A negotiation's
-    // mandate or hold waits for no task: it takes the answer whenever it comes.
+    // mandate or hold, or a listing, waits for no task: it takes the answer whenever it comes.
     db.query(
-      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind != 'mandate'
+      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind NOT IN ('mandate', 'listing')
        AND id NOT IN (SELECT approval_id FROM negotiations WHERE approval_id IS NOT NULL)`,
     ).run(this.now());
   }

@@ -267,6 +267,7 @@ pub enum ApprovalKind {
     InjectionWarning,
     Budget,
     Mandate,
+    Listing,
     Other,
     #[serde(other)]
     Unknown,

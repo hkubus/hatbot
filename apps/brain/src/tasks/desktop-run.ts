@@ -8,7 +8,12 @@ import {
 } from "@anthropic-ai/sdk/helpers/beta/toolsets";
 import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import type { ApprovalKind } from "@hatbot/shared";
-import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/desktop";
+import {
+  type AgentElement,
+  type BrowserState,
+  type ComputerMember,
+  uploadPage,
+} from "@hatbot/shared/desktop";
 import { z } from "zod";
 import { cutOff, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
@@ -20,6 +25,7 @@ import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { DesktopBusy } from "../desktop/service";
+import { listingCheck, listingRefused } from "../listings/gate";
 import {
   collapse,
   type GateState,
@@ -126,6 +132,26 @@ const RecordConversation = z.object({
     .max(100)
     .describe("The conversation's messages, oldest first, each copied exactly"),
 });
+const SetFiles = z.object({
+  ref: z
+    .string()
+    .max(100)
+    .optional()
+    .describe(
+      "The photo upload control, or the file input itself; leave it out if the page has one file input",
+    ),
+  tab_id: z.string().max(100).optional(),
+  photos: z
+    .array(z.number().int())
+    .max(30)
+    .optional()
+    .describe(
+      "Which photos, numbered from 1, for an input that takes one at a time; all if left out",
+    ),
+});
+const RecordListing = z.object({
+  url: z.string().max(2000).describe("The new listing's address, as the browser shows it"),
+});
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
@@ -172,6 +198,19 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
     schema: RecordConversation,
+  },
+  // Only in a listing's desktop tasks.
+  {
+    name: "set_files",
+    description:
+      "Put the listing's photos, staged for this task, on the add-listing page's photo upload, in order, as choosing them in the file picker would.",
+    schema: SetFiles,
+  },
+  {
+    name: "record_listing",
+    description:
+      "Record the new listing's address once it's published and its page shows. Then finish the task.",
+    schema: RecordListing,
   },
 ].map((t) => ({
   name: t.name,
@@ -319,6 +358,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** A negotiation's task may send one approved message, or only read. */
   const gate = tasks.negotiations?.gateFor(id) ?? null;
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
+  /** A listing's task may publish the approved listing once, without asking. */
+  const listing = tasks.listings?.gateFor(id) ?? null;
   /** Text was typed or pasted in this task: what's in a box may be ours, not sent. */
   let typed = false;
   const sources = new Set<string>();
@@ -575,7 +616,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ),
       );
     }
-    const no = gate && refused(gate, call.name, input);
+    const no =
+      (gate && refused(gate, call.name, input)) ||
+      (listing && listingRefused(listing, call.name, input));
     if (no) return notRun(call, no);
     if (typesText(call.name, input)) typed = true;
     const check = checkFor(isBrowser ? "browser" : "computer", call.name, input);
@@ -598,6 +641,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
     let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
+    let publishing = false;
     if (check) {
       const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
       const inspectAt = async (w: Where): Promise<() => Promise<Inspected>> => {
@@ -657,6 +701,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
       }
+      if (listing) {
+        const l = listingCheck(listing, kind, el, hold);
+        if (l.action === "hold") return notRun(call, l.why);
+        // The approved listing's publish needs no confirm_intent.
+        if (l.action === "publish") {
+          hold = null;
+          publishing = true;
+        }
+      }
       // One asked before trying is spent on the first held step, covered or not.
       const here = el?.url ?? lastUrl;
       const was = armed;
@@ -689,6 +742,27 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       r = await (isBrowser ? browser : computer).toolResult(call);
     } finally {
       pendingStepId = undefined;
+    }
+    if (publishing && listing) {
+      // Once: whether it went or not, nothing more is published from this task.
+      listing.published = true;
+      tasks.listings?.publishPassed(id);
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Published the approved listing",
+        detail: listing.title,
+        url: lastUrl,
+      });
+      const note =
+        "Published. Once the new listing's page shows, call record_listing with its address, then finish.";
+      const content = r.content ?? [];
+      r = {
+        ...r,
+        content:
+          typeof content === "string"
+            ? `${content}\n\n${note}`
+            : [...content, { type: "text", text: note }],
+      };
     }
     if (sending && inspectAgain) {
       // One message, once: whether it went or not, nothing more goes from this task.
@@ -751,6 +825,44 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       url: lastUrl,
     });
     return textResult(call, r.text);
+  });
+
+  const setFiles = withInput(SetFiles, async (call, input) => {
+    if (!listing || !tasks.listings) return textResult(call, "This task has no listing.", true);
+    if (d.desktop.get().control === "owner") await waitForOwner();
+    const names = tasks.listings.photoNames(id, input.photos);
+    if (typeof names === "string") return textResult(call, names, true);
+    const tab = await agent.context(false).catch(() => null);
+    if (uploadPage(tab?.url)?.channel !== listing.channel)
+      return notRun(
+        call,
+        `Photos go only on ${listing.channel}'s add-listing page. Open ${listing.addUrl} first.`,
+      );
+    tasks.addStep(id, {
+      kind: "action",
+      name: "set_files",
+      detail: `${names.length} photo${names.length === 1 ? "" : "s"}`,
+      url: lastUrl,
+    });
+    try {
+      const r = await agent.setFiles({
+        ...(input.tab_id ? { tab_id: input.tab_id } : {}),
+        ...(input.ref ? { ref: input.ref } : {}),
+        stage: listing.stage,
+        names,
+      });
+      return textResult(call, ("text" in r && r.text) || "Done.");
+    } catch (err) {
+      if (err instanceof DesktopError) return textResult(call, err.message, true);
+      throw err;
+    }
+  });
+
+  const recordListing = withInput(RecordListing, async (call, input) => {
+    if (!listing || !tasks.listings) return textResult(call, "This task has no listing.", true);
+    const r = tasks.listings.recordUrl(id, input.url);
+    tasks.addStep(id, { kind: "action", name: "record_listing", detail: input.url, url: lastUrl });
+    return textResult(call, r.text, !r.ok);
   });
 
   const confirmIntent = withInput(ConfirmIntent, async (call, input) => {
@@ -1011,6 +1123,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       }),
     ],
     ...(gate ? [["record_conversation", recordConversation] as const] : []),
+    ...(listing
+      ? [["set_files", setFiles] as const, ["record_listing", recordListing] as const]
+      : []),
   ]);
 
   // Its bot's name; the desktop model needs no role or memory.
@@ -1027,7 +1142,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tools: [
       computer.toJSON(),
       browser.toJSON(),
-      ...CUSTOM_TOOLS.filter((t) => gate || t.name !== "record_conversation"),
+      ...CUSTOM_TOOLS.filter(
+        (t) =>
+          (gate || t.name !== "record_conversation") &&
+          (listing || (t.name !== "set_files" && t.name !== "record_listing")),
+      ),
     ],
     thinking: thinkingFor(model),
     output_config: { effort: "medium" },

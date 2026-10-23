@@ -20,6 +20,7 @@ import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
+import type { Listings } from "../listings/service";
 import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Negotiations } from "../negotiate/service";
@@ -181,6 +182,7 @@ export class Tasks {
   readonly pool = new Pool(BACKGROUND_SLOTS);
   /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks. */
   negotiations?: Negotiations;
+  listings?: Listings;
   private running = new Map<number, AbortController>();
   /** Events for running tasks, delivered with their next tool results. */
   private inbox = new Map<number, string[]>();

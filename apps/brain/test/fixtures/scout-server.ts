@@ -1,7 +1,8 @@
-// A stand-in for Scout's MCP server over stdio, for the negotiation tests. It has the tools Scout has
-// today; with SCOUT_FULL=1, also the price reference and comparables it doesn't have yet.
+// A stand-in for Scout's MCP server over stdio, for the negotiation and listing tests. It has the tools
+// Scout has today; with SCOUT_FULL=1, also the price reference and comparables it doesn't have yet,
+// and with SCOUT_FLIPS, the flips to list, kept in that JSON file, which the tests change.
 // Calls are appended to SCOUT_LOG, one JSON line each.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -128,6 +129,90 @@ if (process.env.SCOUT_FULL) {
           { title: "RTX 3070 FE", price: 1380, url: "https://www.olx.pl/d/oferta/y-ID2003.html" },
         ],
       });
+    },
+  );
+}
+const flipsFile = process.env.SCOUT_FLIPS;
+if (flipsFile) {
+  type Flip = Record<string, unknown> & {
+    id: number;
+    updatedAt: string;
+    channels: Record<string, string>;
+    listed?: Record<string, unknown>[];
+  };
+  const flips = (): Flip[] => JSON.parse(readFileSync(flipsFile, "utf8"));
+  const notFound = { isError: true, content: [{ type: "text" as const, text: "No such flip." }] };
+  server.registerTool(
+    "scout_flips_to_list",
+    {
+      description: "Flips marked ready for Hatbot to post, with each marketplace's state",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      log("scout_flips_to_list", {});
+      return json({
+        flips: flips().map((f) => ({
+          id: f.id,
+          updatedAt: f.updatedAt,
+          channels: Object.entries(f.channels).map(([channel, status]) => ({ channel, status })),
+        })),
+      });
+    },
+  );
+  server.registerTool(
+    "scout_flip",
+    {
+      description: "One flip's draft",
+      inputSchema: { id: z.number() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      log("scout_flip", { id });
+      const f = flips().find((x) => x.id === id);
+      if (!f) return notFound;
+      const { channels: _, listed: __, ...draft } = f;
+      return json(draft);
+    },
+  );
+  server.registerTool(
+    "scout_flip_photo",
+    {
+      description: "One of a flip's photos",
+      inputSchema: { id: z.number() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      log("scout_flip_photo", { id });
+      return json({
+        id,
+        mime: "image/jpeg",
+        base64: Buffer.from([0xff, 0xd8, id, 0xd9]).toString("base64"),
+      });
+    },
+  );
+  server.registerTool(
+    "scout_flip_listed",
+    {
+      description: "Record where a flip went up on one marketplace, or why it didn't",
+      inputSchema: {
+        flipId: z.number(),
+        channel: z.string(),
+        status: z.enum(["listed", "failed", "declined"]),
+        url: z.string().optional(),
+        error: z.string().optional(),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (input) => {
+      log("scout_flip_listed", input);
+      const all = flips();
+      const f = all.find((x) => x.id === input.flipId);
+      if (!f) return notFound;
+      f.channels[input.channel] = input.status;
+      f.listed = [...(f.listed ?? []), input];
+      writeFileSync(flipsFile, JSON.stringify(all));
+      return json({ ok: true });
     },
   );
 }
