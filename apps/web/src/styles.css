@@ -95,7 +95,8 @@
   --accent-strong: light-dark(#c96f0a, #d87a12);
   --accent-soft: light-dark(#fdf0e1, rgba(255, 159, 46, 0.14));
   --accent-text: light-dark(#a55a00, #ffb866);
-  --user-bubble: light-dark(#fce7cf, rgba(255, 159, 46, 0.2));
+  /* A bot's own chat sets it to the bot's colour. */
+  --chat-tint: var(--accent);
   --bot-bubble: light-dark(#efeff2, #2c2c2f);
   --attention: light-dark(#007aff, #0a84ff);
   --attention-hover: light-dark(#0062cc, #409cff);
@@ -833,7 +834,10 @@ dialog.ask p {
 
 .msg.user .bubble {
   max-width: min(78%, 560px);
-  background: var(--user-bubble);
+  background: light-dark(
+    color-mix(in srgb, var(--chat-tint) 20%, white),
+    color-mix(in srgb, var(--chat-tint) 20%, transparent)
+  );
   padding: var(--sp) var(--sp-md);
   border-radius: var(--r-bubble) var(--r-bubble) var(--r-sm) var(--r-bubble);
   white-space: pre-wrap;

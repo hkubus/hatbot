@@ -9,9 +9,6 @@ extension Color {
   /// selected row.
   static let brand = Color(light: 0xE8820C, dark: 0xFF9F2E)
   static let attention = Color.blue
-  /// Solid, with white text, like Messages' blue; Hatbot's grey is Messages' too. A darker amber than
-  /// the brand's, so the white reads at 4.9:1 (the brand's own gives 2.75:1).
-  static let userBubble = Color(uiColor: UIColor(hex: 0xB05A00, alpha: 1))
   /// Text and glyphs on the brand's amber: 6.1:1, and 8.2:1 on the dark mode amber.
   static let onBrand = Color(uiColor: UIColor(hex: 0x1D1D1F, alpha: 1))
   static let botBubble = Color(light: 0xE9E9EB, dark: 0x262628)
@@ -37,6 +34,24 @@ extension Bot.Tint {
     case .green: .green
     case .gray: .gray
     }
+  }
+
+  /// Your bubbles in the bot's chat: solid, with white text, like Messages' blue. Darker than the
+  /// colour itself, so the white reads at 4.5:1 or better (the brand's amber gives 2.75:1).
+  var bubble: Color {
+    let hex: UInt32 =
+      switch self {
+      case .amber: 0xB05A00
+      case .red: 0xD70015
+      case .pink: 0xD30F45
+      case .purple: 0x8944AB
+      case .indigo: 0x3634A3
+      case .blue: 0x0062CC
+      case .teal: 0x007C91
+      case .green: 0x1F8239
+      case .gray: 0x6C6C70
+      }
+    return Color(uiColor: UIColor(hex: hex, alpha: 1))
   }
 }
 
