@@ -15,11 +15,18 @@ fn main() -> glib::ExitCode {
         css.load_from_string(include_str!("ui/style.css"));
         let dark = gtk::CssProvider::new();
         dark.load_from_string(include_str!("ui/dark.css"));
+        let layout = gtk::CssProvider::new();
+        layout.load_from_string(include_str!("ui/layout.css"));
         if let Some(display) = gdk::Display::default() {
             gtk::style_context_add_provider_for_display(
                 &display,
                 &css,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &layout,
+                gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
             );
             let follow = move |styles: &adw::StyleManager| {
                 if styles.is_dark() {

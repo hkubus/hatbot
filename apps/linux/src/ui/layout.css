@@ -1,0 +1,19 @@
+/* Over a theme in ~/.config/gtk-4.0/gtk.css: themes paint every text view and size every button,
+   which hid the composer's tint and shrank its buttons. Colours stay in style.css for themes. */
+.composer textview,
+.composer text,
+textview.text-area > text {
+  background: none;
+}
+
+button.composer-button {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+/* A scrolled window is never shorter than its scrollbar, which kept a one-line field taller than
+   its buttons. */
+.composer scrollbar slider {
+  min-height: 12px;
+}
