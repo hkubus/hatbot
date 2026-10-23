@@ -10,8 +10,10 @@ import type {
   BrowserResult,
   BrowserState,
   FetchResult,
+  SetFiles,
   ShellResult,
 } from "@hatbot/shared/desktop";
+import { uploadPage } from "@hatbot/shared/desktop";
 import { type DesktopAgent, DesktopError } from "../src/desktop/client";
 
 /** A desktop that records what it's asked to do. Set `page` and `element` to shape what the policy sees. */
@@ -147,6 +149,27 @@ export class FakeDesktop implements DesktopAgent {
   async browserInspect(at: BrowserInspect) {
     this.inspected.push(at);
     return this.element;
+  }
+  /** Staged files by stage, and what set_files put on the page's input. */
+  staged = new Map<string, Map<string, Uint8Array>>();
+  setFilesCalls: SetFiles[] = [];
+  async stageFiles(stage: string, files: { name: string; bytes: Uint8Array }[]) {
+    const s = this.staged.get(stage) ?? new Map<string, Uint8Array>();
+    for (const f of files) s.set(f.name, f.bytes);
+    this.staged.set(stage, s);
+  }
+  async dropFiles(stage: string) {
+    this.staged.delete(stage);
+  }
+  async setFiles(o: SetFiles): Promise<BrowserResult> {
+    if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
+    if (!uploadPage(this.page.url))
+      throw new DesktopError("Files go only on a marketplace's add-listing page.", 400);
+    for (const n of o.names)
+      if (!this.staged.get(o.stage)?.has(n))
+        throw new DesktopError(`${n} isn't staged for this task.`, 400);
+    this.setFilesCalls.push(o);
+    return { kind: "text", text: `Put ${o.names.length} files on the input.` };
   }
   async lock() {
     this.locked = true;

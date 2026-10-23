@@ -489,6 +489,27 @@ export const FORM_INPUT = `(o) => {
   return { error: o.ref + ' is a <' + el.tagName.toLowerCase() + '>, not a form field.' };
 }`;
 
+/**
+ * The file input for set_files, left in globalThis.__hatbotFile for DOM.setFileInputFiles. Sites hide theirs
+ * behind a styled button, so a ref may be the input, a control holding it or the label for it; with no ref,
+ * the page's only file input, or its only one for images. { multiple, url } or { error }.
+ */
+export const FILE_INPUT = `(o) => {
+  ${COMMON}
+  const el = o.ref ? byRef(o.ref) : null;
+  if (o.ref && !el) return { error: o.ref + ' is stale or not found on the current page. Re-read the page to get fresh references.' };
+  const isFile = (e) => e instanceof HTMLInputElement && e.type === 'file';
+  const all = [...document.querySelectorAll('input[type=file]')];
+  const images = all.filter((i) => /image/i.test(i.accept));
+  let input = null;
+  if (el) input = isFile(el) ? el : el.querySelector('input[type=file]') || (isFile(el.closest('label')?.control) ? el.closest('label').control : null);
+  else input = all.length === 1 ? all[0] : images.length === 1 ? images[0] : null;
+  if (!input) return { error: el ? o.ref + ' isn\\'t a file input and holds none.' : all.length ? 'The page has several file inputs: give the ref of the one for photos.' : 'The page has no file input.' };
+  if (input.disabled) return { error: 'The file input is disabled.' };
+  globalThis.__hatbotFile = input;
+  return { multiple: input.multiple, url: location.href };
+}`;
+
 /** get_page_text: the main content's visible text. */
 export const PAGE_TEXT = `(o) => {
   const main = document.querySelector('main, [role=main], article');
