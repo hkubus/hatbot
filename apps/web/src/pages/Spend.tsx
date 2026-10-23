@@ -17,6 +17,7 @@ import { Seg } from "../ui";
 
 const PURPOSE_NAMES: Record<string, string> = {
   thread: "Chat",
+  "keep-warm": "Keeping chats cached",
   task: "Tasks",
   summary: "Summaries",
   expert: "Asking Opus",

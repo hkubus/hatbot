@@ -81,6 +81,13 @@ export class FakeModel implements ModelClient {
 
   async create(params: CreateParams) {
     this.creates.push(structuredClone(params));
+    // A keep-warm: read from the cache, nothing written.
+    if (params.max_tokens === 0)
+      return message(params.model, [], "max_tokens", {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 1000,
+      });
     // Injection screening finds nothing unless a test says otherwise; it takes no summary's place.
     const reply =
       this.onCreate?.(params) ??

@@ -38,7 +38,7 @@ test("a message gets a streamed reply, stored, and /thread/ask answers with one"
     display: "summarized",
     block_binding: { prefix_mismatch_behavior: "drop_block" },
   });
-  expect(req?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  expect(req?.cache_control).toEqual({ type: "ephemeral" });
   // New episode: context block first, then the timestamped message.
   expect(lastUserText(req)).toContain("<memory_index>");
   expect(lastUserText(req)).toContain("hello there");
@@ -193,6 +193,43 @@ test("a new conversation starts when the prompt or tools change, the model switc
   expect(toolNames(opus)).not.toContain("ask_opus");
 });
 
+test("a chat is kept cached for half an hour after its last request, while that costs less than an hour's cache", async () => {
+  const model = new FakeModel(
+    [
+      { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
+      // Haiku: 200 tokens written for five minutes rather than an hour save what two reads cost.
+      { content: [text("Hi again.")], usage: { cache_creation_input_tokens: 200 } },
+    ],
+    ["<recap>Said hi.</recap>\n<summary>2026-10-09: said hi.</summary>"],
+  );
+  const t = await testApp(model);
+  const pings = () => model.creates.filter((c) => c.max_tokens === 0);
+  const minutes = async (n: number) => {
+    for (let i = 0; i < n; i++) {
+      t.advance(60_000);
+      await t.thread.sweep();
+    }
+  };
+  await t.thread.post("hello").done;
+  await minutes(2);
+  expect(pings()).toHaveLength(0);
+  await minutes(1);
+  const { max_tokens, ...ping } = pings()[0] ?? {};
+  const { max_tokens: _, ...sent } = model.requests[0] ?? {};
+  expect(JSON.stringify(ping)).toBe(JSON.stringify(sent));
+  // Every three minutes until half an hour after the request.
+  await minutes(40);
+  expect(pings()).toHaveLength(9);
+
+  await t.thread.post("hello again").done;
+  await minutes(30);
+  expect(pings()).toHaveLength(11);
+  const spend = t.db
+    .query<{ n: number }, []>("SELECT count(*) AS n FROM spend_ledger WHERE purpose = 'keep-warm'")
+    .get();
+  expect(spend?.n).toBe(11);
+});
+
 test("each request marks where the last one ended, after the same system and tools, within four breakpoints; tasks cache theirs too", async () => {
   const search = (id: string) => [
     { type: "server_tool_use", id, name: "web_search", input: { query: "x" } },
@@ -229,17 +266,17 @@ test("each request marks where the last one ended, after the same system and too
               : [],
           ),
     );
-  const hour = { type: "ephemeral", ttl: "1h" } as const;
+  const mark = { type: "ephemeral" } as const;
   expect(marks(0)).toEqual([]);
   // The second request: on the opening message, where the first request ended.
-  expect(marks(1)).toEqual([[0, true, hour]]);
+  expect(marks(1)).toEqual([[0, true, mark]]);
   // The third: on the tool results the second request ended with.
-  expect(marks(2)).toEqual([[2, true, hour]]);
+  expect(marks(2)).toEqual([[2, true, mark]]);
   expect(model.requests[2]?.messages[2]?.role).toBe("user");
   const stored = t.db.query<{ content: string }, []>("SELECT content FROM episode_turns").all();
   expect(stored.some((r) => r.content.includes("cache_control"))).toBe(false);
 
-  // An hour on, in a new conversation, the system prompt and tools are the same: they're read from the cache.
+  // An hour on, in a new conversation, the system prompt and tools are the same, so they can be read from the cache.
   t.advance(60 * 60_000);
   await t.thread.post("later").done;
   const [first, , , later] = model.requests;
@@ -271,7 +308,7 @@ test("each request marks where the last one ended, after the same system and too
     { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
   ] as Parameters<typeof markPrevious>[0];
   const marked = markPrevious(turns)[1]?.content as { type: string; cache_control?: unknown }[];
-  expect(marked.map((b) => b.cache_control ?? null)).toEqual([null, null, hour, null]);
+  expect(marked.map((b) => b.cache_control ?? null)).toEqual([null, null, mark, null]);
 });
 
 test("the chat stops at the spending limit: before a reply that could pass it, and before asking Opus", async () => {

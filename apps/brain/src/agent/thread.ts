@@ -46,6 +46,7 @@ import {
   BudgetError,
   estimateTokens,
   fixedTokens,
+  priceOf,
   requestCeiling,
   type Spend,
   searchesIn,
@@ -103,6 +104,13 @@ import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } fr
 export const EXPERT_MODEL = "claude-opus-5-5";
 export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
+/** A chat's cache entries last five minutes from the request that last wrote or read them. */
+const CACHE_MS = 5 * 60_000;
+/**
+ * Past this, the sweep (once a minute, and it may wait on summaries) sends the bot's last request
+ * again at no output: a cache read, far cheaper than an hour-long write, while you might reply.
+ */
+const WARM_AFTER_MS = 3 * 60_000;
 const MAX_SUMMARY_TRIES = 3;
 /** A conversation whose last request was this long carries on in a new one. */
 const LONG_EPISODE_TOKENS = 90_000;
@@ -256,8 +264,10 @@ export class Thread {
   private waiting: number | null = null;
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
-  /** When each bot's last chat request was sent, and in which episode: its cache entry's hour runs from then. */
+  /** When each bot's last chat request or keep-warm was sent, and in which episode: its cache entry's five minutes run from then. */
   private sentAt = new Map<string, { episodeId: number; at: number }>();
+  /** Each bot's last chat request, sent again to keep it cached for half an hour after it. */
+  private warm = new Map<string, { episodeId: number; params: CreateParams; at: number }>();
   /**
    * What each episode read, being screened. Kept across replies: a verdict the last reply didn't
    * wait for still holds back a change the next one makes.
@@ -1099,8 +1109,9 @@ export class Thread {
   }
 
   /**
-   * Prompt tokens the bot's last request left in the cache, while its hour lasts. The ledger has when
-   * a request ended, so after a restart it's taken to have run as long as a turn may.
+   * Prompt tokens the bot's last request left in the cache, while its five minutes last, which a
+   * keep-warm starts again. The ledger has when a request ended, so after a restart it's taken to
+   * have run as long as a turn may.
    */
   private cachedTokens(episodeId: number, botId: string): number {
     const last = this.d.db
@@ -1112,9 +1123,8 @@ export class Thread {
     if (!last) return 0;
     const ended = Date.parse(last.created_at);
     const sent = this.sentAt.get(botId);
-    const at =
-      sent && sent.episodeId === episodeId && sent.at <= ended ? sent.at : ended - MAX_TURN_MS;
-    return this.clock() - at < 3600_000 ? last.tokens : 0;
+    const at = sent && sent.episodeId === episodeId ? sent.at : ended - MAX_TURN_MS;
+    return this.clock() - at < CACHE_MS ? last.tokens : 0;
   }
 
   private promptTokens(episodeId: number): number {
@@ -1163,8 +1173,67 @@ export class Thread {
       .all(...ids);
   }
 
+  /**
+   * Sends each bot's last request again, at no output, before its cache runs out: for half an hour
+   * after it, while the episode is open, and while these reads cost less than the episode saved by
+   * writing for five minutes rather than an hour.
+   */
+  private async keepWarm() {
+    const { db, settings, spend, model } = this.d;
+    for (const [botId, w] of this.warm) {
+      const now = this.clock();
+      const sent = this.sentAt.get(botId);
+      if (!sent || sent.episodeId !== w.episodeId || now - sent.at < WARM_AFTER_MS) continue;
+      const open = db
+        .query<{ id: number }, [number]>("SELECT id FROM episodes WHERE id = ? AND summarized = 0")
+        .get(w.episodeId);
+      const r = db
+        .query<{ written: number; spent: number }, [number, string]>(
+          `SELECT coalesce(sum(CASE WHEN purpose = 'thread' THEN cache_write_5m_tokens END), 0) AS written,
+             coalesce(sum(CASE WHEN purpose = 'keep-warm' THEN cost_usd END), 0) AS spent
+           FROM spend_ledger WHERE episode_id = ? AND bot_id = ?`,
+        )
+        .get(w.episodeId, botId);
+      // An hour's write is 2x input, five minutes' 1.25x.
+      const saved = ((r?.written ?? 0) * priceOf(w.params.model).input * 0.75) / 1_000_000;
+      if (
+        !open ||
+        now - w.at >= EPISODE_IDLE_MS ||
+        now - sent.at >= CACHE_MS ||
+        (r?.spent ?? 0) >= saved ||
+        settings.get().paused
+      ) {
+        this.warm.delete(botId);
+        continue;
+      }
+      const cached = this.cachedTokens(w.episodeId, botId);
+      this.sentAt.set(botId, { episodeId: w.episodeId, at: now });
+      try {
+        const release = spend.hold(
+          requestCeiling(w.params.model, { prompt: cached, cached, maxTokens: 0 }),
+        );
+        try {
+          const res = await model.create({ ...w.params, max_tokens: 0 });
+          spend.recordResponse({
+            model: w.params.model,
+            purpose: "keep-warm",
+            usage: res.usage,
+            episodeId: w.episodeId,
+            botId,
+          });
+        } finally {
+          release();
+        }
+      } catch (err) {
+        if (!(err instanceof BudgetError)) console.error("keeping a chat cached failed", err);
+        this.warm.delete(botId);
+      }
+    }
+  }
+
   /** Folds up episodes idle for 30 minutes and ends an idle incognito conversation. */
   async sweep() {
+    await this.keepWarm();
     const incognitoAt = this.d.db
       .query<{ at: string | null }, [number, number]>(
         `SELECT max(at) AS at FROM (
@@ -2117,7 +2186,7 @@ export class Thread {
             requestCeiling(chatModel, {
               prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
               cached,
-              write: "1h",
+              write: "5m",
               maxTokens: MAX_TOKENS,
               webSearches: searchesIn(tools),
               fallbacks: !onHaiku,
@@ -2129,53 +2198,48 @@ export class Thread {
         }
 
         progress("Thinking…");
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
-        const res = await model.stream(
-          {
-            model: chatModel,
-            max_tokens: MAX_TOKENS,
-            betas: BETAS,
-            // Haiku 5.5 has no server-side fallback; a refusal there ends the reply with a note.
-            ...(onHaiku ? {} : { fallbacks: "default" as const }),
-            // Tools and system are stable; the 1-hour cache keeps a 30-minute episode cheap.
-            system: [
-              {
-                type: "text",
-                text: system,
-                cache_control: { type: "ephemeral", ttl: "1h" },
-              },
-            ],
-            cache_control: { type: "ephemeral", ttl: "1h" },
-            tools,
-            // If a replayed thinking block fails the conversation check anyway, lose that reasoning
-            // rather than the reply.
-            // Haiku 5.5 writes no progress notes between tools; its thinking shows summarized.
-            thinking: {
-              type: "adaptive",
-              display: onHaiku ? "summarized" : "updates",
-              block_binding: { prefix_mismatch_behavior: "drop_block" },
-            },
-            output_config: { effort: effort ?? chatEffort },
-            ...(container ? { container } : {}),
-            messages: markPrevious(messages),
+        const params = {
+          model: chatModel,
+          max_tokens: MAX_TOKENS,
+          betas: BETAS,
+          // Haiku 5.5 has no server-side fallback; a refusal there ends the reply with a note.
+          ...(onHaiku ? {} : { fallbacks: "default" as const }),
+          // Five minutes, kept warm by keepWarm: an hour's cache costs 2x input to write, five minutes' 1.25x.
+          system: [
+            { type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } },
+          ],
+          cache_control: { type: "ephemeral" as const },
+          tools,
+          // If a replayed thinking block fails the conversation check anyway, lose that reasoning
+          // rather than the reply.
+          // Haiku 5.5 writes no progress notes between tools; its thinking shows summarized.
+          thinking: {
+            type: "adaptive" as const,
+            display: onHaiku ? ("summarized" as const) : ("updates" as const),
+            block_binding: { prefix_mismatch_behavior: "drop_block" as const },
           },
-          {
-            onText: say,
-            onThinking: (delta) =>
-              events.emit({ type: "message.progress", id: out.id, text: delta }),
-            onServerTool: (name, input) => {
-              const calls = webCalls(name, input);
-              const queries = calls.flatMap((c) => ("search" in c && c.search ? [c.search] : []));
-              const read = calls.find((c) => "read" in c);
-              if (calls.some((c) => "search" in c))
-                progress(activity("Searching the web", { query: queries.join(", ") }));
-              else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
-            },
-            onRetry: checkpoint(),
-            onFailedUsage: (m, usage) => bill(m, "thread", usage),
-            signal: abort.signal,
+          output_config: { effort: effort ?? chatEffort },
+          ...(container ? { container } : {}),
+          messages: markPrevious(messages),
+        };
+        const sentAt = this.clock();
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: sentAt });
+        this.warm.set(bot.id, { episodeId: episode.id, params, at: sentAt });
+        const res = await model.stream(params, {
+          onText: say,
+          onThinking: (delta) => events.emit({ type: "message.progress", id: out.id, text: delta }),
+          onServerTool: (name, input) => {
+            const calls = webCalls(name, input);
+            const queries = calls.flatMap((c) => ("search" in c && c.search ? [c.search] : []));
+            const read = calls.find((c) => "read" in c);
+            if (calls.some((c) => "search" in c))
+              progress(activity("Searching the web", { query: queries.join(", ") }));
+            else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
           },
-        );
+          onRetry: checkpoint(),
+          onFailedUsage: (m, usage) => bill(m, "thread", usage),
+          signal: abort.signal,
+        });
         held();
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
@@ -2414,7 +2478,7 @@ const CACHEABLE = [
 ];
 
 /**
- * The turns with a 1-hour breakpoint where the last request ended, on the turn before the latest
+ * The turns with a breakpoint where the last request ended, on the turn before the latest
  * response: that request's cache entry. The top-level breakpoint looks back only 20 blocks for it,
  * and a long reply (many searches between bits of text) can pass that and write the whole
  * conversation to the cache again. With the system prompt's and the top-level one, three of four.
@@ -2429,7 +2493,7 @@ export function markPrevious(turns: Turn[]): Turn[] {
   const i = turn.content.findLastIndex((b) => CACHEABLE.includes(b.type));
   if (i < 0) return turns;
   const content = [...turn.content];
-  content[i] = { ...content[i], cache_control: { type: "ephemeral", ttl: "1h" } } as BlockParam;
+  content[i] = { ...content[i], cache_control: { type: "ephemeral" } } as BlockParam;
   const out = [...turns];
   out[at] = { ...turn, content };
   return out;

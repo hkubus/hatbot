@@ -427,14 +427,14 @@ test("the most a request may cost: uncached input as a cache write, all its outp
   expect(tokens).toBeGreaterThan(300 + 1600 + 768 * 25);
   expect(tokens).toBeLessThan(300 + 1600 + 768 * 25 + 50);
 
-  // The chat holds that, and its cache's hour runs from when the request was sent.
+  // The chat holds that, and its cache's five minutes run from when the request was sent.
   const sent = Promise.withResolvers<void>();
   const model = new FakeModel([
     {
       content: [text("Hi.")],
       usage: {
         cache_creation_input_tokens: 80_000,
-        cache_creation: { ephemeral_1h_input_tokens: 80_000, ephemeral_5m_input_tokens: 0 },
+        cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 80_000 },
       },
       wait: sent.promise,
     },
@@ -452,8 +452,8 @@ test("the most a request may cost: uncached input as a cache write, all its outp
   const asked = requested(model);
   const first = t.thread.post(`Read this: ${"lorem ".repeat(47_000)}`).done;
   await asked;
-  // A reply that takes 35 minutes, then a message 26 minutes after it: an hour after the request was
-  // sent, its cache entry is gone.
+  // A reply that takes 35 minutes, then a message 26 minutes after it, with no sweep to keep it
+  // cached: the request's cache entry is long gone.
   t.advance(35 * 60_000);
   sent.resolve();
   await first;
@@ -462,9 +462,9 @@ test("the most a request may cost: uncached input as a cache write, all its outp
   expect(new Set(t.thread.list().map((m) => m.episodeId)).size).toBe(1);
   // Each may cost 80k tokens of prompt written to the cache by Opus 5.5, which declines, and again by
   // Opus 5, which answers with all of its output and searches.
-  const most = (80_000 * 8 + 80_000 * 10) / 1e6 + 0.85;
+  const most = (80_000 * 5 + 80_000 * 6.25) / 1e6 + 0.85;
   expect(holds[0]).toBeGreaterThan(most);
-  // The second was sent over an hour after the first: none of it is in the cache.
+  // None of it is in the cache for the second.
   expect(holds[1]).toBeGreaterThan(most);
 });
 
