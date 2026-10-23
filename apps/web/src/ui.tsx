@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { Icon } from "./icons";
 import { Link } from "./link";
 import { navigate } from "./router";
@@ -221,18 +221,21 @@ export function Seg<T extends string | number | boolean>({
   options: readonly (readonly [T, ReactNode])[];
   onChange: (value: T) => void;
 }) {
+  // Radios: Tab reaches the group once, and the arrow keys pick.
+  const name = useId();
   return (
     <div className="seg">
       {options.map(([v, label]) => (
-        <button
-          type="button"
-          key={String(v)}
-          className={value === v ? "active" : ""}
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-        >
+        <label key={String(v)} className={value === v ? "active" : ""}>
+          <input
+            type="radio"
+            className="sr-only"
+            name={name}
+            checked={value === v}
+            onChange={() => onChange(v)}
+          />
           {label}
-        </button>
+        </label>
       ))}
     </div>
   );

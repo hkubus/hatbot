@@ -12,6 +12,7 @@ import { Login, Setup } from "./pages/Login";
 import { Search } from "./pages/Search";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
+import { focusable, moveFocus, useRoving } from "./roving";
 import {
   chatName,
   chatPath,
@@ -176,6 +177,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [chatMenu]);
+  const sidebar = useRef<HTMLElement>(null);
+  useRoving(sidebar, ".nav-item", "y");
+  const main = useRef<HTMLElement>(null);
   const connected = useStore((s) => s.connected);
   // A blip while reconnecting isn't worth a banner.
   const [down, setDown] = useState(false);
@@ -226,6 +230,27 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setChatMenu(false), [path]);
+  // A page that took away what had the focus starts it at its own top, not back in the sidebar.
+  const route = path + params.toString();
+  const shownRoute = useRef(route);
+  useEffect(() => {
+    if (shownRoute.current === route) return;
+    shownRoute.current = route;
+    if (!document.activeElement || document.activeElement === document.body)
+      main.current?.focus({ preventScroll: true });
+  }, [route]);
+  // Up and down go through a page's lists of links, as through the sidebar.
+  useEffect(() => {
+    const el = main.current;
+    if (!el) return;
+    const ROWS = ".row-link, .row-main, .link-row a";
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as Element).matches(ROWS)) moveFocus(e, focusable(el, ROWS), "y", false);
+    };
+    el.addEventListener("keydown", onKey);
+    return () => el.removeEventListener("keydown", onKey);
+  }, []);
+
   // One that's gone, e.g. a deleted bot's: back to Hatbot's.
   useEffect(() => {
     if (chatId && chats.length && !chats.some((c) => c.id === chatId)) navigate("/", true);
@@ -288,9 +313,27 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     [],
   );
 
-  // Cmd/Ctrl-K: Search. Escape: closes the chat switcher, else the live panel.
+  // Cmd/Ctrl-K: Search. Alt-Up and Alt-Down: the chat above or below. Escape: closes the chat
+  // switcher, else the live panel.
+  const onChat = chatId || pageChat?.id || 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+        onChat &&
+        !t?.closest("canvas, .live-keys")
+      ) {
+        const i = chats.findIndex((c) => c.id === onChat);
+        const next = chats[i + (e.key === "ArrowUp" ? -1 : 1)];
+        e.preventDefault();
+        if (i >= 0 && next) navigate(chatPath(next.id));
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         if (location.pathname === "/search")
@@ -301,7 +344,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       if (chatMenu) return setChatMenu(false);
       // Escape in a field, or typed on the desktop in the live view, is theirs.
-      const t = e.target as HTMLElement | null;
       if (t?.closest("input, textarea, select, canvas, [contenteditable]")) return;
       if (insp) {
         localStorage.setItem("hatbot:insp", "0");
@@ -310,7 +352,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [chatMenu, insp]);
+  }, [chatMenu, insp, chats, onChat]);
 
   const toggleInsp = () => {
     localStorage.setItem("hatbot:insp", insp ? "0" : "1");
@@ -320,7 +362,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   return (
     <>
       <div className={`app ${insp && view.path !== "/live" ? "insp" : ""}`}>
-        <aside className="sidebar">
+        <aside className="sidebar" ref={sidebar}>
           <div className="brand">
             <div className="brand-mark">
               <Icon name="hat" />
@@ -332,7 +374,12 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           </nav>
           <nav className="nav nav-views">
             {VIEWS.filter((v) => v.path !== "/").map((v) => (
-              <Link key={v.path} className={`nav-item ${v === view ? "active" : ""}`} to={v.path}>
+              <Link
+                key={v.path}
+                className={`nav-item ${v === view ? "active" : ""}`}
+                aria-current={v === view ? "page" : undefined}
+                to={v.path}
+              >
                 <Icon name={v.icon} />
                 <span>{v.title}</span>
                 {v.path === "/tasks" && pending > 0 && (
@@ -343,7 +390,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           </nav>
         </aside>
 
-        <main className="main">
+        <main className="main" ref={main} tabIndex={-1}>
           <header className="toolbar">
             {chatId ? (
               <>
@@ -542,7 +589,13 @@ function ChatNav({
   const chats = useStore((s) => s.conversations);
   const manyBots = useStore((s) => s.botIds.length > 1);
   const item = (to: string, lit: boolean, icon: ReactNode, name: string, unread = 0) => (
-    <Link key={to} className={`nav-item ${lit ? "active" : ""}`} to={to} onClick={onPick}>
+    <Link
+      key={to}
+      className={`nav-item ${lit ? "active" : ""}`}
+      aria-current={lit ? "page" : undefined}
+      to={to}
+      onClick={onPick}
+    >
       {icon}
       <span className="nav-name">{name}</span>
       {unread > 0 && <span className="count unread">{unread}</span>}
