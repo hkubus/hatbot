@@ -133,7 +133,16 @@ export type ThreadMessage = {
    * an open one), sent as your message. Absent when it offers none.
    */
   choices?: string[][];
+  /** While it's being written: what it has thought and done so far, a line each, the latest last. */
+  progress?: string;
 };
+
+/** Progress text kept to its last `max` lines: what's shown of a reply or task at work. */
+export function keepLines(text: string, max = 40): string {
+  let at = text.length;
+  for (let n = 0; n <= max && at > 0; n++) at = text.lastIndexOf("\n", at - 1);
+  return at > 0 ? text.slice(at) : text;
+}
 
 export type MessageLink = { conversationId: number; messageId: number };
 

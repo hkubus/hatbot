@@ -9,6 +9,7 @@ import {
   type DesktopState,
   type Episode,
   type HatbotEvent,
+  keepLines,
   type Me,
   type MessageChanges,
   type Negotiation,
@@ -197,9 +198,10 @@ async function messagesPage(before?: number) {
   }
 }
 
-/** Deltas still waiting for a frame are among the events. */
+/** Deltas still waiting for a frame are among the events. A reply being written brings its progress. */
 function caughtUp(list: ThreadMessage[], events: HatbotEvent[]) {
   flushDeltas();
+  for (const m of list) if (m.progress) put("progress", m.id, m.progress);
   return events.reduce(onMessages, list);
 }
 
@@ -843,7 +845,7 @@ function apply(e: HatbotEvent) {
         unread: state.unread.filter((id) => !e.ids.includes(id)),
       });
     case "message.progress": {
-      const text = ((state.progress[e.id] ?? "") + e.text).slice(-400);
+      const text = keepLines((state.progress[e.id] ?? "") + e.text);
       return put("progress", e.id, text);
     }
     case "message.rewrite":
@@ -893,7 +895,7 @@ function apply(e: HatbotEvent) {
       return put("steps", e.step.taskId, steps);
     }
     case "task.progress": {
-      const text = ((state.taskProgress[e.taskId] ?? "") + e.text).slice(-400);
+      const text = keepLines((state.taskProgress[e.taskId] ?? "") + e.text);
       return put("taskProgress", e.taskId, text);
     }
     case "approval.created":
