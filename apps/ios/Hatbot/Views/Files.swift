@@ -149,6 +149,8 @@ struct PickedPhoto: Transferable {
 struct ComposerFile: Identifiable {
   let id = UUID()
   let name: String
+  /// A photo still being scaled, before it has a preview.
+  var photo = false
   var preview: UIImage?
   var attachment: Attachment?
   var error: String?
@@ -165,6 +167,8 @@ struct ComposerFiles: View {
           Group {
             if let preview = f.preview {
               Image(uiImage: preview).resizable().scaledToFill().frame(width: 56, height: 56)
+            } else if f.photo {
+              ProgressView().frame(width: 56, height: 56)
             } else {
               HStack(spacing: 6) {
                 Image(systemName: "doc")

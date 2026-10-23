@@ -383,19 +383,20 @@ private struct Composer: View {
     return (hasText || hasFiles) && !sending && !uploading
   }
 
-  private func attach(_ data: Data, name: String, mediaType: String, preview: UIImage? = nil) {
-    let f = ComposerFile(name: name, preview: preview)
-    let key = key
+  private func attach(_ data: Data, name: String, mediaType: String) {
+    let f = ComposerFile(name: name)
     files.append(f)
-    Task {
-      // The chat it was attached in, even if you've gone to another meanwhile.
-      do {
-        let a = try await store.upload(data, name: name, mediaType: mediaType)
-        drafts.update(key, f.id) { $0.attachment = a }
-      } catch {
-        drafts.update(key, f.id) { $0.error = message(for: error) }
-        self.error = message(for: error)
-      }
+    Task { await upload(f.id, key, data, name: name, mediaType: mediaType) }
+  }
+
+  /// To the chat it was attached in, even if you've gone to another meanwhile.
+  private func upload(_ id: UUID, _ key: String, _ data: Data, name: String, mediaType: String) async {
+    do {
+      let a = try await store.upload(data, name: name, mediaType: mediaType)
+      drafts.update(key, id) { $0.attachment = a }
+    } catch {
+      drafts.update(key, id) { $0.error = message(for: error) }
+      self.error = message(for: error)
     }
   }
 
@@ -461,7 +462,10 @@ private struct Composer: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
-    .photosPicker(isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images)
+    // As stored, not turned into JPEG first: they're scaled and turned into JPEG here anyway.
+    .photosPicker(
+      isPresented: $pickingPhotos, selection: $photos, maxSelectionCount: 10, matching: .images,
+      preferredItemEncoding: .current)
     .sensoryFeedback(.impact(weight: .light), trigger: sending) { _, sending in sending }
     .onAppear { draft = drafts.texts[key] ?? "" }
     .onDisappear { drafts.texts[key] = draft }
@@ -472,14 +476,20 @@ private struct Composer: View {
     .onChange(of: photos) { _, picked in
       guard !picked.isEmpty else { return }
       photos = []
-      Task {
-        for item in picked {
-          // attach() adds each one to `files`, so the next is numbered after it.
-          guard let photo = await Self.load(item, index: files.count + 1) else {
+      let key = key
+      let first = files.count + 1
+      // Each shows at once, in the order picked, and goes up as soon as it's scaled.
+      for (i, item) in picked.enumerated() {
+        let f = ComposerFile(name: "photo-\(first + i).jpg", photo: true)
+        files.append(f)
+        Task {
+          guard let photo = await Self.load(item, index: first + i) else {
+            drafts.files[key]?.removeAll { $0.id == f.id }
             error = "Couldn't read that photo."
-            continue
+            return
           }
-          attach(photo.data, name: photo.name, mediaType: "image/jpeg", preview: photo.preview)
+          drafts.update(key, f.id) { $0.preview = photo.preview }
+          await upload(f.id, key, photo.data, name: photo.name, mediaType: "image/jpeg")
         }
       }
     }

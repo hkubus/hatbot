@@ -11,8 +11,9 @@ enum PickedFile {
     var preview: UIImage?
   }
 
-  /// Photos go up as JPEG, at most 2048 pixels on the long side: the model reads those directly.
-  static let longSide = 2048
+  /// Photos go up as JPEG, at most 2000 pixels on the long side: the model reads those directly, even in a
+  /// request with over 20 images, where the API refuses bigger ones.
+  static let longSide = 2000
 
   static func photo(_ data: Data, index: Int) -> Photo? {
     CGImageSourceCreateWithData(data as CFData, nil).flatMap { photo($0, index: index) }
@@ -24,7 +25,10 @@ enum PickedFile {
 
   private static func photo(_ source: CGImageSource, index: Int) -> Photo? {
     guard let image = thumbnail(source, longSide), let jpeg = jpeg(image) else { return nil }
-    let preview = thumbnail(source, 240).map { UIImage(cgImage: $0) }
+    // From the scaled copy: decoding the original again would take as long as the first time.
+    let scale = 240 / CGFloat(max(image.width, image.height, 240))
+    let preview = UIImage(cgImage: image).preparingThumbnail(
+      of: CGSize(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale))
     return Photo(data: jpeg, name: "photo-\(index).jpg", preview: preview)
   }
 
