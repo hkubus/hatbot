@@ -201,7 +201,7 @@ test("a stream that fails is tried three times at most, after retry-after; not o
   expect(failed).toEqual(Array(3).fill({ model: "claude-opus-5-5", output: 40 }));
 });
 
-test("a reply as it's written: shown and saved so far, started over when its stream is tried again, with the failed try billed, and kept through a restart", async () => {
+test("a reply as it's written: shown with what it has done and saved so far, started over when its stream is tried again, with the failed try billed, and kept through a restart", async () => {
   const first = Promise.withResolvers<void>();
   const second = Promise.withResolvers<void>();
   const model = new FakeModel([
@@ -240,6 +240,7 @@ test("a reply as it's written: shown and saved so far, started over when its str
   await again;
   const reply = t.thread.list().at(-1) as ThreadMessage;
   expect(reply).toMatchObject({ status: "streaming", text: "Checking the disks." });
+  expect(reply.progress).toContain("Looking through memory");
   const saved = () =>
     t.db
       .query<{ text: string; status: string }, [number]>(
@@ -277,6 +278,7 @@ test("a reply as it's written: shown and saved so far, started over when its str
   expect(empty?.text).toBe("_This reply was cut off._");
   second.resolve();
   await done;
+  expect(t.thread.list().find((m) => m.id === reply.id)?.progress).toBeUndefined();
 });
 
 test("only the latest reply that failed can be tried again; it's written in place from the turns it had", async () => {

@@ -8,6 +8,7 @@ import {
   describeCron,
   type Episode,
   HATBOT_ID,
+  keepLines,
   type MessageChanges,
   type MessageLink,
   parseCommand,
@@ -264,6 +265,8 @@ export class Thread {
   private waiting: number | null = null;
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
+  /** And what it has thought and done so far. */
+  private liveProgress = new Map<number, string>();
   /** When each bot's last chat request or keep-warm was sent, and in which episode: its cache entry's five minutes run from then. */
   private sentAt = new Map<string, { episodeId: number; at: number }>();
   /** Each bot's last chat request, sent again to keep it cached for half an hour after it. */
@@ -352,10 +355,7 @@ export class Thread {
   }
 
   private shown(rows: MessageRow[]): ThreadMessage[] {
-    const list = rows.map(messageOf).map((m) => {
-      const text = m.status === "streaming" ? this.live.get(m.id) : undefined;
-      return text === undefined ? m : { ...m, text };
-    });
+    const list = rows.map((r) => this.withLive(messageOf(r)));
     return this.d.attachments?.fill(list) ?? list;
   }
 
@@ -1651,9 +1651,14 @@ export class Thread {
       )
       .get(id, this.conversationId);
     if (!row) return null;
-    const m = messageOf(row);
-    const text = m.status === "streaming" ? this.live.get(id) : undefined;
-    return text === undefined ? m : { ...m, text };
+    return this.withLive(messageOf(row));
+  }
+
+  private withLive(m: ThreadMessage): ThreadMessage {
+    if (m.status !== "streaming") return m;
+    const text = this.live.get(m.id);
+    const progress = this.liveProgress.get(m.id);
+    return { ...m, ...(text === undefined ? {} : { text }), ...(progress ? { progress } : {}) };
   }
 
   /**
@@ -1994,8 +1999,11 @@ export class Thread {
     let chartFix: { broken: { start: number; end: number }[]; text: string } | null = null;
     let fixedCharts = false;
     const used = { tokens: 0, costUsd: 0 };
-    const progress = (line: string) =>
-      events.emit({ type: "message.progress", id: out.id, text: `\n${line}\n` });
+    const shown = (text: string) => {
+      this.liveProgress.set(out.id, keepLines((this.liveProgress.get(out.id) ?? "") + text));
+      events.emit({ type: "message.progress", id: out.id, text });
+    };
+    const progress = (line: string) => shown(`\n${line}\n`);
     const say = (delta: string) => {
       if (chartFix) {
         chartFix.text += delta;
@@ -2025,6 +2033,7 @@ export class Thread {
         say(note);
       }
       this.live.delete(out.id);
+      this.liveProgress.delete(out.id);
       db.query(
         "UPDATE messages SET text = ?, status = ?, sources = ?, choices = ? WHERE id = ?",
       ).run(
@@ -2227,7 +2236,7 @@ export class Thread {
         this.warm.set(bot.id, { episodeId: episode.id, params, at: sentAt });
         const res = await model.stream(params, {
           onText: say,
-          onThinking: (delta) => events.emit({ type: "message.progress", id: out.id, text: delta }),
+          onThinking: shown,
           onServerTool: (name, input) => {
             const calls = webCalls(name, input);
             const queries = calls.flatMap((c) => ("search" in c && c.search ? [c.search] : []));
@@ -2431,6 +2440,7 @@ export class Thread {
       );
     } finally {
       this.live.delete(out.id);
+      this.liveProgress.delete(out.id);
       for (const release of holding) release();
     }
   }

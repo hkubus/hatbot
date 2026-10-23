@@ -7,6 +7,7 @@ import {
   type Schedule,
   type TaskCard,
   type TaskStatus,
+  type TaskStep,
 } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { errorText } from "./api";
@@ -103,6 +104,42 @@ function lastLine(text?: string) {
     const line = plainText(lines[i] as string);
     if (line) return line;
   }
+}
+
+const SHOWN_LINES = 6;
+
+/** The latest few, each once, where it last came. */
+function latest(lines: string[]): string[] {
+  const out = lines.filter((line, i) => lines.lastIndexOf(line) === i);
+  return out.slice(-SHOWN_LINES);
+}
+
+/** A reply's progress, a line each. "Thinking…" starts every request, so it's news only when last. */
+export function progressLines(progress?: string): string[] {
+  const lines = (progress ?? "").split("\n").map(plainText).filter(Boolean);
+  return latest(lines.filter((line, i) => line !== "Thinking…" || i === lines.length - 1));
+}
+
+const stepLine = (s: TaskStep) =>
+  s.kind === "note" ? plainText(s.detail) : s.kind === "approval" ? s.name : s.detail || s.name;
+
+/** A task's steps so far, then what it's doing now when its steps don't say it already. */
+export function taskLines(steps: TaskStep[] | undefined, now: string): string[] {
+  const done = (steps ?? []).filter((s) => s.kind !== "screenshot").map(stepLine);
+  const said =
+    !now || done.some((line) => line.includes(now)) || (now === "Working…" && done.length > 0);
+  return latest(said ? done : [...done, now]);
+}
+
+export function Activity({ lines }: { lines: string[] }) {
+  if (!lines.length) return null;
+  return (
+    <ol className="activity">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ol>
+  );
 }
 
 export function taskLine(t: TaskCard, progress?: string): string {

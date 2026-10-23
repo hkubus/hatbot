@@ -48,6 +48,7 @@ import {
   ensureBox,
   ensureNegotiation,
   ensureSchedule,
+  ensureSteps,
   ensureTask,
   getState,
   loadEarlier,
@@ -60,7 +61,16 @@ import {
   trustSchedule,
   useStore,
 } from "../store";
-import { isActive, PendingApproval, PendingQuestion, taskLine, whenText } from "../tasks";
+import {
+  Activity,
+  isActive,
+  PendingApproval,
+  PendingQuestion,
+  progressLines,
+  taskLine,
+  taskLines,
+  whenText,
+} from "../tasks";
 import { Empty } from "../ui";
 import { splitWaiting } from "../waiting";
 
@@ -165,9 +175,14 @@ function Meta({
 function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
+  const steps = useStore((s) => s.steps[taskId]);
   const control = useStore((s) => s.desktop?.control);
   const open = useLinkOpen(m.link) ?? { to: `/tasks/${taskId}`, label: "Open task" };
+  const active = task && isActive(task);
   useEffect(() => ensureTask(taskId), [taskId]);
+  useEffect(() => {
+    if (active) ensureSteps(taskId);
+  }, [active, taskId]);
   // Until it loads (it's fetched again after a reconnect if it failed), the card's own line.
   if (!task)
     return (
@@ -178,7 +193,6 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
         <Meta m={m} open={open} />
       </>
     );
-  const active = isActive(task);
   let text: string;
   let result = "";
   if (active) text = `**${task.title}**`;
@@ -198,7 +212,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
       <div className="body">
         <AssistantBody text={text} />
         {result && <AssistantBody text={result} />}
-        {active && <div className="progress-note">{note}</div>}
+        {active && <Activity lines={taskLines(steps, note)} />}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
       <Meta m={m} copy={active ? undefined : (task.summary ?? task.title)} open={open} />
@@ -209,22 +223,27 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
 function TaskResult({ taskId }: { taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
+  const steps = useStore((s) => s.steps[taskId]);
   const control = useStore((s) => s.desktop?.control);
+  const active = task && isActive(task);
   useEffect(() => ensureTask(taskId), [taskId]);
+  useEffect(() => {
+    if (active) ensureSteps(taskId);
+  }, [active, taskId]);
   if (!task) return <div className="muted card-pending">Task #{taskId}</div>;
-  if (isActive(task)) {
+  if (active) {
     const note =
       control === "owner" && task.status === "running"
         ? "Paused while you have control."
         : taskLine(task, progress);
     return (
       <div className="task-working">
+        <Activity lines={taskLines(steps, note === "Working…" ? "" : note)} />
         <div className="typing">
           <span />
           <span />
           <span />
         </div>
-        {note !== "Working…" && <div className="progress-note">{note}</div>}
       </div>
     );
   }
@@ -340,7 +359,6 @@ function ReplyMessage({
   // A hand-off: its chat shows the task's status too, and how the other bot answered.
   const handedOff = useLinkOpen(m.link);
   const streaming = m.status === "streaming";
-  const note = progress?.trim().split("\n").filter(Boolean).at(-1);
   const ended = task && !isActive(task) ? task : null;
   const finished = ended !== null && ended.status !== "cancelled";
   // Its bot didn't write it again: told some other way, or it failed to.
@@ -358,15 +376,10 @@ function ReplyMessage({
             <span />
           </div>
         )}
-        {streaming && (note || used) && (
-          <div className="progress-note">
-            {note}
-            {note && used && " · "}
-            {used && (
-              <span className="tnum">
-                {tokens(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
-              </span>
-            )}
+        {streaming && <Activity lines={progressLines(progress)} />}
+        {streaming && used && (
+          <div className="progress-note tnum">
+            {tokens(used.tokens)} tokens, ${used.costUsd.toFixed(3)}
           </div>
         )}
         {!streaming && m.sources?.length ? <Sources list={m.sources} /> : null}

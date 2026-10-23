@@ -818,6 +818,7 @@ dialog.ask p {
 }
 .fold-text,
 .msg .progress-note,
+.msg .activity,
 .msg .resolved,
 .msg .card-pending,
 .row .txt.snippet,
@@ -1915,6 +1916,24 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.msg .activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.msg .activity li {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.msg .activity li:last-child {
+  color: var(--text-2);
+}
 .load-earlier {
   align-self: center;
 }
@@ -2372,14 +2391,10 @@ pre.payload {
 }
 .task-working {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: var(--sp);
   min-width: 0;
-}
-.task-working .progress-note {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .msg .resolved {
   overflow-wrap: anywhere;
