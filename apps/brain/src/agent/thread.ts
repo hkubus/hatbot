@@ -83,6 +83,7 @@ import {
   CHAT_WEB_TOOLS,
   containerOf,
   DESKTOP_TOOLS,
+  deferRare,
   INCOGNITO_TOOLS,
   inBatches,
   invalidInput,
@@ -90,6 +91,7 @@ import {
   liveTool,
   runTool,
   TOOL_PARAMS,
+  TOOL_SEARCH,
   type ToolImage,
   toolParam,
   webCalls,
@@ -879,8 +881,10 @@ export class Thread {
         .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name))
         // Boxes are code: with a code bot, it makes and changes them all.
         .filter((t) => !bots.coderFor(bot) || !BOX_CHANGE_TOOLS.includes(t.name))
-        .filter((t) => t.name !== "box_t3" || plugins.readyFor("t3", bot.plugins, left)),
+        .filter((t) => t.name !== "box_t3" || plugins.readyFor("t3", bot.plugins, left))
+        .map(deferRare),
       ASK_OWNER,
+      TOOL_SEARCH,
       ...(onHaiku ? [ASK_OPUS] : []),
       ...pluginTools.map(toolParam),
       ...CHAT_WEB_TOOLS,

@@ -1847,6 +1847,20 @@ export function liveTool(
 /** Order and content must stay stable to keep the cache. */
 export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
 
+/**
+ * Chat tools that load only when the model searches for them: about a third of the prompt's tokens,
+ * paid on every cold cache, for things most conversations never touch.
+ */
+const DEFERRED = /^(box|watch|trigger|schedule)_|^run_desktop_task$/;
+
+export const TOOL_SEARCH: Anthropic.Beta.BetaToolUnion = {
+  type: "tool_search_tool_regex_20251119",
+  name: "tool_search_tool_regex",
+};
+
+export const deferRare = (t: Anthropic.Beta.BetaTool): Anthropic.Beta.BetaTool =>
+  DEFERRED.test(t.name) ? { ...t, defer_loading: true } : t;
+
 /** Input is validated here: with eager input streaming the API doesn't. */
 export async function runTool(
   name: string,
