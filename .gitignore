@@ -9,3 +9,6 @@ dist/
 /data/
 dist-types/
 target/
+/apps/linux/arch/src/
+/apps/linux/arch/pkg/
+*.pkg.tar.zst

@@ -9,6 +9,10 @@ on:
     paths:
       - apps/linux/**
       - .github/workflows/linux.yml
+  # Rebuilds the package when Arch's libraries move under it; publish.sh skips it otherwise.
+  schedule:
+    - cron: "40 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,3 +47,26 @@ jobs:
         with:
           manifest-path: apps/linux/Cargo.toml
           command: check licenses
+
+  # Builds the Arch package and puts it in Forgejo's pacman repository (apps/linux/README.md).
+  publish:
+    needs: [check, licenses]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 30
+    concurrency: arch-package
+    steps:
+      - name: Install the build tools
+        run: pacman -Syu --noconfirm --needed base-devel git jq gtk4 libadwaita libsoup3 libsecret webkitgtk-6.0 rust
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # makepkg won't run as root.
+      - name: Build and publish
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_PACKAGES_TOKEN }}
+        run: |
+          useradd -m builder
+          chown -R builder .
+          sudo -u builder --preserve-env=FORGEJO_TOKEN apps/linux/arch/publish.sh

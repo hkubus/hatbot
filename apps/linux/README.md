@@ -13,9 +13,24 @@ API with a bearer token. Notifications still come from the ntfy app.
 
 ## Install
 
-It needs GTK 4.18, libadwaita 1.7, libsoup 3.6 and WebKitGTK 6.0 (2.40) or newer (Debian 13,
-Ubuntu 25.04, Fedora 42, Arch), Rust 1.88 or newer, and a keyring that speaks the Secret Service:
-GNOME Keyring, KWallet or KeePassXC. Debian's and Ubuntu's Rust is older; get it from [rustup](https://rustup.rs) there.
+On Arch, add Hatbot's package repository once, and pacman updates the app with everything else:
+
+```sh
+curl -o hatbot.key https://git.gaycats.ovh/api/packages/kubus/arch/repository.key
+sudo pacman-key --add hatbot.key
+sudo pacman-key --lsign-key kubus@noreply.git.gaycats.ovh
+printf '\n[kubus.hatbot.git.gaycats.ovh]\nSigLevel = Required\nServer = %s\n' \
+  'https://git.gaycats.ovh/api/packages/kubus/arch/hatbot/$arch' | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu hatbot
+```
+
+CI builds it from `arch/PKGBUILD` on every push to `main` that changes the app, and
+`arch/publish.sh` uploads it with the `FORGEJO_PACKAGES_TOKEN` secret, a Forgejo token that can
+write packages. Each Monday it rebuilds, and uploads only if Arch's libraries changed under it.
+
+Elsewhere, or to build it yourself, it needs GTK 4.18, libadwaita 1.7, libsoup 3.6 and
+WebKitGTK 6.0 (2.40) or newer (Debian 13, Ubuntu 25.04, Fedora 42, Arch), Rust 1.88 or newer,
+and a keyring that speaks the Secret Service: GNOME Keyring, KWallet or KeePassXC. Debian's and Ubuntu's Rust is older; get it from [rustup](https://rustup.rs) there.
 
 ```sh
 sudo pacman -S gtk4 libadwaita libsoup3 libsecret webkitgtk-6.0 rust     # Arch
