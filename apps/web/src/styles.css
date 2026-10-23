@@ -239,8 +239,7 @@ svg.i {
 .copyable code,
 .editor-bar .path,
 .proposal-file .path,
-.commit .sha,
-.approval-text .approval-what {
+.commit .sha {
   font-family: var(--mono);
   font-size: var(--fs-sm);
 }
@@ -2428,16 +2427,22 @@ pre.payload {
 }
 
 .approval-tray {
-  max-width: var(--measure);
-  max-height: min(30vh, 260px);
+  max-width: calc(var(--measure) + 2 * var(--sp-md));
+  max-height: min(40vh, 340px);
   overflow-y: auto;
-  margin: 0 auto var(--sp);
+  /* Room for the cards' shadows, which the scroller would clip. */
+  margin: calc(-1 * var(--sp-md)) auto 0;
+  padding: var(--sp-md);
   display: grid;
   gap: var(--sp);
 }
-.approval-tray .approval {
-  padding: var(--sp) var(--sp-xs) var(--sp-2xs);
-  border-top: 0.5px solid var(--line-strong);
+.approval-tray > .approval {
+  padding: var(--sp-md);
+  background: var(--surface);
+  border: 0.5px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  animation: rise var(--dur) var(--spring) both;
 }
 .approval-tray .shot {
   max-width: 280px;
@@ -2452,6 +2457,7 @@ pre.payload {
   color: var(--text);
 }
 
+.approval-what,
 .question-what {
   font-weight: var(--fw-semibold);
 }

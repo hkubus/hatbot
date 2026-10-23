@@ -164,15 +164,6 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   return (
     <section className="view">
       <div className="page">
-        <Group>
-          <Row
-            label="Pause all activity"
-            sub={pausing.error && <span className="form-error">{pausing.error}</span>}
-          >
-            <Switch on={paused} onChange={pause} />
-          </Row>
-        </Group>
-
         <Group className="show-phone">
           <LinkRow to="/todo" label="To-do" />
           <LinkRow to="/boxes" label="Boxes" />
@@ -292,6 +283,12 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group title="System">
+          <Row
+            label="Pause all activity"
+            sub={pausing.error && <span className="form-error">{pausing.error}</span>}
+          >
+            <Switch on={paused} onChange={pause} />
+          </Row>
           <LinkRow to="/settings/checks" label="Check everything" />
           <UpdateRow toast={toast} />
           <RollbackRow toast={toast} />
