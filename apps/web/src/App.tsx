@@ -65,7 +65,8 @@ const VIEWS = [
 type View = (typeof VIEWS)[number];
 type ViewPath = View["path"];
 
-/** The rail's and the tab bar's entries. One with more than one view shows them as tabs. */
+/** The rail's and the tab bar's entries (Search is in the top bar). One with more than one view shows
+    them as tabs. */
 const SECTIONS = [
   { views: ["/"], title: "Chat", icon: "chat", phone: true },
   { views: ["/tasks", "/live", "/schedules"], title: "Tasks", icon: "tasks", phone: true },
@@ -357,7 +358,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             <ChatNav current={chatId || pageChat?.id || 0} path={path} about />
           </nav>
           <nav className="nav nav-views">
-            {SECTIONS.filter((s) => s.title !== "Chat").map((s) => (
+            {SECTIONS.filter((s) => s.title !== "Chat" && s.title !== "Search").map((s) => (
               <Link
                 key={s.title}
                 className={`nav-item ${s === section ? "active" : ""}`}
@@ -416,11 +417,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 <Icon name="incognito" />
               </button>
             )}
-            {view.path !== "/search" && (
-              <Link className="tb-btn show-phone" to="/search" title="Search">
-                <Icon name="search" />
-              </Link>
-            )}
+            <Link
+              className={`tb-btn ${view.path === "/search" ? "on" : ""}`}
+              to="/search"
+              title="Search"
+            >
+              <Icon name="search" />
+            </Link>
           </header>
           {down && (
             <div className="banner offline-banner">
