@@ -468,8 +468,23 @@ textarea:disabled {
   gap: var(--sp-md);
   flex: none;
   height: 64px;
-  padding: 0 var(--sp-md);
+  padding: 0 var(--sp-xs) 0 var(--sp-md);
   margin-bottom: var(--sp);
+  position: relative;
+}
+.new-menu {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  padding: var(--sp-xs) 0;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-2);
+}
+.new-menu .nav-item {
+  border-radius: 0;
 }
 .brand-mark {
   --shape: polygon(
@@ -652,6 +667,42 @@ textarea:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A section's views, in its title's place: Material's primary tabs. */
+.tabs {
+  align-self: stretch;
+  display: flex;
+  min-width: 0;
+  margin-left: calc(-1 * var(--sp-lg));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-lg);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.tabs a:hover {
+  background: var(--fill-hover);
+}
+.tabs a.active {
+  color: var(--accent-text);
+}
+.tabs a.active::after {
+  content: "";
+  position: absolute;
+  left: var(--sp-lg);
+  right: var(--sp-lg);
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--primary);
 }
 .tb-btn {
   height: var(--h);
