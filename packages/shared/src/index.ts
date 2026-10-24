@@ -289,6 +289,35 @@ export type ApprovalKind =
  */
 export type ApprovalScope = "session" | "always";
 
+/** The kinds Safety settings choose for; budget, mandates and injection warnings have their own. */
+export const SAFETY_KINDS = [
+  "send",
+  "submit_personal_data",
+  "delete",
+  "other",
+  "purchase",
+  "payment",
+  "account_security",
+  "access",
+] as const satisfies readonly ApprovalKind[];
+export type SafetyKind = (typeof SAFETY_KINDS)[number];
+/** Ask you; let the safety review answer first; or go ahead. */
+export const APPROVAL_LEVELS = ["ask", "review", "allow"] as const;
+export type ApprovalLevel = (typeof APPROVAL_LEVELS)[number];
+
+/** What asks you and what goes ahead. Refusals that keep the homelab and Hatbot itself whole stay. */
+export type SafetySettings = {
+  kinds: Record<SafetyKind, ApprovalLevel>;
+  /** After reading untrusted content, changes ask first. */
+  untrusted: boolean;
+  /** Something read that looks like instructions aimed at a bot stops for you. */
+  injection: boolean;
+  /** By write tool: always ask you, or never ask. Tools not here do as their plugin says. */
+  tools: Record<string, "ask" | "allow">;
+  /** Commands one chat reply runs itself before the work has to go to a task. */
+  chatCommands: number;
+};
+
 export type Approval = {
   id: number;
   botId: string;
@@ -711,6 +740,7 @@ export type AppSettings = {
   paused: boolean;
   /** Changes Haiku finds safe go ahead without asking. */
   reviewChanges: boolean;
+  safety: SafetySettings;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
   desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";

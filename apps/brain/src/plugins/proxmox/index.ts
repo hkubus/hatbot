@@ -4,7 +4,7 @@ import { Proxmox } from "../../proxmox";
 import {
   allow,
   ask,
-  askAlways,
+  askCareful,
   block,
   definePlugin,
   needsSetup,
@@ -210,7 +210,7 @@ export const proxmoxPlugin = definePlugin({
                     ? "It stays off until someone starts it again."
                     : null;
                 if (careful.has(vmid))
-                  return askAlways(
+                  return askCareful(
                     `The owner asked to approve power actions on it.${off ? ` ${off}` : ""}`,
                   );
                 if (off) return ask(off);
