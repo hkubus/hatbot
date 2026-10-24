@@ -89,7 +89,7 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
 - The mandate check works from word lists. It holds an IBAN written like a phone number as a phone number, and can't catch an acceptance in words it doesn't know while naming our price inside the mandate, new plain words for paying off the platform, or trades ("300 zł i moją starą kartę").
 - Research has no page reader that runs JavaScript (it could send out what the task has read; such pages go to `run_desktop_task`), and isn't started from schedules.
-- Settings → Plugins and teach mode stay web-only.
+- Settings → Plugins, Approvals and guardrails, and teach mode stay web-only; the iOS and Linux apps have only the safety review's switch.
 - To-do items aren't handed to other bots with `@name`; ask the bot in the chat instead.
 - T3 Code: its sign-in lasts 30 days with no refresh, so it has to be connected again; threads to carry on are kept in memory, which a restart forgets; a box's files over 100 KB can't be handed to it in one message.
 
