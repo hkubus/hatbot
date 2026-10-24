@@ -106,7 +106,6 @@
   --success-text: var(--success);
   --success-soft: color-mix(in srgb, var(--success) 22%, var(--surface));
   --bg: light-dark(var(--bg-light), var(--bg-dark));
-  --bot-bubble: var(--surface-2);
 
   --fill-hover: color-mix(in srgb, currentColor 8%, transparent);
   --fill-active: color-mix(in srgb, currentColor 12%, transparent);
@@ -1165,17 +1164,9 @@ textarea:disabled {
   min-width: 0;
   width: 100%;
   display: grid;
-  /* Wide content (charts, code) shrinks to the bubble instead of stretching it. */
+  /* Wide content (charts, code) shrinks to the column instead of stretching it. */
   grid-template-columns: minmax(0, 1fr);
   gap: var(--sp);
-}
-.msg:not(.user) .body {
-  width: fit-content;
-  max-width: min(88%, 640px);
-  background: var(--bot-bubble);
-  --chart-bg: var(--bot-bubble);
-  padding: var(--sp-md) var(--sp-lg);
-  border-radius: var(--r-lg-up) var(--r-lg-up) var(--r-lg-up) var(--r-xs);
 }
 .msg .time {
   font-size: var(--fs-xs);
@@ -2650,7 +2641,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 }
 .msg:not(.user) .md code,
 .msg:not(.user) .md pre {
-  background: var(--surface);
+  background: var(--surface-2);
 }
 .md pre code {
   background: none;
@@ -2722,7 +2713,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   transition: opacity var(--dur-fast);
 }
 .msg:not(.user) .md .code-copy {
-  background: var(--surface);
+  background: var(--surface-2);
 }
 .code-block:hover .code-copy,
 .code-copy:focus-visible {
