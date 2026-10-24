@@ -370,15 +370,13 @@ pre.payload,
 .group > h2,
 .section-title,
 .chart-head h3,
-.insp-head h2,
 .reader-name,
 .chart-title {
   margin: 0;
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
 }
-.section-title,
-.insp-head h2 {
+.section-title {
   font-size: var(--fs-lg);
 }
 
@@ -621,6 +619,39 @@ textarea:disabled {
   background: var(--primary);
   color: var(--on-primary);
 }
+.nav-row {
+  position: relative;
+}
+.nav-row:hover > .nav-item:not(.active) {
+  background: var(--fill-hover);
+}
+.nav-about {
+  position: absolute;
+  top: 50%;
+  right: var(--sp);
+  translate: 0 -50%;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--fade);
+}
+.nav-about svg.i {
+  width: 20px;
+  height: 20px;
+}
+.nav-row:hover > .nav-about,
+.nav-about:focus-visible {
+  opacity: 1;
+}
+.nav-row:hover > .nav-item .count {
+  visibility: hidden;
+}
+@media (hover: none) {
+  .nav-about {
+    opacity: 1;
+  }
+  .nav-row > .nav-item {
+    padding-right: 56px;
+  }
+}
 
 /* Expressive's linear progress: the track starts after a gap and ends in a stop dot. */
 .meter {
@@ -691,21 +722,24 @@ textarea:disabled {
     var(--chrome) var(--r-xl)
   );
 }
-.app.insp .toolbar::after {
-  top: 100%;
-  right: 0;
-  background: radial-gradient(
-    circle at 0 100%,
-    transparent calc(var(--r-xl) - 0.5px),
-    var(--chrome) var(--r-xl)
-  );
-}
 
 .toolbar h1 {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tb-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  min-width: 0;
+}
+/* The sidebar has each chat's. */
+@media (min-width: 1200px) {
+  .toolbar .tb-about {
+    display: none;
+  }
 }
 /* A section's views, in its title's place: Material's primary tabs. */
 .tabs {
@@ -2887,32 +2921,6 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   flex: none;
 }
 
-.app.insp {
-  grid-template-columns: var(--sb-w) minmax(0, 1fr) clamp(420px, 32vw, 640px);
-}
-.inspector {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  margin: var(--sp) var(--sp) var(--sp) 0;
-  border-radius: var(--r-xl);
-  overflow: hidden;
-  background: var(--surface);
-}
-.insp-head {
-  height: 64px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp);
-  padding: 0 var(--sp) 0 var(--gutter);
-}
-.insp-body {
-  flex: 1;
-  overflow: auto;
-  padding: 0 var(--sp-lg) var(--sp-lg);
-}
 .live {
   display: grid;
   gap: var(--sp-md);
@@ -3116,12 +3124,6 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   }
 }
 @media (max-width: 899px) {
-  .app.insp {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .inspector {
-    display: none;
-  }
   .show-phone {
     display: grid;
   }
@@ -3662,7 +3664,8 @@ pre.payload {
     padding: var(--sp-md) 0;
   }
   .brand-name,
-  .sidebar > .brand > .spacer {
+  .sidebar > .brand > .spacer,
+  .nav-about {
     display: none;
   }
   /* The rail would clip it. */
@@ -3712,8 +3715,17 @@ pre.payload {
     margin: 0;
   }
 }
-/* Where there's a pointer, the rail's + is the mark itself, shown on hover. */
+/* Where there's a pointer, the rail's + is the mark itself and the chat's settings sit by its name, both
+   shown on hover. */
 @media (min-width: 900px) and (max-width: 1199px) and (hover: hover) {
+  .tb-about {
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--fade);
+  }
+  .tb-title:hover > .tb-about,
+  .tb-about:focus-visible {
+    opacity: 1;
+  }
   .sidebar > .brand > .tb-btn {
     position: absolute;
     top: var(--sp-md);
