@@ -77,7 +77,7 @@ import {
   SUMMARY_PROMPT,
   SYSTEM_PROMPT,
 } from "./prompt";
-import { mayReview, safeToRun, scopesFor } from "./review";
+import { levelOf, safeToRun, scopable, scopesFor } from "./review";
 import { type Readable, Screener } from "./screening";
 import {
   addSources,
@@ -124,8 +124,6 @@ const MAX_TOKENS = 32000;
 const MAX_TURN_MS = 10 * 60_000;
 /** How often a reply being written is saved, so one a restart cuts off keeps what it had. */
 const SAVE_TEXT_MS = 3000;
-/** Commands one reply runs itself; past this, the work belongs in a background task (run_task). */
-const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
 const DELETED = "deleted";
@@ -622,8 +620,11 @@ export class Thread {
     progress: (line: string) => void,
   ): Promise<{ note: string | null } | { content: string; isError: true }> {
     const { approvals, settings } = this.d;
-    const { tainted: taintedBy, suspected } = this.trust(episodeId);
-    const reviewable = mayReview(verdict, suspected !== null);
+    const { tainted: taintedBy, ...trust } = this.trust(episodeId);
+    const suspected = settings.get().safety.injection ? trust.suspected : null;
+    const level = levelOf(settings.get(), verdict, suspected !== null);
+    if (level === "allow") return { note: null };
+    const reviewable = scopable(verdict, suspected !== null);
     if (
       reviewable &&
       approvals?.granted({
@@ -637,7 +638,7 @@ export class Thread {
     )
       return { note: null };
     let review = "";
-    if (settings.get().reviewChanges && reviewable) {
+    if (level === "review") {
       progress("Checking it's safe");
       const check = await safeToRun(
         this.d,
@@ -713,7 +714,13 @@ export class Thread {
         : undefined,
     };
     const what = describeCall(t, input);
-    const verdict = verdictFor(t, input, cc, this.trust(episodeId).tainted !== null);
+    const verdict = verdictFor(
+      t,
+      input,
+      cc,
+      this.trust(episodeId).tainted !== null,
+      this.d.settings.get().safety,
+    );
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
     if (verdict.action === "ask") {
@@ -2392,9 +2399,10 @@ export class Thread {
                 if (plugins.pluginOf(t.name)?.id !== "code") {
                   const parsed = t.schema.safeParse(input);
                   commands += parsed.success && t.commands ? t.commands(parsed.data) : 1;
-                  if (commands > MAX_CHAT_COMMANDS)
+                  const most = this.d.settings.get().safety.chatCommands;
+                  if (commands > most)
                     return {
-                      content: `Not run: that would take this reply past ${MAX_CHAT_COMMANDS} commands (each part of a chained command counts, and a loop is many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
+                      content: `Not run: that would take this reply past ${most} commands (each part of a chained command counts, and a loop is many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
                       isError: true,
                     };
                 }

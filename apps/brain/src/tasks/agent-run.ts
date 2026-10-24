@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { cutOff, type StreamParams } from "../agent/model";
 import { AGENT_PROMPT, CHART_GUESS, RESEARCH_ASK_BOT } from "../agent/prompt";
-import { mayReview, safeToRun, scopesFor } from "../agent/review";
+import { levelOf, safeToRun, scopable, scopesFor } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
 import {
@@ -493,7 +493,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ? `${words ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
       : words;
 
-  /** Never for money, accounts, what you said to always ask about, or suspected injection. */
+  /** As Settings → Safety says; by default never for money, accounts, what's careful, or suspected injection. */
   const reviewed = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
@@ -502,16 +502,28 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   ): Promise<{ safe: boolean; why: string; by?: string; suspected?: boolean }> => {
     // What it read so far is screened first: suspected injection skips the review.
     await screener.settled();
-    const suspected = tasks.get(id)?.injectionSuspected ?? false;
-    if (!mayReview(verdict, suspected)) return { safe: false, why: "", suspected };
-    const granted = d.approvals.granted({
-      botId: bot.id,
-      tool: t.name,
-      input: call.input,
-      target: t.target?.(call.input as never) ?? null,
-      taskId: id,
-      taintOnly: verdict.tainted === true,
-    });
+    const settings = d.settings.get();
+    const suspected = (tasks.get(id)?.injectionSuspected ?? false) && settings.safety.injection;
+    const level = levelOf(settings, verdict, suspected);
+    if (level === "allow") {
+      tasks.addStep(id, {
+        kind: "approval",
+        name: "Not asking: your Safety settings allow it",
+        detail: what,
+        url: null,
+      });
+      return { safe: true, why: "" };
+    }
+    const granted =
+      scopable(verdict, suspected) &&
+      d.approvals.granted({
+        botId: bot.id,
+        tool: t.name,
+        input: call.input,
+        target: t.target?.(call.input as never) ?? null,
+        taskId: id,
+        taintOnly: verdict.tainted === true,
+      });
     if (granted) {
       tasks.addStep(id, {
         kind: "approval",
@@ -521,7 +533,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
       return { safe: true, why: granted };
     }
-    if (!d.settings.get().reviewChanges) return { safe: false, why: "", suspected };
+    if (level === "ask") return { safe: false, why: "", suspected };
     const check = await safeToRun(
       d,
       { taskId: id },
@@ -559,7 +571,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       away: (fn) => withoutSlot(fn),
     };
     const what = describeCall(t, call.input);
-    const verdict = verdictFor(t, call.input, cc);
+    const verdict = verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety);
     let note: string | null = null;
     if (verdict.action === "block") {
       tasks.addStep(id, {
@@ -582,7 +594,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             target: t.target?.(call.input as never) ?? null,
           },
           // Never for money, accounts, doors, what you said to always ask about, or a suspicion.
-          scopes: check.suspected || !mayReview(verdict) ? [] : scopesFor(verdict),
+          scopes: scopable(verdict, check.suspected) ? scopesFor(verdict) : [],
           reason: check.suspected
             ? `${verdict.why} ${SUSPECTED}`
             : check.why
@@ -814,7 +826,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const parsed = t.schema.safeParse(call.input);
         if (!parsed.success) return false;
         const cc = { task: { id, tainted: task.tainted }, signal };
-        if (verdictFor(t, call.input, cc).action !== "allow") return false;
+        if (verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety).action !== "allow")
+          return false;
         return !untrustedOf(t, parsed.data) && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
       const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {

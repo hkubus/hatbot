@@ -15,6 +15,7 @@ import {
   allow,
   ask,
   askAlways,
+  askCareful,
   definePlugin,
   PluginError,
   type PluginInstance,
@@ -470,7 +471,7 @@ export const mcpPlugin = definePlugin({
                       : kind
                         ? askAlways(KIND_WHY[kind], kind)
                         : mode === "always"
-                          ? askAlways("The owner asked to always be asked before this tool runs.")
+                          ? askCareful("The owner asked to always be asked before this tool runs.")
                           : ask(`MCP tools ask first unless the owner allows them in Settings.`),
                 }),
             run: async (input, { signal }) => {

@@ -4,7 +4,6 @@ import { ApiError, api, errorText } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
 import { Link } from "./link";
 import { LiveView } from "./live";
-import { useMedia } from "./media";
 import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
 import { GroupPage } from "./pages/Group";
@@ -53,18 +52,39 @@ const Spend = lazy(() => import("./pages/Spend").then((m) => ({ default: m.Spend
 const TodoPage = lazy(() => import("./pages/Todo").then((m) => ({ default: m.TodoPage })));
 
 const VIEWS = [
-  { path: "/", title: "Chat", icon: "chat", phone: true },
-  { path: "/tasks", title: "Tasks", icon: "tasks", phone: true },
-  { path: "/todo", title: "To-do", icon: "todo", phone: false },
-  { path: "/boxes", title: "Boxes", icon: "box", phone: false },
-  { path: "/search", title: "Search", icon: "search", phone: false },
-  { path: "/live", title: "Live", icon: "monitor", phone: true },
-  { path: "/schedules", title: "Automations", icon: "clock", phone: false },
-  { path: "/memory", title: "Memory", icon: "book", phone: true },
-  { path: "/spend", title: "Spend", icon: "gauge", phone: false },
-  { path: "/settings", title: "Settings", icon: "sliders", phone: true },
-] as const satisfies readonly { path: string; title: string; icon: IconName; phone: boolean }[];
+  { path: "/", title: "Chat" },
+  { path: "/tasks", title: "Tasks" },
+  { path: "/live", title: "Live" },
+  { path: "/schedules", title: "Automations" },
+  { path: "/memory", title: "Memory" },
+  { path: "/todo", title: "To-do" },
+  { path: "/boxes", title: "Boxes" },
+  { path: "/search", title: "Search" },
+  { path: "/settings", title: "Settings" },
+  { path: "/spend", title: "Spend" },
+] as const;
 type View = (typeof VIEWS)[number];
+type ViewPath = View["path"];
+
+/** The rail's and the tab bar's entries (Search is in the top bar). One with more than one view shows
+    them as tabs. */
+const SECTIONS = [
+  { views: ["/"], title: "Chat", icon: "chat", phone: true },
+  { views: ["/tasks", "/live", "/schedules"], title: "Tasks", icon: "tasks", phone: true },
+  { views: ["/memory", "/todo"], title: "Memory", icon: "book", phone: true },
+  { views: ["/boxes"], title: "Boxes", icon: "box", phone: false },
+  { views: ["/search"], title: "Search", icon: "search", phone: false },
+  { views: ["/settings", "/spend"], title: "Settings", icon: "sliders", phone: true },
+] as const satisfies readonly {
+  views: readonly ViewPath[];
+  title: string;
+  icon: IconName;
+  phone: boolean;
+}[];
+type Section = (typeof SECTIONS)[number];
+const sectionOf = (v: View): Section =>
+  SECTIONS.find((s) => (s.views as readonly string[]).includes(v.path)) ?? SECTIONS[0];
+const titleOf = (path: string) => VIEWS.find((v) => v.path === path)?.title ?? "";
 
 /** Pages that belong to another view than their first segment names. */
 const VIEW_OF: Record<string, string> = {
@@ -80,13 +100,8 @@ const viewOf = (path: string) => {
   const first = path.split("/")[1] ?? "";
   return VIEWS.find((v) => v.path === (VIEW_OF[first] ?? `/${first}`)) ?? VIEWS[0];
 };
-/** On a phone, To-do, Boxes, Spend and Automations are reached from Settings, so its tab stays lit. */
-const TAB_OF: Record<string, string> = {
-  "/todo": "/settings",
-  "/boxes": "/settings",
-  "/spend": "/settings",
-  "/schedules": "/settings",
-};
+/** On a phone, Boxes is reached from Settings, so its tab stays lit. */
+const TAB_OF: Partial<Record<Section["title"], Section["title"]>> = { Boxes: "Settings" };
 
 /** Sub-pages that have a name of their own; anything else is named by its view. */
 const SUB_TITLE: Record<string, string> = {
@@ -94,6 +109,7 @@ const SUB_TITLE: Record<string, string> = {
   "/settings/notifications": "ntfy server",
   "/settings/api-key": "Anthropic API key",
   "/settings/allowed": "Always allowed",
+  "/settings/safety": "Approvals and guardrails",
   "/settings/account": "Password and authenticator",
   "/settings/devices": "Devices and tokens",
   "/settings/checks": "Check everything",
@@ -166,6 +182,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const chat = useStore(currentChat);
   const title = useStore((s) => chatName(s, currentChat(s)));
   const [chatMenu, setChatMenu] = useState(false);
+  const [newMenu, setNewMenu] = useState(false);
+  const manyBots = useStore((s) => s.botIds.length > 1);
   const chatMenuEl = useRef<HTMLDivElement>(null);
   const chatSwitch = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -178,7 +196,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return () => document.removeEventListener("pointerdown", onDown);
   }, [chatMenu]);
   const sidebar = useRef<HTMLElement>(null);
-  useRoving(sidebar, ".nav-item", "y");
+  useRoving(sidebar, ".nav .nav-item", "y");
   const main = useRef<HTMLElement>(null);
   const connected = useStore((s) => s.connected);
   // A blip while reconnecting isn't worth a banner.
@@ -188,16 +206,19 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     const t = setTimeout(() => setDown(true), 4000);
     return () => clearTimeout(t);
   }, [connected]);
-  const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind }[]>([]);
-  const [insp, setInsp] = useState(() => localStorage.getItem("hatbot:insp") === "1");
+  const [toasts, setToasts] = useState<
+    { id: number; text: string; kind: ToastKind; leaving?: boolean }[]
+  >([]);
   // The reader is Memory's for a note; an attachment's stays with the view it was opened from.
   const reading = path === "/read";
   const openedFrom = useRef<View>(VIEWS[0]);
   const view = reading && !params.get("path") ? openedFrom.current : viewOf(path);
   if (!reading) openedFrom.current = view;
   const page = reading ? "" : view.path;
+  const section = sectionOf(view);
+  const tab = TAB_OF[section.title] ?? section.title;
+  const tabs = section.views.length > 1 && (section.views as readonly string[]).includes(path);
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
-  const wide = useMedia("(min-width: 900px)");
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
   const negotiationId = /^\/negotiations\/(\d+)$/.exec(path)?.[1];
   const boxId = /^\/boxes\/(\d+)$/.exec(path)?.[1];
@@ -229,7 +250,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
-  useEffect(() => setChatMenu(false), [path]);
+  useEffect(() => {
+    setChatMenu(false);
+    setNewMenu(false);
+  }, [path]);
   // A page that took away what had the focus starts it at its own top, not back in the sidebar.
   const route = path + params.toString();
   const shownRoute = useRef(route);
@@ -273,6 +297,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const toast = useCallback<Toast>((text, kind = "done") => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
+    setTimeout(
+      () => setToasts((t) => t.map((x) => (x.id === id ? { ...x, leaving: true } : x))),
+      2600,
+    );
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, []);
 
@@ -314,7 +342,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   );
 
   // Cmd/Ctrl-K: Search. Alt-Up and Alt-Down: the chat above or below. Escape: closes the chat
-  // switcher, else the live panel.
+  // switcher or the New menu.
   const onChat = chatId || pageChat?.id || 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -343,46 +371,53 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       }
       if (e.key !== "Escape" || e.defaultPrevented) return;
       if (chatMenu) return setChatMenu(false);
-      // Escape in a field, or typed on the desktop in the live view, is theirs.
-      if (t?.closest("input, textarea, select, canvas, [contenteditable]")) return;
-      if (insp) {
-        localStorage.setItem("hatbot:insp", "0");
-        setInsp(false);
-      }
+      if (newMenu) setNewMenu(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [chatMenu, insp, chats, onChat]);
-
-  const toggleInsp = () => {
-    localStorage.setItem("hatbot:insp", insp ? "0" : "1");
-    setInsp(!insp);
-  };
+  }, [chatMenu, newMenu, chats, onChat]);
 
   return (
     <>
-      <div className={`app ${insp && view.path !== "/live" ? "insp" : ""}`}>
+      <div className="app">
         <aside className="sidebar" ref={sidebar}>
           <div className="brand">
             <div className="brand-mark">
               <Icon name="hat" />
             </div>
             <div className="brand-name">Hatbot</div>
+            <span className="spacer" />
+            {manyBots ? (
+              <button
+                type="button"
+                className={`tb-btn ${newMenu ? "on" : ""}`}
+                aria-expanded={newMenu}
+                onClick={() => setNewMenu((v) => !v)}
+                title="New"
+              >
+                <Icon name="plus" />
+              </button>
+            ) : (
+              <Link className="tb-btn" to="/bots/new" title="New bot">
+                <Icon name="plus" />
+              </Link>
+            )}
+            {newMenu && <NewMenu onClose={() => setNewMenu(false)} />}
           </div>
           <nav className="nav">
-            <ChatNav current={chatId || pageChat?.id || 0} path={path} />
+            <ChatNav current={chatId || pageChat?.id || 0} path={path} about />
           </nav>
           <nav className="nav nav-views">
-            {VIEWS.filter((v) => v.path !== "/").map((v) => (
+            {SECTIONS.filter((s) => s.title !== "Chat" && s.title !== "Search").map((s) => (
               <Link
-                key={v.path}
-                className={`nav-item ${v === view ? "active" : ""}`}
-                aria-current={v === view ? "page" : undefined}
-                to={v.path}
+                key={s.title}
+                className={`nav-item ${s === section ? "active" : ""}`}
+                aria-current={s === section ? "page" : undefined}
+                to={s.views[0]}
               >
-                <Icon name={v.icon} />
-                <span>{v.title}</span>
-                {v.path === "/tasks" && pending > 0 && (
+                <Icon name={s.icon} filled={s === section} />
+                <span>{s.title}</span>
+                {s.title === "Tasks" && pending > 0 && (
                   <span className="count attn">{pending}</span>
                 )}
               </Link>
@@ -393,7 +428,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         <main className="main" ref={main} tabIndex={-1}>
           <header className="toolbar">
             {chatId ? (
-              <>
+              <div className="tb-title">
                 <h1 className="hide-phone">{incognito ? `${title} · Incognito` : title}</h1>
                 <button
                   ref={chatSwitch}
@@ -405,20 +440,18 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                   <h1>{incognito ? `${title} · Incognito` : title}</h1>
                   <Icon name="chevron" />
                 </button>
-              </>
+                {chat && chatId > 0 && (
+                  <Link className="tb-btn tb-about" to={aboutPath(chat)} title={`About ${title}`}>
+                    <Icon name="sliders" />
+                  </Link>
+                )}
+              </div>
+            ) : tabs ? (
+              <SectionTabs label={section.title} views={section.views} path={path} />
             ) : (
               <h1>{pageTitle}</h1>
             )}
             <span className="spacer" />
-            {chat && chatId > 0 && (
-              <Link
-                className="tb-btn"
-                to={chat.kind === "group" ? `/groups/${chat.id}` : `/bots/${chat.botIds[0]}`}
-                title={`About ${title}`}
-              >
-                <Icon name="sliders" />
-              </Link>
-            )}
             {chatId > 0 && chat?.kind !== "group" && (
               <button
                 type="button"
@@ -429,21 +462,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 <Icon name="incognito" />
               </button>
             )}
-            {view.path !== "/search" && (
-              <Link className="tb-btn show-phone" to="/search" title="Search">
-                <Icon name="search" />
-              </Link>
-            )}
-            {view.path !== "/live" && (
-              <button
-                type="button"
-                className={`tb-btn hide-phone ${insp ? "on" : ""}`}
-                onClick={toggleInsp}
-                title="Live view"
-              >
-                <Icon name="monitor" />
-              </button>
-            )}
+            <Link
+              className={`tb-btn ${view.path === "/search" ? "on" : ""}`}
+              to="/search"
+              title="Search"
+            >
+              <Icon name="search" />
+            </Link>
           </header>
           {down && (
             <div className="banner offline-banner">
@@ -457,7 +482,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           <PausedBanner />
           {chatMenu && chatId > 0 && (
             <div className="chat-menu" ref={chatMenuEl}>
-              <ChatNav current={chatId} path={path} onPick={() => setChatMenu(false)} />
+              <ChatNav current={chatId} path={path} onPick={() => setChatMenu(false)} withNew />
             </div>
           )}
           {chatId > 0 && <Chat key={chatId} id={chatId} />}
@@ -505,34 +530,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           </Suspense>
           {page === "/search" && <Search query={params.get("q") ?? ""} />}
         </main>
-
-        {insp && wide && view.path !== "/live" && (
-          <aside className="inspector">
-            <div className="insp-head">
-              <h2>Live</h2>
-              <span className="spacer" />
-              <button type="button" className="tb-btn" onClick={toggleInsp} title="Close">
-                <Icon name="x" />
-              </button>
-            </div>
-            <div className="insp-body">
-              <LiveView />
-            </div>
-          </aside>
-        )}
       </div>
 
       <nav className="tabbar" aria-label="Sections">
-        {VIEWS.filter((v) => v.phone).map((v) => (
-          <Link
-            key={v.path}
-            className={v.path === (TAB_OF[view.path] ?? view.path) ? "active" : ""}
-            to={v.path}
-          >
-            <Icon name={v.icon} />
-            {v.title}
-            {v.path === "/tasks" && pending > 0 && <span className="badge">{pending}</span>}
-            {v.path === "/" && unread > 0 && <span className="badge unread">{unread}</span>}
+        {SECTIONS.filter((s) => s.phone).map((s) => (
+          <Link key={s.title} className={s.title === tab ? "active" : ""} to={s.views[0]}>
+            <Icon name={s.icon} filled={s.title === tab} />
+            {s.title}
+            {s.title === "Tasks" && pending > 0 && <span className="badge">{pending}</span>}
+            {s.title === "Chat" && unread > 0 && <span className="badge unread">{unread}</span>}
           </Link>
         ))}
       </nav>
@@ -541,7 +547,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         {toasts.map((t) => {
           const icon = TOAST_ICON[t.kind];
           return (
-            <div className={`toast ${t.kind}`} key={t.id}>
+            <div className={`toast ${t.kind} ${t.leaving ? "leaving" : ""}`} key={t.id}>
               {icon && <Icon name={icon} />}
               {t.text}
             </div>
@@ -577,50 +583,157 @@ export function PausedBanner() {
   );
 }
 
+function SectionTabs({
+  label,
+  views,
+  path,
+}: {
+  label: string;
+  views: readonly string[];
+  path: string;
+}) {
+  const el = useRef<HTMLElement>(null);
+  useRoving(el, "a", "x");
+  return (
+    <nav className="tabs" aria-label={label} ref={el}>
+      {views.map((v) => (
+        <Link key={v} className={v === path ? "active" : ""} to={v}>
+          {titleOf(v)}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** New bot and New group, from the + by Hatbot's name. */
+function NewMenu({ onClose }: { onClose: () => void }) {
+  const el = useRef<HTMLDivElement>(null);
+  useRoving(el, ".nav-item", "y");
+  // It opens on its first item, and Escape goes back to the +.
+  useEffect(() => el.current?.querySelector<HTMLElement>(".nav-item")?.focus(), []);
+  useEffect(() => {
+    const menu = el.current;
+    if (!menu) return;
+    const toggle = () => document.querySelector<HTMLElement>(".brand [aria-expanded]");
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      onClose();
+      toggle()?.focus();
+    };
+    const onOut = (e: FocusEvent) => {
+      const to = e.relatedTarget as Node | null;
+      if (to && !menu.contains(to) && !toggle()?.contains(to)) onClose();
+    };
+    menu.addEventListener("keydown", onKey);
+    menu.addEventListener("focusout", onOut);
+    return () => {
+      menu.removeEventListener("keydown", onKey);
+      menu.removeEventListener("focusout", onOut);
+    };
+  }, [onClose]);
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      // The + itself toggles it.
+      const t = e.target as Element;
+      if (!el.current?.contains(t) && !t.closest?.(".brand [aria-expanded]")) onClose();
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [onClose]);
+  return (
+    <div className="new-menu" ref={el}>
+      <Link className="nav-item" to="/bots/new">
+        <Icon name="hat" />
+        <span className="nav-name">New bot</span>
+      </Link>
+      <Link className="nav-item" to="/groups/new">
+        <Icon name="users" />
+        <span className="nav-name">New group</span>
+      </Link>
+    </div>
+  );
+}
+
 function ChatNav({
   current,
   path,
   onPick,
+  withNew,
+  about,
 }: {
   current: number;
   path: string;
   onPick?: () => void;
+  /** On a phone, where there's no rail with its +. */
+  withNew?: boolean;
+  /** Each chat's settings, on hover. */
+  about?: boolean;
 }) {
   const chats = useStore((s) => s.conversations);
   const manyBots = useStore((s) => s.botIds.length > 1);
-  const item = (to: string, lit: boolean, icon: ReactNode, name: string, unread = 0) => (
-    <Link
-      key={to}
-      className={`nav-item ${lit ? "active" : ""}`}
-      aria-current={lit ? "page" : undefined}
-      to={to}
-      onClick={onPick}
-    >
-      {icon}
-      <span className="nav-name">{name}</span>
-      {unread > 0 && <span className="count unread">{unread}</span>}
-    </Link>
-  );
+  const item = (
+    to: string,
+    lit: boolean,
+    icon: ReactNode,
+    name: string,
+    unread = 0,
+    settings?: string,
+  ) => {
+    const link = (
+      <Link
+        key={to}
+        className={`nav-item ${lit ? "active" : ""}`}
+        aria-current={lit ? "page" : undefined}
+        to={to}
+        onClick={onPick}
+      >
+        {icon}
+        <span className="nav-name">{name}</span>
+        {unread > 0 && <span className="count unread">{unread}</span>}
+      </Link>
+    );
+    if (!settings) return link;
+    return (
+      <div key={to} className="nav-row">
+        {link}
+        {/* Not a Tab stop of its own for each chat: the chat's top bar has About too. */}
+        <Link className="tb-btn nav-about" to={settings} title={`About ${name}`} tabIndex={-1}>
+          <Icon name="sliders" />
+        </Link>
+      </div>
+    );
+  };
   return (
     <>
       {chats.map((c) =>
         item(
           chatPath(c.id),
           c.id === current,
-          <ChatIcon chat={c} />,
+          <ChatIcon chat={c} filled={c.id === current} />,
           chatName(getState(), c),
           c.unread,
+          about ? aboutPath(c) : undefined,
         ),
       )}
-      {!chats.length && item("/", current > 0, <Icon name="chat" />, "Chat")}
-      {item("/bots/new", path === "/bots/new", <Icon name="plus" />, "New bot")}
-      {manyBots && item("/groups/new", path === "/groups/new", <Icon name="users" />, "New group")}
+      {!chats.length && item("/", current > 0, <Icon name="chat" filled={current > 0} />, "Chat")}
+      {withNew && item("/bots/new", path === "/bots/new", <Icon name="plus" />, "New bot")}
+      {withNew &&
+        manyBots &&
+        item(
+          "/groups/new",
+          path === "/groups/new",
+          <Icon name="users" filled={path === "/groups/new"} />,
+          "New group",
+        )}
     </>
   );
 }
 
-function ChatIcon({ chat }: { chat: Conversation }) {
+const aboutPath = (c: Conversation) =>
+  c.kind === "group" ? `/groups/${c.id}` : `/bots/${c.botIds[0]}`;
+
+function ChatIcon({ chat, filled }: { chat: Conversation; filled: boolean }) {
   const bot = useStore((s) => (chat.kind === "direct" ? s.bots[chat.botIds[0] ?? ""] : undefined));
-  if (bot) return <BotMark bot={bot} />;
-  return <Icon name={chat.kind === "group" ? "users" : "chat"} />;
+  if (bot) return <BotMark bot={bot} filled={filled} />;
+  return <Icon name={chat.kind === "group" ? "users" : "chat"} filled={filled} />;
 }

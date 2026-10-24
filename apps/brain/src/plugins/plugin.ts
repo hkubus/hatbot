@@ -9,8 +9,18 @@ import type { DesktopAgent } from "../desktop/client";
 export type Verdict =
   /** `covered`: an approval already given (e.g. a negotiation's mandate) stands in for the untrusted-content rule's. */
   | { action: "allow"; covered?: string }
-  /** `tainted`: only the untrusted-content rule asks. `always`: Haiku's review can't let it through. */
-  | { action: "ask"; why: string; kind?: ApprovalKind; tainted?: boolean; always?: boolean }
+  /**
+   * `tainted`: only the untrusted-content rule asks. `always`: Haiku's review can't let it through.
+   * `careful`: you marked it to ask you, so Safety settings can't let it through either.
+   */
+  | {
+      action: "ask";
+      why: string;
+      kind?: ApprovalKind;
+      tainted?: boolean;
+      always?: boolean;
+      careful?: boolean;
+    }
   | { action: "block"; why: string };
 
 export const allow = (): Verdict => ({ action: "allow" });
@@ -21,6 +31,13 @@ export const askAlways = (why: string, kind?: ApprovalKind): Verdict => ({
   why,
   kind,
   always: true,
+});
+export const askCareful = (why: string, kind?: ApprovalKind): Verdict => ({
+  action: "ask",
+  why,
+  kind,
+  always: true,
+  careful: true,
 });
 export const block = (why: string): Verdict => ({ action: "block", why });
 

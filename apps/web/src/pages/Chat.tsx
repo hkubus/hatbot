@@ -239,11 +239,7 @@ function TaskResult({ taskId }: { taskId: number }) {
     return (
       <div className="task-working">
         <Activity lines={taskLines(steps, note === "Working…" ? "" : note)} />
-        <div className="typing">
-          <span />
-          <span />
-          <span />
-        </div>
+        <div className="typing" />
       </div>
     );
   }
@@ -369,13 +365,7 @@ function ReplyMessage({
         {replaced && m.taskId && <TaskResult taskId={m.taskId} />}
         {replaced && m.text && <hr className="result-rule" />}
         {m.text && <AssistantBody text={m.text} streaming={streaming} />}
-        {streaming && !m.text && (!m.taskId || finished) && (
-          <div className="typing">
-            <span />
-            <span />
-            <span />
-          </div>
-        )}
+        {streaming && !m.text && (!m.taskId || finished) && <div className="typing" />}
         {streaming && <Activity lines={progressLines(progress)} />}
         {streaming && used && (
           <div className="progress-note tnum">

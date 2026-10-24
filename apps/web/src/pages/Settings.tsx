@@ -32,6 +32,7 @@ import {
   Select,
 } from "../ui";
 import { PluginPage, PluginsPage } from "./Plugins";
+import { SafetyPage } from "./Safety";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
 const ApiKeyPage = lazy(() => import("./Connections").then((m) => ({ default: m.ApiKeyPage })));
@@ -78,6 +79,8 @@ export function Settings({
     <ApiKeyPage toast={toast} />
   ) : path === "/settings/notifications" ? (
     <NtfyPage toast={toast} />
+  ) : path === "/settings/safety" ? (
+    <SafetyPage toast={toast} />
   ) : path === "/settings/allowed" ? (
     <AllowedPage />
   ) : path === "/settings/checks" ? (
@@ -165,10 +168,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     <section className="view">
       <div className="page">
         <Group className="show-phone">
-          <LinkRow to="/todo" label="To-do" />
           <LinkRow to="/boxes" label="Boxes" />
-          <LinkRow to="/schedules" label="Automations" />
-          <LinkRow to="/spend" label="Spend" />
         </Group>
 
         <Group title="Models">
@@ -238,9 +238,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <Group title="Safety">
-          <Row label="Let a safety review allow safe changes without asking you">
-            <Switch on={settings.reviewChanges} onChange={(on) => update({ reviewChanges: on })} />
-          </Row>
+          <LinkRow to="/settings/safety" label="Approvals and guardrails" />
           <LinkRow to="/settings/allowed" label="Always allowed">
             {rules !== null && <span className="val">{rules || "None"}</span>}
           </LinkRow>
