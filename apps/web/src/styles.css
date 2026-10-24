@@ -757,7 +757,8 @@ textarea:disabled {
   height: var(--h);
   min-width: var(--h);
   padding: 0 var(--sp);
-  border-radius: var(--r-pill);
+  /* Half its height, not --r-pill, so the corners ease to their pressed shape instead of snapping. */
+  border-radius: calc(var(--h) / 2);
   border: 0;
   background: transparent;
   color: var(--text-2);
@@ -792,7 +793,7 @@ textarea:disabled {
 .btn {
   height: var(--h);
   padding: 0 var(--sp-lg);
-  border-radius: var(--r-pill);
+  border-radius: calc(var(--h) / 2);
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text-2);
@@ -867,6 +868,7 @@ textarea:disabled {
 .btn.sm {
   height: var(--h-sm);
   padding: 0 var(--sp-md);
+  border-radius: calc(var(--h-sm) / 2);
 }
 .btn.sm svg.i {
   width: 18px;
@@ -940,7 +942,7 @@ textarea:disabled {
   border: 0;
   height: var(--h);
   padding: 0 var(--sp-lg);
-  border-radius: var(--r-pill);
+  border-radius: calc(var(--h) / 2);
   background: transparent;
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
@@ -1068,7 +1070,7 @@ textarea:disabled {
   line-height: 1.45;
 }
 .fold:hover {
-  background: var(--fill-hover);
+  color: var(--text);
 }
 .fold svg.i {
   flex: none;
@@ -1647,18 +1649,18 @@ dialog.ask p {
 .group-box > .disclosure > .row {
   border-bottom: 0;
 }
-.group-box > :is(a, .row-link, .link-row, .fold),
-.group-box > .disclosure > :is(a, .row-link, .link-row, .fold) {
+.group-box > :is(a, .row-link, .link-row),
+.group-box > .disclosure > :is(a, .row-link, .link-row) {
   transition:
     border-radius var(--dur) var(--spring),
     background-color var(--dur-fast) var(--fade);
 }
-.group-box > :is(a, .row-link, .link-row, .fold):hover,
-.group-box > .disclosure > :is(a, .row-link, .link-row, .fold):hover {
+.group-box > :is(a, .row-link, .link-row):hover,
+.group-box > .disclosure > :is(a, .row-link, .link-row):hover {
   border-radius: var(--r-md);
 }
-.group-box > :is(a, .row-link, .link-row, .fold):active,
-.group-box > .disclosure > :is(a, .row-link, .link-row, .fold):active {
+.group-box > :is(a, .row-link, .link-row):active,
+.group-box > .disclosure > :is(a, .row-link, .link-row):active {
   border-radius: var(--r-lg);
 }
 dialog.ask {
@@ -1980,25 +1982,59 @@ dialog.ask,
 .row .chev {
   color: var(--text-2);
 }
+/* Filled fields, a tone up from what they sit on, ringed in the accent while you type. */
 .row input[type="text"],
 .row input[type="number"],
 .row select,
+.row .affix,
 .field {
   height: var(--h);
-  border-radius: var(--r-xs);
-  border: 1px solid var(--outline);
-  background: transparent;
+  border-radius: var(--r-md);
+  border: 0;
+  background-color: var(--surface-3);
+  color: var(--text);
   padding: 0 var(--sp-md);
   font-size: var(--fs-md);
-  transition: border-color var(--dur-fast);
+  transition:
+    background-color var(--dur-fast) var(--fade),
+    box-shadow var(--dur-fast) var(--fade);
 }
-:is(.row input[type="text"], .row input[type="number"], .row select, .field):hover:not(:disabled) {
-  border-color: var(--text);
+:is(.row input[type="text"], .row input[type="number"], .row select, .row .affix, .field):hover:not(
+  :disabled
+) {
+  background-color: color-mix(in srgb, var(--text) 8%, var(--surface-3));
 }
-:is(.row input[type="text"], .row input[type="number"], .row select, .field, .otp input):focus {
+:is(.row input[type="text"], .row input[type="number"], .row select, .field, .otp input):focus,
+.row .affix:focus-within {
   outline: 0;
-  border-color: var(--focus);
-  box-shadow: inset 0 0 0 1px var(--focus);
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+/* Material's dropdown arrow, drawn so it takes the theme's colour. */
+.row select,
+select.field {
+  appearance: none;
+  padding-right: calc(var(--sp-md) + 20px);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-2) 50%),
+    linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
+  background-position:
+    calc(100% - var(--sp-md) - 10px) 52%,
+    calc(100% - var(--sp-md) - 5px) 52%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+/* A unit inside the field, before the number. */
+.row .affix {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--muted);
+}
+.row .affix input[type="number"] {
+  height: 100%;
+  padding: 0 0 0 var(--sp-xs);
+  background: none;
+  box-shadow: none;
 }
 :is(.row input, .row select, .field, .otp input)::placeholder {
   color: var(--muted);
@@ -2011,6 +2047,9 @@ select.field option {
 .row input[type="number"] {
   width: 84px;
   text-align: right;
+}
+.row .affix input[type="number"] {
+  width: 64px;
 }
 
 .memory {
@@ -2294,6 +2333,7 @@ select.field option {
 }
 .login-card .btn {
   height: var(--h-lg);
+  border-radius: calc(var(--h-lg) / 2);
 }
 a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 .tree a:hover,
@@ -3142,6 +3182,7 @@ button.text-link:hover {
 }
 .panel.form .btn:not(.sm) {
   height: var(--h-lg);
+  border-radius: calc(var(--h-lg) / 2);
 }
 .panel.form textarea.field {
   height: auto;
@@ -3615,7 +3656,7 @@ pre.payload {
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: var(--r-pill);
+  border-radius: 20px;
   background: transparent;
   color: var(--text-2);
   transition: border-radius var(--dur) var(--spring);
@@ -4000,7 +4041,7 @@ a.row-main:hover {
   z-index: 1;
   width: 40px;
   height: 40px;
-  border-radius: var(--r-pill);
+  border-radius: 20px;
   display: grid;
   place-items: center;
   border: 0;
