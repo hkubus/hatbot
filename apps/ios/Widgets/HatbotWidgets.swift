@@ -1,6 +1,7 @@
 // iOS refreshes the widget about every 15 minutes; the app asks it to when things change.
 import AppIntents
 import SwiftUI
+import UIKit
 import WidgetKit
 
 @main
@@ -64,6 +65,12 @@ struct StatusWidget: Widget {
 }
 
 struct StatusView: View {
+  /// The app's brand colour; the widget has no asset catalog to take it from.
+  private static let lime = Color(
+    uiColor: UIColor { $0.userInterfaceStyle == .dark
+      ? UIColor(red: 0xBB / 255, green: 0xE4 / 255, blue: 0x81 / 255, alpha: 1)
+      : UIColor(red: 0x50 / 255, green: 0x7D / 255, blue: 0x12 / 255, alpha: 1)
+    })
   let entry: StatusEntry
   @Environment(\.widgetFamily) private var family
 
@@ -86,7 +93,7 @@ struct StatusView: View {
         if let n = entry.needsYou {
           Text(n == 0 ? "Nothing needs you" : n == 1 ? "1 needs you" : "\(n) need you")
             .font(.subheadline.weight(n > 0 ? .semibold : .regular))
-            .foregroundStyle(n > 0 ? Color.orange : .secondary)
+            .foregroundStyle(n > 0 ? Self.lime : .secondary)
         }
       }
     }

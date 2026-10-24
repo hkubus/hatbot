@@ -55,6 +55,16 @@ button.attention {
   color: white;
 }
 
+/* Your bubbles in a bot's chat: its colour, dark enough for white text at 4.5:1. */
+.tint-red .bubble.mine { background-color: #d70015; }
+.tint-pink .bubble.mine { background-color: #d30f45; }
+.tint-purple .bubble.mine { background-color: #8944ab; }
+.tint-indigo .bubble.mine { background-color: #3634a3; }
+.tint-blue .bubble.mine { background-color: #0062cc; }
+.tint-teal .bubble.mine { background-color: #007c91; }
+.tint-green .bubble.mine { background-color: #1f8239; }
+.tint-gray .bubble.mine { background-color: #6c6c70; }
+
 /* A tint of the text's colour, so it suits light, dark and your own theme. */
 .bubble.theirs {
   background-color: alpha(currentColor, 0.08);

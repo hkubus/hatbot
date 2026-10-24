@@ -71,16 +71,14 @@ private struct SidebarButton: ViewModifier {
 
 private struct Count: View {
   let n: Int
-  /// Blue with white, for what needs you; otherwise Hatbot's amber, with dark text, which reads on it.
-  var needsYou = true
 
   var body: some View {
     Text("\(n)")
       .font(.caption2.weight(.semibold).monospacedDigit())
-      .foregroundStyle(needsYou ? Color.white : .onBrand)
+      .foregroundStyle(Color.onBrand)
       .padding(.horizontal, 5)
       .frame(minWidth: 18, minHeight: 18)
-      .background(needsYou ? Color.attention : .brand, in: .capsule)
+      .background(Color.brand, in: .capsule)
   }
 }
 
@@ -177,7 +175,7 @@ struct Sidebar<Content: View>: View {
           Divider().padding(.vertical, 6).padding(.horizontal, 14)
         }
         ForEach(AppTab.allCases.filter { $0 != .chat }, id: \.self) { t in
-          row(t.title, icon: t.icon, selected: t == tab, count: t == .tasks ? store.needsYou : 0, needsYou: true) {
+          row(t.title, icon: t.icon, selected: t == tab, count: t == .tasks ? store.needsYou : 0) {
             tab = t
           }
         }
@@ -213,7 +211,7 @@ struct Sidebar<Content: View>: View {
   }
 
   private func row(
-    _ title: String, icon: String, tint: Color? = nil, selected: Bool, count: Int, needsYou: Bool = false,
+    _ title: String, icon: String, tint: Color? = nil, selected: Bool, count: Int,
     action: @escaping () -> Void
   ) -> some View {
     Button {
@@ -224,7 +222,7 @@ struct Sidebar<Content: View>: View {
         Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.accentColor : .primary))
         Text(title).lineLimit(1)
         Spacer()
-        if count > 0 { Count(n: count, needsYou: needsYou) }
+        if count > 0 { Count(n: count) }
       }
       .font(.body.weight(selected ? .semibold : .regular))
       .foregroundStyle(selected ? Color.accentColor : .primary)
