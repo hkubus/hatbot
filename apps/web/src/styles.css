@@ -73,54 +73,53 @@
   --font-text: "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* --bg-light and --bg-dark are copied into index.html, offline.html, theme.js and the manifest,
-     which run before this loads. */
-  --bg-light: #f6efea;
-  --bg-dark: #171310;
+  /* From Material's 2025 colour spec, the Vibrant scheme on Hatbot's amber (#ff9f2e). --bg-light and
+     --bg-dark are copied into index.html, offline.html, theme.js and the manifest, which run before
+     this loads. */
+  --bg-light: #fff5ec;
+  --bg-dark: #170c00;
+  --surface: light-dark(#fff5ec, #170c00);
+  --surface-1: light-dark(#ffe4c4, #271600);
+  --surface-2: light-dark(#ffddb4, #2f1c00);
+  --surface-3: light-dark(#ffd6a2, #372100);
+  --text: light-dark(#432900, #ffe1bc);
+  --text-2: light-dark(#775524, #cea46b);
+  --muted: light-dark(#775524, #cea46b);
+  --soft: light-dark(#95703c, #946f3b);
+  --line: light-dark(#d0a66d, #614212);
+  --outline: light-dark(#95703c, #946f3b);
+  --inverse: light-dark(#170c00, #fff8f4);
+  --on-inverse: light-dark(#bf965e, #6f4f1e);
+  --primary: light-dark(#874e00, #ffa84b);
+  --on-primary: light-dark(#fff0e5, #562f00);
+  --accent: light-dark(#fc9500, #fc9500);
+  --on-accent: light-dark(#472700, #472700);
+  --accent-text: light-dark(#874e00, #ffa84b);
+  --accent-soft: light-dark(#ffc87e, #825500);
+  --on-accent-soft: light-dark(#644000, #fff6ef);
+  --selected: light-dark(#ffc87e, #825500);
+  --on-selected: light-dark(#644000, #fff6ef);
+  --secondary: light-dark(#7f5200, #ffae26);
+  --user-bubble: light-dark(#ffdcbe, #6a3c00);
+  --on-user-bubble: light-dark(#2d1600, #ffdcbe);
+  --attention: light-dark(#305da8, #adc7ff);
+  --on-attention: light-dark(#ffffff, #002e68);
+  --attention-soft: light-dark(#d8e2ff, #2a4678);
+  --on-attention-soft: light-dark(#001a41, #d8e2ff);
+  --danger: light-dark(#b02500, #ff7351);
+  --danger-text: light-dark(#b02500, #ff7351);
+  --on-danger: light-dark(#ffefec, #450900);
+  --danger-soft: light-dark(#f95630, #b92902);
+  --on-danger-soft: light-dark(#520c00, #ffd2c8);
+  --success: light-dark(#306a39, #97d599);
+  --success-text: light-dark(#306a39, #97d599);
+  --success-soft: light-dark(#c1eec0, #294f2d);
   --bg: light-dark(var(--bg-light), var(--bg-dark));
-  --surface: light-dark(#fffbf9, #201b17);
-  --surface-1: light-dark(#faf3ee, #26201b);
-  --surface-2: light-dark(#f3ebe5, #2f2924);
-  --surface-3: light-dark(#ede4dd, #3a332d);
-  --text: light-dark(#1f1b17, #ece0d7);
-  --text-2: light-dark(#4f453d, #d3c5ba);
-  --muted: light-dark(#6b6058, #b0a398);
-  --soft: light-dark(#82766d, #9b8f85);
-  --line: light-dark(#e7ddd5, #3c352f);
-  --line-strong: light-dark(#d3c6bc, #4f463f);
-  --outline: light-dark(#82766d, #9b8f85);
-  --inverse: light-dark(#34302c, #ece0d7);
-  --on-inverse: light-dark(#f9efe8, #34302c);
-
-  --accent: light-dark(#e8820c, #ff9f2e);
-  /* White is 2.75:1 on amber; this is 6.4:1 (8.6:1 on the dark theme's amber). */
-  --on-accent: #2c1600;
-  --accent-strong: light-dark(#c96f0a, #ffb870);
-  --accent-soft: light-dark(#ffdcbe, #693c00);
-  --on-accent-soft: light-dark(#2c1600, #ffdcbe);
-  --accent-text: light-dark(#8b5000, #ffb870);
-  --selected: light-dark(#fedcbe, #5a4330);
-  --on-selected: light-dark(#291806, #fedcbe);
-  --user-bubble: light-dark(#ffdcbe, #693c00);
-  --bot-bubble: light-dark(#f3ebe5, #2f2924);
-  --attention: light-dark(#0061a4, #9ecaff);
-  --attention-hover: light-dark(#00497d, #d1e4ff);
-  --attention-soft: light-dark(#d1e4ff, #00497d);
-  --on-attention-soft: light-dark(#001d36, #d1e4ff);
-  --danger: light-dark(#ba1a1a, #ffb4ab);
-  --danger-text: light-dark(#ba1a1a, #ffb4ab);
-  --danger-soft: light-dark(#ffdad6, #93000a);
-  --on-danger-soft: light-dark(#410002, #ffdad6);
-  --success: light-dark(#1e6c34, #8dd89c);
-  --success-text: light-dark(#1e6c34, #8dd89c);
-  --success-soft: light-dark(#b7f1c0, #00531f);
-  --on-attention: light-dark(#fff, #003258);
-  --on-danger: light-dark(#fff, #690005);
+  --bot-bubble: var(--surface-2);
 
   --fill-hover: color-mix(in srgb, currentColor 8%, transparent);
   --fill-active: color-mix(in srgb, currentColor 12%, transparent);
-  --control-active: var(--selected);
-  --focus: var(--accent-text);
+  --focus: var(--secondary);
   --disabled: 0.38;
   --shadow-color: light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.5));
   --shadow-key: light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.35));
@@ -136,16 +135,15 @@
   --screen: #2b2622;
   --on-screen: #d5c3b5;
 
-  --chart: light-dark(#c96f0a, #ff9f2e);
-  --chart-track: light-dark(#ffdcbe, #4a2800);
-  --grid: light-dark(rgba(33, 26, 20, 0.08), rgba(239, 224, 213, 0.08));
-  --switch-line: var(--outline);
+  --chart: var(--accent);
+  --chart-track: var(--selected);
+  --grid: color-mix(in srgb, var(--text) 8%, transparent);
   /* Chart series, in this order; checked for colour-blind separation. */
   --series-1: var(--chart);
   --series-2: light-dark(#2a78d6, #3987e5);
   --series-3: light-dark(#138a60, #199e70);
   /* Bots' colours (BOT_COLORS), at tone 50 so each reads on light and dark. */
-  --bot-amber: var(--accent);
+  --bot-amber: var(--primary);
   --bot-red: light-dark(#dd3730, #ff5449);
   --bot-pink: light-dark(#d81b60, #ff6f9a);
   --bot-purple: light-dark(#8e44ad, #c58af0);
@@ -159,8 +157,9 @@
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
+  --r-lg-up: 20px;
   --r-xl: 28px;
-  --r-bubble: 20px;
+  --r-xl-up: 32px;
   --r-pill: 999px;
 
   --fs-xs: 11px;
@@ -170,6 +169,7 @@
   --fs-lg: 16px;
   --fs-xl: 22px;
   --fs-2xl: 24px;
+  --fs-3xl: 32px;
   --fw-medium: 500;
   --fw-semibold: 600;
   --fw-title: 500;
@@ -190,10 +190,68 @@
   --h: 40px;
   --h-lg: 48px;
 
-  --dur-fast: 0.15s;
-  --dur: 0.3s;
-  --spring: cubic-bezier(0.2, 0, 0, 1);
-  --bounce: cubic-bezier(0.42, 1.67, 0.21, 0.9);
+  /* Material's expressive springs, sampled: the fast spatial one moves small things and overshoots
+     a little; the effects one fades colour and opacity without overshooting. */
+  --dur-fast: 0.2s;
+  --dur: 0.35s;
+  --dur-slow: 0.41s;
+  --spring: linear(
+    0,
+    0.14,
+    0.44,
+    0.72,
+    0.93,
+    1.05,
+    1.09,
+    1.09,
+    1.07,
+    1.04,
+    1.01,
+    1,
+    0.99,
+    0.99,
+    0.99,
+    1,
+    1
+  );
+  --spring-soft: linear(
+    0,
+    0.1,
+    0.29,
+    0.5,
+    0.68,
+    0.81,
+    0.9,
+    0.96,
+    0.99,
+    1.01,
+    1.01,
+    1.01,
+    1.01,
+    1.01,
+    1.01,
+    1,
+    1
+  );
+  --fade: linear(
+    0,
+    0.1,
+    0.28,
+    0.47,
+    0.62,
+    0.74,
+    0.82,
+    0.88,
+    0.92,
+    0.95,
+    0.97,
+    0.98,
+    0.99,
+    0.99,
+    0.99,
+    1,
+    1
+  );
 
   color-scheme: light dark;
 }
@@ -295,7 +353,7 @@ pre.payload,
 .task-head h2 {
   margin: 0;
   font-size: var(--fs-xl);
-  font-weight: 400;
+  font-weight: var(--fw-medium);
   line-height: 1.27;
 }
 .tile .label,
@@ -316,7 +374,7 @@ pre.payload,
   display: inline-flex;
   align-items: center;
   gap: var(--sp-sm);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   border-radius: var(--r-sm);
   font-size: var(--fs-md);
 }
@@ -353,52 +411,105 @@ textarea:disabled {
 }
 
 .app {
-  --sb-w: 264px;
+  --sb-w: 272px;
   display: grid;
   grid-template-columns: var(--sb-w) minmax(0, 1fr);
-  column-gap: var(--sp);
   height: var(--app-h, 100dvh);
-  padding: var(--sp) var(--sp) var(--sp) 0;
+  background: var(--surface);
 }
 
+/* Material 3 Expressive's expanded navigation rail, which replaces the drawer: it sits flush on the
+   surface, and only the chosen item is filled. */
 .sidebar {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
-  padding: 0 var(--sp-md) var(--sp-md);
+  scrollbar-width: none;
+  padding: 0 var(--sp-md) var(--sp-lg);
 }
 .sidebar > .brand {
   display: flex;
   align-items: center;
   gap: var(--sp-md);
-  padding: var(--sp) var(--sp-lg) var(--sp-lg);
+  flex: none;
+  height: 64px;
+  padding: 0 var(--sp-md);
+  margin-bottom: var(--sp);
 }
 .brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--r-md);
+  --shape: polygon(
+    100% 50%,
+    98.2% 56.4%,
+    93.9% 61.8%,
+    95% 68.6%,
+    93.3% 75%,
+    88.6% 79.6%,
+    82.2% 82.2%,
+    79.6% 88.6%,
+    75% 93.3%,
+    68.6% 95%,
+    61.8% 93.9%,
+    56.4% 98.2%,
+    50% 100%,
+    43.6% 98.2%,
+    38.2% 93.9%,
+    31.4% 95%,
+    25% 93.3%,
+    20.4% 88.6%,
+    17.8% 82.2%,
+    11.4% 79.6%,
+    6.7% 75%,
+    5% 68.6%,
+    6.1% 61.8%,
+    1.8% 56.4%,
+    0% 50%,
+    1.8% 43.6%,
+    6.1% 38.2%,
+    5% 31.4%,
+    6.7% 25%,
+    11.4% 20.4%,
+    17.8% 17.8%,
+    20.4% 11.4%,
+    25% 6.7%,
+    31.4% 5%,
+    38.2% 6.1%,
+    43.6% 1.8%,
+    50% 0%,
+    56.4% 1.8%,
+    61.8% 6.1%,
+    68.6% 5%,
+    75% 6.7%,
+    79.6% 11.4%,
+    82.2% 17.8%,
+    88.6% 20.4%,
+    93.3% 25%,
+    95% 31.4%,
+    93.9% 38.2%,
+    98.2% 43.6%
+  );
+  width: 40px;
+  height: 40px;
   display: grid;
   place-items: center;
   background: var(--accent);
   color: var(--on-accent);
+  clip-path: var(--shape);
 }
 .brand-mark svg.i {
   width: 22px;
   height: 22px;
-  stroke-width: 1.8;
+  stroke-width: 2;
 }
 .brand-name {
-  font-weight: var(--fw-title);
+  font-weight: var(--fw-medium);
   font-size: var(--fs-xl);
 }
 
 .nav {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2xs);
 }
 .nav-item {
   display: flex;
@@ -408,15 +519,17 @@ textarea:disabled {
   border: 0;
   background: transparent;
   text-align: left;
-  height: var(--h);
+  height: 56px;
+  flex: none;
   padding: 0 var(--sp-lg);
   border-radius: var(--r-pill);
   color: var(--text-2);
   font-weight: var(--fw-medium);
+  transition: background-color var(--dur-fast) var(--fade);
 }
 .nav-item svg.i {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
 }
 .nav-item:hover,
 .tree :is(button, a):hover,
@@ -436,8 +549,8 @@ textarea:disabled {
   margin-left: auto;
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
-  min-width: 16px;
-  height: 16px;
+  min-width: 18px;
+  height: 18px;
   padding: 0 var(--sp-xs);
   border-radius: var(--r-pill);
   display: grid;
@@ -450,25 +563,36 @@ textarea:disabled {
   color: var(--on-attention);
 }
 .nav-item .count.unread {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--primary);
+  color: var(--on-primary);
 }
 
+/* Expressive's linear progress: the track starts after a gap and ends in a stop dot. */
 .meter {
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: var(--chart-track);
+  --meter: var(--primary);
+  display: flex;
+  gap: var(--sp-xs);
+  height: 8px;
   overflow: hidden;
 }
-.meter > span {
-  display: block;
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: var(--chart);
-  transition: width var(--dur) var(--spring);
+.meter.hot {
+  --meter: var(--danger);
 }
-.meter.hot > span {
-  background: var(--danger);
+.meter > span {
+  flex: none;
+  max-width: 100%;
+  border-radius: var(--r-pill);
+  background: var(--meter);
+  transition: width var(--dur-slow) var(--spring-soft);
+}
+.meter::after {
+  content: "";
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--r-pill);
+  background:
+    radial-gradient(circle at calc(100% - 4px) 50%, var(--meter) 2px, transparent 2.5px),
+    var(--selected);
 }
 
 .main {
@@ -476,8 +600,6 @@ textarea:disabled {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
-  border-radius: var(--r-lg);
   overflow: hidden;
   position: relative;
 }
@@ -490,9 +612,9 @@ textarea:disabled {
   display: flex;
   align-items: center;
   gap: var(--sp-xs);
-  padding: 0 var(--sp) 0 var(--gutter);
-  background: var(--surface);
+  padding: 0 var(--sp-md) 0 var(--gutter);
 }
+
 .toolbar h1 {
   min-width: 0;
   overflow: hidden;
@@ -512,7 +634,7 @@ textarea:disabled {
   justify-content: center;
   gap: var(--sp-sm);
   font-size: var(--fs-md);
-  transition: border-radius var(--dur-fast) var(--spring);
+  transition: border-radius var(--dur) var(--spring);
 }
 .tb-btn svg.i {
   width: 22px;
@@ -539,7 +661,7 @@ textarea:disabled {
   height: var(--h);
   padding: 0 var(--sp-lg);
   border-radius: var(--r-pill);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   background: transparent;
   color: var(--text-2);
   display: inline-flex;
@@ -553,7 +675,7 @@ textarea:disabled {
   transition:
     background var(--dur-fast),
     box-shadow var(--dur-fast),
-    border-radius var(--dur-fast) var(--spring);
+    border-radius var(--dur) var(--spring);
 }
 .btn:active:not(:disabled) {
   border-radius: var(--r-sm);
@@ -563,10 +685,12 @@ textarea:disabled {
   color: var(--on-attention);
   border-color: transparent;
 }
+/* A chosen toggle squares off and fills, as Expressive's toggle buttons do. */
 .btn[aria-pressed="true"] {
-  background: var(--selected);
-  color: var(--on-selected);
+  background: var(--primary);
+  color: var(--on-primary);
   border-color: transparent;
+  border-radius: var(--r-md);
 }
 .btn.accent {
   background: var(--accent);
@@ -671,44 +795,47 @@ textarea:disabled {
   color: var(--accent-text);
 }
 
+/* Expressive's connected button group, which replaces the segmented button: the ends are round,
+   the joins square-ish, and the chosen one goes fully round. */
 .seg {
   display: inline-flex;
   flex: none;
-  border: 1px solid var(--outline);
-  border-radius: var(--r-pill);
-  overflow: hidden;
+  gap: var(--sp-2xs);
 }
 .seg button {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-sm);
   border: 0;
-  background: transparent;
-  height: var(--h-sm);
-  padding: 0 var(--sp-md);
+  height: var(--h);
+  padding: 0 var(--sp-lg);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
-  color: var(--text);
+  color: var(--text-2);
   white-space: nowrap;
+  transition:
+    border-radius var(--dur) var(--spring),
+    background-color var(--dur-fast) var(--fade);
 }
-.seg button + button {
-  border-left: 1px solid var(--outline);
+.seg button:first-child {
+  border-top-left-radius: var(--r-pill);
+  border-bottom-left-radius: var(--r-pill);
+}
+.seg button:last-child {
+  border-top-right-radius: var(--r-pill);
+  border-bottom-right-radius: var(--r-pill);
 }
 .seg button:hover {
   background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
 }
-.seg button.active {
-  background: var(--control-active);
-  color: var(--on-selected);
+.seg button:active {
+  border-radius: var(--r-xs);
 }
-.seg button.active::before {
-  content: "";
-  width: 16px;
-  height: 16px;
-  background: currentColor;
-  mask:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E")
-    center / contain no-repeat;
+.seg button.active {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: var(--r-pill);
 }
 
 .switch {
@@ -717,8 +844,9 @@ textarea:disabled {
   height: 32px;
   flex: none;
   border-radius: var(--r-pill);
-  border: 2px solid var(--switch-line);
+  border: 2px solid var(--outline);
   background: var(--surface-3);
+  cursor: pointer;
   transition:
     background var(--dur-fast),
     border-color var(--dur-fast);
@@ -735,9 +863,9 @@ textarea:disabled {
   background: var(--outline);
   transform: translateY(-50%);
   transition:
-    left var(--dur) var(--bounce),
-    width var(--dur) var(--bounce),
-    height var(--dur) var(--bounce),
+    left var(--dur) var(--spring),
+    width var(--dur) var(--spring),
+    height var(--dur) var(--spring),
     background var(--dur-fast);
 }
 .switch:hover::after {
@@ -749,15 +877,16 @@ textarea:disabled {
   left: 0;
 }
 .switch.on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--primary);
+  border-color: var(--primary);
 }
 .switch.on::after {
   left: 22px;
   width: 24px;
   height: 24px;
-  background: var(--on-accent);
+  background: var(--on-primary);
 }
+
 .switch.on:active::after {
   left: 20px;
   width: 28px;
@@ -823,7 +952,7 @@ textarea:disabled {
   width: 13px;
   height: 13px;
   align-self: center;
-  transition: transform var(--dur-fast) var(--spring);
+  transition: transform var(--dur) var(--spring);
 }
 .fold-row.open .fold svg.i {
   transform: rotate(90deg);
@@ -878,7 +1007,7 @@ textarea:disabled {
   background: var(--bot-bubble);
   --chart-bg: var(--bot-bubble);
   padding: var(--sp-md) var(--sp-lg);
-  border-radius: var(--r-bubble) var(--r-bubble) var(--r-bubble) var(--r-xs);
+  border-radius: var(--r-lg-up) var(--r-lg-up) var(--r-lg-up) var(--r-xs);
 }
 .msg .time {
   font-size: var(--fs-xs);
@@ -917,44 +1046,454 @@ dialog.ask p {
 .msg.user .bubble {
   max-width: min(78%, 560px);
   background: var(--user-bubble);
-  color: var(--on-accent-soft);
+  color: var(--on-user-bubble);
   padding: var(--sp-md) var(--sp-lg);
-  border-radius: var(--r-bubble) var(--r-bubble) var(--r-xs) var(--r-bubble);
+  border-radius: var(--r-lg-up) var(--r-lg-up) var(--r-xs) var(--r-lg-up);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .typing {
-  display: inline-flex;
-  gap: var(--sp-xs);
-  padding: var(--sp-sm) 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
 }
-.typing span {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--soft);
-  animation: blink 1.2s infinite;
+/* Expressive's loading indicator: one shape morphing through the others as it turns. */
+.typing::before {
+  content: "";
+  width: 26px;
+  height: 26px;
+  background: var(--primary);
+  animation: morph 4.9s infinite var(--spring-soft);
 }
-.typing span:nth-child(2) {
-  animation-delay: 0.15s;
-}
-.typing span:nth-child(3) {
-  animation-delay: 0.3s;
-}
-@keyframes blink {
-  0%,
-  80%,
-  100% {
-    opacity: 0.3;
+@keyframes morph {
+  0% {
+    clip-path: polygon(
+      100% 50%,
+      95.5% 56%,
+      88.4% 60.3%,
+      87.5% 65.5%,
+      90.9% 73.6%,
+      89.5% 80.3%,
+      81.5% 81.5%,
+      73.9% 81.1%,
+      70.9% 86.2%,
+      68.5% 94.7%,
+      62.8% 97.6%,
+      55.6% 92.7%,
+      50% 89%,
+      44.4% 92.7%,
+      37.2% 97.6%,
+      31.5% 94.7%,
+      29.1% 86.2%,
+      26.1% 81.1%,
+      18.5% 81.5%,
+      10.5% 80.3%,
+      9.1% 73.6%,
+      12.5% 65.5%,
+      11.6% 60.3%,
+      4.5% 56%,
+      0% 50%,
+      4.5% 44%,
+      11.6% 39.7%,
+      12.5% 34.5%,
+      9.1% 26.4%,
+      10.5% 19.7%,
+      18.5% 18.5%,
+      26.1% 18.9%,
+      29.1% 13.8%,
+      31.5% 5.3%,
+      37.2% 2.4%,
+      44.4% 7.3%,
+      50% 11%,
+      55.6% 7.3%,
+      62.8% 2.4%,
+      68.5% 5.3%,
+      70.9% 13.8%,
+      73.9% 18.9%,
+      81.5% 18.5%,
+      89.5% 19.7%,
+      90.9% 26.4%,
+      87.5% 34.5%,
+      88.4% 39.7%,
+      95.5% 44%
+    );
+    rotate: 0deg;
   }
-  40% {
-    opacity: 1;
+  14.29% {
+    clip-path: polygon(
+      100% 50%,
+      98.7% 56.4%,
+      93.2% 61.6%,
+      90.2% 66.6%,
+      91.5% 74%,
+      89.6% 80.4%,
+      85.2% 85.2%,
+      78.2% 86.8%,
+      71.5% 87.2%,
+      67.7% 92.8%,
+      62.9% 98.1%,
+      56.5% 99.5%,
+      50% 97.9%,
+      44.3% 93.1%,
+      38.4% 93.2%,
+      31.2% 95.4%,
+      25% 93.3%,
+      20.1% 89%,
+      18.4% 81.6%,
+      15.5% 76.5%,
+      8.5% 74%,
+      3.8% 69.1%,
+      1.9% 62.9%,
+      4.1% 56%,
+      7% 50%,
+      4.1% 44%,
+      1.9% 37.1%,
+      3.8% 30.9%,
+      8.5% 26%,
+      15.5% 23.5%,
+      18.4% 18.4%,
+      20.1% 11%,
+      25% 6.7%,
+      31.2% 4.6%,
+      38.4% 6.8%,
+      44.3% 6.9%,
+      50% 2.1%,
+      56.5% 0.5%,
+      62.9% 1.9%,
+      67.7% 7.2%,
+      71.5% 12.8%,
+      78.2% 13.2%,
+      85.2% 14.8%,
+      89.6% 19.6%,
+      91.5% 26%,
+      90.2% 33.4%,
+      93.2% 38.4%,
+      98.7% 43.6%
+    );
+    rotate: 102.9deg;
+  }
+  28.57% {
+    clip-path: polygon(
+      50% 0%,
+      56.1% 3.9%,
+      61.4% 7.4%,
+      66.3% 10.6%,
+      70.9% 13.8%,
+      75.3% 17%,
+      79.7% 20.3%,
+      84.2% 23.7%,
+      88.9% 27.5%,
+      94.1% 31.7%,
+      96.8% 37.5%,
+      95% 44.1%,
+      93.4% 50%,
+      91.8% 55.5%,
+      90.2% 60.8%,
+      88.5% 66%,
+      86.7% 71.2%,
+      84.7% 76.6%,
+      82.5% 82.5%,
+      79.9% 89%,
+      73.6% 90.8%,
+      67% 91.1%,
+      61.1% 91.4%,
+      55.5% 91.5%,
+      50% 91.6%,
+      44.5% 91.5%,
+      38.9% 91.4%,
+      33% 91.1%,
+      26.4% 90.8%,
+      20.1% 89%,
+      17.5% 82.5%,
+      15.3% 76.6%,
+      13.3% 71.2%,
+      11.5% 66%,
+      9.8% 60.8%,
+      8.2% 55.5%,
+      6.6% 50%,
+      5% 44.1%,
+      3.2% 37.5%,
+      5.9% 31.7%,
+      11.1% 27.5%,
+      15.8% 23.7%,
+      20.3% 20.3%,
+      24.7% 17%,
+      29.1% 13.8%,
+      33.7% 10.6%,
+      38.6% 7.4%,
+      43.9% 3.9%
+    );
+    rotate: 205.7deg;
+  }
+  42.86% {
+    clip-path: polygon(
+      89.8% 89.8%,
+      84.1% 94.4%,
+      77.6% 97.8%,
+      70.6% 99.6%,
+      63.4% 100%,
+      56.4% 98.9%,
+      50% 96.6%,
+      44.3% 93.2%,
+      39.6% 88.9%,
+      35.5% 84.9%,
+      31.9% 81.3%,
+      28.6% 77.9%,
+      25.3% 74.7%,
+      22.1% 71.4%,
+      18.7% 68.1%,
+      15.1% 64.5%,
+      11.1% 60.4%,
+      6.8% 55.7%,
+      3.4% 50%,
+      1.1% 43.6%,
+      0% 36.6%,
+      0.4% 29.4%,
+      2.2% 22.4%,
+      5.6% 15.9%,
+      10.2% 10.2%,
+      15.9% 5.6%,
+      22.4% 2.2%,
+      29.4% 0.4%,
+      36.6% 0%,
+      43.6% 1.1%,
+      50% 3.4%,
+      55.7% 6.8%,
+      60.4% 11.1%,
+      64.5% 15.1%,
+      68.1% 18.7%,
+      71.4% 22.1%,
+      74.7% 25.3%,
+      77.9% 28.6%,
+      81.3% 31.9%,
+      84.9% 35.5%,
+      88.9% 39.6%,
+      93.2% 44.3%,
+      96.6% 50%,
+      98.9% 56.4%,
+      100% 63.4%,
+      99.6% 70.6%,
+      97.8% 77.6%,
+      94.4% 84.1%
+    );
+    rotate: 308.6deg;
+  }
+  57.14% {
+    clip-path: polygon(
+      100% 50%,
+      99% 56.4%,
+      95.2% 62.1%,
+      91.6% 67.2%,
+      90.5% 73.4%,
+      89.2% 80.1%,
+      85.4% 85.4%,
+      80.1% 89.2%,
+      73.4% 90.5%,
+      67.2% 91.6%,
+      62.1% 95.2%,
+      56.4% 99%,
+      50% 100%,
+      43.6% 99%,
+      37.9% 95.2%,
+      32.8% 91.6%,
+      26.6% 90.5%,
+      19.9% 89.2%,
+      14.6% 85.4%,
+      10.8% 80.1%,
+      9.5% 73.4%,
+      8.4% 67.2%,
+      4.8% 62.1%,
+      1% 56.4%,
+      0% 50%,
+      1% 43.6%,
+      4.8% 37.9%,
+      8.4% 32.8%,
+      9.5% 26.6%,
+      10.8% 19.9%,
+      14.6% 14.6%,
+      19.9% 10.8%,
+      26.6% 9.5%,
+      32.8% 8.4%,
+      37.9% 4.8%,
+      43.6% 1%,
+      50% 0%,
+      56.4% 1%,
+      62.1% 4.8%,
+      67.2% 8.4%,
+      73.4% 9.5%,
+      80.1% 10.8%,
+      85.4% 14.6%,
+      89.2% 19.9%,
+      90.5% 26.6%,
+      91.6% 32.8%,
+      95.2% 37.9%,
+      99% 43.6%
+    );
+    rotate: 411.4deg;
+  }
+  71.43% {
+    clip-path: polygon(
+      90.9% 90.9%,
+      85.1% 95.7%,
+      78.2% 98.9%,
+      70.7% 100%,
+      63.2% 99.3%,
+      56.3% 98%,
+      50% 97.4%,
+      43.7% 98%,
+      36.8% 99.3%,
+      29.3% 100%,
+      21.8% 98.9%,
+      14.9% 95.7%,
+      9.1% 90.9%,
+      4.3% 85.1%,
+      1.1% 78.2%,
+      0% 70.7%,
+      0.7% 63.2%,
+      2% 56.3%,
+      2.6% 50%,
+      2% 43.7%,
+      0.7% 36.8%,
+      0% 29.3%,
+      1.1% 21.8%,
+      4.3% 14.9%,
+      9.1% 9.1%,
+      14.9% 4.3%,
+      21.8% 1.1%,
+      29.3% 0%,
+      36.8% 0.7%,
+      43.7% 2%,
+      50% 2.6%,
+      56.3% 2%,
+      63.2% 0.7%,
+      70.7% 0%,
+      78.2% 1.1%,
+      85.1% 4.3%,
+      90.9% 9.1%,
+      95.7% 14.9%,
+      98.9% 21.8%,
+      100% 29.3%,
+      99.3% 36.8%,
+      98% 43.7%,
+      97.4% 50%,
+      98% 56.3%,
+      99.3% 63.2%,
+      100% 70.7%,
+      98.9% 78.2%,
+      95.7% 85.1%
+    );
+    rotate: 514.3deg;
+  }
+  85.71% {
+    clip-path: polygon(
+      90.6% 9.4%,
+      95.2% 15.3%,
+      98.3% 22.1%,
+      99.8% 29.4%,
+      100% 36.6%,
+      99.1% 43.5%,
+      97.5% 50%,
+      95.3% 56%,
+      92.6% 61.4%,
+      89.6% 66.4%,
+      86.4% 71%,
+      83% 75.3%,
+      79.3% 79.3%,
+      75.3% 83%,
+      71% 86.4%,
+      66.4% 89.6%,
+      61.4% 92.6%,
+      56% 95.3%,
+      50% 97.5%,
+      43.5% 99.1%,
+      36.6% 100%,
+      29.4% 99.8%,
+      22.1% 98.3%,
+      15.3% 95.2%,
+      9.4% 90.6%,
+      4.8% 84.7%,
+      1.7% 77.9%,
+      0.2% 70.6%,
+      0% 63.4%,
+      0.9% 56.5%,
+      2.5% 50%,
+      4.7% 44%,
+      7.4% 38.6%,
+      10.4% 33.6%,
+      13.6% 29%,
+      17% 24.7%,
+      20.7% 20.7%,
+      24.7% 17%,
+      29% 13.6%,
+      33.6% 10.4%,
+      38.6% 7.4%,
+      44% 4.7%,
+      50% 2.5%,
+      56.5% 0.9%,
+      63.4% 0%,
+      70.6% 0.2%,
+      77.9% 1.7%,
+      84.7% 4.8%
+    );
+    rotate: 617.1deg;
+  }
+  100% {
+    clip-path: polygon(
+      100% 50%,
+      95.5% 56%,
+      88.4% 60.3%,
+      87.5% 65.5%,
+      90.9% 73.6%,
+      89.5% 80.3%,
+      81.5% 81.5%,
+      73.9% 81.1%,
+      70.9% 86.2%,
+      68.5% 94.7%,
+      62.8% 97.6%,
+      55.6% 92.7%,
+      50% 89%,
+      44.4% 92.7%,
+      37.2% 97.6%,
+      31.5% 94.7%,
+      29.1% 86.2%,
+      26.1% 81.1%,
+      18.5% 81.5%,
+      10.5% 80.3%,
+      9.1% 73.6%,
+      12.5% 65.5%,
+      11.6% 60.3%,
+      4.5% 56%,
+      0% 50%,
+      4.5% 44%,
+      11.6% 39.7%,
+      12.5% 34.5%,
+      9.1% 26.4%,
+      10.5% 19.7%,
+      18.5% 18.5%,
+      26.1% 18.9%,
+      29.1% 13.8%,
+      31.5% 5.3%,
+      37.2% 2.4%,
+      44.4% 7.3%,
+      50% 11%,
+      55.6% 7.3%,
+      62.8% 2.4%,
+      68.5% 5.3%,
+      70.9% 13.8%,
+      73.9% 18.9%,
+      81.5% 18.5%,
+      89.5% 19.7%,
+      90.9% 26.4%,
+      87.5% 34.5%,
+      88.4% 39.7%,
+      95.5% 44%
+    );
+    rotate: 720deg;
   }
 }
 
 .card,
-.group-box,
-.table-wrap,
 .tile,
 .chart-card,
 .panel {
@@ -963,8 +1502,41 @@ dialog.ask p {
   border-radius: var(--r-lg);
 }
 .login-card {
-  background: var(--surface);
+  background: var(--surface-1);
   border-radius: var(--r-xl);
+}
+/* Expressive's segmented list: each item its own tile, 2px apart, with small inner corners and the
+   group's large ones outside. An item you can press rounds off under the pointer. */
+.group-box {
+  display: grid;
+  gap: var(--sp-2xs);
+  border-radius: var(--r-lg);
+}
+.group-box > *,
+.group-box > .disclosure > * {
+  background: var(--surface-1);
+  border-radius: var(--r-xs);
+}
+.group-box > .disclosure {
+  display: contents;
+}
+.group-box > .row,
+.group-box > .disclosure > .row {
+  border-bottom: 0;
+}
+.group-box > :is(a, .row-link, .link-row, .fold),
+.group-box > .disclosure > :is(a, .row-link, .link-row, .fold) {
+  transition:
+    border-radius var(--dur) var(--spring),
+    background-color var(--dur-fast) var(--fade);
+}
+.group-box > :is(a, .row-link, .link-row, .fold):hover,
+.group-box > .disclosure > :is(a, .row-link, .link-row, .fold):hover {
+  border-radius: var(--r-md);
+}
+.group-box > :is(a, .row-link, .link-row, .fold):active,
+.group-box > .disclosure > :is(a, .row-link, .link-row, .fold):active {
+  border-radius: var(--r-lg);
 }
 dialog.ask {
   background: var(--surface-2);
@@ -990,6 +1562,9 @@ dialog.ask,
 .card,
 .group-box {
   overflow: hidden;
+}
+.table-wrap {
+  border-radius: var(--r-lg);
 }
 .field.approval-note {
   display: block;
@@ -1088,7 +1663,7 @@ dialog.ask,
   place-items: center;
   background: transparent;
   color: var(--text-2);
-  transition: border-radius var(--dur-fast) var(--spring);
+  transition: border-radius var(--dur) var(--spring);
 }
 .composer .icon-btn svg.i {
   width: 22px;
@@ -1159,9 +1734,12 @@ dialog.ask,
   gap: var(--sp);
   flex-wrap: wrap;
 }
+/* Rows as a segmented list too. */
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0 var(--sp-2xs);
+  margin: calc(-1 * var(--sp-2xs)) 0;
   font-size: var(--fs-md);
 }
 .table th {
@@ -1169,20 +1747,43 @@ dialog.ask,
   font-weight: var(--fw-medium);
   font-size: var(--fs-sm);
   color: var(--text-2);
-  height: 48px;
+  height: 36px;
   padding: 0 var(--sp-lg);
-  border-bottom: 1px solid var(--line-strong);
   white-space: nowrap;
 }
 .table td {
-  height: 52px;
+  height: 56px;
   padding: var(--sp) var(--sp-lg);
-  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
   vertical-align: middle;
   white-space: nowrap;
+  transition: border-radius var(--dur) var(--spring);
 }
-.table tbody tr:last-child td {
-  border-bottom: 0;
+.table td:first-child {
+  border-radius: var(--r-xs) 0 0 var(--r-xs);
+}
+.table td:last-child {
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+}
+.table tbody tr:first-child td:first-child {
+  border-top-left-radius: var(--r-lg);
+}
+.table tbody tr:first-child td:last-child {
+  border-top-right-radius: var(--r-lg);
+}
+.table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: var(--r-lg);
+}
+.table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: var(--r-lg);
+}
+.table tbody tr.link-row:hover td:first-child {
+  border-top-left-radius: var(--r-md);
+  border-bottom-left-radius: var(--r-md);
+}
+.table tbody tr.link-row:hover td:last-child {
+  border-top-right-radius: var(--r-md);
+  border-bottom-right-radius: var(--r-md);
 }
 .table td.wrap {
   white-space: normal;
@@ -1295,7 +1896,6 @@ select.field option {
   height: 100%;
 }
 .tree {
-  border-right: 1px solid var(--line);
   padding: var(--sp-md) var(--sp);
   overflow: auto;
   background: var(--surface);
@@ -1336,6 +1936,11 @@ select.field option {
   flex-direction: column;
   min-height: 0;
   overflow: auto;
+}
+.memory .editor {
+  margin: 0 var(--sp) var(--sp) 0;
+  border-radius: var(--r-xl);
+  background: var(--surface-1);
 }
 .editor-bar {
   display: flex;
@@ -1622,7 +2227,6 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   }
   .app {
     grid-template-columns: minmax(0, 1fr);
-    padding: 0;
   }
   .sidebar {
     display: none;
@@ -1635,7 +2239,6 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
     display: none;
   }
   .main {
-    border-radius: 0;
     padding-bottom: calc(64px + env(safe-area-inset-bottom));
   }
   .chat-scroll {
@@ -1654,10 +2257,15 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
+  .memory .editor {
+    margin: 0;
+    border-radius: 0;
+    background: none;
+  }
   .tree {
     display: flex;
-    border-right: 0;
     border-bottom: 1px solid var(--line);
+
     gap: var(--sp-xs);
     overflow-x: auto;
     padding: var(--sp);
@@ -1721,7 +2329,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
     transition: background var(--dur-fast);
   }
   .tabbar a.active {
-    color: var(--text);
+    color: var(--secondary);
   }
   .tabbar a.active svg.i {
     background: var(--selected);
@@ -1801,7 +2409,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 .md blockquote {
   margin-left: 0;
   margin-right: 0;
-  border-left: 2px solid var(--line-strong);
+  border-left: 2px solid var(--line);
   padding-left: var(--sp-md);
   color: var(--text-2);
 }
@@ -1816,7 +2424,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 .msg .md td,
 .reader .md > table th,
 .reader .md > table td {
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   text-align: left;
 }
 .msg .md table {
@@ -1832,7 +2440,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 }
 .md hr {
   border: 0;
-  border-top: 1px solid var(--line-strong);
+  border-top: 1px solid var(--line);
 }
 .msg .md em:only-child {
   color: var(--muted);
@@ -1845,7 +2453,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   width: 100%;
   margin: var(--sp-2xs) 0;
   border: 0;
-  border-top: 1px solid var(--line-strong);
+  border-top: 1px solid var(--line);
 }
 
 .md .code-block {
@@ -1931,7 +2539,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   touch-action: pan-y;
 }
 .reply-chart .baseline {
-  stroke: var(--line-strong);
+  stroke: var(--line);
 }
 .reply-chart .tick.y {
   text-anchor: end;
@@ -1960,7 +2568,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   stroke-linecap: round;
 }
 .reply-chart .crosshair {
-  stroke: var(--line-strong);
+  stroke: var(--line);
 }
 /* A ring in the colour of what the chart sits on. */
 .reply-chart .dot {
@@ -2138,9 +2746,10 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-radius: var(--r-lg);
+  margin: var(--sp) var(--sp) var(--sp) 0;
+  border-radius: var(--r-xl);
   overflow: hidden;
-  background: var(--surface);
+  background: var(--surface-1);
 }
 .insp-head {
   height: 64px;
@@ -2177,7 +2786,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   border-radius: var(--r-lg);
   overflow: hidden;
   background: var(--screen);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   outline: 2px solid transparent;
   outline-offset: 2px;
   transition: outline-color var(--dur-fast);
@@ -2311,7 +2920,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   display: block;
   border-radius: var(--r-sm);
   overflow: hidden;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   background: var(--surface-2);
   line-height: 0;
 }
@@ -2472,7 +3081,7 @@ button.text-link:hover {
   border-color: var(--accent);
   background:
     var(--accent)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232c1600' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E")
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23472700' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E")
     center / 14px no-repeat;
 }
 .form-actions {
@@ -2864,7 +3473,7 @@ pre.payload {
   border-radius: var(--r-pill);
   background: transparent;
   color: var(--text-2);
-  transition: border-radius var(--dur-fast) var(--spring);
+  transition: border-radius var(--dur) var(--spring);
 }
 .bot-pick.on {
   border-radius: var(--r-md);
@@ -3111,9 +3720,9 @@ dialog.ask .field {
   color: inherit;
   text-decoration: none;
 }
-.table tbody tr.link-row:hover,
+.table tbody tr.link-row:hover td,
 .row-link:hover {
-  background: var(--fill-hover);
+  background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
 }
 .row-link:hover,
 a.row-main:hover {
@@ -3142,15 +3751,19 @@ a.row-main:hover {
   z-index: 1;
   width: 40px;
   height: 40px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-pill);
   display: grid;
   place-items: center;
   border: 0;
-  background: var(--surface-2);
-  color: var(--accent-text);
+  background: var(--selected);
+  color: var(--on-selected);
+  transition: border-radius var(--dur) var(--spring);
 }
 .to-bottom:hover {
   background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
+}
+.to-bottom:active {
+  border-radius: var(--r-md);
 }
 
 .view.dropping {
@@ -3297,7 +3910,7 @@ a.row-main:hover {
   aspect-ratio: 16 / 10;
   overflow: hidden;
   border-radius: var(--r-lg);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
 }
@@ -3348,7 +3961,7 @@ a.row-main:hover {
   width: 100%;
   height: 100%;
   min-height: 320px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line);
   border-radius: var(--r-lg);
 }
 .box-frame {
@@ -3398,20 +4011,11 @@ a.row-main:hover {
 .disclosure.open > .fold svg.i {
   transform: rotate(90deg);
 }
-.group-box > .disclosure {
-  gap: 0;
-}
 .group-box > .disclosure > .fold {
+  align-items: center;
   width: 100%;
   margin: 0;
-  min-height: 44px;
-  padding: var(--sp) var(--sp-md);
-  border-radius: 0;
-}
-.group-box > .disclosure.open > .fold,
-.group-box > .disclosure:not(:last-child) > .fold {
-  border-bottom: 1px solid var(--line);
-}
-.group-box > .disclosure:not(:last-child) > .row:last-child {
-  border-bottom: 1px solid var(--line);
+
+  min-height: 48px;
+  padding: var(--sp) var(--sp-lg);
 }
