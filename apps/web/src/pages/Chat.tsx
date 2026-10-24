@@ -795,7 +795,6 @@ export function Chat({ id }: { id: number }) {
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
   const bots = useStore((s) => s.bots);
-  const tint = useStore(chatTint);
   const [error, setError] = useState("");
   // Until the thread has loaded there's nothing to say about it, not even hello.
   const [ready, setReady] = useState(false);
@@ -999,7 +998,6 @@ export function Chat({ id }: { id: number }) {
     <>
       <section
         className={`view ${dropping ? "dropping" : ""}`}
-        style={tint ? ({ "--chat-tint": `var(--bot-${tint})` } as React.CSSProperties) : undefined}
         ref={scroller}
         onScroll={onScroll}
         onWheel={(e) => {
@@ -1109,10 +1107,6 @@ export function spoken(m: ThreadMessage, name: string): string {
 const groupMembers = (s: ReturnType<typeof getState>) => {
   const c = currentChat(s);
   return c?.kind === "group" ? c.botIds : null;
-};
-const chatTint = (s: ReturnType<typeof getState>) => {
-  const c = currentChat(s);
-  return c?.kind === "direct" ? s.bots[c.botIds[0] ?? ""]?.color : undefined;
 };
 
 /** A random id for a send. Not crypto.randomUUID, which needs https, and a LAN address may not have it. */

@@ -727,12 +727,6 @@ final class AppStore {
 
   var currentChat: Conversation? { conversations.first { $0.id == conversationId } }
 
-  /// A bot's own chat is in its colour; a group's is Hatbot's.
-  var chatTint: Bot.Tint {
-    guard let c = currentChat, c.kind == .direct, let id = c.botIds.first else { return .amber }
-    return bots[id]?.color ?? .amber
-  }
-
   /// nil model, effort or plugins: as in Settings, every plugin.
   struct BotChange: Encodable, Sendable {
     var name: String?

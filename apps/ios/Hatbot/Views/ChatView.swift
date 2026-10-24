@@ -682,7 +682,7 @@ private struct MessageRow: View, Equatable {
             .foregroundStyle(Color.onBrand)
             .textSelection(.enabled)
             .padding(Bubble.insets(.trailing))
-            .background(store.chatTint.bubble, in: shape)
+            .background(Color.userBubble, in: shape)
             .contentShape(.contextMenuPreview, shape)
             .contextMenu { copyButton(m.text) }
             .modifier(Spoken(label: "You", text: m.text))

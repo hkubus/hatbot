@@ -34,24 +34,6 @@ extension Bot.Tint {
     case .gray: .gray
     }
   }
-
-  /// Your bubbles in the bot's chat: solid, with white text, like Messages' blue. Darker than the
-  /// colour itself, so the white reads at 4.5:1 or better (the brand's amber gives 2.75:1).
-  var bubble: Color {
-    let hex: UInt32 =
-      switch self {
-      case .amber: 0xB05A00
-      case .red: 0xD70015
-      case .pink: 0xD30F45
-      case .purple: 0x8944AB
-      case .indigo: 0x3634A3
-      case .blue: 0x0062CC
-      case .teal: 0x007C91
-      case .green: 0x1F8239
-      case .gray: 0x6C6C70
-      }
-    return Color(uiColor: UIColor(hex: hex, alpha: 1))
-  }
 }
 
 extension UIColor {
