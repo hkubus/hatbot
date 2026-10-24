@@ -1678,9 +1678,9 @@ dialog.ask,
   outline: 0;
   resize: none;
   background: transparent;
-  padding: 10px var(--sp-xs);
+  /* One line is as tall as the buttons beside it, so it sits level with them. */
+  padding: calc((var(--h-lg) - 1.5em) / 2) var(--sp-xs);
   max-height: 160px;
-  min-height: 22px;
 }
 .composer textarea::placeholder {
   color: var(--muted);
