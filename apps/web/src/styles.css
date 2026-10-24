@@ -73,10 +73,14 @@
   --font-text: "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Catppuccin: Latte for light, Mocha for dark. --bg-light and --bg-dark are copied into index.html,
-     offline.html, theme.js and the manifest, which run before this loads. */
+  /* Catppuccin: Latte for light, Mocha for dark. --bg-light, --bg-dark, --bar-light and --bar-dark are
+     copied into index.html, offline.html, theme.js and the manifest, which run before this loads. */
   --bg-light: #eff1f5;
   --bg-dark: #1e1e2e;
+  /* The rail and the top and tab bars, a step darker than the page they frame. */
+  --bar-light: #e6e9ef;
+  --bar-dark: #181825;
+  --chrome: light-dark(var(--bar-light), var(--bar-dark));
   --surface: light-dark(#eff1f5, #1e1e2e);
   --surface-1: light-dark(#e6e9ef, #282839);
   --surface-2: light-dark(#dce0e8, #313244);
@@ -448,7 +452,7 @@ textarea:disabled {
   display: grid;
   grid-template-columns: var(--sb-w) minmax(0, 1fr);
   height: var(--app-h, 100dvh);
-  background: var(--surface);
+  background: var(--chrome);
 }
 
 /* Material 3 Expressive's expanded navigation rail, which replaces the drawer: it sits flush on the
@@ -649,6 +653,7 @@ textarea:disabled {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  background: var(--surface);
 }
 .toolbar {
   position: sticky;
@@ -660,6 +665,36 @@ textarea:disabled {
   align-items: center;
   gap: var(--sp-xs);
   padding: 0 var(--sp-md) 0 var(--gutter);
+  background: var(--chrome);
+}
+/* The page's rounded corners where it meets the bars. */
+.toolbar::before,
+.toolbar::after,
+.tabbar::before,
+.tabbar::after {
+  content: "";
+  position: absolute;
+  width: var(--r-xl);
+  height: var(--r-xl);
+  pointer-events: none;
+}
+.toolbar::before {
+  top: 100%;
+  left: 0;
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--r-xl) - 0.5px),
+    var(--chrome) var(--r-xl)
+  );
+}
+.app.insp .toolbar::after {
+  top: 100%;
+  right: 0;
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent calc(var(--r-xl) - 0.5px),
+    var(--chrome) var(--r-xl)
+  );
 }
 
 .toolbar h1 {
@@ -2389,7 +2424,34 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
     z-index: 30;
     grid-auto-flow: column;
     grid-auto-columns: 1fr;
-    background: var(--surface-1);
+    background: var(--chrome);
+  }
+  .toolbar::after {
+    top: 100%;
+    right: 0;
+    background: radial-gradient(
+      circle at 0 100%,
+      transparent calc(var(--r-xl) - 0.5px),
+      var(--chrome) var(--r-xl)
+    );
+  }
+  .tabbar::before {
+    bottom: 100%;
+    left: 0;
+    background: radial-gradient(
+      circle at 100% 0,
+      transparent calc(var(--r-xl) - 0.5px),
+      var(--chrome) var(--r-xl)
+    );
+  }
+  .tabbar::after {
+    bottom: 100%;
+    right: 0;
+    background: radial-gradient(
+      circle at 0 0,
+      transparent calc(var(--r-xl) - 0.5px),
+      var(--chrome) var(--r-xl)
+    );
   }
   .tabbar a {
     border: 0;
@@ -2832,7 +2894,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   margin: var(--sp) var(--sp) var(--sp) 0;
   border-radius: var(--r-xl);
   overflow: hidden;
-  background: var(--surface-1);
+  background: var(--surface);
 }
 .insp-head {
   height: 64px;
