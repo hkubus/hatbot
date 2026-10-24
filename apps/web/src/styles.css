@@ -89,7 +89,7 @@
   --outline: light-dark(#8c8fa1, #6c7086);
   --inverse: light-dark(#4c4f69, #cdd6f4);
   --on-inverse: light-dark(#eff1f5, #1e1e2e);
-  /* The bot you're with sets --hue (data-hue, below); the accents are its colour. */
+  /* The bot you're with sets --hue (data-hue, below); the accents and what needs you are its colour. */
   --hue: var(--bot-amber);
   --on-hue: light-dark(#eff1f5, #11111b);
   --hue-soft: color-mix(in srgb, var(--hue) 22%, var(--surface));
@@ -105,9 +105,9 @@
   --secondary: var(--hue);
   --user-bubble: var(--hue);
   --on-user-bubble: var(--on-hue);
-  --attention: light-dark(#1e66f5, #89b4fa);
-  --on-attention: light-dark(#eff1f5, #11111b);
-  --attention-soft: light-dark(#c9d8f5, #363f5b);
+  --attention: var(--hue);
+  --on-attention: var(--on-hue);
+  --attention-soft: var(--hue-soft);
   --on-attention-soft: var(--text);
   --danger: light-dark(#d20f39, #f38ba8);
   --danger-text: light-dark(#d20f39, #f38ba8);

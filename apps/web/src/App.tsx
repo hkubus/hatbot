@@ -225,12 +225,14 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               view.title),
   );
 
-  // The accents are the colour of the bot you're with, kept on other pages; a group's are amber.
+  // The accents are the colour of the bot you're with (or whose task it is), kept on other pages; a
+  // group's are amber.
   const hue = useStore((s): BotColor | undefined => {
     if (groupPage) return "amber";
     const chat = chatId ? s.conversations.find((c) => c.id === chatId) : undefined;
     if (chat?.kind === "group") return "amber";
-    const botId = botPage ?? chat?.botIds[0];
+    const botId =
+      botPage ?? chat?.botIds[0] ?? (taskId ? s.tasks[Number(taskId)]?.botId : undefined);
     return botId ? s.bots[botId]?.color : undefined;
   });
   useEffect(() => setHue(hue ?? savedHue()), [hue]);
