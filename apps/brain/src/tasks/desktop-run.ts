@@ -147,7 +147,7 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "desktop_shell",
     description:
-      "Run a bash command on the desktop as a separate shell user, and get its exit code and output as text. Use it for computing, scripts, downloading and processing files, and trying things out: it's faster than typing into a terminal on screen. Its home (/var/lib/hatbot-shell) persists between tasks. It can't see the browser profile, the browser's downloads or the screen, has no sudo, and reaches the internet but not the owner's network. Commands that delete data recursively or the like ask the owner first.",
+      "Run a bash command on the desktop as a separate shell user, and get its exit code and output as text. Use it for computing, scripts, downloading and processing files, and trying things out: it's faster than typing into a terminal on screen. Its home (/var/lib/hatbot-shell) persists between tasks. It can't see the browser profile, the browser's downloads or the screen, has no sudo, and reaches the internet but not the owner's network. Commands that delete data recursively or the like may ask the owner first.",
     schema: DesktopShell,
   },
   {
@@ -754,6 +754,58 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return textResult(call, r.text);
   });
 
+  /**
+   * As your Safety settings say: it goes ahead, the review looks, or null, it's yours to answer. The
+   * pages read are screened first: suspected injection skips the review.
+   */
+  const reviewed = async (
+    tool: string,
+    input: unknown,
+    what: string,
+    why: string,
+    kind: ApprovalKind,
+    url: string | null,
+  ): Promise<{ safe: boolean; why: string; by?: string } | null> => {
+    await screened();
+    const level = levelOf(
+      d.settings.get(),
+      { action: "ask", why, kind, tainted: true },
+      tasks.get(id)?.injectionSuspected ?? false,
+    );
+    if (level === "allow") {
+      tasks.addStep(id, {
+        kind: "approval",
+        name: "Not asking: your Safety settings allow it",
+        detail: what,
+        url,
+      });
+      return { safe: true, why: "" };
+    }
+    if (level !== "review") return null;
+    const request = tasks.requestOf(id);
+    const check = await safeToRun(
+      d,
+      { taskId: id },
+      {
+        ownerSaid: notes.length
+          ? `${request ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
+          : request,
+        goal: `${task.goal}\n\nDone when: ${task.successCriteria}`,
+        sources: [...sources],
+      },
+      { tool, input, what, why },
+      { reserve: usesReserve(task.origin) },
+    );
+    if (check.safe)
+      tasks.addStep(id, {
+        kind: "approval",
+        name: `Not asking: ${check.by} found it safe`,
+        detail: check.why ? `${what}. ${check.why}` : what,
+        url,
+      });
+    return check;
+  };
+
   const confirmIntent = withInput(ConfirmIntent, async (call, input) => {
     if (gate?.mode === "read")
       return textResult(
@@ -798,56 +850,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const arm = (hold: Hold | null) => {
       armed = { page, kind, summary: input.summary, control: input.control, hold };
     };
-    // The pages it read are screened first: suspected injection skips the review.
-    await screened();
     const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
-    const level = levelOf(
-      d.settings.get(),
-      { action: "ask", why, kind, tainted: true },
-      tasks.get(id)?.injectionSuspected ?? false,
+    const check = await reviewed(
+      "confirm_intent",
+      { ...input, kind, page, held: held?.what ?? null },
+      input.summary,
+      why,
+      kind,
+      page,
     );
-    if (level === "allow") {
-      tasks.addStep(id, {
-        kind: "approval",
-        name: "Not asking: your Safety settings allow it",
-        detail: input.summary,
-        url: page,
-      });
+    if (check?.safe) {
       arm(held?.hold ?? null);
       return textResult(call, "Approved. Go ahead with exactly this action.");
     }
-    if (level === "review") {
-      const request = tasks.requestOf(id);
-      const check = await safeToRun(
-        d,
-        { taskId: id },
-        {
-          ownerSaid: notes.length
-            ? `${request ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
-            : request,
-          goal: `${task.goal}\n\nDone when: ${task.successCriteria}`,
-          sources: [...sources],
-        },
-        {
-          tool: "confirm_intent",
-          input: { ...input, kind, page, held: held?.what ?? null },
-          what: input.summary,
-          why,
-        },
-        { reserve: usesReserve(task.origin) },
-      );
-      if (check.safe) {
-        tasks.addStep(id, {
-          kind: "approval",
-          name: `Not asking: ${check.by} found it safe`,
-          detail: check.why ? `${input.summary}. ${check.why}` : input.summary,
-          url: page,
-        });
-        arm(held?.hold ?? null);
-        return textResult(call, "Approved. Go ahead with exactly this action.");
-      }
-      if (check.why) reason = [reason, `${check.by}: ${check.why}`].filter(Boolean).join(" ");
-    }
+    if (check?.why) reason = [reason, `${check.by}: ${check.why}`].filter(Boolean).join(" ");
     const { outcome, note } = await askApproval({
       ...input,
       ...(reason ? { reason } : {}),
@@ -882,34 +898,32 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     );
   });
 
-  /** Destructive patterns ask, as on your hosts. */
+  /** Destructive patterns ask, as on your hosts, unless the review finds them safe. */
   const shellCall = withInput(DesktopShell, async (call, input) => {
     const { command, timeout_s: timeoutS = 60 } = input;
     if (d.desktop.get().control === "owner") await waitForOwner();
     const danger = destructive(command);
     let note: string | null = null;
-    const level =
-      danger &&
-      levelOf(
-        d.settings.get(),
-        { action: "ask", why: danger.why, kind: danger.kind, always: true },
-        tasks.get(id)?.injectionSuspected ?? false,
-      );
-    if (danger && level !== "allow") {
-      const answer = await askApproval({
-        kind: danger.kind,
-        summary: `On the desktop: ${command}`,
-        reason: `This command ${danger.why}.`,
-      });
-      note = answer.note;
-      if (answer.outcome !== "approved")
-        return textResult(
-          call,
-          note
-            ? `The owner denied this. ${ownerNote(note)}`
-            : "The owner denied this. Don't try it another way.",
-          true,
-        );
+    if (danger) {
+      const summary = `On the desktop: ${command}`;
+      const why = `This command ${danger.why}.`;
+      const check = await reviewed("desktop_shell", input, summary, why, danger.kind, null);
+      if (!check?.safe) {
+        const answer = await askApproval({
+          kind: danger.kind,
+          summary,
+          reason: check?.why ? `${why} ${check.by}: ${check.why}` : why,
+        });
+        note = answer.note;
+        if (answer.outcome !== "approved")
+          return textResult(
+            call,
+            note
+              ? `The owner denied this. ${ownerNote(note)}`
+              : "The owner denied this. Don't try it another way.",
+            true,
+          );
+      }
     }
     tasks.addStep(id, { kind: "action", name: "desktop_shell", detail: command, url: null });
     const r = await agent.exec(command, timeoutS);

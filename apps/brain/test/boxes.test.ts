@@ -308,31 +308,42 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   expect(model.requests).toHaveLength(2);
 });
 
-test("after reading untrusted content, giving a box a feed waits for the owner, past Haiku's review", async () => {
+test("after reading untrusted content, a feed for a box that reaches no host goes to the review; one that reaches a host waits for the owner", async () => {
+  const feed = (box: number) =>
+    toolUse("box_feed", { box, name: "load", tool: "lab_load", tool_input: { node: "pve" } });
   const model = new FakeModel([
     { content: [text("Hi.")] },
-    {
-      content: [
-        toolUse("box_feed", {
-          box: 1,
-          name: "load",
-          tool: "lab_load",
-          tool_input: { node: "pve" },
-        }),
-      ],
-    },
-    { content: [text("Not added.")] },
+    { content: [feed(1)] },
+    { content: [feed(2)] },
+    { content: [text("One added.")] },
   ]);
-  const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);
-  t.taskModel.onCreate = (p) =>
+  model.onCreate = (p) =>
     p.system === REVIEW_PROMPT ? JSON.stringify({ safe: true, why: "" }) : undefined;
+  const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);
   await t.plugins.update("lab", { enabled: true });
   t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
+  t.boxes.create(
+    {
+      botId: "hatbot",
+      conversationId: 1,
+      title: "Remote",
+      html: PAGE,
+      files: [
+        { path: "index.html", content: PAGE },
+        { path: "box.json", content: JSON.stringify({ hosts: ["x.test"] }) },
+      ],
+    },
+    {},
+  );
+  expect(t.boxes.hosts(2)).toEqual(["x.test"]);
   await t.thread.post("hi").done;
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
-  const reply = t.thread.post("show the load in the box");
+  const reply = t.thread.post("show the load in both boxes");
   const asked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(asked.summary).toContain("box #2");
   t.approvals.decide(asked.id, "deny", "web");
   await reply.done;
-  expect(t.boxes.feeds?.list(1)).toEqual([]);
+  expect(t.boxes.feeds?.list(1).map((f) => f.name)).toEqual(["load"]);
+  expect(t.boxes.feeds?.list(2)).toEqual([]);
+  expect(t.approvals.list(false)).toHaveLength(1);
 });

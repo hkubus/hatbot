@@ -432,9 +432,10 @@ test("hitting the task limit asks to raise it", async () => {
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
-test("desktop_shell runs commands as text; destructive ones ask first", async () => {
+test("desktop_shell runs commands as text; destructive ones go to the review, then the owner", async () => {
   const work = new FakeModel([
     { content: [toolUse("desktop_shell", { command: "python3 -c 'print(6*7)'" })] },
+    { content: [toolUse("desktop_shell", { command: "rm -rf ~/build" })] },
     { content: [toolUse("desktop_shell", { command: "rm -rf ~/experiments" })] },
     finish("Worked it out."),
   ]);
@@ -444,19 +445,29 @@ test("desktop_shell runs commands as text; destructive ones ask first", async ()
     output: c.includes("print") ? "42" : "",
     timedOut: false,
   });
+  t.taskModel.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify(
+          JSON.stringify(p.messages).includes("build")
+            ? { safe: true, why: "Build output." }
+            : { safe: false, why: "Nothing else has these files." },
+        )
+      : undefined;
   const task = startTask(t, "Compute");
   const approval = await pending(t);
   expect(approval).toMatchObject({
     kind: "delete",
     summary: "On the desktop: rm -rf ~/experiments",
   });
-  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'"]);
+  expect(approval.reason).toContain("Opus: Nothing else has these files.");
+  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'", "rm -rf ~/build"]);
   t.approvals.decide(approval.id, "deny", "web");
   await t.tasks.idle();
   expect(t.tasks.get(task.id)?.status).toBe("done");
-  expect(t.agent.commands).toHaveLength(1);
+  expect(t.agent.commands).toHaveLength(2);
   expect(lastText(work.requests[1])).toContain("Exit code 0\\n42");
-  expect(lastText(work.requests[2])).toContain("The owner denied this.");
+  expect(lastText(work.requests[3])).toContain("The owner denied this.");
+  expect(t.approvals.list(false)).toHaveLength(1);
 });
 
 test("a click in a frame Hatbot can't enter, or that it couldn't look at, is held", async () => {
