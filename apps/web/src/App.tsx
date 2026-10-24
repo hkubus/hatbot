@@ -333,7 +333,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           <nav className="nav nav-views">
             {VIEWS.filter((v) => v.path !== "/").map((v) => (
               <Link key={v.path} className={`nav-item ${v === view ? "active" : ""}`} to={v.path}>
-                <Icon name={v.icon} />
+                <Icon name={v.icon} filled={v === view} />
                 <span>{v.title}</span>
                 {v.path === "/tasks" && pending > 0 && (
                   <span className="count attn">{pending}</span>
@@ -482,7 +482,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             className={v.path === (TAB_OF[view.path] ?? view.path) ? "active" : ""}
             to={v.path}
           >
-            <Icon name={v.icon} />
+            <Icon name={v.icon} filled={v.path === (TAB_OF[view.path] ?? view.path)} />
             {v.title}
             {v.path === "/tasks" && pending > 0 && <span className="badge">{pending}</span>}
             {v.path === "/" && unread > 0 && <span className="badge unread">{unread}</span>}
@@ -554,20 +554,26 @@ function ChatNav({
         item(
           chatPath(c.id),
           c.id === current,
-          <ChatIcon chat={c} />,
+          <ChatIcon chat={c} filled={c.id === current} />,
           chatName(getState(), c),
           c.unread,
         ),
       )}
-      {!chats.length && item("/", current > 0, <Icon name="chat" />, "Chat")}
+      {!chats.length && item("/", current > 0, <Icon name="chat" filled={current > 0} />, "Chat")}
       {item("/bots/new", path === "/bots/new", <Icon name="plus" />, "New bot")}
-      {manyBots && item("/groups/new", path === "/groups/new", <Icon name="users" />, "New group")}
+      {manyBots &&
+        item(
+          "/groups/new",
+          path === "/groups/new",
+          <Icon name="users" filled={path === "/groups/new"} />,
+          "New group",
+        )}
     </>
   );
 }
 
-function ChatIcon({ chat }: { chat: Conversation }) {
+function ChatIcon({ chat, filled }: { chat: Conversation; filled: boolean }) {
   const bot = useStore((s) => (chat.kind === "direct" ? s.bots[chat.botIds[0] ?? ""] : undefined));
-  if (bot) return <BotMark bot={bot} />;
-  return <Icon name={chat.kind === "group" ? "users" : "chat"} />;
+  if (bot) return <BotMark bot={bot} filled={filled} />;
+  return <Icon name={chat.kind === "group" ? "users" : "chat"} filled={filled} />;
 }

@@ -304,11 +304,17 @@ svg.i {
   width: 18px;
   height: 18px;
   flex: none;
-  stroke: currentColor;
+  fill: currentColor;
+}
+svg.i .hat {
   fill: none;
-  stroke-width: 1.9;
+  stroke: currentColor;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+svg.i .hat .crown {
+  fill: currentColor;
 }
 .mono,
 .secret,
@@ -500,7 +506,6 @@ textarea:disabled {
 .brand-mark svg.i {
   width: 22px;
   height: 22px;
-  stroke-width: 2;
 }
 .brand-name {
   font-weight: var(--fw-medium);
@@ -2325,7 +2330,6 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
     height: 24px;
     padding: var(--sp-xs) var(--sp-lg);
     border-radius: var(--r-pill);
-    stroke-width: 1.8;
     transition: background var(--dur-fast);
   }
   .tabbar a.active {
