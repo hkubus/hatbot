@@ -3642,6 +3642,72 @@ pre.payload {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Between a phone and a wide screen, Material's navigation rail: icons with their labels under them. */
+@media (min-width: 900px) and (max-width: 1199px) {
+  .app {
+    --sb-w: 96px;
+  }
+  .sidebar {
+    padding: 0 var(--sp-xs) var(--sp-lg);
+  }
+  .sidebar > .brand {
+    flex-direction: column;
+    justify-content: center;
+    height: auto;
+    gap: var(--sp);
+    padding: var(--sp-md) 0;
+  }
+  .brand-name,
+  .sidebar > .brand > .spacer {
+    display: none;
+  }
+  /* The rail would clip it. */
+  .new-menu {
+    position: fixed;
+    top: 64px;
+    left: calc(var(--sb-w) - var(--sp));
+    right: auto;
+  }
+  .sidebar .nav .nav-item {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--sp-xs);
+    height: auto;
+    padding: var(--sp-xs) 0 var(--sp);
+    font-size: var(--fs-sm);
+    text-align: center;
+  }
+  .sidebar .nav .nav-item,
+  .sidebar .nav .nav-item:hover,
+  .sidebar .nav .nav-item.active {
+    background: none;
+  }
+  .sidebar .nav .nav-item svg.i {
+    box-sizing: content-box;
+    padding: var(--sp-xs) var(--sp-lg);
+    border-radius: var(--r-pill);
+    transition: background-color var(--dur-fast) var(--fade);
+  }
+  .sidebar .nav .nav-item:hover svg.i {
+    background: var(--fill-hover);
+  }
+  .sidebar .nav .nav-item.active svg.i {
+    background: var(--selected);
+  }
+  .sidebar .nav .nav-item > span:not(.count) {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sidebar .nav .nav-item .count {
+    position: absolute;
+    top: 0;
+    left: calc(50% + 6px);
+    margin: 0;
+  }
+}
 .chat-switch {
   display: none;
   align-items: center;
