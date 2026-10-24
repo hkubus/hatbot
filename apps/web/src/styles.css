@@ -927,12 +927,12 @@ textarea:disabled {
   color: var(--accent-text);
 }
 
-/* Expressive's connected button group, which replaces the segmented button: the ends are round,
-   the joins square-ish, and the chosen one goes fully round. */
+/* The options share one pill-shaped track, and the chosen one is a filled pill on it. */
 .seg {
   display: inline-flex;
   flex: none;
-  gap: var(--sp-2xs);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
 }
 .seg button {
   display: inline-flex;
@@ -940,8 +940,8 @@ textarea:disabled {
   border: 0;
   height: var(--h);
   padding: 0 var(--sp-lg);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
+  border-radius: var(--r-pill);
+  background: transparent;
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
   color: var(--text-2);
@@ -950,24 +950,15 @@ textarea:disabled {
     border-radius var(--dur) var(--spring),
     background-color var(--dur-fast) var(--fade);
 }
-.seg button:first-child {
-  border-top-left-radius: var(--r-pill);
-  border-bottom-left-radius: var(--r-pill);
-}
-.seg button:last-child {
-  border-top-right-radius: var(--r-pill);
-  border-bottom-right-radius: var(--r-pill);
-}
 .seg button:hover {
   background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
 }
 .seg button:active {
-  border-radius: var(--r-xs);
+  border-radius: var(--r-md);
 }
 .seg button.active {
-  background: var(--primary);
+  background-color: var(--primary);
   color: var(--on-primary);
-  border-radius: var(--r-pill);
 }
 
 .switch {
