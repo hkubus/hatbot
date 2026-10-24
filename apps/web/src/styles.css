@@ -2047,6 +2047,13 @@ select.field option {
 .row input[type="number"] {
   width: 84px;
   text-align: right;
+  /* No spinner: Firefox always draws one, and it crowds the number. Arrow keys still step. */
+  appearance: textfield;
+}
+.row input[type="number"]::-webkit-inner-spin-button,
+.row input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
 }
 .row .affix input[type="number"] {
   width: 64px;
