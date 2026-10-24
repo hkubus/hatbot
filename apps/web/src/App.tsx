@@ -425,7 +425,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 onClick={() => void setIncognito(!incognito)}
                 title={incognito ? "Leave incognito" : "Incognito"}
               >
-                <Icon name="incognito" filled={incognito} />
+                <Icon name="incognito" />
               </button>
             )}
             {view.path !== "/search" && (
