@@ -86,6 +86,10 @@ export function useLeaveGuard(dirty: boolean): () => void {
 export function Dialogs() {
   const q = useSyncExternalStore(subscribe, () => open);
   const ref = useRef<HTMLDialogElement>(null);
+  // Still shown while it shrinks away.
+  const last = useRef(q);
+  if (q) last.current = q;
+  const shown = q ?? last.current;
   const [value, setValue] = useState("");
   useEffect(() => {
     hosts++;
@@ -114,35 +118,35 @@ export function Dialogs() {
         q?.answer(null);
       }}
     >
-      {q && (
+      {shown && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (q.input === undefined) q.answer("");
-            else if (value.trim()) q.answer(value.trim());
+            if (shown.input === undefined) shown.answer("");
+            else if (value.trim()) shown.answer(value.trim());
           }}
         >
-          <p>{q.text}</p>
-          {q.input !== undefined && (
+          <p>{shown.text}</p>
+          {shown.input !== undefined && (
             <input
               className="field"
               value={value}
-              placeholder={q.input}
-              aria-label={q.text}
+              placeholder={shown.input}
+              aria-label={shown.text}
               spellCheck={false}
               onChange={(e) => setValue(e.target.value)}
             />
           )}
           <div className="ask-actions">
-            <button type="button" className="btn" onClick={() => q.answer(null)}>
-              {q.cancel}
+            <button type="button" className="btn" onClick={() => shown.answer(null)}>
+              {shown.cancel}
             </button>
             <button
               type="submit"
-              className={`btn ${q.danger ? "danger" : "accent"}`}
-              disabled={q.input !== undefined && !value.trim()}
+              className={`btn ${shown.danger ? "danger" : "accent"}`}
+              disabled={shown.input !== undefined && !value.trim()}
             >
-              {q.ok}
+              {shown.ok}
             </button>
           </div>
         </form>

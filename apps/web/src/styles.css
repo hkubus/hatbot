@@ -464,6 +464,21 @@ textarea:disabled {
 .new-menu .nav-item {
   border-radius: 0;
 }
+/* Menus unroll down from where they hang. */
+.new-menu,
+.chat-menu,
+.command-menu {
+  animation: unroll var(--dur) var(--spring-soft);
+}
+@keyframes unroll {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0 round var(--r-md));
+  }
+  to {
+    clip-path: inset(0 round var(--r-md));
+  }
+}
 /* The rail's + takes the mark's shape. */
 .brand,
 .brand-mark {
@@ -571,6 +586,34 @@ textarea:disabled {
   background: var(--selected);
   color: var(--on-selected);
 }
+/* The chosen item's pill grows out from its middle, as Material's indicator does. */
+.sidebar .nav-item {
+  position: relative;
+  isolation: isolate;
+}
+.sidebar .nav-item.active {
+  background: transparent;
+}
+.sidebar .nav-item.active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--selected);
+  animation: pill-in var(--dur-slow) var(--spring-soft);
+}
+@keyframes icon-pill {
+  from {
+    padding-inline: var(--sp-xs);
+  }
+}
+@keyframes pill-in {
+  from {
+    inset: 0 45%;
+    opacity: 0;
+  }
+}
 .tree :is(button, a).active {
   font-weight: var(--fw-medium);
 }
@@ -587,6 +630,15 @@ textarea:disabled {
   color: var(--text-2);
 }
 
+.nav-item .count:is(.attn, .unread),
+.tabbar .badge {
+  animation: pop var(--dur) var(--spring);
+}
+@keyframes pop {
+  from {
+    scale: 0;
+  }
+}
 .nav-item .count.attn {
   background: var(--attention);
   color: var(--on-attention);
@@ -752,6 +804,12 @@ textarea:disabled {
   height: 3px;
   border-radius: 3px 3px 0 0;
   background: var(--primary);
+  animation: grow-x var(--dur) var(--spring);
+}
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
 }
 .tb-btn {
   height: var(--h);
@@ -788,6 +846,8 @@ textarea:disabled {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* Not filled: a transform left on it would hold the fixed things inside it. */
+  animation: rise var(--dur) var(--spring);
 }
 
 .btn {
@@ -2380,6 +2440,15 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   gap: var(--sp-md);
   animation: rise var(--dur) var(--spring) both;
 }
+.toast.leaving {
+  animation: sink var(--dur-fast) var(--fade) both;
+}
+@keyframes sink {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
 .toast svg.i {
   color: light-dark(#8dd89c, #1e6c34);
 }
@@ -2531,6 +2600,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   .tabbar a.active svg.i {
     background: var(--selected);
     color: var(--on-selected);
+    animation: icon-pill var(--dur) var(--spring);
   }
   .tabbar .badge {
     position: absolute;
@@ -3235,8 +3305,10 @@ button.text-link:hover {
   border: 2px solid var(--text-2);
   border-radius: 2px;
   cursor: pointer;
+  background: transparent var(--tick) center / 0 no-repeat;
   transition:
-    background var(--dur-fast),
+    background-color var(--dur-fast),
+    background-size var(--dur) var(--spring),
     border-color var(--dur-fast);
 }
 .todo-box:hover:not(:disabled) {
@@ -3256,7 +3328,8 @@ html[data-theme="dark"] {
 }
 .todo-box:checked {
   border-color: var(--primary);
-  background: var(--primary) var(--tick) center / 14px no-repeat;
+  background-color: var(--primary);
+  background-size: 14px;
 }
 .form-actions {
   display: flex;
@@ -3735,6 +3808,10 @@ pre.payload {
   }
   .sidebar .nav .nav-item.active svg.i {
     background: var(--selected);
+    animation: icon-pill var(--dur) var(--spring);
+  }
+  .sidebar .nav .nav-item.active::before {
+    content: none;
   }
   .sidebar .nav .nav-item > span:not(.count) {
     max-width: 100%;
@@ -3806,6 +3883,10 @@ pre.payload {
   height: 16px;
   transform: rotate(90deg);
   color: var(--muted);
+  transition: transform var(--dur) var(--spring);
+}
+.chat-switch[aria-expanded="true"] svg.i {
+  transform: rotate(-90deg);
 }
 .chat-menu {
   position: absolute;
@@ -3982,6 +4063,33 @@ dialog.ask::backdrop {
 dialog.ask[open] {
   animation: dialog-in var(--dur) var(--spring);
 }
+/* Closing, it shrinks away; the top layer keeps it there until it has. */
+dialog.ask {
+  transition:
+    opacity var(--dur-fast) var(--fade),
+    scale var(--dur-fast) var(--fade),
+    overlay var(--dur-fast) allow-discrete,
+    display var(--dur-fast) allow-discrete;
+}
+dialog.ask:not([open]) {
+  opacity: 0;
+  scale: 0.96;
+  pointer-events: none;
+}
+dialog.ask::backdrop {
+  transition:
+    opacity var(--dur-fast) var(--fade),
+    overlay var(--dur-fast) allow-discrete,
+    display var(--dur-fast) allow-discrete;
+}
+dialog.ask:not([open])::backdrop {
+  opacity: 0;
+}
+@starting-style {
+  dialog.ask[open]::backdrop {
+    opacity: 0;
+  }
+}
 @keyframes dialog-in {
   from {
     opacity: 0;
@@ -4055,6 +4163,7 @@ a.row-main:hover {
   background: var(--selected);
   color: var(--on-selected);
   transition: border-radius var(--dur) var(--spring);
+  animation: pop var(--dur) var(--spring);
 }
 .to-bottom:hover {
   background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
@@ -4307,6 +4416,9 @@ a.row-main:hover {
 }
 .disclosure.open > .fold svg.i {
   transform: rotate(90deg);
+}
+.disclosure.open > :not(.fold) {
+  animation: rise var(--dur) var(--spring) both;
 }
 .group-box > .disclosure > .fold {
   align-items: center;

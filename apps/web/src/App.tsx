@@ -201,7 +201,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     const t = setTimeout(() => setDown(true), 4000);
     return () => clearTimeout(t);
   }, [connected]);
-  const [toasts, setToasts] = useState<{ id: number; text: string; kind: ToastKind }[]>([]);
+  const [toasts, setToasts] = useState<
+    { id: number; text: string; kind: ToastKind; leaving?: boolean }[]
+  >([]);
   // The reader is Memory's for a note; an attachment's stays with the view it was opened from.
   const reading = path === "/read";
   const openedFrom = useRef<View>(VIEWS[0]);
@@ -269,6 +271,10 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const toast = useCallback<Toast>((text, kind = "done") => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, text, kind }]);
+    setTimeout(
+      () => setToasts((t) => t.map((x) => (x.id === id ? { ...x, leaving: true } : x))),
+      2600,
+    );
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, []);
 
@@ -502,7 +508,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
         {toasts.map((t) => {
           const icon = TOAST_ICON[t.kind];
           return (
-            <div className={`toast ${t.kind}`} key={t.id}>
+            <div className={`toast ${t.kind} ${t.leaving ? "leaving" : ""}`} key={t.id}>
               {icon && <Icon name={icon} />}
               {t.text}
             </div>
