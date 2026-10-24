@@ -298,7 +298,10 @@ export function PendingApproval({
     <div className="approval">
       <div className={more && shot ? "thumb-wrap" : undefined}>
         <div className="approval-text">
-          <p className="approval-what">{a.summary}</p>
+          <p className="approval-what">
+            {compact && <Icon name="shield" />}
+            {a.summary}
+          </p>
           {why && a.reason && <p>{a.reason}</p>}
           {a.sources.length > 0 && <p className="muted">After reading {a.sources.join(", ")}</p>}
         </div>
@@ -332,12 +335,7 @@ export function PendingApproval({
           </button>
         )}
         <span className="spacer" />
-        <button
-          type="button"
-          className="btn tint-danger"
-          disabled={busy}
-          onClick={() => decide("deny")}
-        >
+        <button type="button" className="btn tonal" disabled={busy} onClick={() => decide("deny")}>
           Deny
         </button>
         {a.scopes.includes("always") && (

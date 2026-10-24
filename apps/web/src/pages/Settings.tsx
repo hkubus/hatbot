@@ -168,10 +168,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     <section className="view">
       <div className="page">
         <Group className="show-phone">
-          <LinkRow to="/todo" label="To-do" />
           <LinkRow to="/boxes" label="Boxes" />
-          <LinkRow to="/schedules" label="Automations" />
-          <LinkRow to="/spend" label="Spend" />
         </Group>
 
         <Group title="Models">

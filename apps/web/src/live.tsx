@@ -25,7 +25,7 @@ type Conn = "connecting" | "live" | "offline";
 
 type Viewer = { canvas: React.RefObject<HTMLCanvasElement | null>; setConn: (c: Conn) => void };
 
-/** One socket per tab however many screens show it: the inspector beside a task's page, say. */
+/** One socket per tab however many screens show it. */
 const feed = (() => {
   const viewers = new Set<Viewer>();
   let socket: WebSocket | null = null;

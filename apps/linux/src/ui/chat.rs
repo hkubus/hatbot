@@ -7,7 +7,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk::glib;
 use hatbot::core::format;
-use hatbot::core::models::{ConversationKind, MessageLink, ThreadMessage};
+use hatbot::core::models::{BOT_COLORS, ConversationKind, MessageLink, ThreadMessage};
 use hatbot::core::thread;
 use hatbot::store::{Change, Listener, Store};
 
@@ -407,9 +407,15 @@ impl Inner {
     }
 
     fn render(self: &Rc<Self>) {
-        let (chat, incognito, name, loaded, empty, has_earlier, is_group) = {
+        let (chat, incognito, name, loaded, empty, has_earlier, is_group, tint) = {
             let st = self.store.state();
             let c = st.current_chat();
+            // A bot's own chat is in its colour; a group's is Hatbot's.
+            let tint = c
+                .filter(|c| c.kind == ConversationKind::Direct)
+                .and_then(|c| st.bots.get(c.bot_ids.first()?))
+                .map_or("amber", |b| b.color.as_str())
+                .to_owned();
             (
                 st.conversation_id,
                 st.incognito,
@@ -418,8 +424,13 @@ impl Inner {
                 st.messages.is_empty(),
                 st.has_earlier,
                 c.is_some_and(|c| c.kind == ConversationKind::Group),
+                tint,
             )
         };
+        for c in BOT_COLORS {
+            self.list.remove_css_class(&format!("tint-{c}"));
+        }
+        self.list.add_css_class(&format!("tint-{tint}"));
         if self.chat.replace((chat, incognito)) != (chat, incognito) {
             self.open_folds.borrow_mut().clear();
             self.sticky.set(true);
