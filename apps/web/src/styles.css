@@ -839,9 +839,9 @@ textarea:disabled {
   color: var(--on-attention-soft);
   border-color: transparent;
 }
-.btn.tint-danger {
-  background: var(--danger-soft);
-  color: var(--on-danger-soft);
+.btn.tonal {
+  background: light-dark(#d6d9c8, var(--surface-3));
+  color: var(--text);
   border-color: transparent;
 }
 .btn.ghost {
@@ -875,7 +875,7 @@ textarea:disabled {
 .btn.sm:active:not(:disabled) {
   border-radius: var(--r-sm);
 }
-.btn:is(.primary, .accent, .danger, .tint-attn, .tint-danger, [aria-pressed="true"]):disabled {
+.btn:is(.primary, .accent, .danger, .tint-attn, .tonal, [aria-pressed="true"]):disabled {
   opacity: 1;
   background: color-mix(in srgb, var(--text) 12%, transparent);
   color: color-mix(in srgb, var(--text) 38%, transparent);
@@ -3350,25 +3350,46 @@ pre.payload {
   padding: 0 0 var(--sp-lg);
 }
 
+/* What's waiting sits on the message box, joined to it as one stack. */
 .approval-tray {
   max-width: var(--measure);
   max-height: min(40vh, 340px);
   overflow-y: auto;
   margin: 0 auto;
-  padding-bottom: var(--sp-md);
+  padding-bottom: 2px;
   display: grid;
-  gap: var(--sp);
+  gap: 2px;
 }
 .approval-tray > .approval {
   padding: var(--sp-lg);
-  background: var(--surface-1);
-  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  border-radius: var(--r-xs);
   animation: rise var(--dur) var(--spring) both;
+}
+.approval-tray > .approval:first-child {
+  border-top-left-radius: var(--r-xl);
+  border-top-right-radius: var(--r-xl);
+}
+.composer-wrap:has(.approval-tray > .approval) .composer {
+  border-top-left-radius: var(--r-xs);
+  border-top-right-radius: var(--r-xs);
+}
+.approval-tray .approval-what {
+  display: flex;
+  gap: var(--sp);
+}
+.approval-tray .approval-what svg.i {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--attention);
 }
 .approval-tray .shot {
   max-width: 280px;
 }
 .text-link.tray-more {
+  order: -1;
+  margin-bottom: var(--sp);
   justify-self: start;
   color: var(--muted);
   text-decoration: underline;
