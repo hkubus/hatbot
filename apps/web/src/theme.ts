@@ -1,4 +1,3 @@
-import type { BotColor } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 
 export type Theme = "system" | "light" | "dark";
@@ -21,15 +20,6 @@ export function setTheme(t: Theme) {
   for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))
     m.content = barColor(t, m.media);
   window.dispatchEvent(new Event("hatbot:theme"));
-}
-
-/** The colour of the bot the app last followed: styles.css's --hue. */
-export const savedHue = (): BotColor =>
-  (localStorage.getItem("hatbot-hue") as BotColor | null) ?? "amber";
-
-export function setHue(color: BotColor) {
-  localStorage.setItem("hatbot-hue", color);
-  document.documentElement.dataset.hue = color;
 }
 
 export function useTheme(): Theme {
