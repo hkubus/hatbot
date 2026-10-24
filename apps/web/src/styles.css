@@ -301,15 +301,15 @@ a:hover {
   text-decoration: underline;
 }
 svg.i {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   flex: none;
   fill: currentColor;
 }
 svg.i .hat {
   fill: none;
   stroke: currentColor;
-  stroke-width: 2;
+  stroke-width: 2.25;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -388,8 +388,8 @@ pre.payload,
 .composer-file svg,
 .box-line svg.i {
   flex: none;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   color: var(--muted);
 }
 .muted {
@@ -642,8 +642,8 @@ textarea:disabled {
   transition: border-radius var(--dur) var(--spring);
 }
 .tb-btn svg.i {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 .tb-btn:hover {
   background: var(--fill-hover);
@@ -742,8 +742,8 @@ textarea:disabled {
   padding: 0 var(--sp-md);
 }
 .btn.sm svg.i {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 .btn.sm:active:not(:disabled) {
   border-radius: var(--r-sm);
@@ -768,8 +768,8 @@ textarea:disabled {
   white-space: nowrap;
 }
 .chip svg.i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 .chip.attn {
   background: var(--attention-soft);
@@ -786,8 +786,8 @@ textarea:disabled {
   white-space: nowrap;
 }
 .status svg.i {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 .status.ok {
   color: var(--success-text);
@@ -954,8 +954,8 @@ textarea:disabled {
 }
 .fold svg.i {
   flex: none;
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   align-self: center;
   transition: transform var(--dur) var(--spring);
 }
@@ -1671,8 +1671,8 @@ dialog.ask,
   transition: border-radius var(--dur) var(--spring);
 }
 .composer .icon-btn svg.i {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 .composer .icon-btn:hover {
   background: var(--fill-hover);
@@ -1929,8 +1929,8 @@ select.field option {
   color: var(--text);
 }
 .tree :is(button, a) svg.i {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   color: var(--text-2);
 }
 .tree :is(button, a).active svg.i {
@@ -2859,8 +2859,8 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   white-space: nowrap;
 }
 .live-task svg.i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex: none;
   color: var(--soft);
 }
@@ -2896,8 +2896,8 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 }
 .log svg.i,
 .tl-step > svg.i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   margin-top: 1px;
   color: var(--muted);
 }
@@ -3174,8 +3174,8 @@ pre.payload {
   color: var(--text);
 }
 .msg-act svg.i {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 .task-working {
   display: flex;
@@ -3517,8 +3517,8 @@ pre.payload {
   white-space: nowrap;
 }
 .chat-switch svg.i {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   transform: rotate(90deg);
   color: var(--muted);
 }

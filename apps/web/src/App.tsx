@@ -379,7 +379,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 onClick={() => void setIncognito(!incognito)}
                 title={incognito ? "Leave incognito" : "Incognito"}
               >
-                <Icon name="incognito" />
+                <Icon name="incognito" filled={incognito} />
               </button>
             )}
             {view.path !== "/search" && (
@@ -394,7 +394,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 onClick={toggleInsp}
                 title="Live view"
               >
-                <Icon name="monitor" />
+                <Icon name="monitor" filled={insp} />
               </button>
             )}
           </header>
