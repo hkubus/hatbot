@@ -161,7 +161,6 @@ struct ChatView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(m.botId.flatMap { store.bots[$0]?.color.color } ?? .secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 14)
                     .padding(.top, 10)
                 }
                 // A question's choices can be tapped until anything comes after it.
@@ -680,7 +679,7 @@ private struct MessageRow: View, Equatable {
         if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .trailing) }
         if !m.text.isEmpty {
           Text(m.text)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.onBrand)
             .textSelection(.enabled)
             .padding(Bubble.insets(.trailing))
             .background(store.chatTint.bubble, in: shape)
@@ -692,12 +691,11 @@ private struct MessageRow: View, Equatable {
       .padding(.leading, 56)
       .frame(maxWidth: .infinity, alignment: .trailing)
     } else {
-      let shape = Bubble(tail: tail, side: .leading)
+      // The bot's words sit on the page, without a bubble, as on the web.
       VStack(alignment: .leading, spacing: 3) {
         VStack(alignment: .leading, spacing: 8) { content }
-          .padding(Bubble.insets(.leading))
-          .background(Color.botBubble, in: shape)
-          .contentShape(.contextMenuPreview, shape)
+          .padding(.vertical, 4)
+          .contentShape(.contextMenuPreview, .rect(cornerRadius: 12))
           .contextMenu { menu }
           .modifier(Spoken(label: speaker, text: spokenText, unread: m.id))
         // The task's result changed this message after it was sent.
@@ -705,10 +703,8 @@ private struct MessageRow: View, Equatable {
           Text("Edited \(editedAt.timeText)")
             .font(.caption2)
             .foregroundStyle(Color.accentColor)
-            .padding(.leading, Bubble.tailWidth + 12)
         }
       }
-      .padding(.trailing, 40)
       .frame(maxWidth: .infinity, alignment: .leading)
       .overlay { UnreadMark(id: m.id).allowsHitTesting(false) }
     }
