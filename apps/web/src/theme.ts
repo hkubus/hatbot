@@ -1,3 +1,4 @@
+import type { BotColor } from "@hatbot/shared";
 import { useSyncExternalStore } from "react";
 
 export type Theme = "system" | "light" | "dark";
@@ -13,13 +14,27 @@ const bg = (dark: boolean) =>
 export const barColor = (t: Theme, media: string): string =>
   bg(t === "system" ? media.includes("dark") : t === "dark");
 
+// The browser's bar (and the phone's status bar) follows a chosen theme, not only the system's.
+const paintBar = () => {
+  for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))
+    m.content = barColor(getTheme(), m.media);
+};
+
 export function setTheme(t: Theme) {
   localStorage.setItem("hatbot-theme", t);
   document.documentElement.dataset.theme = t;
-  // The browser's bar (and the phone's status bar) follows a chosen theme, not only the system's.
-  for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'))
-    m.content = barColor(t, m.media);
+  paintBar();
   window.dispatchEvent(new Event("hatbot:theme"));
+}
+
+/** The bot colour the app last wore: themes.css's scheme for it. */
+export const savedHue = (): BotColor =>
+  (localStorage.getItem("hatbot-hue") as BotColor | null) ?? "amber";
+
+export function setHue(color: BotColor) {
+  localStorage.setItem("hatbot-hue", color);
+  document.documentElement.dataset.hue = color;
+  paintBar();
 }
 
 export function useTheme(): Theme {

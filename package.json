@@ -11,11 +11,13 @@
     "check": "biome check .",
     "format": "biome format --write .",
     "licenses": "bun scripts/licenses.ts",
+    "themes": "bun scripts/themes.ts && biome format --write apps/web/src/themes.css",
     "test": "bun test",
     "typecheck": "tsc -b"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
+    "@material/material-color-utilities": "^0.4.0",
     "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"
   }
