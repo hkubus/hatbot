@@ -3375,12 +3375,11 @@ pre.payload {
 }
 
 .approval-tray {
-  max-width: calc(var(--measure) + 2 * var(--sp-md));
+  max-width: var(--measure);
   max-height: min(40vh, 340px);
   overflow-y: auto;
-  /* Room for the cards' shadows, which the scroller would clip. */
-  margin: calc(-1 * var(--sp-md)) auto 0;
-  padding: var(--sp-md);
+  margin: 0 auto;
+  padding-bottom: var(--sp-md);
   display: grid;
   gap: var(--sp);
 }
@@ -3388,7 +3387,6 @@ pre.payload {
   padding: var(--sp-lg);
   background: var(--surface-1);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-2);
   animation: rise var(--dur) var(--spring) both;
 }
 .approval-tray .shot {
