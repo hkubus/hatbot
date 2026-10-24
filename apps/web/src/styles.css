@@ -490,6 +490,8 @@ textarea:disabled {
 .new-menu .nav-item {
   border-radius: 0;
 }
+/* The rail's + takes the mark's shape. */
+.brand,
 .brand-mark {
   --shape: polygon(
     100% 50%,
@@ -541,6 +543,8 @@ textarea:disabled {
     93.9% 38.2%,
     98.2% 43.6%
   );
+}
+.brand-mark {
   width: 40px;
   height: 40px;
   display: grid;
@@ -3664,7 +3668,7 @@ pre.payload {
   /* The rail would clip it. */
   .new-menu {
     position: fixed;
-    top: 64px;
+    top: var(--sp-md);
     left: calc(var(--sb-w) - var(--sp));
     right: auto;
   }
@@ -3706,6 +3710,34 @@ pre.payload {
     top: 0;
     left: calc(50% + 6px);
     margin: 0;
+  }
+}
+/* Where there's a pointer, the rail's + is the mark itself, shown on hover. */
+@media (min-width: 900px) and (max-width: 1199px) and (hover: hover) {
+  .sidebar > .brand > .tb-btn {
+    position: absolute;
+    top: var(--sp-md);
+    left: 50%;
+    translate: -50% 0;
+    width: 40px;
+    min-width: 0;
+    height: 40px;
+    padding: 0;
+    border-radius: 0;
+    clip-path: var(--shape);
+    background: var(--accent);
+    color: var(--on-accent);
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--fade);
+  }
+  .sidebar > .brand > .tb-btn svg.i {
+    width: 22px;
+    height: 22px;
+  }
+  .sidebar > .brand:hover > .tb-btn,
+  .sidebar > .brand > .tb-btn:focus-visible,
+  .sidebar > .brand > .tb-btn.on {
+    opacity: 1;
   }
 }
 .chat-switch {
