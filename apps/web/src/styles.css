@@ -73,44 +73,44 @@
   --font-text: "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* From Material's 2025 colour spec, the Vibrant scheme on Hatbot's amber (#ff9f2e). --bg-light and
-     --bg-dark are copied into index.html, offline.html, theme.js and the manifest, which run before
+  /* From Material's 2025 colour spec, the Tonal spot scheme on Hatbot's amber (#ff9f2e). --bg-light
+     and --bg-dark are copied into index.html, offline.html, theme.js and the manifest, which run before
      this loads. */
-  --bg-light: #fff5ec;
-  --bg-dark: #170c00;
-  --surface: light-dark(#fff5ec, #170c00);
-  --surface-1: light-dark(#ffe4c4, #271600);
-  --surface-2: light-dark(#ffddb4, #2f1c00);
-  --surface-3: light-dark(#ffd6a2, #372100);
-  --text: light-dark(#432900, #ffe1bc);
-  --text-2: light-dark(#775524, #cea46b);
-  --muted: light-dark(#775524, #cea46b);
-  --soft: light-dark(#95703c, #946f3b);
-  --line: light-dark(#d0a66d, #614212);
-  --outline: light-dark(#95703c, #946f3b);
-  --inverse: light-dark(#170c00, #fff8f4);
-  --on-inverse: light-dark(#bf965e, #6f4f1e);
-  --primary: light-dark(#874e00, #ffa84b);
-  --on-primary: light-dark(#fff0e5, #562f00);
-  --accent: light-dark(#fc9500, #fc9500);
-  --on-accent: light-dark(#472700, #472700);
-  --accent-text: light-dark(#874e00, #ffa84b);
-  --accent-soft: light-dark(#ffc87e, #825500);
-  --on-accent-soft: light-dark(#644000, #fff6ef);
-  --selected: light-dark(#ffc87e, #825500);
-  --on-selected: light-dark(#644000, #fff6ef);
-  --secondary: light-dark(#7f5200, #ffae26);
-  --user-bubble: light-dark(#ffdcbe, #6a3c00);
+  --bg-light: #fff8f5;
+  --bg-dark: #120d08;
+  --surface: light-dark(#fff8f5, #120d08);
+  --surface-1: light-dark(#fcebde, #201811);
+  --surface-2: light-dark(#f7e5d7, #271e16);
+  --surface-3: light-dark(#f3dfd0, #2e241a);
+  --text: light-dark(#3c3026, #f6e2d2);
+  --text-2: light-dark(#6b5c50, #b9a89a);
+  --muted: light-dark(#6b5c50, #b9a89a);
+  --soft: light-dark(#87786b, #827366);
+  --line: light-dark(#c1afa0, #52463a);
+  --outline: light-dark(#87786b, #827366);
+  --inverse: light-dark(#120d08, #fff8f5);
+  --on-inverse: light-dark(#a69b93, #5c534d);
+  --primary: light-dark(#835523, #f0bd8d);
+  --on-primary: light-dark(#fff7f4, #5a3914);
+  --accent: light-dark(#fbbd81, #6f4b24);
+  --on-accent: light-dark(#613807, #ffddc0);
+  --accent-text: light-dark(#835523, #f0bd8d);
+  --accent-soft: light-dark(#ffdcbe, #4d3722);
+  --on-accent-soft: light-dark(#654d37, #dab99d);
+  --selected: light-dark(#ffdcbe, #4d3722);
+  --on-selected: light-dark(#654d37, #dab99d);
+  --secondary: light-dark(#735a43, #e1c1a4);
+  --user-bubble: light-dark(#ffdcbe, #623f1a);
   --on-user-bubble: light-dark(#2d1600, #ffdcbe);
   --attention: light-dark(#305da8, #adc7ff);
   --on-attention: light-dark(#ffffff, #002e68);
   --attention-soft: light-dark(#d8e2ff, #2a4678);
   --on-attention-soft: light-dark(#001a41, #d8e2ff);
-  --danger: light-dark(#b02500, #ff7351);
-  --danger-text: light-dark(#b02500, #ff7351);
-  --on-danger: light-dark(#ffefec, #450900);
-  --danger-soft: light-dark(#f95630, #b92902);
-  --on-danger-soft: light-dark(#520c00, #ffd2c8);
+  --danger: light-dark(#a73b21, #f97758);
+  --danger-text: light-dark(#a73b21, #f97758);
+  --on-danger: light-dark(#fff7f6, #450900);
+  --danger-soft: light-dark(#fd795a, #85230a);
+  --on-danger-soft: light-dark(#6e1400, #ff9b82);
   --success: light-dark(#306a39, #97d599);
   --success-text: light-dark(#306a39, #97d599);
   --success-soft: light-dark(#c1eec0, #294f2d);
@@ -135,7 +135,7 @@
   --screen: #2b2622;
   --on-screen: #d5c3b5;
 
-  --chart: var(--accent);
+  --chart: var(--primary);
   --chart-track: var(--selected);
   --grid: color-mix(in srgb, var(--text) 8%, transparent);
   /* Chart series, in this order; checked for colour-blind separation. */
@@ -693,8 +693,8 @@ textarea:disabled {
   border-radius: var(--r-md);
 }
 .btn.accent {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--primary);
+  color: var(--on-primary);
   border-color: transparent;
 }
 .btn.danger {
@@ -978,7 +978,7 @@ textarea:disabled {
   transition: border-color var(--dur);
 }
 .msg.unread {
-  border-left-color: var(--accent);
+  border-left-color: var(--primary);
 }
 .msg .edited {
   font-size: var(--fs-xs);
@@ -1673,11 +1673,11 @@ dialog.ask,
   background: var(--fill-hover);
 }
 .composer .send {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--primary);
+  color: var(--on-primary);
 }
 .composer .send:hover {
-  background: var(--accent);
+  background: var(--primary);
   background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
 }
 .composer .icon-btn:active:not(:disabled) {
@@ -2075,7 +2075,7 @@ select.field option {
   cursor: default;
 }
 .chart .bar.hl {
-  fill: var(--accent);
+  fill: var(--primary);
 }
 .chart-tip.above {
   z-index: 10;
@@ -2352,8 +2352,8 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   }
 
   .tabbar .badge.unread {
-    background: var(--accent);
-    color: var(--on-accent);
+    background: var(--primary);
+    color: var(--on-primary);
   }
   .card .thumb-wrap {
     grid-template-columns: 1fr;
@@ -2795,7 +2795,7 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   aspect-ratio: 16 / 10;
 }
 .screen.control {
-  outline-color: var(--accent);
+  outline-color: var(--primary);
 }
 .screen canvas {
   display: block;
@@ -3058,7 +3058,6 @@ button.text-link:hover {
 .todo-add > .btn {
   flex-shrink: 0;
 }
-/* --on-accent is the same in both themes, so the tick can be drawn in it. */
 .todo-box {
   appearance: none;
   flex-shrink: 0;
@@ -3077,12 +3076,21 @@ button.text-link:hover {
 .todo-box:hover:not(:disabled) {
   box-shadow: 0 0 0 11px var(--fill-hover);
 }
+/* A data URL can't take a variable, so the tick, in --on-primary, is drawn once per theme. */
+:root {
+  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff7f4' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a3914' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  }
+}
+html[data-theme="dark"] {
+  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a3914' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+}
 .todo-box:checked {
-  border-color: var(--accent);
-  background:
-    var(--accent)
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23472700' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E")
-    center / 14px no-repeat;
+  border-color: var(--primary);
+  background: var(--primary) var(--tick) center / 14px no-repeat;
 }
 .form-actions {
   display: flex;
@@ -3361,7 +3369,7 @@ pre.payload {
   left: 0;
   bottom: 0;
   height: 3px;
-  background: var(--accent);
+  background: var(--primary);
   transition: width var(--dur-fast);
 }
 .composer-error {
@@ -3564,7 +3572,7 @@ pre.payload {
   font-weight: var(--fw-medium);
 }
 mark {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
   color: inherit;
   border-radius: var(--r-xs);
   padding: 0 1px;
@@ -3925,7 +3933,7 @@ a.row-main:hover {
   height: 28px;
 }
 .box-card:hover .box-shot {
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 .box-line {
   display: flex;
