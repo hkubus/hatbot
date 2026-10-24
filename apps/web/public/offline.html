@@ -5,16 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <!-- Tries again on its own: the page that was asked for, through the service worker. -->
     <meta http-equiv="refresh" content="15" />
-    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#161617" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f6efea" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#171310" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <title>Hatbot</title>
     <style>
       :root {
         color-scheme: light dark;
         font-family: system-ui, sans-serif;
-        background: light-dark(#f5f5f7, #161617);
-        color: light-dark(#3a3a3c, #d1d1d6);
+        background: light-dark(#f6efea, #171310);
+        color: light-dark(#4f453d, #d3c5ba);
       }
       body {
         margin: 0;
@@ -27,11 +27,12 @@
       }
       a {
         color: inherit;
-        padding: 5px 12px;
-        border-radius: 8px;
-        border: 0.5px solid rgba(127, 127, 127, 0.45);
+        padding: 8px 16px;
+        border-radius: 999px;
+        border: 1px solid light-dark(#d3c6bc, #4f463f);
         text-decoration: none;
-        font-size: 12.5px;
+        font-size: 14px;
+        font-weight: 500;
       }
     </style>
   </head>

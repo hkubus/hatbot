@@ -633,7 +633,7 @@ export const FRAME_CSP =
  * The app's colours (apps/web/src/styles.css) as defaults a box's own styles override. Its fonts can't
  * load here: the page reaches nothing outside itself.
  */
-const BASE_CSS = `:root{--hb-bg:light-dark(#f5f5f7,#161617);--hb-surface:light-dark(#fff,#1e1e20);--hb-text:light-dark(#1d1d1f,#f5f5f7);--hb-muted:light-dark(#6e6e73,#98989d);--hb-line:light-dark(rgba(0,0,0,.09),rgba(255,255,255,.09));--hb-accent:light-dark(#e8820c,#ff9f2e);--hb-on-accent:#1d1d1f;--hb-attention:light-dark(#007aff,#0a84ff);--hb-danger:light-dark(#ff3b30,#ff453a);--hb-success:light-dark(#34c759,#30d158);--hb-font:system-ui,-apple-system,"Segoe UI",sans-serif;--hb-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}:where(:root){background:var(--hb-bg);color:var(--hb-text);font-family:var(--hb-font)}`;
+const BASE_CSS = `:root{--hb-bg:light-dark(#f6efea,#171310);--hb-surface:light-dark(#fffbf9,#201b17);--hb-text:light-dark(#1f1b17,#ece0d7);--hb-muted:light-dark(#6b6058,#b0a398);--hb-line:light-dark(#e7ddd5,#3c352f);--hb-accent:light-dark(#e8820c,#ff9f2e);--hb-on-accent:#2c1600;--hb-attention:light-dark(#0061a4,#9ecaff);--hb-danger:light-dark(#ba1a1a,#ffb4ab);--hb-success:light-dark(#1e6c34,#8dd89c);--hb-font:system-ui,-apple-system,"Segoe UI",sans-serif;--hb-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace}:where(:root){background:var(--hb-bg);color:var(--hb-text);font-family:var(--hb-font)}`;
 
 /**
  * Each call goes through the app to the brain for this box only, so a new kind of call needs nothing

@@ -4,7 +4,7 @@
   "short_name": "Hatbot",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f5f5f7",
+  "background_color": "#f6efea",
   "theme_color": "#e8820c",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },

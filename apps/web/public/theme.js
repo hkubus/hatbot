@@ -4,7 +4,7 @@
   const theme = localStorage.getItem("hatbot-theme") || "system";
   document.documentElement.dataset.theme = theme;
   if (theme !== "system") {
-    const color = theme === "dark" ? "#161617" : "#f5f5f7";
+    const color = theme === "dark" ? "#171310" : "#f6efea";
     for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = color;
   }
 }
