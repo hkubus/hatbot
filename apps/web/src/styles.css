@@ -73,47 +73,50 @@
   --font-text: "Noto Sans", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* From Material's 2025 colour spec, the Tonal spot scheme on Hatbot's amber (#ff9f2e). --bg-light
-     and --bg-dark are copied into index.html, offline.html, theme.js and the manifest, which run before
-     this loads. */
-  --bg-light: #fff8f5;
-  --bg-dark: #120d08;
-  --surface: light-dark(#fff8f5, #120d08);
-  --surface-1: light-dark(#fcebde, #201811);
-  --surface-2: light-dark(#f7e5d7, #271e16);
-  --surface-3: light-dark(#f3dfd0, #2e241a);
-  --text: light-dark(#3c3026, #f6e2d2);
-  --text-2: light-dark(#6b5c50, #b9a89a);
-  --muted: light-dark(#6b5c50, #b9a89a);
-  --soft: light-dark(#87786b, #827366);
-  --line: light-dark(#c1afa0, #52463a);
-  --outline: light-dark(#87786b, #827366);
-  --inverse: light-dark(#120d08, #fff8f5);
-  --on-inverse: light-dark(#a69b93, #5c534d);
-  --primary: light-dark(#835523, #f0bd8d);
-  --on-primary: light-dark(#fff7f4, #5a3914);
-  --accent: light-dark(#fbbd81, #6f4b24);
-  --on-accent: light-dark(#613807, #ffddc0);
-  --accent-text: light-dark(#835523, #f0bd8d);
-  --accent-soft: light-dark(#ffdcbe, #4d3722);
-  --on-accent-soft: light-dark(#654d37, #dab99d);
-  --selected: light-dark(#ffdcbe, #4d3722);
-  --on-selected: light-dark(#654d37, #dab99d);
-  --secondary: light-dark(#735a43, #e1c1a4);
-  --user-bubble: light-dark(#ffdcbe, #623f1a);
-  --on-user-bubble: light-dark(#2d1600, #ffdcbe);
-  --attention: light-dark(#305da8, #adc7ff);
-  --on-attention: light-dark(#ffffff, #002e68);
-  --attention-soft: light-dark(#d8e2ff, #2a4678);
-  --on-attention-soft: light-dark(#001a41, #d8e2ff);
-  --danger: light-dark(#a73b21, #f97758);
-  --danger-text: light-dark(#a73b21, #f97758);
-  --on-danger: light-dark(#fff7f6, #450900);
-  --danger-soft: light-dark(#fd795a, #85230a);
-  --on-danger-soft: light-dark(#6e1400, #ff9b82);
-  --success: light-dark(#306a39, #97d599);
-  --success-text: light-dark(#306a39, #97d599);
-  --success-soft: light-dark(#c1eec0, #294f2d);
+  /* Catppuccin: Latte for light, Mocha for dark. --bg-light and --bg-dark are copied into index.html,
+     offline.html, theme.js and the manifest, which run before this loads. */
+  --bg-light: #eff1f5;
+  --bg-dark: #1e1e2e;
+  --surface: light-dark(#eff1f5, #1e1e2e);
+  --surface-1: light-dark(#e6e9ef, #282839);
+  --surface-2: light-dark(#dce0e8, #313244);
+  --surface-3: light-dark(#ccd0da, #45475a);
+  --text: light-dark(#4c4f69, #cdd6f4);
+  --text-2: light-dark(#5c5f77, #bac2de);
+  --muted: light-dark(#6c6f85, #a6adc8);
+  --soft: light-dark(#8c8fa1, #7f849c);
+  --line: light-dark(#bcc0cc, #45475a);
+  --outline: light-dark(#8c8fa1, #6c7086);
+  --inverse: light-dark(#4c4f69, #cdd6f4);
+  --on-inverse: light-dark(#eff1f5, #1e1e2e);
+  /* The bot you're with sets --hue (data-hue, below); the accents are its colour. */
+  --hue: var(--bot-amber);
+  --on-hue: light-dark(#eff1f5, #11111b);
+  --hue-soft: color-mix(in srgb, var(--hue) 22%, var(--surface));
+  --primary: var(--hue);
+  --on-primary: var(--on-hue);
+  --accent: var(--hue);
+  --on-accent: var(--on-hue);
+  --accent-text: var(--hue);
+  --accent-soft: var(--hue-soft);
+  --on-accent-soft: var(--text);
+  --selected: var(--hue-soft);
+  --on-selected: var(--text);
+  --secondary: var(--hue);
+  --user-bubble: var(--hue);
+  --on-user-bubble: var(--on-hue);
+  --attention: light-dark(#1e66f5, #89b4fa);
+  --on-attention: light-dark(#eff1f5, #11111b);
+  --attention-soft: light-dark(#c9d8f5, #363f5b);
+  --on-attention-soft: var(--text);
+  --danger: light-dark(#d20f39, #f38ba8);
+  --danger-text: light-dark(#d20f39, #f38ba8);
+  --on-danger: light-dark(#eff1f5, #11111b);
+  --danger-soft: light-dark(#eac8d3, #4d3649);
+  --on-danger-soft: var(--text);
+  --success: light-dark(#40a02b, #a6e3a1);
+  --success-text: light-dark(#40a02b, #a6e3a1);
+  --success-soft: light-dark(#d0e2d1, #3c4947);
   --bg: light-dark(var(--bg-light), var(--bg-dark));
   --bot-bubble: var(--surface-2);
 
@@ -132,8 +135,8 @@
   --shadow-pop:
     0 1px 3px var(--shadow-key),
     0 4px 8px 3px color-mix(in srgb, var(--shadow-color) 50%, transparent);
-  --screen: #2b2622;
-  --on-screen: #d5c3b5;
+  --screen: #11111b;
+  --on-screen: #a6adc8;
 
   --chart: var(--primary);
   --chart-track: var(--selected);
@@ -142,16 +145,16 @@
   --series-1: var(--chart);
   --series-2: light-dark(#2a78d6, #3987e5);
   --series-3: light-dark(#138a60, #199e70);
-  /* Bots' colours (BOT_COLORS), at tone 50 so each reads on light and dark. */
-  --bot-amber: var(--primary);
-  --bot-red: light-dark(#dd3730, #ff5449);
-  --bot-pink: light-dark(#d81b60, #ff6f9a);
-  --bot-purple: light-dark(#8e44ad, #c58af0);
-  --bot-indigo: light-dark(#4c55c4, #8c94ff);
-  --bot-blue: light-dark(#1a73e8, #6aa9ff);
-  --bot-teal: light-dark(#00838f, #4fd1dc);
-  --bot-green: light-dark(#2e8540, #6fd38a);
-  --bot-gray: light-dark(#7d7168, #a1958c);
+  /* Bots' colours (BOT_COLORS), from Catppuccin. */
+  --bot-amber: light-dark(#fe640b, #fab387);
+  --bot-red: light-dark(#d20f39, #f38ba8);
+  --bot-pink: light-dark(#ea76cb, #f5c2e7);
+  --bot-purple: light-dark(#8839ef, #cba6f7);
+  --bot-indigo: light-dark(#7287fd, #b4befe);
+  --bot-blue: light-dark(#1e66f5, #89b4fa);
+  --bot-teal: light-dark(#179299, #94e2d5);
+  --bot-green: light-dark(#40a02b, #a6e3a1);
+  --bot-gray: light-dark(#7c7f93, #9399b2);
 
   --r-xs: 4px;
   --r-sm: 8px;
@@ -254,6 +257,30 @@
   );
 
   color-scheme: light dark;
+}
+:root[data-hue="red"] {
+  --hue: var(--bot-red);
+}
+:root[data-hue="pink"] {
+  --hue: var(--bot-pink);
+}
+:root[data-hue="purple"] {
+  --hue: var(--bot-purple);
+}
+:root[data-hue="indigo"] {
+  --hue: var(--bot-indigo);
+}
+:root[data-hue="blue"] {
+  --hue: var(--bot-blue);
+}
+:root[data-hue="teal"] {
+  --hue: var(--bot-teal);
+}
+:root[data-hue="green"] {
+  --hue: var(--bot-green);
+}
+:root[data-hue="gray"] {
+  --hue: var(--bot-gray);
 }
 html[data-theme="light"] {
   color-scheme: light;
@@ -3080,17 +3107,17 @@ button.text-link:hover {
 .todo-box:hover:not(:disabled) {
   box-shadow: 0 0 0 11px var(--fill-hover);
 }
-/* A data URL can't take a variable, so the tick, in --on-primary, is drawn once per theme. */
+/* A data URL can't take a variable, so the tick, in --on-hue, is drawn once per theme. */
 :root {
-  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff7f4' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23eff1f5' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) {
-    --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a3914' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2311111b' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
   }
 }
 html[data-theme="dark"] {
-  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a3914' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+  --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2311111b' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
 }
 .todo-box:checked {
   border-color: var(--primary);
