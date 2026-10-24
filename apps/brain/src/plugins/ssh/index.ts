@@ -8,7 +8,7 @@ import { type DesktopAgent, DesktopError } from "../../desktop/client";
 import {
   allow,
   ask,
-  askAlways,
+  askCareful,
   block,
   definePlugin,
   PluginError,
@@ -364,7 +364,7 @@ export const sshPlugin = definePlugin({
     /** Where it's careful, the owner answers whatever the call is; the reason it'd ask still shows. */
     const verdict = (careful: string | null, why: string | null, kind?: ApprovalKind): Verdict =>
       careful
-        ? askAlways(why ? `${careful} ${why}` : careful, kind)
+        ? askCareful(why ? `${careful} ${why}` : careful, kind)
         : why
           ? ask(why, kind)
           : allow();

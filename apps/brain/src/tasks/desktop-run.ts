@@ -12,7 +12,7 @@ import type { AgentElement, BrowserState, ComputerMember } from "@hatbot/shared/
 import { z } from "zod";
 import { cutOff, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
-import { mayReview, safeToRun } from "../agent/review";
+import { levelOf, safeToRun } from "../agent/review";
 import { type Screening, screenPage } from "../agent/screening";
 import { localStamp } from "../agent/thread";
 import { untrustedBlock } from "../agent/untrusted";
@@ -521,6 +521,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         detail: verdict.excerpt,
         url,
       });
+      if (!d.settings.get().safety.injection) continue;
       const { outcome } = await askApproval({
         kind: "injection_warning",
         summary: `Keep going on ${host}?`,
@@ -800,13 +801,22 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // The pages it read are screened first: suspected injection skips the review.
     await screened();
     const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
-    if (
-      d.settings.get().reviewChanges &&
-      mayReview(
-        { action: "ask", why, kind, tainted: true },
-        tasks.get(id)?.injectionSuspected ?? false,
-      )
-    ) {
+    const level = levelOf(
+      d.settings.get(),
+      { action: "ask", why, kind, tainted: true },
+      tasks.get(id)?.injectionSuspected ?? false,
+    );
+    if (level === "allow") {
+      tasks.addStep(id, {
+        kind: "approval",
+        name: "Not asking: your Safety settings allow it",
+        detail: input.summary,
+        url: page,
+      });
+      arm(held?.hold ?? null);
+      return textResult(call, "Approved. Go ahead with exactly this action.");
+    }
+    if (level === "review") {
       const request = tasks.requestOf(id);
       const check = await safeToRun(
         d,
@@ -878,7 +888,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (d.desktop.get().control === "owner") await waitForOwner();
     const danger = destructive(command);
     let note: string | null = null;
-    if (danger) {
+    const level =
+      danger &&
+      levelOf(
+        d.settings.get(),
+        { action: "ask", why: danger.why, kind: danger.kind, always: true },
+        tasks.get(id)?.injectionSuspected ?? false,
+      );
+    if (danger && level !== "allow") {
       const answer = await askApproval({
         kind: danger.kind,
         summary: `On the desktop: ${command}`,

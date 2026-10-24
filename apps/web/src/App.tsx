@@ -108,6 +108,7 @@ const SUB_TITLE: Record<string, string> = {
   "/settings/notifications": "ntfy server",
   "/settings/api-key": "Anthropic API key",
   "/settings/allowed": "Always allowed",
+  "/settings/safety": "Approvals and guardrails",
   "/settings/account": "Password and authenticator",
   "/settings/devices": "Devices and tokens",
   "/settings/checks": "Check everything",
