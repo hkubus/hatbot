@@ -213,7 +213,13 @@ export class Plugins {
     return this.readyOnes(only, except, false).map((s) => s.plugin.name);
   }
 
+  /** What the model may be offered. */
   tools(only: string[] | null = null, except: string[] = []): PluginTool[] {
+    return this.brainTools(only, except).filter((t) => !t.brainOnly);
+  }
+
+  /** With the ones only the brain calls. */
+  brainTools(only: string[] | null = null, except: string[] = []): PluginTool[] {
     return this.readyOnes(only, except).flatMap((s) => s.instance?.tools ?? []);
   }
 

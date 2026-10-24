@@ -67,7 +67,7 @@ export async function listingFacts(
   if (!parts) throw new PluginError(`"${key}" isn't a listing key like "OLX:123456".`);
   const detail = scoutTool(tools, "scout_listing_detail");
   if (!detail)
-    throw new PluginError("Scout isn't connected: there's no scout_listing_detail tool.");
+    throw new PluginError("Scout isn't connected: connect it in Settings → Plugins → Scout.");
   const d = await readScout(detail, { key }, signal);
   const l = obj(d.listing);
   const url = str(l.url) ?? str(obj(d.descriptionSnapshot).url);

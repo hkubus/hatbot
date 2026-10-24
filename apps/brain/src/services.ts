@@ -31,6 +31,7 @@ import { DeadManPing } from "./ping";
 import { codePlugin } from "./plugins/code";
 import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
+import { scoutPlugin } from "./plugins/scout";
 import { selfPlugin } from "./plugins/self";
 import { t3Plugin } from "./plugins/t3";
 import { Proxmox } from "./proxmox";
@@ -108,6 +109,18 @@ export async function createServices(o: Outside) {
         publicUrl,
         saveToken: async (token) => {
           await plugins.setSecrets("t3", { T3_TOKEN: token });
+        },
+        fetch: o.fetch,
+      }),
+      scoutPlugin({
+        publicUrl,
+        saveToken: async (token) => {
+          await plugins.setSecrets("scout", { SCOUT_TOKEN: token });
+        },
+        connected: () => {
+          const haggler = bots.list().find((b) => b.name.toLowerCase() === "haggler");
+          if (haggler?.plugins && !haggler.plugins.includes("scout"))
+            bots.update(haggler.id, { plugins: [...haggler.plugins, "scout"] });
         },
         fetch: o.fetch,
       }),

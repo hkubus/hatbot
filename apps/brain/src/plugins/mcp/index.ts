@@ -301,7 +301,7 @@ export function unsent(err: unknown): boolean {
   return typeof code === "string" && NO_CONNECTION.has(code);
 }
 
-function resultText(r: { content?: unknown; structuredContent?: unknown }): string {
+export function resultText(r: { content?: unknown; structuredContent?: unknown }): string {
   const parts: string[] = [];
   for (const c of (r.content ?? []) as Record<string, unknown>[]) {
     if (c.type === "text") parts.push(String(c.text));

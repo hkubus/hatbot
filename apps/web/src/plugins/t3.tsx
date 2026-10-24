@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
-import { navigate, useRoute } from "../router";
 import { Panel, SaveBar, Seg } from "../ui";
 import type { PluginSettingsProps } from ".";
+import { useSignInReturn } from "./sign-in";
 
 type Model = "opus" | "haiku";
 type Config = { url: string; model: Model; minutes: number };
@@ -19,8 +19,6 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
   const [model, setModel] = useState(config.model);
   const [minutes, setMinutes] = useState(String(config.minutes));
   const { busy, error, setError, run } = useAction();
-  const route = useRoute();
-  const finishing = useRef(false);
   const n = Number(minutes);
   const okMinutes = Number.isInteger(n) && n >= 5 && n <= 240;
   const okUrl = url === "" || /^https?:\/\/[^\s/]+\/?$/.test(url.trim());
@@ -28,25 +26,7 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
   useLeaveGuard(changed);
 
   // T3 Code sends the browser back here once you've let Hatbot in.
-  const code = route.params.get("code");
-  const state = route.params.get("state");
-  const denied = route.params.get("error_description") ?? route.params.get("error");
-  useEffect(() => {
-    if (denied) {
-      setError(`T3 Code said no: ${denied}`);
-      navigate(route.path, true);
-      return;
-    }
-    if (!code || !state || !running || finishing.current) return;
-    finishing.current = true;
-    run(
-      async () => {
-        await action("finish", { code, state });
-        navigate(route.path, true);
-      },
-      (err) => setError(errorText(err, "Couldn't connect.")),
-    );
-  }, [code, state, denied, running, action, run, setError, route.path]);
+  useSignInReturn("T3 Code", action, running, { run, setError });
 
   const submit = () =>
     run(

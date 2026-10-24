@@ -1,6 +1,6 @@
 // Flips Scout marks ready to list: Hatbot asks once for all their marketplaces, then the bot that
 // holds the marketplace logins posts each in a desktop task of its own, and Scout hears how it went.
-// Scout's tools are called by name through the MCP plugin, without the model.
+// Scout's tools are called by name through its plugin (or the MCP plugin), without the model.
 import { randomUUID } from "node:crypto";
 import type { Approval, Bot, ListingStatus, Task } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
@@ -157,7 +157,7 @@ export class Listings {
     const bots = this.d.bots.list();
     const haggler = bots.filter((b) => b.name.toLowerCase() === "haggler");
     for (const bot of [...haggler, ...bots.filter((b) => !haggler.includes(b))]) {
-      const tools = this.d.plugins.tools(bot.plugins);
+      const tools = this.d.plugins.brainTools(bot.plugins);
       if (scoutTool(tools, "scout_flips_to_list")) return { bot, tools };
     }
     return null;

@@ -3,14 +3,15 @@ import type { ComponentType } from "react";
 import { HomeAssistantSettings } from "./homeassistant";
 import { McpSettings } from "./mcp";
 import { ProxmoxSettings } from "./proxmox";
+import { ScoutSettings } from "./scout";
 import { SelfSettings } from "./self";
 import { SshSettings } from "./ssh";
 import { T3Settings } from "./t3";
 
 export type PluginSettingsProps<C = unknown> = {
   config: C;
-  /** The plugin restarts with them. Rejects with the brain's message. */
-  save: (config: C) => Promise<void>;
+  /** The plugin restarts with them, and turnOn switches it on. Rejects with the brain's message. */
+  save: (config: C, turnOn?: boolean) => Promise<void>;
   action: <T = unknown>(name: string, args?: unknown) => Promise<T>;
   /** The plugin is running (on, or waiting for setup), so its actions answer. */
   running: boolean;
@@ -23,4 +24,5 @@ export const PLUGIN_SETTINGS: Record<string, ComponentType<PluginSettingsProps>>
   homeassistant: HomeAssistantSettings as ComponentType<PluginSettingsProps>,
   self: SelfSettings,
   t3: T3Settings as ComponentType<PluginSettingsProps>,
+  scout: ScoutSettings as ComponentType<PluginSettingsProps>,
 };

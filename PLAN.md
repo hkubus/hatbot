@@ -56,7 +56,9 @@ You mark a flip ready in Scout and pick channels; Hatbot asks once; Haggler post
 
 L2 (photo uploads on the add-listing pages) and L3 (the lister, `apps/brain/src/listings/`) are built (2026-10-24) and tested against a stand-in Scout and desktop-agent, not live. Not checked yet: the add-listing pages' addresses (`UPLOAD_PAGES` in `packages/shared/src/desktop.ts`) and their publish buttons' labels (`listings/gate.ts`).
 
-**L4, live.** Once L1 is in Scout, connect it to Haggler with its three read tools on Chat and `scout_flip_listed` on Allow. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after the tap.
+Scout is connected with a button: Settings → Plugins → Scout (2026-10-25). Scout's side, the sign-in (MCP's OAuth with PKCE) and Connected apps, is being built on its `feat/hatbot-listing` branch.
+
+**L4, live.** Once L1 and the sign-in are in Scout, connect it. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after the tap.
 
 **Not in N6:** answering buyers (N5), taking a sold flip off its other channels (Scout already has the checklist), editing or relisting a live listing, and paid promotion.
 
