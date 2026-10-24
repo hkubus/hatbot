@@ -1,4 +1,4 @@
-import type { BotColor, Conversation, Me } from "@hatbot/shared";
+import type { Conversation, Me } from "@hatbot/shared";
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorText } from "./api";
 import { BotMark, Icon, type IconName } from "./icons";
@@ -31,7 +31,6 @@ import {
   unreadCount,
   useStore,
 } from "./store";
-import { savedHue, setHue } from "./theme";
 import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
@@ -225,15 +224,6 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               view.title),
   );
 
-  // The app wears the colours of the bot you're with and keeps them elsewhere; a group's are amber.
-  const hue = useStore((s): BotColor | undefined => {
-    if (groupPage) return "amber";
-    const chat = chatId ? s.conversations.find((c) => c.id === chatId) : undefined;
-    if (chat?.kind === "group") return "amber";
-    const botId = botPage ?? chat?.botIds[0];
-    return botId ? s.bots[botId]?.color : undefined;
-  });
-  useEffect(() => setHue(hue ?? savedHue()), [hue]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes on every navigation
   useEffect(() => setChatMenu(false), [path]);
   // One that's gone, e.g. a deleted bot's: back to Hatbot's.

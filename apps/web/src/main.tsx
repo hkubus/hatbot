@@ -5,7 +5,6 @@ import { ErrorBoundary } from "./boundary";
 import { Dialogs } from "./confirm";
 import { reloadOnce } from "./reload";
 import "./styles.css";
-import "./themes.css";
 import { followViewport } from "./viewport";
 
 followViewport();
