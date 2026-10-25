@@ -79,7 +79,7 @@ Planned 2026-10-25. A thread is a side conversation in a bot's chat, on one topi
 - **Clients**: the web and iOS stores hold one chat's messages; they need one list per open conversation, and `message.created` matched to any of them. On the web a thread opens in a panel beside the chat (a full-screen route on a phone); its card shows the title and the latest reply, or the outcome once resolved. A Threads button in the chat's header lists them. A bot's unread count includes its threads'.
 
 ### 4.2 Milestones
-- **T1, brain**: the data, thread conversations and their context, the tools in the chat, the API and events. Done when a bot opens a thread from the chat and answers in it while the main chat is replying.
+- **T1, brain** is built (2026-10-25): the data, thread conversations and their context, `thread_open`, `thread_read` and `thread_resolve` in the chat, and `GET /conversations/:id/threads` and `POST /conversations/:id/resolve`. Until T2 the web shows a thread's card as a reply whose link opens the thread as a chat.
 - **T2, web**: the store, the panel and route, the card, the threads list, Resolve, and Reply in thread.
 - **T3, tasks**: threads opened by tasks, their results and questions there, notifications and links.
 - **T4, bots**: every negotiation gets its thread when it starts; holds, counter-offers, the agreement and N3's seller replies go there, and closing the negotiation resolves it. The heartbeat's and watchers' findings open a thread instead of a note in the chat. Prompt lines on when to open a thread and when to just answer.

@@ -10,6 +10,7 @@ import {
   localDay,
   MAX_BOX_FEED_NAME,
   MAX_BOX_HTML,
+  MAX_OPEN_THREADS,
   MAX_WATCH_MINUTES,
   MIN_WATCH_MINUTES,
   minWatchMinutes,
@@ -63,11 +64,13 @@ import {
   type Watchers,
   watcherLine,
 } from "../watch/service";
+import type { Chats } from "./chats";
 import type { Readable } from "./screening";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
 export type ToolContext = {
   db: Db;
+  chats?: Chats;
   clock?: () => number;
   memory: MemoryStore;
   events: EventBus;
@@ -267,6 +270,7 @@ const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
 export class NotChanged extends Error {}
+export class ThreadError extends Error {}
 
 /**
  * After reading untrusted content, deleting or switching off a schedule, watcher or trigger waits for
@@ -1476,6 +1480,73 @@ export const TOOLS = [
     },
   }),
   def({
+    name: "thread_open",
+    description: `Open a thread: a side conversation with the owner in your chat, on one topic, apart from this one. For something that needs its own back-and-forth (findings to go through, a decision with several parts) and would crowd this chat. Not for a quick answer, nor for what the owner is talking about now. Your message opens it: say what it's about and what you need from them. They answer there when they can, and you reply there. At most ${MAX_OPEN_THREADS} open at once.`,
+    schema: z.object({
+      title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
+      message: z
+        .string()
+        .min(1)
+        .max(8000)
+        .describe("The thread's first message, to the owner, with everything they need"),
+    }),
+    run: async ({ title, message }, { chats, bot, tainted }) => {
+      if (!chats || !bot) return "Threads aren't available here.";
+      const { conversation } = chats.openThread({
+        botId: bot.id,
+        title,
+        message,
+        taintedBy: chatTaint(tainted?.()) || null,
+      });
+      return `Opened thread #${conversation.id} "${title}". The owner sees it beside this chat; you reply to them there.`;
+    },
+  }),
+  def({
+    name: "thread_read",
+    description: "Read one of this chat's threads: its latest messages. Without an id, list them.",
+    schema: z.object({ id: z.number().int().optional() }),
+    run: async ({ id }, { chats, conversationId, taint }) => {
+      if (!chats || conversationId === undefined) return "Threads aren't available here.";
+      const all = chats.threads(conversationId);
+      if (id === undefined)
+        return (
+          all
+            .map(
+              (c) =>
+                `#${c.id} "${tagText(c.title ?? "")}": ${c.resolvedAt ? `resolved ${c.resolvedAt.slice(0, 10)}` : "open"}`,
+            )
+            .join("\n") || "No threads."
+        );
+      const c = all.find((t) => t.id === id);
+      const thread = c && chats.thread(c.id);
+      if (!c || !thread) return `No thread #${id} in this chat.`;
+      const { text, taintedBy } = thread.readOut();
+      // What the thread read comes with it.
+      const by = chats.threadTaint(c.id) ?? taintedBy;
+      if (by) taint?.(`Thread #${c.id}: ${by}`, text);
+      const head = `Thread #${c.id} "${tagText(c.title ?? "")}": ${c.resolvedAt ? `resolved, ${tagText(c.outcome ?? "by the owner")}` : "open"}.`;
+      return `${head}\n${text || "(no messages)"}`;
+    },
+  }),
+  def({
+    name: "thread_resolve",
+    description:
+      "Mark this thread settled, once its topic is done, with what it came to. The main chat hears the outcome. The owner can open it again by writing in it.",
+    schema: z.object({
+      outcome: z
+        .string()
+        .trim()
+        .min(1)
+        .max(300)
+        .describe('What it came to, in a line: "Offered 350 zł; the seller agreed"'),
+    }),
+    run: async ({ outcome }, { chats, conversationId }) => {
+      if (!chats || conversationId === undefined) return "Threads aren't available here.";
+      const c = chats.resolveThread(conversationId, outcome);
+      return c?.resolvedAt ? "Resolved." : "This isn't an open thread.";
+    },
+  }),
+  def({
     name: "get_task",
     description: "The status of a task, its summary if it ended, and its last few steps.",
     schema: z.object({ id: z.number().int() }),
@@ -1915,7 +1986,8 @@ export async function runTool(
       err instanceof ScheduleError ||
       err instanceof DesktopError ||
       err instanceof NotChanged ||
-      err instanceof BoxError
+      err instanceof BoxError ||
+      err instanceof ThreadError
     )
       return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);
@@ -1924,6 +1996,10 @@ export async function runTool(
 }
 
 export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
+
+/** Only in a bot's own chat, and only in a thread. */
+export const MAIN_CHAT_TOOLS = ["thread_open", "thread_read"];
+export const IN_THREAD_TOOLS = ["thread_resolve"];
 
 /** Only the code bot gets these, when there is one. */
 export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed", "box_t3"];

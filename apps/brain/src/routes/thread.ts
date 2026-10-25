@@ -130,6 +130,12 @@ export const threadRoutes = new Hono<AppEnv>()
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
+  .get("/conversations/:id/threads", (c) => c.json(c.var.chats.threads(id(c))))
+  .post("/conversations/:id/resolve", (c) => {
+    const thread = c.var.chats.get(id(c));
+    if (thread?.kind !== "thread") return c.json({ error: "That's gone." }, 404);
+    return c.json(c.var.chats.resolveThread(thread.id, null) ?? thread);
+  })
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
     c.var.chats.markSeen(c.req.valid("json").ids);
@@ -185,6 +191,7 @@ function refused(c: Ctx, t: Thread, { attachmentIds, incognito }: z.infer<typeof
   if (attachmentIds.some((id) => c.var.attachments.get(id)?.from !== "owner"))
     return c.json({ error: "unknown attachment" }, 400);
   if (incognito && t.group()) return c.json({ error: "Group chats have no incognito." }, 400);
+  if (incognito && t.parent() !== null) return c.json({ error: "Threads have no incognito." }, 400);
   return closed(c, t);
 }
 

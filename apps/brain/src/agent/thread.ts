@@ -59,6 +59,7 @@ import { clip, head } from "../text";
 import type { Triggers } from "../triggers";
 import type { Watchers } from "../watch/service";
 import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
+import type { Chats } from "./chats";
 import {
   afterFallback,
   type CreateParams,
@@ -86,11 +87,13 @@ import {
   containerOf,
   DESKTOP_TOOLS,
   deferRare,
+  IN_THREAD_TOOLS,
   INCOGNITO_TOOLS,
   inBatches,
   invalidInput,
   LOOKUP_TOOLS,
   liveTool,
+  MAIN_CHAT_TOOLS,
   runTool,
   TOOL_PARAMS,
   TOOL_SEARCH,
@@ -234,8 +237,15 @@ export type ThreadDeps = {
   plugins: Plugins;
   bots: Bots;
   boxes?: Boxes;
+  /** Set by Chats itself. */
+  chats?: Chats;
   clock?: () => number;
 };
+
+/** Resolved threads the main chat still hears of. */
+const RESOLVED_SHOWN_MS = 7 * 86400_000;
+/** The most of a thread thread_read hands the main chat. */
+const READ_THREAD_MESSAGES = 40;
 
 export function parseSummary(out: string): { recap: string | null; summary: string } {
   const tag = (name: string) =>
@@ -275,6 +285,7 @@ export class Thread {
    */
   private screeners = new Map<number, Screener>();
   private clock: () => number;
+  private kindOf?: { kind: string; parentId: number | null };
 
   constructor(
     private d: ThreadDeps,
@@ -293,6 +304,16 @@ export class Thread {
       .all(this.conversationId)
       .map((r) => (group ? this.d.bots.active(r.bot_id) : this.d.bots.get(r.bot_id)))
       .filter((b): b is Bot => b !== null);
+  }
+
+  /** A thread's chat, if this is a thread. */
+  parent(): number | null {
+    this.kindOf ??= this.d.db
+      .query<{ kind: string; parentId: number | null }, [number]>(
+        "SELECT kind, parent_id AS parentId FROM conversations WHERE id = ?",
+      )
+      .get(this.conversationId) ?? { kind: "direct", parentId: null };
+    return this.kindOf.kind === "thread" ? this.kindOf.parentId : null;
   }
 
   group(): { title: string | null } | null {
@@ -363,7 +384,7 @@ export class Thread {
    */
   add(m: {
     role?: "user" | "assistant";
-    kind?: "text" | "command" | "task" | "schedule" | "box" | "handoff";
+    kind?: "text" | "command" | "task" | "schedule" | "box" | "handoff" | "thread";
     text: string;
     status?: "done" | "streaming";
     botId?: string;
@@ -437,6 +458,7 @@ export class Thread {
     });
     // Writing again instead of answering an approval moves on without it.
     if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
+    if (this.parent() !== null) this.d.chats?.reopenThread(this.conversationId);
     // Stopping can't wait its turn behind the reply it stops.
     if (command?.name === "stop") {
       this.stop(command.arg, message);
@@ -899,6 +921,11 @@ export class Thread {
         // Boxes are code: with a code bot, it makes and changes them all.
         .filter((t) => !bots.coderFor(bot) || !BOX_CHANGE_TOOLS.includes(t.name))
         .filter((t) => t.name !== "box_t3" || plugins.readyFor("t3", bot.plugins, left))
+        .filter((t) =>
+          this.parent() !== null
+            ? !MAIN_CHAT_TOOLS.includes(t.name)
+            : !IN_THREAD_TOOLS.includes(t.name) && (!group || !MAIN_CHAT_TOOLS.includes(t.name)),
+        )
         .map(deferRare),
       ASK_OWNER,
       TOOL_SEARCH,
@@ -1150,8 +1177,8 @@ export class Thread {
    * every summarized conversation, so one suspected of reading one itself makes it suspect until that
    * one is deleted; what a conversation only carried over doesn't. Mere untrusted reads don't carry.
    */
-  private summarySuspected(): string | null {
-    if (!this.threadSummary()) return null;
+  private summarySuspected(conversationId = this.conversationId): string | null {
+    if (!this.threadSummary(conversationId)) return null;
     return (
       this.d.db
         .query<{ s: string }, [number]>(
@@ -1159,15 +1186,15 @@ export class Thread {
            FROM episodes WHERE conversation_id = ? AND summarized = 1 AND read_suspected IS NOT NULL
            ORDER BY id LIMIT 1`,
         )
-        .get(this.conversationId)?.s ?? null
+        .get(conversationId)?.s ?? null
     );
   }
 
-  private threadSummary(): string {
+  private threadSummary(conversationId = this.conversationId): string {
     return (
       this.d.db
         .query<{ summary: string }, [number]>("SELECT summary FROM conversations WHERE id = ?")
-        .get(this.conversationId)?.summary ?? ""
+        .get(conversationId)?.summary ?? ""
     );
   }
 
@@ -1541,20 +1568,83 @@ export class Thread {
         }),
       )
       .join("\n");
+    // One written from a conversation suspected of reading an injection is data, like what it read.
+    const summary = (tag: string, conversationId: number, none: string) =>
+      this.summarySuspected(conversationId)
+        ? untrustedBlock(tag, this.threadSummary(conversationId))
+        : `<${tag}>\n${this.threadSummary(conversationId) || none}\n</${tag}>`;
+    const parent = this.parent();
     return [
       "<context>",
       await memoryIndex(this.d.memory, bot.id),
       ...(incognito
         ? []
-        : [
-            // One written from a conversation suspected of reading an injection is data, like what it read.
-            this.summarySuspected()
-              ? untrustedBlock("summary_of_earlier_conversations", this.threadSummary())
-              : `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
-          ]),
+        : parent !== null
+          ? [
+              summary("summary_of_earlier_conversations", parent, "(none yet)"),
+              this.threadNote(),
+              ...(this.threadSummary()
+                ? [summary("summary_of_this_thread", this.conversationId, "")]
+                : []),
+            ]
+          : [
+              summary("summary_of_earlier_conversations", this.conversationId, "(none yet)"),
+              ...(this.group() ? [] : [this.threadsNote()]),
+            ]),
       `<recent_messages>\n${recent || "(none)"}\n</recent_messages>`,
       "</context>",
     ].join("\n");
+  }
+
+  private threadNote(): string {
+    const c = this.d.chats?.get(this.conversationId);
+    return `<thread title=${JSON.stringify(c?.title ?? "")}>\nThis is a thread: a side conversation in your chat with the owner, on one topic, apart from the main chat. The messages below are this thread's; the summary above is of the main chat. Stay on the topic. Once it's settled, resolve it with thread_resolve.\n</thread>`;
+  }
+
+  /** The main chat's threads: the open ones, and those resolved lately with what they came to. */
+  private threadsNote(): string {
+    const chats = this.d.chats;
+    if (!chats) return "";
+    const since = new Date(this.clock() - RESOLVED_SHOWN_MS).toISOString();
+    const shown = chats
+      .threads(this.conversationId)
+      .filter((c) => !c.resolvedAt || c.resolvedAt >= since);
+    if (!shown.length) return "";
+    const line = (c: (typeof shown)[number]) =>
+      `#${c.id} "${c.title ?? ""}": ${c.resolvedAt ? `resolved, ${c.outcome ?? "by the owner"}` : "open"}`;
+    const plain = shown.filter((c) => !chats.threadTaint(c.id));
+    const read = shown.filter((c) => chats.threadTaint(c.id));
+    return [
+      "<threads>",
+      "Threads in this chat: side conversations on one topic each, where the owner answers you apart from here. thread_read reads one.",
+      ...plain.map(line),
+      // Their titles and outcomes were written after reading untrusted content.
+      ...(read.length
+        ? [untrustedBlock("threads_that_read_untrusted_content", read.map(line).join("\n"))]
+        : []),
+      "</threads>",
+    ].join("\n");
+  }
+
+  /** The thread's latest messages, for the main chat's thread_read; `taintedBy` is what they read. */
+  readOut(): { text: string; taintedBy: string | null } {
+    const messages = this.list(undefined, READ_THREAD_MESSAGES).filter(
+      (m) => m.status !== "streaming",
+    );
+    const untrusted = this.untrusted(messages.map((m) => m.id));
+    const text = messages
+      .map((m) =>
+        this.transcript({
+          role: m.role,
+          bot_id: m.botId,
+          kind: m.kind,
+          text: m.text,
+          created_at: m.createdAt,
+          tainted_by: untrusted.get(m.id)?.source ?? null,
+        }),
+      )
+      .join("\n");
+    return { text, taintedBy: [...untrusted.values()][0]?.source ?? null };
   }
 
   private commandsSince(episodeId: number, userId: number): string {
@@ -1851,7 +1941,15 @@ export class Thread {
           // A new conversation starts untainted; only a suspected injection carries on. /new leaves
           // the messages before behind, and that with them.
           if (!episode.fresh) this.inheritSuspicion(episode.id, userId);
-          this.carrySuspicion(episode.id, this.summarySuspected());
+          const parent = this.parent();
+          this.carrySuspicion(
+            episode.id,
+            this.summarySuspected() ?? (parent === null ? null : this.summarySuspected(parent)),
+          );
+          // A thread's first message is what it's about, like a schedule's prompt.
+          const opener =
+            parent === null ? null : this.d.chats?.threadTaint(this.conversationId, true);
+          if (opener) this.taint(episode.id, opener);
         }
       } else {
         const commands = this.commandsSince(episode.id, userId);
