@@ -28,6 +28,51 @@ export const MandateInput = z.object({
 });
 export type MandateInput = z.infer<typeof MandateInput>;
 
+/** negotiate_start's mandate: the model never sets the limit, or reads it back. */
+export const StartInput = MandateInput.omit({ limit: true }).extend({
+  owner_max: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      "The most to pay, only if the owner named it in their own words; leave it out otherwise",
+    ),
+});
+export type StartInput = z.infer<typeof StartInput>;
+
+/**
+ * The limit for a purchase: the owner's own max, else Scout's walk-away price, else the asking price.
+ * Its errors never name a limit the model wasn't given.
+ */
+export function startLimit(
+  i: StartInput,
+  walkAway: number | null,
+  asking: number | null,
+  currency: string,
+): { limit: number } | { problem: string } {
+  if (i.opening > i.target) return { problem: "The opening offer must be at most the target." };
+  if (asking !== null && i.target > asking)
+    return {
+      problem: `The target is above the asking price (${zl(asking, currency)}): there's no paying more than asked.`,
+    };
+  if (i.owner_max !== undefined) {
+    if (i.owner_max < i.target) return { problem: "The target is above the owner's max." };
+    return { limit: asking !== null ? Math.min(i.owner_max, asking) : i.owner_max };
+  }
+  const limit = walkAway ?? asking;
+  if (limit === null)
+    return {
+      problem:
+        "Scout couldn't appraise this listing and it shows no price, so there's no limit to set. Ask the owner for the most to pay, and pass it as owner_max.",
+    };
+  if (i.target > limit)
+    return {
+      problem:
+        "The target is above what Scout's appraisal says the listing is worth. Aim lower, or ask the owner for the most to pay and pass it as owner_max.",
+    };
+  return { limit };
+}
+
 export function mandateProblem(
   m: Pick<Mandate, "opening" | "target" | "limit">,
   role: "buy" | "sell",
@@ -58,7 +103,13 @@ export function toMandate(i: MandateInput, currency: string, now: number): Manda
 
 export function mandateTerms(n: Pick<Negotiation, "mandate" | "role">): string {
   const m = n.mandate;
-  return `open at ${zl(m.opening, m.currency)}, aim for ${zl(m.target, m.currency)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit, m.currency)}`;
+  return `${mandateAims(n)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${zl(m.limit, m.currency)}`;
+}
+
+/** The mandate as the model reads it: without the limit, which only the code checks. */
+export function mandateAims(n: Pick<Negotiation, "mandate">): string {
+  const m = n.mandate;
+  return `open at ${zl(m.opening, m.currency)}, aim for ${zl(m.target, m.currency)}`;
 }
 
 /** The title is the seller's words: without quote marks or line breaks, so it can't close the quote and read as ours. */

@@ -233,11 +233,12 @@ export async function appraise(
   };
 }
 
+/** For the model: the walk-away price becomes the limit, which it isn't told. */
 export function appraisalText(l: ListingFacts, a: Appraisal): string {
   const lines = [
     `${l.title} (${l.key}) ${l.url}`,
     `Asking ${a.asking !== null ? zl(a.asking, a.currency) : "unknown"}.`,
-    `Open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away above ${zl(a.walkAway, a.currency)}.`,
+    `Open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}.`,
     `Basis: ${a.basis}`,
     "Rests on:",
     ...a.sources.map(
