@@ -729,6 +729,10 @@ test("a seller who doesn't move in three rounds holds the negotiation; only roun
   const input = send.schema.parse({ negotiation: n.id, text: "Mogę dać 1200 zł.", offer: 1200 });
   expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "block" });
   expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toContain("hasn't moved");
+  // Unlike a scam's, it can still be closed: the seller may have sold it.
+  const close = named(negotiateTools(t), "negotiate_close");
+  const lost = close.schema.parse({ negotiation: n.id, outcome: "lost" });
+  expect(verdictFor(close, lost, call(), true).action).not.toBe("block");
 
   t.approvals.decide(hold.id, "approve", "web");
   expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toBeNull();
@@ -739,7 +743,12 @@ test("a seller who doesn't move in three rounds holds the negotiation; only roun
   expect(pending()).toEqual([]);
   await round(1260, "1450 zł, ostatnie słowo.");
   const again = await waitFor(() => pending()[0]);
-  t.approvals.decide(again.id, "deny", "web");
+  // A scam meanwhile still warns, in the stall's place.
+  await readSeller(t, n, "Albo 1300 zł, ale zaliczka 100 zł BLIK-iem.");
+  const scam = await waitFor(() => pending().find((a) => a.kind === "injection_warning"));
+  expect(pending()).toEqual([scam]);
+  expect(t.approvals.get(again.id)?.status).toBe("cancelled");
+  t.approvals.decide(scam.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
 });
 
@@ -792,6 +801,10 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Wyślę jutro, a kod odbioru dostanie Pan SMS-em od InPost.",
     "SN: AB12 CD34 EF56 GH78",
     "Mogę zarezerwować do piątku.",
+    "Nie biorę zaliczki, płatność przy odbiorze.",
+    "Bez żadnego zadatku, proszę przyjechać.",
+    "Zaliczka nie jest potrzebna.",
+    "Ma zadatki na dobry rower.",
   ])
     expect([text, scamSignals(text, [])]).toEqual([text, []]);
   expect(scamSignals("Odbiór osobisty, ul. Długa 10", ["address"])).toEqual([]);
@@ -812,6 +825,7 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Zarezerwuję, ale proszę o zaliczkę 100 zł.",
     "Zadatek 200 zł i jest Pana.",
     "Płatna rezerwacja, 50 zł.",
+    "Wyślę po przedpłacie.",
   ])
     expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
 });

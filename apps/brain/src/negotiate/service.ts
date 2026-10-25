@@ -743,8 +743,13 @@ export class Negotiations {
     const a = this.d.approvals.get(n.approvalId);
     if (!a || !HOLD_KINDS.includes(a.kind) || a.status !== "pending") return null;
     return this.holdOf(n.id) === "stalled"
-      ? `Negotiation #${n.id} is held: the seller hasn't moved in ${STALL_ROUNDS} rounds, and the owner decides whether to carry on. Don't message the seller or close the negotiation; wait for the owner.`
+      ? `Negotiation #${n.id} is held: the seller hasn't moved in ${STALL_ROUNDS} rounds, and the owner decides whether to carry on. Don't message the seller; wait for the owner. If the seller sold it or took your offer, you may still close it.`
       : `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
+  }
+
+  /** A scam warning waits for the owner, who ends it or carries on; closing would clear it. */
+  scamHeld(n: Negotiation): string | null {
+    return this.holdOf(n.id) === "scam" ? this.held(n) : null;
   }
 
   private holdOf(id: number): Hold {
@@ -765,7 +770,10 @@ export class Negotiations {
       summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
       reason: `The seller wrote: “${quoted}”\nIt has ${signals.join("; ")}, which is how scams on marketplaces often start. Nothing more goes to the seller until you decide. Approve to carry on, or deny to end the negotiation.`,
     });
+    // A scam outranks a stall: the stall's question goes, after the row stops pointing at it.
+    const stall = this.held(n) ? n.approvalId : null;
     this.update(n.id, { approval_id: approval.id, hold: "scam" });
+    if (stall) this.d.approvals.cancel(stall);
   }
 
   /** A stall isn't a scam: it can be approved from anywhere. */
@@ -788,11 +796,13 @@ export class Negotiations {
         .all(a.id),
     );
     if (!n || a.status === "pending") return;
-    if (a.status === "approved") return this.emit(n.id);
-    const why =
-      this.holdOf(n.id) === "stalled"
-        ? `The seller didn't move in ${STALL_ROUNDS} rounds`
-        : "The seller's message looked like a scam";
+    const stall = this.holdOf(n.id) === "stalled";
+    // Unanswered, a stall carries on: walking away is the owner's to say.
+    if (a.status === "approved" || (stall && a.status === "expired"))
+      return this.update(n.id, { approval_id: null });
+    const why = stall
+      ? `The seller didn't move in ${STALL_ROUNDS} rounds`
+      : "The seller's message looked like a scam";
     await this.close(
       n,
       "abandoned",
@@ -813,7 +823,7 @@ export class Negotiations {
       : `${bot} doesn't answer sellers after a deal, so it's yours to answer.`;
     this.d.chats.note(
       n.botId,
-      `**Negotiation #${n.id}** (${quotedTitle(n.title)}, ${n.status}${price}): the seller wrote after the deal:\n${quoted}\n${yours}`,
+      `**Negotiation #${n.id}** (${quotedTitle(n.title)}, ${n.status}${price}): new from the seller:\n${quoted}\n${yours}`,
       `The seller in negotiation #${n.id}`,
     );
   }
@@ -915,7 +925,7 @@ export class Negotiations {
       const signals = scamSignals(text, n.mandate.allow);
       // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
       const current = signals.length ? this.get(n.id) : null;
-      if (current?.status === "open" && !this.held(current)) this.hold(current, text, signals);
+      if (current?.status === "open" && !this.scamHeld(current)) this.hold(current, text, signals);
     });
     if (fresh.length && DEALT.includes(n.status)) this.afterDeal(n, fresh);
     if (fresh.length) this.stallCheck(n.id);
