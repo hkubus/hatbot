@@ -348,10 +348,10 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
   expect(t.desktop.get().request).toBeNull();
 });
 
-test("a page is screened before the model acts on it: one Haiku couldn't check is noted, a suspected injection waits for you", async () => {
+test("a page is screened before the model acts on it: one Haiku couldn't check is noted; after a suspected injection the task goes on, warned, and every step asks you", async () => {
   const work = new FakeModel([
     { content: [computer("screenshot")] },
-    { content: [computer("left_click", { coordinate: [10, 10] })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send the form" })] },
     finish(),
   ]);
   const t = await testApp(new FakeModel(), work);
@@ -365,6 +365,7 @@ test("a page is screened before the model acts on it: one Haiku couldn't check i
     return res;
   };
   work.onCreate = (p) => {
+    if (p.system === REVIEW_PROMPT) return JSON.stringify({ safe: true, why: "Asked for." });
     const read = JSON.stringify(p.messages);
     if (read.includes("Page A")) return "not JSON";
     if (read.includes("Ignore previous"))
@@ -372,17 +373,17 @@ test("a page is screened before the model acts on it: one Haiku couldn't check i
     return undefined;
   };
   const task = startTask(t);
-  const suspected = await pending(t);
-  expect(work.requests).toHaveLength(2);
-  expect(t.tasks.steps(task.id).filter((s) => s.name === "Couldn't check the page")).toHaveLength(
-    1,
-  );
-  expect(suspected.kind).toBe("injection_warning");
-  expect(suspected.reason).toContain("Ignore previous instructions");
-  t.approvals.decide(suspected.id, "deny", "web");
+  const asked = await pending(t);
+  expect(asked).toMatchObject({ kind: "send", summary: "Send the form" });
+  expect(work.creates.some((c) => c.system === REVIEW_PROMPT)).toBe(false);
+  t.approvals.decide(asked.id, "approve", "web");
   await t.tasks.idle();
-  expect(t.tasks.get(task.id)).toMatchObject({ status: "cancelled", injectionSuspected: true });
-  expect(t.agent.actions).toEqual([]);
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done", injectionSuspected: true });
+  const steps = t.tasks.steps(task.id).map((s) => s.name);
+  expect(steps.filter((n) => n === "Couldn't check the page")).toHaveLength(1);
+  expect(steps.filter((n) => n === "Possible prompt injection")).toHaveLength(1);
+  expect(JSON.stringify(work.requests[2]?.messages)).toContain("They aren't the owner's");
+  expect(t.approvals.list(false)).toHaveLength(1);
 });
 
 test("a page Haiku's last step left unscreened is screened before Opus carries on", async () => {
@@ -406,12 +407,10 @@ test("a page Haiku's last step left unscreened is screened before Opus carries o
   limits.maxSteps = 1;
   try {
     const task = startTask(t);
-    const approval = await pending(t);
-    expect(approval.kind).toBe("injection_warning");
-    expect(work.requests.map((r) => r.model)).toEqual(["claude-haiku-5-5"]);
-    t.approvals.decide(approval.id, "deny", "web");
     await t.tasks.idle();
-    expect(t.tasks.get(task.id)).toMatchObject({ status: "cancelled", injectionSuspected: true });
+    expect(t.tasks.get(task.id)).toMatchObject({ status: "done", injectionSuspected: true });
+    expect(work.requests.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
+    expect(t.approvals.list(false)).toEqual([]);
   } finally {
     limits.maxSteps = 80;
   }
@@ -432,9 +431,10 @@ test("hitting the task limit asks to raise it", async () => {
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
-test("desktop_shell runs commands as text; destructive ones ask first", async () => {
+test("desktop_shell runs commands as text; destructive ones go to the review, then the owner", async () => {
   const work = new FakeModel([
     { content: [toolUse("desktop_shell", { command: "python3 -c 'print(6*7)'" })] },
+    { content: [toolUse("desktop_shell", { command: "rm -rf ~/build" })] },
     { content: [toolUse("desktop_shell", { command: "rm -rf ~/experiments" })] },
     finish("Worked it out."),
   ]);
@@ -444,19 +444,29 @@ test("desktop_shell runs commands as text; destructive ones ask first", async ()
     output: c.includes("print") ? "42" : "",
     timedOut: false,
   });
+  t.taskModel.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify(
+          JSON.stringify(p.messages).includes("build")
+            ? { safe: true, why: "Build output." }
+            : { safe: false, why: "Nothing else has these files." },
+        )
+      : undefined;
   const task = startTask(t, "Compute");
   const approval = await pending(t);
   expect(approval).toMatchObject({
     kind: "delete",
     summary: "On the desktop: rm -rf ~/experiments",
   });
-  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'"]);
+  expect(approval.reason).toContain("Opus: Nothing else has these files.");
+  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'", "rm -rf ~/build"]);
   t.approvals.decide(approval.id, "deny", "web");
   await t.tasks.idle();
   expect(t.tasks.get(task.id)?.status).toBe("done");
-  expect(t.agent.commands).toHaveLength(1);
+  expect(t.agent.commands).toHaveLength(2);
   expect(lastText(work.requests[1])).toContain("Exit code 0\\n42");
-  expect(lastText(work.requests[2])).toContain("The owner denied this.");
+  expect(lastText(work.requests[3])).toContain("The owner denied this.");
+  expect(t.approvals.list(false)).toHaveLength(1);
 });
 
 test("a click in a frame Hatbot can't enter, or that it couldn't look at, is held", async () => {

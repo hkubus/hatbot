@@ -1239,7 +1239,7 @@ export const TOOLS = [
       const input = tool_input ?? {};
       const every = every_minutes ?? 60;
       // The page gets what the tool reads. After untrusted content, or for a page written after it,
-      // that's for the owner to allow: Haiku's review never sees what the page does with it.
+      // a box that reaches a host is for the owner to allow: the review never sees what the page does with it.
       const chat = ctx.tainted?.() ?? null;
       let note = "";
       if (chat || ctx.boxes.taintedBy(id)) {
@@ -1258,7 +1258,7 @@ export const TOOLS = [
             why: chat
               ? "This conversation has read untrusted content, so giving a box your data needs your approval."
               : "This box's page was written after reading untrusted content, so giving it your data needs your approval.",
-            always: true,
+            always: hosts.length > 0,
           },
           signal,
         );

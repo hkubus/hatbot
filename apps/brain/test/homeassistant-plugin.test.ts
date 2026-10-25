@@ -109,7 +109,7 @@ test("a task calls a service with the token; strangers' text is read only as unt
   );
 });
 
-test("everyday control runs; locks, covers, purges and anything else ask, as does a tainted task", async () => {
+test("everyday control and locking run; unlocking, opening, purges and anything else ask, as does a tainted task", async () => {
   const t = await pluginApp(homeassistantPlugin, env);
   const service = t.tool("homeassistant_call_service");
   const v = (domain: string, service_: string, more: object = {}) =>
@@ -126,6 +126,15 @@ test("everyday control runs; locks, covers, purges and anything else ask, as doe
   const always = { action: "ask", kind: "access", always: true };
   expect(v("lock", "unlock", { entity_id: "lock.front_door" })).toMatchObject(always);
   expect(v("cover", "open_cover", { entity_id: "cover.garage" })).toMatchObject(always);
+  // Keeping people out runs, but not on anything else slipped in beside it.
+  expect(v("lock", "lock", { entity_id: "lock.front_door" }).action).toBe("allow");
+  expect(v("alarm_control_panel", "alarm_arm_away", { data: { area_id: "house" } }).action).toBe(
+    "allow",
+  );
+  expect(v("cover", "close_cover", { entity_id: "cover.garage" }).action).toBe("allow");
+  expect(
+    v("lock", "lock", { entity_id: "lock.front_door", data: { entity_id: "cover.garage" } }),
+  ).toMatchObject(always);
   expect(v("recorder", "purge", { data: { keep_days: 1 } })).toMatchObject({
     action: "ask",
     kind: "delete",
