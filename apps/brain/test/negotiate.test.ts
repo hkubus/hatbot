@@ -692,6 +692,83 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
 });
 
+/** Reads the conversation in a desktop task that finds `text` from the seller. */
+async function readSeller(t: TestApp, n: Negotiation, text: string) {
+  t.taskModel.script.push(
+    { content: [toolUse("record_conversation", { messages: [{ from: "seller", text }] })] },
+    finish(),
+  );
+  await t.negotiations.check(t.negotiations.get(n.id) as Negotiation, call());
+  await t.tasks.idle();
+}
+
+test("a seller who doesn't move in three rounds holds the negotiation; only rounds after you decide count again", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  const round = async (offer: number, reply: string) => {
+    const id = t.negotiations.claimSend(t.negotiations.get(n.id) as Negotiation, {
+      text: `Mogę dać ${offer} zł.`,
+      offer,
+      agree: false,
+      stated: null,
+    });
+    t.db.query("UPDATE negotiation_messages SET status = 'sent' WHERE id = ?").run(id);
+    await readSeller(t, n, reply);
+  };
+  const pending = () => t.approvals.list(true);
+  await round(1060, "Cena 1500 zł, jak w ogłoszeniu.");
+  await round(1100, "Nie, 1500 zł.");
+  expect(pending()).toEqual([]);
+  await round(1150, "Zostaję przy 1500 zł.");
+  const hold = await waitFor(() => pending()[0]);
+  // Not a scam: it can be approved from the lock screen.
+  expect(hold.kind).toBe("other");
+  expect(hold.reason).toContain("1,500 zł");
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: "Mogę dać 1200 zł.", offer: 1200 });
+  expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "block" });
+  expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toContain("hasn't moved");
+
+  t.approvals.decide(hold.id, "approve", "web");
+  expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toBeNull();
+  // The seller moves, then holds at the new price: three rounds at it from then on hold it again.
+  await round(1200, "Dobra, 1450 zł.");
+  await round(1220, "1450 zł.");
+  await round(1240, "Mówiłem, 1450 zł.");
+  expect(pending()).toEqual([]);
+  await round(1260, "1450 zł, ostatnie słowo.");
+  const again = await waitFor(() => pending()[0]);
+  t.approvals.decide(again.id, "deny", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("after a deal the seller's messages are read but go to you, and a dispute says so", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  const check = named(negotiateTools(t), "negotiate_check");
+  const input = check.schema.parse({ negotiation: n.id });
+  await t.negotiations.close(n, "agreed", 1300, null);
+  expect(verdictFor(check, input, call(), true).action).toBe("allow");
+
+  await readSeller(t, n, "Paczka przyszła pusta, chcę zwrot pieniędzy albo zgłaszam spór.");
+  const note = () => t.chats.direct(n.botId).list().at(-1)?.text ?? "";
+  expect(note()).toContain("Paczka przyszła pusta");
+  expect(note()).toContain("reads like a dispute");
+  // Off the platform after the deal: nothing to hold, and it's the owner's either way.
+  await readSeller(t, n, "Wyślę kurierem jutro rano, przelew dostałem.");
+  expect(t.approvals.list(true)).toEqual([]);
+  expect(note()).toContain("przelew dostałem");
+  expect(note()).not.toContain("dispute");
+
+  const lost = openNegotiation(t);
+  await t.negotiations.close(lost, "lost", null, null);
+  expect(verdictFor(check, check.schema.parse({ negotiation: lost.id }), call(), true).action).toBe(
+    "block",
+  );
+});
+
 test("the seller's own words in the title can't pass for the mandate's terms", () => {
   const n = {
     ...({} as Negotiation),
@@ -714,6 +791,7 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Kod z aplikacji InPost do odbioru",
     "Wyślę jutro, a kod odbioru dostanie Pan SMS-em od InPost.",
     "SN: AB12 CD34 EF56 GH78",
+    "Mogę zarezerwować do piątku.",
   ])
     expect([text, scamSignals(text, [])]).toEqual([text, []]);
   expect(scamSignals("Odbiór osobisty, ul. Długa 10", ["address"])).toEqual([]);
@@ -731,6 +809,9 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Podaj numer karty płatniczej",
     "Paczka jutro. Resztę ustalimy SMS-em",
     "Wpłać na PL61 1090 1014 0000 0712 1981 2874",
+    "Zarezerwuję, ale proszę o zaliczkę 100 zł.",
+    "Zadatek 200 zł i jest Pana.",
+    "Płatna rezerwacja, 50 zł.",
   ])
     expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
 });

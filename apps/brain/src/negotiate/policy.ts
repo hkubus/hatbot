@@ -1,6 +1,6 @@
 // negotiate_send's policy, in code rather than by a model. It fails closed: a message goes on its own
 // only when the check can read all of it and finds it inside the mandate. It never sends on a guess.
-import type { MandateContact, Negotiation, Stated } from "@hatbot/shared";
+import type { MandateContact, Negotiation, NegotiationMessage, Stated } from "@hatbot/shared";
 import { askAlways, block, covered, type Verdict } from "../plugins/plugin";
 import { collapse, sameHost } from "./gate";
 
@@ -396,6 +396,41 @@ function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null 
     if (r.values.length) return worst(r.values);
   }
   return n.asking;
+}
+
+export const STALL_ROUNDS = 3;
+
+/**
+ * The price the seller has kept to through the last three of our messages they answered, each sent
+ * after message `since`, while our offer stayed short of it. Null when it moved or can't be read for
+ * certain.
+ */
+export function stalled(
+  n: Negotiation,
+  messages: NegotiationMessage[],
+  since: number | null,
+): number | null {
+  const theirs = messages.filter((m) => m.direction === "in");
+  const ours = messages.filter(
+    (m) => m.direction === "out" && (m.status === "sent" || m.status === "unconfirmed"),
+  );
+  const upTo = (to: number, after = to) =>
+    theirs.filter((m) => m.id < to).map((m) => ({ text: m.text, after: m.id > after }));
+  const rounds = ours.flatMap((o, i) => {
+    const next = ours[i + 1]?.id ?? Number.POSITIVE_INFINITY;
+    const answered = theirs.some((m) => m.id > o.id && m.id < next);
+    return answered && o.id > (since ?? 0)
+      ? [{ id: o.id, price: theirPrice(n, upTo(next, o.id)) }]
+      : [];
+  });
+  const last = rounds.slice(-STALL_ROUNDS);
+  const first = last[0];
+  if (!first || last.length < STALL_ROUNDS) return null;
+  const before = theirPrice(n, upTo(first.id));
+  if (before === null || last.some((r) => r.price !== before)) return null;
+  const offer = ours.findLast((o) => o.offer !== null)?.offer;
+  if (offer == null) return null;
+  return (n.role === "buy" ? offer < before : offer > before) ? before : null;
 }
 
 const FIRM =

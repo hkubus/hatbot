@@ -144,6 +144,66 @@ const DISGUISED: Term[] = [
 ];
 const DISGUISED_RE = termsRe(DISGUISED);
 
+// Money before the item is seen, which buyer protection doesn't cover.
+const DEPOSIT: Term[] = [
+  "zaliczk*",
+  "zadat*",
+  "kaucj*",
+  "przedplat*",
+  "platn* rezerwacj*",
+  "rezerwacj* platn*",
+  "oplat* rezerwacyjn*",
+  "oplat* za rezerwacj*",
+  "zaplac* za rezerwacj*",
+  "wplac* za rezerwacj*",
+  "wplat* za rezerwacj*",
+  "deposit*",
+  "down payment",
+];
+const DEPOSIT_RE = termsRe(DEPOSIT);
+
+/** Payment, delivery or the item gone wrong after a deal, or a threat to take it further. */
+const DISPUTE: Term[] = [
+  "zwrot*",
+  "zwroc*",
+  "reklamacj*",
+  "spor",
+  "sporu",
+  "oszust*",
+  "oszuk*",
+  "naciag*",
+  "policj*",
+  "prokurat*",
+  "pozew",
+  "pozw*",
+  "nie zaplacil*",
+  "nie zaplacon*",
+  "brak platnosci",
+  "brak wplaty",
+  "nie dotarl*",
+  "nie doszl*",
+  "nie przyszl*",
+  "nie otrzymal*",
+  "nie dostal*",
+  "uszkodz*",
+  "zepsut*",
+  "niezgodn*",
+  "pust* paczk*",
+  "pust* karton*",
+  "refund*",
+  "dispute*",
+  "chargeback",
+  "scam*",
+  "not received",
+  "never arrived",
+  "wrong item",
+  "damaged",
+  "report*",
+];
+const DISPUTE_RE = termsRe(DISPUTE);
+
+export const disputed = (text: string) => DISPUTE_RE.test(fold(text));
+
 /** A card's details, unless it's a graphics, memory, SIM or warranty card's. */
 const CARD_KINDS = [
   "graficzn*",
@@ -232,6 +292,7 @@ export function scamSignals(text: string, allow: MandateContact[]): string[] {
   const out: string[] = [];
   const off = OFF_PLATFORM.exec(text)?.[0] ?? disguised(text);
   if (off) out.push(`payment or talk off the platform (“${off}”)`);
+  if (DEPOSIT_RE.test(fold(text))) out.push("a request for a deposit");
   const account = [...plain(text).matchAll(ACCOUNT)].map((m) => m[0]).find(ibanChecks);
   if (account) out.push(`a bank account number (“${account}”)`);
   const link = linksIn(text).find((l) => !ownSite(l));

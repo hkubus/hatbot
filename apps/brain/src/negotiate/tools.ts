@@ -258,7 +258,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_check",
       description:
-        "Read the negotiation's conversation now, in a desktop task that sends nothing, and record what the seller wrote. Then negotiate_get shows it.",
+        "Read the negotiation's conversation now, in a desktop task that sends nothing, and record what the seller wrote. Then negotiate_get shows it. It still reads after a deal (agreed, paid or received), when what the seller writes goes to the owner, who answers it.",
       schema: z.object({ negotiation: Id }),
       access: "write",
       untrusted: true,
@@ -270,12 +270,13 @@ export function negotiateTools(
         const n = neg.get(i.negotiation);
         if (!n || n.botId !== bot.id) return block(`There's no negotiation #${i.negotiation}.`);
         // Before its mandate nothing has gone to the seller, and a scam hold would take the mandate's
-        // place; once it's closed, it's over.
+        // place. After a deal the seller may still write; otherwise once it's closed, it's over.
         if (n.status === "awaiting_mandate")
           return block(
             `Negotiation #${n.id} waits for its mandate: nothing has gone to the seller yet.`,
           );
-        if (n.status !== "open") return block(`Negotiation #${n.id} is ${n.status}.`);
+        if (!["open", "agreed", "paid", "received"].includes(n.status))
+          return block(`Negotiation #${n.id} is ${n.status}.`);
         return covered("It only reads the conversation");
       },
       run: async ({ negotiation }, call) => {
