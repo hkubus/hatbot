@@ -78,8 +78,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
     instructions: HAGGLER,
     chatModel: null,
     chatEffort: null,
-    // Scout.
-    plugins: ["mcp"],
+    plugins: ["scout", "mcp"],
   },
   {
     id: "sysadmin",

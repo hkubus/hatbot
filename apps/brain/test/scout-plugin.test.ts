@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BOT_TEMPLATES } from "@hatbot/shared";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
@@ -185,3 +186,13 @@ test("Scout's calls share one connection, so a flip's photos aren't held back by
   expect(scout.s.posts.filter((m) => m === "tools/call")).toHaveLength(12);
 });
 
+test("a Haggler made after Scout is connected lists flips", async () => {
+  const t = await testApp();
+  await connected(t, fakeScout());
+  const template = BOT_TEMPLATES.find((x) => x.id === "haggler");
+  if (!template) throw new Error("no Haggler template");
+  const { id: _, ...made } = template;
+  const haggler = t.bots.create(made);
+  await t.listings.tick();
+  expect(t.approvals.list(true).map((a) => [a.kind, a.botId])).toEqual([["listing", haggler.id]]);
+});
