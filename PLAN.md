@@ -64,7 +64,32 @@ Scout is connected with a button: Settings → Plugins → Scout (2026-10-25). S
 
 ---
 
-## 4. Left on purpose
+## 4. Threads
+Planned 2026-10-25. A thread is a side conversation in a bot's chat, on one topic, with a title. A bot opens one when it has something for you that shouldn't interrupt the main chat or get lost in it: Haggler wanting your view on a counter-offer, Sysadmin reporting what it found. You can open one too. Several run at once, each with its own reply queue, so the bot answers in one while the main chat is busy. When it's settled, the bot or you resolve it, and its outcome goes into what the main chat knows.
+
+### 4.1 How
+- **Data**: a conversation of a new kind, `thread`, with `parent_id` (the bot's own chat), `key` (one thread per subject: `negotiation:12`), `opened_by_task_id`, `resolved_at` and `outcome`. A `thread` message in the parent chat links to it and is its card in the timeline. Threads stay out of the chat list; `GET /conversations/:id/threads` lists a chat's. Only in a bot's own chat, not in groups.
+- **What the bot sees in a thread**: its memory index, the parent chat's summary, the thread's own summary and recent messages, and what opened it (the task's summary, the negotiation's record). Not the main chat's recent messages. The same tools as in the main chat.
+- **What the main chat sees**: the open threads (id, title, last line), and each resolved thread's outcome through its summary. `thread_read` reads one in full when you ask; what it reads brings that thread's taint with it.
+- **Tools**: `thread_open {title, message, key?}` in chats and tasks; `thread_post {id | key, message}` in tasks; `thread_resolve {outcome}` in a thread. None asks: they only write to you. At most 12 open threads per bot, and one `thread_open` per task.
+- **You**: Reply in thread on a bot's message or a task card; Resolve; writing in a resolved thread opens it again.
+- **Tasks**: a task started in a thread reports there. A background task (a schedule, the heartbeat, a watcher, a negotiation) that opens or posts in a thread reports there, not in the main chat, and asks its `ask_owner` questions there.
+- **Taint**: each thread has its own. A thread that reads a seller's messages or logs doesn't taint the main chat; one opened by a tainted task starts tainted, and its opening message is untrusted. A tainted thread's title reaches the main chat as untrusted.
+- **Notifications**: a new thread notifies (it needs you), opening `/chat/:id/threads/:threadId`, with a `hatbot://` link for iOS. Replies in a thread don't, as in the chat.
+- **Clients**: the web and iOS stores hold one chat's messages; they need one list per open conversation, and `message.created` matched to any of them. On the web a thread opens in a panel beside the chat (a full-screen route on a phone); its card shows the title and the latest reply, or the outcome once resolved. A Threads button in the chat's header lists them. A bot's unread count includes its threads'.
+
+### 4.2 Milestones
+- **T1, brain**: the data, thread conversations and their context, the tools in the chat, the API and events. Done when a bot opens a thread from the chat and answers in it while the main chat is replying.
+- **T2, web**: the store, the panel and route, the card, the threads list, Resolve, and Reply in thread.
+- **T3, tasks**: threads opened by tasks, their results and questions there, notifications and links.
+- **T4, bots**: every negotiation gets its thread when it starts; holds, counter-offers, the agreement and N3's seller replies go there, and closing the negotiation resolves it. The heartbeat's and watchers' findings open a thread instead of a note in the chat. Prompt lines on when to open a thread and when to just answer.
+- **T5, iOS**.
+
+**Not in threads:** groups, threads inside threads, more than one bot in a thread, moving messages between threads, and the Linux app (it's being removed).
+
+---
+
+## 5. Left on purpose
 Known gaps, kept because closing them costs more than they risk (the owner's call, 2026-10-18).
 - stdio MCP servers run as the `hatbot` user, which can read `/etc/hatbot/*.env` and `secrets.json`. Running each as its own user would need a root-side launcher.
 - Attachments are sent inline with every request, up to 20 MB, and a desktop task sends its screenshots again each step, not through the Files API, which keeps files at Anthropic until deleted.
@@ -86,6 +111,6 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - Boxes shared by public link, WebSockets from box backends, and box languages other than TypeScript.
 - The Linux app's disk cache of chats, tray icon or running in the background, and Flatpak.
 
-## 5. Maybe later
+## 6. Maybe later
 - Teams.
 - The desktop as a KVM VM instead of an LXC, if RAM allows.
