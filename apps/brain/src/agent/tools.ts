@@ -1452,7 +1452,7 @@ export const TOOLS = [
   def({
     name: "ask_bot",
     description:
-      "Hand work to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
+      "Hand work to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner in a sentence or two what it did and whether it's finished, since they read its answer in its chat. It can't see this conversation, so give it everything it needs. Don't wait for it.",
     schema: AskBotInput,
     run: async (
       { bot: to, request },
