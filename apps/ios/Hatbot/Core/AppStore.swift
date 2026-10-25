@@ -78,13 +78,15 @@ final class AppStore {
   }
   /// Each note's own, so the same one again is shown for its full time again.
   private(set) var toastId = 0
-  /// The chat that's showing: a bot's own, or a group. Hatbot's own is the first.
+  /// The chat that's showing: a bot's own, a group or a thread. Hatbot's own is the first.
   private(set) var conversationId = 1
   /// Your bots, deleted ones too once seen: old messages still name them.
   var bots: [String: Bot] = [:]
   var botIds: [String] = []
   /// Empty on brains from before bots.
   var conversations: [Conversation] = []
+  /// The threads of the chats you've opened, by id; they stay out of the chat list.
+  var threads: [Int: Conversation] = [:]
   @ObservationIgnored private var refreshing = false
   /// News came while the chats were loading: load them once more after.
   @ObservationIgnored private var refreshAgain = false
@@ -147,7 +149,7 @@ final class AppStore {
     if !conversations.isEmpty {
       cache.save(
         DiskCache.Chats(
-          bots: botIds.compactMap { bots[$0] }, conversations: conversations, conversationId: conversationId))
+          bots: botIds.compactMap { bots[$0] }, conversations: conversations, conversationId: listedChatId))
     }
     guard !incognito, !messages.isEmpty else { return }
     // Finished messages only: one still streaming would come back half written.
@@ -496,8 +498,12 @@ final class AppStore {
   /// A chat deleted, here or elsewhere. If it's the one you're in, back to Hatbot's own chat, keeping none of it.
   private func chatGone(_ id: Int) {
     conversations.removeAll { $0.id == id }
-    cache?.forget(id)
-    if conversationId == id {
+    let gone = [id] + threads.values.filter { $0.parentId == id }.map(\.id)
+    for t in gone {
+      threads[t] = nil
+      cache?.forget(t)
+    }
+    if gone.contains(conversationId) {
       messages = []
       threadKnown = false
       Task { await openConversation(1) }
@@ -708,6 +714,9 @@ final class AppStore {
         refreshAgain = false
         try? await Task.sleep(for: refreshDelay)
         if let chats: [Conversation] = try? await api.get("/conversations") { conversations = chats }
+        // A thread's latest message and unread count.
+        let parent = currentChat?.parentId ?? conversationId
+        if threads.values.contains(where: { $0.parentId == parent }) { try? await loadThreads(parent) }
       } while refreshAgain
       refreshing = false
       prefetch()
@@ -722,10 +731,46 @@ final class AppStore {
   func chatName(_ c: Conversation?) -> String {
     guard let c else { return "Hatbot" }
     if c.kind == .group { return c.title ?? c.botIds.map(botName).joined(separator: ", ") }
+    if c.kind == .thread { return c.title ?? "Thread" }
     return botName(c.botIds.first)
   }
 
-  var currentChat: Conversation? { conversations.first { $0.id == conversationId } }
+  var currentChat: Conversation? { conversations.first { $0.id == conversationId } ?? threads[conversationId] }
+
+  /// The chat the list shows as open: a thread's own chat while you're in the thread.
+  var listedChatId: Int { currentChat?.parentId ?? conversationId }
+
+  // MARK: Threads
+
+  func loadThreads(_ parentId: Int) async throws {
+    let list: [Conversation] = try await api.get("/conversations/\(parentId)/threads")
+    for (id, t) in threads where t.parentId == parentId { threads[id] = nil }
+    for t in list { threads[t.id] = t }
+  }
+
+  /// A thread a link or a card names, loaded first if it isn't known.
+  @discardableResult
+  func openThread(_ id: Int) async -> Bool {
+    if threads[id] == nil {
+      guard let c: Conversation = try? await api.get("/conversations/\(id)"), c.isThread else { return false }
+      put(c)
+    }
+    return await openConversation(id)
+  }
+
+  func resolveThread(_ id: Int) async throws {
+    let c: Conversation = try await api.post("/conversations/\(id)/resolve", body: Empty())
+    put(c)
+  }
+
+  /// A thread that starts with this message of the bot's, or this ended task's card.
+  func replyInThread(_ m: ThreadMessage) async throws {
+    struct Body: Encodable { let messageId: Int }
+    let c: Conversation = try await api.post(
+      "/conversations/\(m.conversationId ?? conversationId)/threads", body: Body(messageId: m.id))
+    put(c)
+    await openConversation(c.id)
+  }
 
   /// nil model, effort or plugins: as in Settings, every plugin.
   struct BotChange: Encodable, Sendable {
@@ -802,6 +847,10 @@ final class AppStore {
   }
 
   private func put(_ c: Conversation) {
+    guard c.kind != .thread else {
+      threads[c.id] = c
+      return
+    }
     if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
   }
 

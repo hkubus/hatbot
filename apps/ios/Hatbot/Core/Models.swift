@@ -38,8 +38,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   /// "task"/"schedule": shows what it points at, `text` a fallback. "box": a note from box `boxId`, neither
   /// yours nor the bot's. "handoff": another bot (`botId`) handing this bot work; `taskId` is the hand-off.
+  /// "thread": a thread's card, `link` its first message.
   enum Kind: String, LenientEnum {
-    case text, task, schedule, command, box, handoff
+    case text, task, schedule, command, box, handoff, thread
     static let fallback = Kind.text
   }
 
@@ -492,18 +493,27 @@ enum Mention {
 }
 
 struct Conversation: Codable, Identifiable, Equatable, Sendable {
+  /// "thread": a side conversation in a bot's own chat (`parentId`), on one topic.
   enum Kind: String, LenientEnum {
-    case direct, group
+    case direct, group, thread
     static let fallback = Kind.direct
   }
 
   let id: Int
   var kind: Kind
-  /// A group's name; nil for a bot's own chat, which goes by the bot's.
+  /// A group's or a thread's name; nil for a bot's own chat, which goes by the bot's.
   var title: String?
   var botIds: [String]
   var unread: Int
   var lastMessageAt: String?
+  var parentId: Int?
+  var resolvedAt: String?
+  /// What a resolved thread came to, in a line.
+  var outcome: String?
+  /// A thread's latest message, cut short.
+  var latest: String?
+
+  var isThread: Bool { kind == .thread && parentId != nil }
 }
 
 /// A trigger with its secret: only right after it's made or the secret is replaced.

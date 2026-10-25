@@ -16,6 +16,7 @@ struct ChatView: View {
   @State private var today = Calendar.current.startOfDay(for: .now)
   @State private var router = OpenRoute()
   private var name: String { store.chatName(store.currentChat) }
+  private var thread: Conversation? { store.currentChat.flatMap { $0.isThread ? $0 : nil } }
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
@@ -241,22 +242,44 @@ struct ChatView: View {
           .animation(.snappy, value: store.unreachable)
         }
         .edgeBar(.bottom) {
-          Composer(name: name, members: members, error: $error) {
+          Composer(name: thread.map { store.botName($0.botIds.first) } ?? name, members: members, error: $error) {
             withAnimation { position.scrollTo(edge: .bottom) }
           }
         }
         .navigationTitle(store.incognito ? "Incognito" : name)
         .sidebarButton()
         .toolbar {
-          if let c = store.currentChat {
+          if let t = thread, let parent = t.parentId {
+            ToolbarItem(placement: .topBarLeading) {
+              Button {
+                Task { await store.openConversation(parent) }
+              } label: {
+                Image(systemName: "chevron.backward")
+              }
+              .accessibilityLabel("Back to \(store.botName(t.botIds.first))")
+            }
+            if t.resolvedAt == nil {
+              ToolbarItem(placement: .topBarTrailing) {
+                Button("Resolve") { Task { await attempt($error) { try await store.resolveThread(t.id) } } }
+              }
+            }
+          } else if let c = store.currentChat {
             ToolbarItem(placement: .topBarTrailing) {
               NavigationLink(value: c.kind == .group ? Route.group(c.id) : Route.bot(c.botIds.first ?? Bot.hatbot)) {
                 Image(systemName: "slider.horizontal.3")
               }
               .accessibilityLabel("About \(name)")
             }
+            if c.kind == .direct, !store.incognito, store.threads.values.contains(where: { $0.parentId == c.id }) {
+              ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(value: Route.threads(c.id)) {
+                  Image(systemName: "bubble.left.and.text.bubble.right")
+                }
+                .accessibilityLabel("Threads")
+              }
+            }
           }
-          if members == nil {
+          if members == nil && thread == nil {
             ToolbarItem(placement: .topBarTrailing) {
               // Leaving deletes the incognito conversation.
               Button {
@@ -288,6 +311,8 @@ struct ChatView: View {
             Task {
               if store.conversations.contains(where: { $0.id == link.conversationId }) {
                 await store.openConversation(link.conversationId)
+              } else if link.conversationId != store.conversationId {
+                await store.openThread(link.conversationId)
               }
               focus = link.messageId
             }
@@ -316,6 +341,10 @@ struct ChatView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
           newDay()
+        }
+        .task(id: store.listedChatId) {
+          guard store.currentChat?.kind == .direct || thread != nil else { return }
+          try? await store.loadThreads(store.listedChatId)
         }
         .task {
           // Coming back to a chat that's loaded and live: the events kept it current. Otherwise the latest
@@ -717,6 +746,7 @@ private struct MessageRow: View, Equatable {
     case .schedule where m.scheduleId != nil: ScheduleMessage(scheduleId: m.scheduleId!)
     case .box: BoxNote(m: m)
     case .handoff: HandoffMessage(m: m)
+    case .thread where m.link != nil: ThreadCard(id: m.link!.conversationId, title: m.text)
     default: ReplyMessage(m: m)
     }
     if m.kind != .box, let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
@@ -748,7 +778,7 @@ private struct MessageRow: View, Equatable {
     switch m.kind {
     case .text, .command: return done
     case .task: return done > m.createdAt ? done : nil
-    case .schedule, .box, .handoff: return nil
+    case .schedule, .box, .handoff, .thread: return nil
     }
   }
 
@@ -772,6 +802,10 @@ private struct MessageRow: View, Equatable {
       } else if let taskId = m.taskId {
         openButton(taskId)
       }
+    case .thread:
+      if let id = m.link?.conversationId {
+        Button("Open thread", systemImage: "chevron.right") { Task { await store.openThread(id) } }
+      }
     default:
       let task = m.taskId.flatMap { store.tasks[$0] }
       let result = task.flatMap { $0.isActive ? nil : $0.summary }
@@ -786,7 +820,22 @@ private struct MessageRow: View, Equatable {
       if m.status == .error && m.role == .assistant {
         Button("Try again", systemImage: "arrow.clockwise") { retry() }
       }
+      if threadable(task) {
+        Button("Reply in Thread", systemImage: "bubble.left.and.text.bubble.right") {
+          Task {
+            do { try await store.replyInThread(m) } catch { store.toast = message(for: error) }
+          }
+        }
+      }
     }
+  }
+
+  /// A bot's reply, or a task's card once it has ended, in its own chat.
+  private func threadable(_ task: AgentTask?) -> Bool {
+    guard store.currentChat?.kind == .direct, !store.incognito, m.role == .assistant, m.status == .done else {
+      return false
+    }
+    return m.kind == .text || (m.kind == .task && task?.finishedAt != nil)
   }
 
   private func retry() {
