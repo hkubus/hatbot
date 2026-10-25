@@ -2,7 +2,7 @@
 // read ones run, and writes go through their policy.
 import type { Bot, Negotiation, Stated } from "@hatbot/shared";
 import { z } from "zod";
-import { askAlways, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
+import { askCareful, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
 import { appraisalText, appraise, type ListingFacts, listingFacts, parseKey } from "./appraise";
 import { collapse } from "./gate";
 import { mandateAims, StartInput, startLimit, toMandate } from "./mandate";
@@ -319,7 +319,7 @@ export function negotiateTools(
         if (i.price === undefined) return block("Give the agreed price.");
         const outside = n.role === "buy" ? i.price > n.mandate.limit : i.price < n.mandate.limit;
         return outside
-          ? askAlways(
+          ? askCareful(
               `${zl(i.price, n.mandate.currency)} is outside the mandate (${n.role === "buy" ? "at most" : "at least"} ${zl(n.mandate.limit, n.mandate.currency)}).`,
               "purchase",
             )

@@ -502,6 +502,9 @@ test("closing as agreed past the mandate asks, and nothing is agreed before the 
   const close = named(negotiateTools(t), "negotiate_close");
   const over = close.schema.parse({ negotiation: n.id, outcome: "agreed", price: 1450 });
   expect(verdictFor(close, over, call(), true)).toMatchObject({ action: "ask", kind: "purchase" });
+  // The model doesn't know the limit, so letting the tool run in Settings can't pass it either.
+  const allowed = { tools: { negotiate_close: "allow" as const }, untrusted: false };
+  expect(verdictFor(close, over, call(), false, allowed)).toMatchObject({ action: "ask" });
   const within = close.schema.parse({
     negotiation: n.id,
     outcome: "agreed",

@@ -35,7 +35,7 @@ export const StartInput = MandateInput.omit({ limit: true }).extend({
     .positive()
     .optional()
     .describe(
-      "The most to pay, only if the owner named it in their own words; leave it out otherwise",
+      "The most to pay, in the listing's currency, only if the owner named it in their own words; leave it out otherwise",
     ),
 });
 export type StartInput = z.infer<typeof StartInput>;
