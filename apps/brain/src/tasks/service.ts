@@ -708,6 +708,7 @@ export class Tasks {
       attachments: this.d.attachments,
       desktop: agent.withSignal?.(signal) ?? agent,
       proposals: this.d.proposals,
+      settings: this.d.settings,
       // The run marks `task` as it reads untrusted content.
       tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),
     };

@@ -9,7 +9,7 @@ import {
   MAX_BOX_FILES,
   MAX_BOX_SOURCE,
 } from "@hatbot/shared/hatbox";
-import { mayReview, safeToRun } from "../agent/review";
+import { levelOf, safeToRun } from "../agent/review";
 import {
   BOX_FILES_RULES,
   BOX_PAGE_RULES,
@@ -92,7 +92,9 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
     const by = taintedBy();
     const sources = by ? [by] : [];
     const suspected = tasks.get(id)?.injectionSuspected ?? false;
-    if (d.settings.get().reviewChanges && mayReview(verdict, suspected)) {
+    const level = levelOf(d.settings.get(), verdict, suspected);
+    if (level === "allow") return { content: "", isError: false };
+    if (level === "review") {
       const check = await safeToRun(
         d,
         { taskId: id },
@@ -187,7 +189,7 @@ export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal):
         : `Make a box called "${title}": ${job.request}`,
     ].join("\n\n");
     // Not a sandbox: T3 Code can do anything the owner can on their computer.
-    if (taintedBy()) {
+    if (taintedBy() && d.settings.get().safety.untrusted) {
       const ok = await approve(
         {
           tool: "box_t3",

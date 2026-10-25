@@ -62,28 +62,37 @@ export function SavedRow<T extends string | number>({
     }
   };
 
+  const field = (
+    <input
+      {...input}
+      aria-label={label}
+      aria-invalid={error ? true : undefined}
+      value={text}
+      onChange={(e) => {
+        typing.current = true;
+        setText(e.target.value);
+        setError("");
+      }}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
   return (
     <div className="row">
       <div className="txt">
         <b>{label}</b>
         {error && <span className="form-error">{error}</span>}
       </div>
-      {prefix}
-      <input
-        {...input}
-        aria-label={label}
-        aria-invalid={error ? true : undefined}
-        value={text}
-        onChange={(e) => {
-          typing.current = true;
-          setText(e.target.value);
-          setError("");
-        }}
-        onBlur={() => void commit()}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-        }}
-      />
+      {prefix ? (
+        <span className="affix">
+          {prefix}
+          {field}
+        </span>
+      ) : (
+        field
+      )}
     </div>
   );
 }

@@ -94,6 +94,12 @@ const CAREFUL: Record<string, string> = {
 const ACCESS = new Set(["lock", "alarm_control_panel", "cover"]);
 /** Covers that only shade a window: no way in (the owner's choice). Covers with no class still count. */
 const SHADES = new Set(["blind", "curtain", "shade", "shutter", "awning"]);
+/** Services that only keep people out: they run without asking, on their own domain's entities. */
+const SECURES: Record<string, RegExp> = {
+  lock: /^lock$/,
+  alarm_control_panel: /^alarm_arm_/,
+  cover: /^close_cover(_tilt)?$/,
+};
 const askAccess = (why: string) => askAlways(why, "access");
 const careful = (domain: string) =>
   ACCESS.has(domain) ? askAccess(CAREFUL[domain] ?? "") : ask(CAREFUL[domain] ?? "");
@@ -301,7 +307,7 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_call_service",
         description:
-          'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Locks, alarms, covers (doors, garage, gates, windows; not blinds, curtains, shades, shutters or awnings), the entities the owner marked, and scenes, groups, areas, devices, labels or floors that could include them always wait for the owner. Scenes from an integration, scripts, automations, notifications, Home Assistant itself and other services that aren\'t everyday device control need approval (the safety review or the owner).',
+          'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Locking, arming the alarm and closing covers run. Anything else on locks, alarms, covers (doors, garage, gates, windows; not blinds, curtains, shades, shutters or awnings), the entities the owner marked, and scenes, groups, areas, devices, labels or floors that could include them always wait for the owner. Scenes from an integration, scripts, automations, notifications, Home Assistant itself and other services that aren\'t everyday device control need approval (the safety review or the owner).',
         access: "write",
         label: "Controlling Home Assistant",
         schema: z.object({
@@ -321,6 +327,11 @@ export const homeassistantPlugin = definePlugin({
             return askAccess(
               `${JSON.stringify(odd)} isn't an entity id as Home Assistant writes them, so what it reaches isn't known.`,
             );
+          if (
+            SECURES[domain]?.test(service) &&
+            targets.every((t) => t === "all" || domainOf(t) === domain)
+          )
+            return allow();
           const reached = expand(targets);
           const door = reached.find(isAccess);
           if (door) return askAccess(accessWhy(door));
@@ -408,7 +419,7 @@ export const homeassistantPlugin = definePlugin({
     ];
 
     return ready(tools, {
-      guidance: `Home Assistant at ${base}: the house's lights, switches, climate, media players, sensors and the rest. Find entities with homeassistant_states (filter by domain or search), read one with homeassistant_entity, see how it changed with homeassistant_history, and control devices with homeassistant_call_service. Locks, alarms, covers other than blinds, curtains, shades, shutters and awnings${marked.size ? `, ${[...marked].join(", ")}` : ""} and scenes or groups that hold them always wait for the owner; scenes from an integration, scripts, automations, notifications and Home Assistant itself need approval (the safety review or the owner).`,
+      guidance: `Home Assistant at ${base}: the house's lights, switches, climate, media players, sensors and the rest. Find entities with homeassistant_states (filter by domain or search), read one with homeassistant_entity, see how it changed with homeassistant_history, and control devices with homeassistant_call_service. Locking, arming the alarm and closing covers run; anything else on locks, alarms, covers other than blinds, curtains, shades, shutters and awnings${marked.size ? `, ${[...marked].join(", ")}` : ""} and scenes or groups that hold them always wait for the owner; scenes from an integration, scripts, automations, notifications and Home Assistant itself need approval (the safety review or the owner).`,
       test: async () => {
         await api("GET", "/");
         const config = await api<{ location_name?: string; version?: string }>(

@@ -126,7 +126,12 @@ export const t3Plugin = (d: {
               );
             // Unlike a sandbox, it can do anything the owner can on their computer.
             return call.task.tainted
-              ? ask("It runs on your computer with full access, after reading outside content.")
+              ? {
+                  ...ask(
+                    "It runs on your computer with full access, after reading outside content.",
+                  ),
+                  tainted: true,
+                }
               : allow();
           },
           run: async ({ project, request, worktree, base, carry_on }, call) => {

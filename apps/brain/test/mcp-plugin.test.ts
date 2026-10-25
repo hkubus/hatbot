@@ -3,7 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { mayReview } from "../src/agent/review";
+import { levelOf } from "../src/agent/review";
 import { approvableFromNotification } from "../src/approvals";
 import {
   callFailure,
@@ -16,6 +16,7 @@ import {
 } from "../src/plugins/mcp";
 import type { CallContext } from "../src/plugins/plugin";
 import { runPluginTool, untrustedDefinitions, verdictFor } from "../src/plugins/registry";
+import { DEFAULT_SETTINGS } from "../src/settings";
 import { FakeModel, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
 import {
@@ -155,7 +156,7 @@ test("money tools always ask and never go to the review, whatever their mode; th
     verdictFor(t.tool(`mcp_fix_${name}`), {}, ctx);
   const reviewable = (name: string, ctx: CallContext = call) => {
     const verdict = v(name, ctx);
-    return verdict.action === "ask" && mayReview(verdict);
+    return verdict.action === "ask" && levelOf(DEFAULT_SETTINGS, verdict) === "review";
   };
   expect(v("echo")).toMatchObject({ action: "ask", always: true });
   expect(reviewable("echo")).toBe(false);

@@ -1,8 +1,15 @@
 // The review of a change that would otherwise ask you to approve it: if it isn't destructive or
 // dangerous, and nothing untrusted could have put it there, it goes ahead. Haiku looks first, and Opus
 // looks again before a no reaches you.
-import type { ApprovalKind, ApprovalScope } from "@hatbot/shared";
+import {
+  type ApprovalKind,
+  type ApprovalLevel,
+  type ApprovalScope,
+  SAFETY_KINDS,
+  type SafetyKind,
+} from "@hatbot/shared";
 import type { Verdict } from "../plugins/plugin";
+import type { Settings } from "../settings";
 import type { Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
@@ -31,8 +38,22 @@ const ALWAYS_ASK: ApprovalKind[] = [
   "injection_warning",
 ];
 
-export const mayReview = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
+/** Approvals you may stretch past this once: not money, accounts, doors, what's careful, or a suspicion. */
+export const scopable = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
   !suspected && !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
+
+/** Whether an ask goes to you, to the review first, or ahead, as Safety settings say. */
+export function levelOf(
+  settings: Settings,
+  verdict: Extract<Verdict, { action: "ask" }>,
+  suspected = false,
+): ApprovalLevel {
+  if (verdict.careful || (suspected && settings.safety.injection)) return "ask";
+  const kind = verdict.kind ?? "other";
+  if (!SAFETY_KINDS.includes(kind as SafetyKind)) return "ask";
+  const level = settings.safety.kinds[kind as SafetyKind];
+  return level === "review" && (verdict.always || !settings.reviewChanges) ? "ask" : level;
+}
 
 /** Where only untrusted content asks, you may also approve the tool for the rest of the work. */
 export const scopesFor = (verdict: Extract<Verdict, { action: "ask" }>): ApprovalScope[] =>

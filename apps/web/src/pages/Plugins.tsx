@@ -1,5 +1,5 @@
 // Secrets are only ever sent, never shown.
-import type { PluginEnvInfo, PluginInfo } from "@hatbot/shared";
+import type { AppSettings, PluginEnvInfo, PluginInfo } from "@hatbot/shared";
 import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
@@ -9,7 +9,8 @@ import { LoadError, PageLoad, useLoad } from "../load";
 import { PLUGIN_SETTINGS } from "../plugins";
 import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, Disclosure, Group, LinkRow } from "../ui";
+import { BackHead, Disclosure, Group, LinkRow, Select } from "../ui";
+import { saveSafety, TOOL_LEVELS } from "./Safety";
 
 const STATE: Record<PluginInfo["state"], string> = {
   off: "Off",
@@ -126,22 +127,53 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
           />
         )}
 
-        {p.tools.length > 0 && (
-          <Disclosure label={p.tools.length === 1 ? "1 tool" : `${p.tools.length} tools`}>
-            <div className="group-box">
-              {p.tools.map((t) => (
-                <div className="row" key={t.name}>
-                  <div className="txt">
-                    <b className="mono">{t.name}</b>
-                  </div>
-                  <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
-                </div>
-              ))}
-            </div>
-          </Disclosure>
-        )}
+        {p.tools.length > 0 && <ToolList tools={p.tools} />}
       </div>
     </section>
+  );
+}
+
+/** Each change can always ask or never ask, past what the plugin says (Settings → Safety). */
+function ToolList({ tools }: { tools: PluginInfo["tools"] }) {
+  const settingsVersion = useStore((s) => s.settingsVersion);
+  const { data: settings, setData } = useLoad(
+    () => api<AppSettings>("/settings"),
+    [settingsVersion],
+  );
+  const [error, setError] = useState("");
+  const set = async (name: string, level: (typeof TOOL_LEVELS)[number][0]) => {
+    if (!settings) return;
+    const { [name]: _, ...rest } = settings.safety.tools;
+    setError("");
+    try {
+      setData(await saveSafety({ tools: level === "plugin" ? rest : { ...rest, [name]: level } }));
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  return (
+    <Disclosure label={tools.length === 1 ? "1 tool" : `${tools.length} tools`}>
+      {error && <div className="form-error">{error}</div>}
+      <div className="group-box">
+        {tools.map((t) => (
+          <div className="row" key={t.name}>
+            <div className="txt">
+              <b className="mono">{t.name}</b>
+            </div>
+            {t.access === "write" && settings ? (
+              <Select
+                label={`When ${t.name} asks`}
+                value={settings.safety.tools[t.name] ?? "plugin"}
+                options={TOOL_LEVELS}
+                onChange={(level) => set(t.name, level)}
+              />
+            ) : (
+              <span className="val">{t.access === "read" ? "Reads" : "Changes"}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </Disclosure>
   );
 }
 

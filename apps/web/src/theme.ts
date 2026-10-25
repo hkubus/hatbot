@@ -6,10 +6,10 @@ const getTheme = (): Theme => (localStorage.getItem("hatbot-theme") as Theme | n
 
 const bg = (dark: boolean) =>
   getComputedStyle(document.documentElement)
-    .getPropertyValue(dark ? "--bg-dark" : "--bg-light")
+    .getPropertyValue(dark ? "--bar-dark" : "--bar-light")
     .trim();
 
-/** The page's background in a theme: styles.css's --bg. */
+/** The top bar's colour in a theme: styles.css's --chrome. */
 export const barColor = (t: Theme, media: string): string =>
   bg(t === "system" ? media.includes("dark") : t === "dark");
 

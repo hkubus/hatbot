@@ -6,9 +6,9 @@ struct ChartView: View {
   @State private var selectedPoint: Int?
   @State private var selectedBar: String?
 
-  /// Checked for colour-blind separation on the bot bubble (web: --series-N).
+  /// Checked for colour-blind separation on the chat's background (web: --series-N).
   static let palette = [
-    Color(light: 0xC96F0A, dark: 0xD87A12),
+    Color(light: 0x507D12, dark: 0xBBE481),
     Color(light: 0x2A78D6, dark: 0x3987E5),
     Color(light: 0x138A60, dark: 0x199E70),
   ]
@@ -304,13 +304,13 @@ struct ChartView: View {
     single ? spec.format(value) : "\(spec.format(value)), \(spec.names[series])"
   }
 
-  /// An 8pt dot with a 2pt ring of the bubble's colour, so it stays clear where lines cross.
+  /// An 8pt dot with a 2pt ring of the background's colour, so it stays clear where lines cross.
   static func dot(_ color: Color) -> some View {
     Circle()
       .fill(color)
       .frame(width: 8, height: 8)
       .padding(2)
-      .background(Circle().fill(Color.botBubble))
+      .background(Circle().fill(.background))
   }
 
   private func readout(_ i: Int) -> some View {

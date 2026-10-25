@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { PluginEnvInfo, PluginInfo, PluginState } from "@hatbot/shared";
+import type { PluginEnvInfo, PluginInfo, PluginState, SafetySettings } from "@hatbot/shared";
 import { z } from "zod";
 import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
@@ -8,7 +8,9 @@ import type { Secrets } from "../secrets";
 import { getSetting, setSetting } from "../settings";
 import {
   allow,
+  askCareful,
   type CallContext,
+  covered,
   type Plugin,
   PluginError,
   type PluginFiles,
@@ -466,21 +468,33 @@ export function describeCall(t: PluginTool, input: unknown): string {
 
 /**
  * Once a task or conversation has read untrusted content, every write needs approval, unless Haiku's
- * review lets it through or the tool's policy says an approval you gave covers it.
+ * review lets it through or the tool's policy says an approval you gave covers it. `safety` is what
+ * Settings → Safety asks for: a tool you always or never want asked about, and the untrusted rule.
  */
 export function verdictFor(
   t: PluginTool,
   input: unknown,
   call: CallContext,
   tainted = call.task?.tainted ?? false,
+  safety?: Pick<SafetySettings, "tools" | "untrusted">,
 ): Verdict {
   if (t.access === "read") return allow();
   const parsed = t.schema.safeParse(input);
   // Bad input fails in runPluginTool, before anything runs.
   if (!parsed.success) return allow();
   const own = t.policy ? t.policy(parsed.data, call) : allow();
+  if (own.action === "block") return own;
+  const mine = safety?.tools[t.name];
+  if (mine === "ask")
+    return own.action === "ask"
+      ? { ...own, always: true, careful: true }
+      : askCareful(`You asked to be asked before ${t.name} runs.`, t.kind);
+  if (own.action === "ask" && own.careful) return own;
+  if (mine === "allow") return covered("You let it run without asking in Settings.");
+  const untrustedAsks = safety?.untrusted ?? true;
+  if (own.action === "ask" && own.tainted && !untrustedAsks) return allow();
   if (own.action !== "allow" || own.covered) return own;
-  if (tainted)
+  if (tainted && untrustedAsks)
     return {
       action: "ask",
       why: `This ${call.task ? "task" : "conversation"} has read untrusted content, so changes need your approval.`,

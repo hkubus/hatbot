@@ -56,7 +56,7 @@ print(
             "identifier": f"{prefix}.hatbot.source",
             "sourceURL": f"{base}/source.json",
             "iconURL": f"{base}/icon.png",
-            "tintColor": "E8820C",
+            "tintColor": "507D12",
             "apps": [
                 {
                     "name": "Hatbot",
@@ -64,7 +64,7 @@ print(
                     "developerName": "kubus",
                     "localizedDescription": about,
                     "iconURL": f"{base}/icon.png",
-                    "tintColor": "E8820C",
+                    "tintColor": "507D12",
                     "category": "utilities",
                     "versions": [
                         {

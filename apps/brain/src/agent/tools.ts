@@ -51,6 +51,7 @@ import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import type { PluginTool } from "../plugins/plugin";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
+import type { SettingsStore } from "../settings";
 import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
@@ -87,6 +88,8 @@ export type ToolContext = {
   scheduleCard?: (s: Schedule) => void;
   pluginTools?: PluginTool[];
   proposals?: Proposals;
+  /** For what Settings → Safety asks for; without it, everything asks as by default. */
+  settings?: SettingsStore;
   /** What untrusted content was read first, or null; tasks it starts begin tainted. */
   tainted?: () => string | null;
   taint?: (by: string, text?: string) => void;
@@ -248,7 +251,7 @@ async function held(
 ): Promise<string | null> {
   const by = ctx.tainted?.();
   const { rel } = ctx.memory.resolve(path);
-  if (!by || !TRUSTED_FILE.test(rel)) return null;
+  if (!by || !TRUSTED_FILE.test(rel) || !untrustedAsks(ctx)) return null;
   if (!ctx.proposals)
     throw new MemoryError(`${rel} can't be changed after reading untrusted content.`);
   const p = await ctx.proposals.hold(rel, content, reason, by);
@@ -258,6 +261,8 @@ async function held(
       : "No change: the file already had this content.";
   return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md, homelab.md and todo.md wait for them.";
 }
+
+const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted ?? true;
 
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
@@ -272,7 +277,7 @@ async function asked(
   signal: AbortSignal,
   call: { name: string; input: unknown; what: string },
 ): Promise<string> {
-  if (!ctx.tainted?.()) return "";
+  if (!ctx.tainted?.() || !untrustedAsks(ctx)) return "";
   if (!ctx.approve)
     throw new NotChanged(
       "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
@@ -292,7 +297,16 @@ async function askedIfSuspected(
   signal: AbortSignal,
   call: { name: string; input: unknown; what: string },
 ): Promise<string> {
-  return (await ctx.suspected?.()) ? asked(ctx, signal, call) : "";
+  if (!(ctx.settings?.get().safety.injection ?? true) || !(await ctx.suspected?.())) return "";
+  if (!ctx.approve)
+    throw new NotChanged(
+      "Not changed: after a suspected prompt injection this needs the owner's approval, which can't be asked here.",
+    );
+  const why =
+    "Something this conversation read may be instructions aimed at a bot, so this needs your approval.";
+  const r = await ctx.approve({ tool: call.name, input: call.input, what: call.what, why }, signal);
+  if (r.isError) throw new NotChanged(r.content);
+  return r.content;
 }
 
 const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -1225,7 +1239,7 @@ export const TOOLS = [
       const input = tool_input ?? {};
       const every = every_minutes ?? 60;
       // The page gets what the tool reads. After untrusted content, or for a page written after it,
-      // that's for the owner to allow: Haiku's review never sees what the page does with it.
+      // a box that reaches a host is for the owner to allow: the review never sees what the page does with it.
       const chat = ctx.tainted?.() ?? null;
       let note = "";
       if (chat || ctx.boxes.taintedBy(id)) {
@@ -1244,7 +1258,7 @@ export const TOOLS = [
             why: chat
               ? "This conversation has read untrusted content, so giving a box your data needs your approval."
               : "This box's page was written after reading untrusted content, so giving it your data needs your approval.",
-            always: true,
+            always: hosts.length > 0,
           },
           signal,
         );

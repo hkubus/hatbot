@@ -1,6 +1,23 @@
-import { BOT_ID, CHAT_EFFORTS } from "@hatbot/shared";
+import {
+  APPROVAL_LEVELS,
+  BOT_ID,
+  CHAT_EFFORTS,
+  SAFETY_KINDS,
+  type SafetyKind,
+} from "@hatbot/shared";
 import { z } from "zod";
 import type { Db } from "./db";
+
+const Level = z.enum(APPROVAL_LEVELS);
+const Safety = z.object({
+  kinds: z.object(
+    Object.fromEntries(SAFETY_KINDS.map((k) => [k, Level])) as Record<SafetyKind, typeof Level>,
+  ),
+  untrusted: z.boolean(),
+  injection: z.boolean(),
+  tools: z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), z.enum(["ask", "allow"])),
+  chatCommands: z.number().int().min(1).max(50),
+});
 
 export const Settings = z.object({
   limits: z.object({
@@ -22,6 +39,7 @@ export const Settings = z.object({
   paused: z.boolean(),
   /** Changes Haiku finds safe go ahead without asking. */
   reviewChanges: z.boolean(),
+  safety: Safety,
   notificationsOpen: z.enum(["web", "app"]),
   /** Haiku 5.5 is far cheaper, Opus 5.5 fails less. */
   desktopModel: z.enum(["claude-opus-5-5", "claude-haiku-5-5"]),
@@ -45,8 +63,11 @@ export const Settings = z.object({
   todoHour: z.number().int().min(0).max(23),
 });
 export type Settings = z.infer<typeof Settings>;
-/** Limits may change one at a time. */
-export const SettingsPatch = Settings.extend({ limits: Settings.shape.limits.partial() }).partial();
+/** Limits and approval kinds may change one at a time; `tools` is replaced whole. */
+export const SettingsPatch = Settings.extend({
+  limits: Settings.shape.limits.partial(),
+  safety: Safety.extend({ kinds: Safety.shape.kinds.partial() }).partial(),
+}).partial();
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -63,6 +84,22 @@ export const DEFAULT_SETTINGS: Settings = {
   owner: { name: "You", email: "owner@local" },
   paused: false,
   reviewChanges: true,
+  safety: {
+    kinds: {
+      send: "review",
+      submit_personal_data: "review",
+      delete: "review",
+      other: "review",
+      purchase: "ask",
+      payment: "ask",
+      account_security: "ask",
+      access: "ask",
+    },
+    untrusted: true,
+    injection: true,
+    tools: {},
+    chatCommands: 2,
+  },
   notificationsOpen: "web",
   desktopModel: "claude-haiku-5-5",
   desktopEscalate: true,
@@ -89,6 +126,16 @@ export function setSetting(db: Db, key: string, value: string) {
   ).run(key, value);
 }
 
+function merged(base: Settings, patch: SettingsPatch): Settings {
+  const safety = { ...base.safety, ...patch.safety };
+  return {
+    ...base,
+    ...patch,
+    limits: { ...base.limits, ...patch.limits },
+    safety: { ...safety, kinds: { ...base.safety.kinds, ...patch.safety?.kinds } },
+  };
+}
+
 export class SettingsStore {
   constructor(private db: Db) {}
 
@@ -100,14 +147,12 @@ export class SettingsStore {
     // reviewChanges was reviewTaintedChanges, for tainted work only.
     if (stored.reviewTaintedChanges !== undefined)
       stored.reviewChanges ??= stored.reviewTaintedChanges;
-    // Limits saved before a new one existed take its default.
-    const limits = { ...DEFAULT_SETTINGS.limits, ...stored.limits };
-    return Settings.parse({ ...DEFAULT_SETTINGS, ...stored, limits });
+    // Settings saved before a new one existed take its default.
+    return Settings.parse(merged(DEFAULT_SETTINGS, stored));
   }
 
   update(patch: SettingsPatch): Settings {
-    const now = this.get();
-    const next = Settings.parse({ ...now, ...patch, limits: { ...now.limits, ...patch.limits } });
+    const next = Settings.parse(merged(this.get(), patch));
     setSetting(this.db, "app", JSON.stringify(next));
     return next;
   }
