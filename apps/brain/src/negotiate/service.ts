@@ -28,9 +28,9 @@ import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, namesListing, type SendGate, sameAddress, sameHost } from "./gate";
 import {
   applyNote,
+  mandateAims,
   mandateReason,
   mandateSummary,
-  mandateTerms,
   quotedTitle,
   widened,
 } from "./mandate";
@@ -563,7 +563,7 @@ export class Negotiations {
       message: card,
       runKey: `negotiation:${n.id}`,
       // The listing's title is the seller's words, so it isn't among the owner's.
-      request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateTerms(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
+      request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateAims(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
     });
   }
 
@@ -988,7 +988,7 @@ export class Negotiations {
     const lines = [
       `## ${this.now().slice(0, 10)} · ${n.title}`,
       `${n.listingKey} ${n.listingUrl}`,
-      `${outcome}${price !== null ? ` at ${price} ${n.mandate.currency}` : ""}; asking ${n.asking ?? "?"}, opened ${n.mandate.opening}, aimed ${n.mandate.target}, limit ${n.mandate.limit}.`,
+      `${outcome}${price !== null ? ` at ${price} ${n.mandate.currency}` : ""}; asking ${n.asking ?? "?"}, opened ${n.mandate.opening}, aimed ${n.mandate.target}.`,
       ...(notes ? [notes.trim()] : []),
     ];
     const folder = botFolder(n.botId);

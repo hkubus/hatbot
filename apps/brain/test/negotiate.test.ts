@@ -184,7 +184,7 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
         text("Starting."),
         toolUse("negotiate_start", {
           listing: "OLX:1001",
-          mandate: { opening: 1060, target: 1250, limit: 1400, delivery: "OLX delivery" },
+          mandate: { opening: 1060, target: 1250, owner_max: 1450, delivery: "OLX delivery" },
           want: "an RTX 3070 for the media PC",
         }),
       ],
@@ -223,7 +223,7 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   const t = await testApp(chat, work, {}, [mcpPlugin], {});
   await withScout(t);
   messageBox(t);
-  t.thread.post("Haggle for OLX:1001, up to 1400");
+  t.thread.post("Haggle for OLX:1001, up to 1450");
   await t.thread.idle();
 
   expect(results(chat, 1)).toContain('trusted=\\"false\\"');
@@ -234,11 +234,11 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
     taskId: null,
     conversationId: t.thread.conversationId,
   });
-  expect(approval.summary).toContain("pay at most 1,400 zł");
+  expect(approval.summary).toContain("pay at most 1,450 zł");
   expect(t.negotiations.get(1)).toMatchObject({
     status: "awaiting_mandate",
     approvalId: approval.id,
-    mandate: { opening: 1060, target: 1250, limit: 1400 },
+    mandate: { opening: 1060, target: 1250, limit: 1450 },
   });
   expect(t.negotiations.messages(1)).toEqual([]);
   expect(t.tasks.list()).toEqual([]);
@@ -259,25 +259,41 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   expect(t.negotiations.messages(1)[0]).toMatchObject({ status: "sent", offer: 1060 });
   // What it told the seller is kept, so later messages keep to it.
   expect(t.negotiations.get(1)?.claims.max).toBe(1200);
+  // The tasks that talk to the seller never read the limit, nor Scout's walk-away price.
+  const read = JSON.stringify(work.requests);
+  for (const limit of ["1450", "1,450", "1400", "1,400"]) expect(read).not.toContain(limit);
   await t.plugins.stopAll();
 });
 
-test("a mandate's numbers must make sense, in the listing's currency", async () => {
+test("the limit comes from the owner or Scout, never the model, and its errors don't name it", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   await withScout(t);
   const start = named(negotiateTools(t, t.plugins.tools()), "negotiate_start");
-  // Scout prices this one at 300 EUR.
-  const tryIt = (mandate: Record<string, number>) =>
-    runPluginTool(
-      start,
-      { listing: "Vinted:2002", mandate: { delivery: "Vinted shipping", ...mandate } },
-      call(),
-    );
-  await tryIt({ opening: 270, target: 260, limit: 290 });
-  await tryIt({ opening: 220, target: 260, limit: 310 });
+  const tryIt = (listing: string, mandate: Record<string, number>) =>
+    runPluginTool(start, { listing, mandate: { delivery: "Shipping", ...mandate } }, call());
+  // Vinted:2002 asks 300 EUR.
+  await tryIt("Vinted:2002", { opening: 270, target: 260 });
+  await tryIt("Vinted:2002", { opening: 220, target: 310 });
+  await tryIt("Vinted:2002", { opening: 220, target: 260, owner_max: 250 });
+  // Scout puts OLX:1001's walk-away at 1400 zł, under its asking price.
+  const above = await tryIt("OLX:1001", { opening: 1060, target: 1450 });
+  expect(above.isError).toBe(true);
+  expect(above.text).not.toMatch(/1[,.]?400/);
   expect(t.negotiations.list()).toEqual([]);
-  expect((await tryIt({ opening: 220, target: 260, limit: 290 })).isError).toBe(false);
-  expect(t.negotiations.list()[0]?.mandate).toMatchObject({ currency: "EUR", limit: 290 });
+
+  expect((await tryIt("OLX:1001", { opening: 1060, target: 1250 })).isError).toBe(false);
+  expect((await tryIt("Vinted:2002", { opening: 220, target: 260, owner_max: 400 })).isError).toBe(
+    false,
+  );
+  const limits = Object.fromEntries(
+    t.negotiations.list().map((n) => [n.listingKey, [n.mandate.currency, n.mandate.limit]]),
+  );
+  // No paying more than asked, whatever the owner said.
+  expect(limits).toEqual({ "OLX:1001": ["PLN", 1400], "Vinted:2002": ["EUR", 300] });
+  const get = named(negotiateTools(t, t.plugins.tools()), "negotiate_get");
+  const read = await runPluginTool(get, { negotiation: 1 }, call());
+  expect(read.text).toContain("aim for 1,250 zł");
+  expect(read.text).not.toMatch(/1[,.]?400/);
   await t.plugins.stopAll();
 });
 
@@ -486,6 +502,9 @@ test("closing as agreed past the mandate asks, and nothing is agreed before the 
   const close = named(negotiateTools(t), "negotiate_close");
   const over = close.schema.parse({ negotiation: n.id, outcome: "agreed", price: 1450 });
   expect(verdictFor(close, over, call(), true)).toMatchObject({ action: "ask", kind: "purchase" });
+  // The model doesn't know the limit, so letting the tool run in Settings can't pass it either.
+  const allowed = { tools: { negotiate_close: "allow" as const }, untrusted: false };
+  expect(verdictFor(close, over, call(), false, allowed)).toMatchObject({ action: "ask" });
   const within = close.schema.parse({
     negotiation: n.id,
     outcome: "agreed",
