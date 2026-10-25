@@ -200,6 +200,15 @@ function Meta({
   );
 }
 
+/** Only a bot's own chat has threads, and they don't nest. */
+function useThreadable(m: ThreadMessage) {
+  const inThread = useContext(InThread);
+  const direct = useStore(
+    (s) => s.conversations.find((c) => c.id === m.conversationId)?.kind === "direct",
+  );
+  return !inThread && direct && !m.incognito;
+}
+
 function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const task = useStore((s) => s.tasks[taskId]);
   const progress = useStore((s) => s.taskProgress[taskId]);
@@ -207,6 +216,7 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
   const control = useStore((s) => s.desktop?.control);
   const open = useLinkOpen(m.link) ?? { to: `/tasks/${taskId}`, label: "Open task" };
   const active = task && isActive(task);
+  const threadable = useThreadable(m);
   useEffect(() => ensureTask(taskId), [taskId]);
   useEffect(() => {
     if (active) ensureSteps(taskId);
@@ -243,7 +253,16 @@ function TaskMessage({ m, taskId }: { m: ThreadMessage; taskId: number }) {
         {active && <Activity lines={taskLines(steps, note)} />}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
-      <Meta m={m} copy={active ? undefined : (task.summary ?? task.title)} open={open} />
+      <Meta
+        m={m}
+        copy={active ? undefined : (task.summary ?? task.title)}
+        open={open}
+        thread={
+          threadable && !active
+            ? async () => navigate(threadPath(await replyInThread(m)))
+            : undefined
+        }
+      />
     </>
   );
 }
@@ -380,12 +399,7 @@ function ReplyMessage({
 }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
-  // Only a bot's own chat has threads, and they don't nest.
-  const inThread = useContext(InThread);
-  const direct = useStore(
-    (s) => s.conversations.find((c) => c.id === m.conversationId)?.kind === "direct",
-  );
-  const threadable = !inThread && direct;
+  const threadable = useThreadable(m);
   // A hand-off: its chat shows the task's status too, and how the other bot answered.
   const handedOff = useLinkOpen(m.link);
   const streaming = m.status === "streaming";
@@ -428,7 +442,7 @@ function ReplyMessage({
           }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
           thread={
-            threadable && !m.incognito && m.status === "done" && m.kind === "text"
+            threadable && m.status === "done" && m.kind === "text"
               ? async () => navigate(threadPath(await replyInThread(m)))
               : undefined
           }

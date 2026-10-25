@@ -19,6 +19,8 @@ import {
   missingSkill,
   runTool,
   serverToolWaiting,
+  ThreadError,
+  ThreadOpenInput,
   TOOL_PARAMS,
   toolParam,
   WEB_TOOLS,
@@ -122,6 +124,14 @@ const NotifyOwner = z.object({
 
 const MAX_NOTIFICATIONS = 5;
 
+const ThreadPost = z
+  .object({
+    id: z.number().int().optional().describe("The thread's number"),
+    key: z.string().trim().min(1).max(80).optional().describe("Or the open thread's key"),
+    message: z.string().min(1).max(8000).describe("What to tell the owner there"),
+  })
+  .refine((v) => (v.id === undefined) !== (v.key === undefined), "Give either id or key.");
+
 const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
   ...TOOL_PARAMS.filter((t) => SHARED_TOOLS.includes(t.name)),
   toolParam({
@@ -157,6 +167,18 @@ const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Send the owner a notification now, without ending the task: for news they shouldn't wait for, like a watch that saw what they asked about. finish_task notifies on its own, so don't use this for the result.",
     schema: NotifyOwner,
+  }),
+  toolParam({
+    name: "thread_open",
+    description:
+      "Open a thread with the owner in your chat: a side conversation on one topic, for findings they should go through or a decision that's theirs, notifying them. Your message opens it. Unless the owner started this task from a chat, your result and ask_owner's questions go there too. One per task; with a key whose thread is open, your message goes there instead.",
+    schema: ThreadOpenInput,
+  }),
+  toolParam({
+    name: "thread_post",
+    description:
+      "Write in one of your open threads with the owner, by its number or key, to add to a topic already there rather than open another. Unless the owner started this task from a chat, your result and questions go there too.",
+    schema: ThreadPost,
   }),
   toolParam({
     name: "finish_task",
@@ -645,6 +667,48 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** Not stored: a run lasts only as long as the brain, like the task. */
   let asks = 0;
+  let threadOpened = false;
+  const thread = (call: Anthropic.Beta.BetaToolUseBlock) => {
+    try {
+      if (call.name === "thread_open") {
+        const p = ThreadOpenInput.safeParse(call.input);
+        if (!p.success) return result(call, invalidInput(p.error), true);
+        if (threadOpened)
+          return result(
+            call,
+            "Not opened: a task opens one thread. Write in it with thread_post.",
+            true,
+          );
+        const { conversation, opened } = tasks.openThread(id, p.data);
+        threadOpened = true;
+        tasks.addStep(id, {
+          kind: "action",
+          name: "Opened a thread",
+          detail: p.data.title,
+          url: null,
+        });
+        return result(
+          call,
+          opened
+            ? `Opened thread #${conversation.id}. The owner was notified.`
+            : `Thread #${conversation.id} on "${p.data.key}" was open already: your message went there.`,
+        );
+      }
+      const p = ThreadPost.safeParse(call.input);
+      if (!p.success) return result(call, invalidInput(p.error), true);
+      const n = tasks.postInThread(id, p.data);
+      tasks.addStep(id, {
+        kind: "action",
+        name: "Wrote in a thread",
+        detail: p.data.message,
+        url: null,
+      });
+      return result(call, `Written in thread #${n}.`);
+    } catch (err) {
+      if (err instanceof ThreadError) return result(call, err.message, true);
+      throw err;
+    }
+  };
   const ask = async (call: Anthropic.Beta.BetaToolUseBlock) => {
     const p = TaskAskOwner.safeParse(call.input);
     if (!p.success) return result(call, invalidInput(p.error), true);
@@ -660,7 +724,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       d.questions.create({
         botId: bot.id,
         taskId: id,
-        conversationId: task.conversationId,
+        // A thread it wrote in, since it started.
+        conversationId: tasks.conversationOf(id) ?? task.conversationId,
         question: q.question,
         choices: q.choices,
         sources: [...sources],
@@ -879,6 +944,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "ask_bot") return askBot(call);
         if (call.name === "wait") return wait(call);
         if (call.name === "ask_owner") return ask(call);
+        if (call.name === "thread_open" || call.name === "thread_post") return thread(call);
         if (call.name === "send_file") {
           const r = await runTool(call.name, call.input, { ...ctx, taskId: id });
           if (!r.isError)
