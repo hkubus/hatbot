@@ -1,7 +1,7 @@
 // negotiate_send's policy, in code rather than by a model. It fails closed: a message goes on its own
 // only when the check can read all of it and finds it inside the mandate. It never sends on a guess.
 import type { MandateContact, Negotiation, NegotiationMessage, Stated } from "@hatbot/shared";
-import { askAlways, block, covered, type Verdict } from "../plugins/plugin";
+import { askCareful, block, covered, type Verdict } from "../plugins/plugin";
 import { collapse, sameHost } from "./gate";
 
 export type SendInput = {
@@ -67,12 +67,13 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
   const why = outside(n, input, f);
   if (!why.length) return covered("Within the mandate you approved");
   // Money and terms past the mandate are approved in the app, as the mandate is; a message that only
-  // carries a link or contact details can be approved from the lock screen.
+  // carries a link or contact details can be approved from the lock screen. The model isn't told the
+  // limit, so no Safety setting lets this through: the owner's answer is the only thing that holds it.
   const text = plain(input.text);
   const talk =
     contactsIn(text).filter((c) => !n.mandate.allow.includes(c.kind)).length +
     (linksIn(text).length ? 1 : 0);
-  return askAlways(
+  return askCareful(
     `Outside the mandate: ${why.join(" ")}`,
     input.agree || why.length > talk ? "purchase" : "send",
   );

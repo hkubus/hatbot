@@ -504,7 +504,7 @@ describe("how it asks", () => {
       verdict("Mogę dać 1600 zł."),
       verdict("Dam 1100 zł.", { offer: 1100 }, negotiation(), ranOut),
     ])
-      expect(v).toMatchObject({ action: "ask", kind: "purchase" });
+      expect(v).toMatchObject({ action: "ask", kind: "purchase", careful: true });
     expect(verdict("Zdjęcia: https://imgur.com/a/x")).toMatchObject({
       action: "ask",
       kind: "send",

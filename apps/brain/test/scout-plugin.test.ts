@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BOT_TEMPLATES } from "@hatbot/shared";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
@@ -37,7 +38,12 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
       },
     ]),
   );
-  const s = { challenge: "", tokens: new Set<string>(), bearers: [] as string[] };
+  const s = {
+    challenge: "",
+    tokens: new Set<string>(),
+    bearers: [] as string[],
+    posts: [] as string[],
+  };
   const handle = async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     if (u.origin !== SCOUT) return new Response(null, { status: 404 });
@@ -67,6 +73,7 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
       case "/mcp": {
         const auth = new Headers(init?.headers).get("authorization") ?? "";
         s.bearers.push(auth);
+        if (init?.method === "POST") s.posts.push(JSON.parse(String(init.body)).method);
         if (!s.tokens.has(auth.replace(/^Bearer /, ""))) return new Response(null, { status: 401 });
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
@@ -86,6 +93,15 @@ async function connect(t: TestApp, scout: ReturnType<typeof fakeScout>) {
   await t.plugins.update("scout", { enabled: true, config: { url: `${SCOUT}/` } });
   const { url } = (await t.plugins.action("scout", "connect", {})) as { url: string };
   return new URL(url);
+}
+
+async function connected(t: TestApp, scout: ReturnType<typeof fakeScout>) {
+  const go = await connect(t, scout);
+  scout.s.challenge = go.searchParams.get("code_challenge") ?? "";
+  await t.plugins.action("scout", "finish", {
+    code: "the-code",
+    state: go.searchParams.get("state"),
+  });
 }
 
 const named = (tools: PluginTool[], name: string) => {
@@ -151,16 +167,32 @@ test("a Scout that can't connect apps, or sends the sign-in elsewhere, isn't use
 test("only the brain tells Scout how a listing went, never a task", async () => {
   const t = await testApp();
   const scout = fakeScout();
-  const go = await connect(t, scout);
-  scout.s.challenge = go.searchParams.get("code_challenge") ?? "";
-  await t.plugins.action("scout", "finish", {
-    code: "the-code",
-    state: go.searchParams.get("state"),
-  });
+  await connected(t, scout);
   const listed = named(t.plugins.brainTools(), "scout_flip_listed");
   const input = { flipId: 7, channel: "OLX", status: "declined" };
   expect(verdictFor(listed, input, call(), false).action).toBe("allow");
   expect(verdictFor(listed, input, { ...call(), task: { id: 1, tainted: false } }).action).toBe(
     "block",
   );
+});
+
+test("Scout's calls share one connection, so a flip's photos aren't held back by Scout's rate limit", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const photo = named(t.plugins.brainTools(), "scout_flip_photo");
+  for (let i = 0; i < 12; i++) await runPluginTool(photo, { id: 1 }, call());
+  expect(scout.s.posts.filter((m) => m === "initialize")).toHaveLength(1);
+  expect(scout.s.posts.filter((m) => m === "tools/call")).toHaveLength(12);
+});
+
+test("a Haggler made after Scout is connected lists flips", async () => {
+  const t = await testApp();
+  await connected(t, fakeScout());
+  const template = BOT_TEMPLATES.find((x) => x.id === "haggler");
+  if (!template) throw new Error("no Haggler template");
+  const { id: _, ...made } = template;
+  const haggler = t.bots.create(made);
+  await t.listings.tick();
+  expect(t.approvals.list(true).map((a) => [a.kind, a.botId])).toEqual([["listing", haggler.id]]);
 });

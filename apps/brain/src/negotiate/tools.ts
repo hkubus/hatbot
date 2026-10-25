@@ -2,10 +2,10 @@
 // read ones run, and writes go through their policy.
 import type { Bot, Negotiation, Stated } from "@hatbot/shared";
 import { z } from "zod";
-import { askAlways, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
+import { askCareful, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
 import { appraisalText, appraise, type ListingFacts, listingFacts, parseKey } from "./appraise";
 import { collapse } from "./gate";
-import { MandateInput, mandateProblem, toMandate } from "./mandate";
+import { mandateAims, StartInput, startLimit, toMandate } from "./mandate";
 import { type SendInput, sendPolicy, zl } from "./policy";
 import { MAX_TEXT, type Negotiations } from "./service";
 
@@ -34,7 +34,7 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
     negotiationLine(n),
     `Listing: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "none recorded yet"}`,
-    `Mandate${n.status === "awaiting_mandate" ? " (waiting for the owner's approval)" : ""}: open at ${money(m.opening)}, aim for ${money(m.target)}, ${n.role === "buy" ? "pay at most" : "take at least"} ${money(m.limit)}; delivery: ${m.delivery}; until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC; contact details allowed: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
+    `Mandate${n.status === "awaiting_mandate" ? " (waiting for the owner's approval)" : ""}: ${mandateAims(n)}, and a limit only the owner and the check know; delivery: ${m.delivery}; until ${m.expiresAt.slice(0, 16).replace("T", " ")} UTC; contact details allowed: ${m.allow.length ? m.allow.join(", ") : "none"}.`,
   ];
   const held = neg.held(n);
   if (held) head.push(held);
@@ -109,7 +109,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_appraise",
       description:
-        "What a marketplace listing is worth, from Scout: an opening offer, a target and a walk-away price, with the prices each rests on (Scout's price reference or the watch's prices, comparable listings, the price history). Use it before negotiate_start.",
+        "What a marketplace listing is worth, from Scout: an opening offer and a target, with the prices they rest on (Scout's price reference or the watch's prices, comparable listings, the price history). Use it before negotiate_start.",
       schema: z.object({ listing: ListingKey }),
       access: "read",
       untrusted: true,
@@ -125,10 +125,10 @@ export function negotiateTools(
     tool({
       name: "negotiate_start",
       description:
-        "Start negotiating for a listing, inside a mandate: the opening offer, the target, the most you'd pay, delivery terms and how long it lasts. Use negotiate_appraise first and base the numbers on it and on what the owner said. It makes the negotiation's record, which shows under your reply, and asks the owner to approve the mandate. Once they do, a task sends the opening message on its own; don't send anything before.",
+        "Start negotiating for a listing, inside a mandate: the opening offer, the target, delivery terms and how long it lasts. Use negotiate_appraise first and base the numbers on it and on what the owner said. The most to pay is set from Scout's appraisal, or from owner_max when the owner named one, and you aren't told it: negotiate_send holds you to it. It makes the negotiation's record, which shows under your reply, and asks the owner to approve the mandate. Once they do, a task sends the opening message on its own; don't send anything before.",
       schema: z.object({
         listing: ListingKey,
-        mandate: MandateInput,
+        mandate: StartInput,
         want: z
           .union([z.number().int().positive(), z.string().trim().min(1).max(200)])
           .optional()
@@ -140,7 +140,7 @@ export function negotiateTools(
       commands: () => 0,
       describe: (i) => {
         const money = (x: number) => zl(x, appraised.get(i.listing)?.appraisal.currency);
-        return `Negotiate for ${i.listing}: open at ${money(i.mandate.opening)}, aim for ${money(i.mandate.target)}, at most ${money(i.mandate.limit)}`;
+        return `Negotiate for ${i.listing}: open at ${money(i.mandate.opening)}, aim for ${money(i.mandate.target)}`;
       },
       policy: () => covered("It only makes a record; you approve its mandate"),
       run: async (i, call) => {
@@ -150,8 +150,8 @@ export function negotiateTools(
         const listing: ListingFacts =
           r?.listing ?? (await listingFacts(available, i.listing, call.signal));
         const currency = r?.appraisal.currency ?? listing.currency;
-        const problem = mandateProblem(i.mandate, "buy", listing.asking, currency);
-        if (problem) throw new PluginError(problem);
+        const set = startLimit(i.mandate, r?.appraisal.walkAway ?? null, listing.asking, currency);
+        if ("problem" in set) throw new PluginError(set.problem);
         const wantId = neg.wantFor(bot, i.want, listing.title);
         const busy = neg.busy(listing.key, wantId);
         if (busy)
@@ -164,7 +164,7 @@ export function negotiateTools(
           bot,
           wantId,
           listing,
-          mandate: toMandate(i.mandate, currency, neg.clock()),
+          mandate: toMandate({ ...i.mandate, limit: set.limit }, currency, neg.clock()),
           appraisal: r?.appraisal ?? null,
           status: "awaiting_mandate",
           conversationId:
@@ -209,7 +209,7 @@ export function negotiateTools(
 
     tool({
       name: "negotiate_send",
-      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else. Put the price you offer in \`offer\`; set \`agree\` when this message accepts a price (biorę, zgoda, deal), with that price in \`offer\` and in the text; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own; whatever the check can't read for certain asks the owner. These ask: an amount, an offer or a stated max past the limit; amounts that together pass it (every amount in the message counts); agreeing to a seller's price past it; while the seller's last price is past the limit, a message that doesn't name your price inside it; another currency; a way to pay or a delivery the mandate's terms don't name; saying something was paid or sent; contact details the mandate doesn't allow; a link; an amount in words; and anything but plain letters, digits and punctuation (no emoji). So write amounts in digits, one price to a message and no amounts set by another (no percentages, "the rest", "o 100 więcej"); name the price you agree to in the text, or it asks; while the seller is above your limit, name your price in every message and offer it (mogę dać 1200 zł) rather than open with ok or yes or use words that accept; and don't repeat a price past your limit, even the seller's. Nothing goes between 22:00 and 08:00. One paragraph, at most ${MAX_TEXT} characters. You may bluff about our side (a lower max, other offers, urgency, walking away); never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier.`,
+      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else. Put the price you offer in \`offer\`; set \`agree\` when this message accepts a price (biorę, zgoda, deal), with that price in \`offer\` and in the text; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own; whatever the check can't read for certain asks the owner. These ask: an amount, an offer or a stated max past the limit; amounts that together pass it (every amount in the message counts); agreeing to a seller's price past it; while the seller's last price is past the limit, a message that doesn't name your price inside it; another currency; a way to pay or a delivery the mandate's terms don't name; saying something was paid or sent; contact details the mandate doesn't allow; a link; an amount in words; and anything but plain letters, digits and punctuation (no emoji). So write amounts in digits, one price to a message and no amounts set by another (no percentages, "the rest", "o 100 więcej"); name the price you agree to in the text, or it asks; until you agree, name your price in every message and offer it (mogę dać 1200 zł) rather than open with ok or yes or use words that accept; and don't repeat the seller's price unless you agree to it. You aren't told the limit: past the target, go up in small steps, and a price past the limit asks the owner. If they say no, that was your last offer. Nothing goes between 22:00 and 08:00. One paragraph, at most ${MAX_TEXT} characters. You may bluff about our side (a lower max, other offers, urgency, walking away); never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier.`,
       schema: z.object({
         negotiation: Id,
         text: z
@@ -292,7 +292,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_close",
       description:
-        "End a negotiation: agreed (at `price`), lost (the seller sold it, said no, or won't come within the limit) or abandoned (you or the owner gave up on it). Put what's worth remembering in `notes`: how the seller haggled, what worked and what didn't. It doesn't message the seller; paying comes after, and always asks.",
+        "End a negotiation: agreed (at `price`), lost (the seller sold it, said no, or the owner said no to going higher) or abandoned (you or the owner gave up on it). Put what's worth remembering in `notes`: how the seller haggled, what worked and what didn't. It doesn't message the seller; paying comes after, and always asks.",
       schema: z.object({
         negotiation: Id,
         outcome: z.enum(["agreed", "lost", "abandoned"]),
@@ -319,7 +319,7 @@ export function negotiateTools(
         if (i.price === undefined) return block("Give the agreed price.");
         const outside = n.role === "buy" ? i.price > n.mandate.limit : i.price < n.mandate.limit;
         return outside
-          ? askAlways(
+          ? askCareful(
               `${zl(i.price, n.mandate.currency)} is outside the mandate (${n.role === "buy" ? "at most" : "at least"} ${zl(n.mandate.limit, n.mandate.currency)}).`,
               "purchase",
             )
