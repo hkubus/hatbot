@@ -236,6 +236,27 @@ export class Chats {
     return { conversation: this.get(id) as Conversation, message, opened: true };
   }
 
+  /**
+   * What a bot found on its own, for you: in its open thread on the subject or a new one, or in its
+   * chat while too many are open. Returns the path that shows it.
+   */
+  finding(o: {
+    botId: string;
+    title: string;
+    message: string;
+    key: string;
+    taintedBy: string | null;
+  }): string {
+    try {
+      const { conversation } = this.openThread(o);
+      return `/chat/${conversation.parentId}?thread=${conversation.id}`;
+    } catch (err) {
+      if (!(err instanceof ThreadError)) throw err;
+      this.note(o.botId, `**${o.title}**: ${o.message}`, o.taintedBy);
+      return `/chat/${this.direct(o.botId).conversationId}`;
+    }
+  }
+
   /** One of the bot's threads, by id, or the open one with this key. */
   findThread(botId: string, by: { id?: number; key?: string }): number | null {
     const parent = this.direct(botId).conversationId;

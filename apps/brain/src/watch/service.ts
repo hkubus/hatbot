@@ -459,12 +459,18 @@ export class Watchers {
       : w.tainted
         ? `The watcher "${w.name}", made after reading: ${w.taintedBy ?? "untrusted content"}`
         : null;
-    this.d.chats.note(w.botId, `**${w.name}**: ${what}`, from);
+    const path = this.d.chats.finding({
+      botId: w.botId,
+      title: w.name,
+      message: what,
+      key: `watch:${w.id}`,
+      taintedBy: from,
+    });
     void this.d.notifier.send({
       title: this.titled(w, w.name),
       message: what,
       priority: 4,
-      click: `${this.d.publicUrl}/watchers/${w.id}`,
+      click: `${this.d.publicUrl}${path}`,
     });
   }
 

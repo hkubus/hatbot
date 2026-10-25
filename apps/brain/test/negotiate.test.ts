@@ -227,13 +227,12 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   await t.thread.idle();
 
   expect(results(chat, 1)).toContain('trusted=\\"false\\"');
-  // The chat doesn't wait: the mandate waits among what needs you, and nothing goes before it's approved.
+  // The chat doesn't wait: the mandate waits in the negotiation's own thread, and nothing goes before
+  // it's approved.
+  const [thread] = t.chats.threads(t.thread.conversationId);
+  expect(thread?.title).toBe("an RTX 3070 for the media PC");
   const approval = t.approvals.list(true)[0] as Approval;
-  expect(approval).toMatchObject({
-    kind: "mandate",
-    taskId: null,
-    conversationId: t.thread.conversationId,
-  });
+  expect(approval).toMatchObject({ kind: "mandate", taskId: null, conversationId: thread?.id });
   expect(approval.summary).toContain("pay at most 1,400 zł");
   expect(t.negotiations.get(1)).toMatchObject({
     status: "awaiting_mandate",
@@ -248,8 +247,8 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   await t.tasks.idle();
   await t.thread.idle();
 
-  // The opening task sent through its desktop task, and nothing else asked.
-  expect(t.tasks.get(1)?.status).toBe("done");
+  // The opening task sent through its desktop task, in the thread, and nothing else asked.
+  expect(t.tasks.get(1)).toMatchObject({ status: "done", conversationId: thread?.id });
   expect(t.tasks.get(2)?.parentId).toBe(1);
   expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["mandate"]);
   expect(clicks(t)).toBe(1);
@@ -260,6 +259,15 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   // What it told the seller is kept, so later messages keep to it.
   expect(t.negotiations.get(1)?.claims.max).toBe(1200);
   await t.plugins.stopAll();
+});
+
+test("closing a negotiation resolves its thread with what came of it", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  const [thread] = t.chats.threads(1);
+  expect(n.conversationId).toBe(thread?.id as number);
+  await t.negotiations.close(n, "agreed", 1250, null);
+  expect(t.chats.get(thread?.id as number)).toMatchObject({ outcome: "agreed at 1,250 zł" });
 });
 
 test("a mandate's numbers must make sense, in the listing's currency", async () => {

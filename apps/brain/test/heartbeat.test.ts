@@ -65,7 +65,13 @@ test("the heartbeat looks when it's due, and tells you once about something new,
     note: "Jellyfin is down.",
   });
   expect(told(t).at(-1)?.message).toBe("Jellyfin is down.");
-  expect(t.thread.list().at(-1)?.text).toContain("Jellyfin is down.");
+  const [thread] = t.chats.threads(1);
+  expect(
+    t.chats
+      .thread(thread?.id as number)
+      ?.list()
+      .at(-1)?.text,
+  ).toBe("Jellyfin is down.");
   t.advance(10 * 60_000);
   expect(t.heartbeat.tick()).toBeUndefined();
 
@@ -79,7 +85,9 @@ test("the heartbeat looks when it's due, and tells you once about something new,
   await t.heartbeat.run();
   down.push("Jellyfin");
   await t.heartbeat.run();
+  // Told again in the same thread, while it's open.
   expect(told(t)).toHaveLength(2);
+  expect(t.chats.threads(1)).toHaveLength(1);
   expect(t.heartbeat.info().recent.map((r) => r.action)).toEqual(["notify", "notify"]);
 });
 

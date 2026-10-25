@@ -82,7 +82,7 @@ Planned 2026-10-25. A thread is a side conversation in a bot's chat, on one topi
 - **T1, brain** is built (2026-10-25): the data, thread conversations and their context, `thread_open`, `thread_read` and `thread_resolve` in the chat, and `GET /conversations/:id/threads` and `POST /conversations/:id/resolve`.
 - **T2, web** is built (2026-10-25): the store's second pane, the panel at `?thread=<id>`, the card, the list at `?threads`, Resolve, and Reply in thread (`POST /conversations/:id/threads`).
 - **T3, tasks** is built (2026-10-25): `thread_open` (with `key`) and `thread_post` in background tasks, which then report and ask in the thread unless started from a chat; the notification and its `hatbot://threads/<id>` link; Reply in thread on an ended task's card.
-- **T4, bots**: every negotiation gets its thread when it starts; holds, counter-offers, the agreement and N3's seller replies go there, and closing the negotiation resolves it. The heartbeat's and watchers' findings open a thread instead of a note in the chat. Prompt lines on when to open a thread and when to just answer.
+- **T4, bots** is built (2026-10-25): every negotiation opens its thread (`negotiation:<id>`, named by its want, not the seller's title) and reports there, its mandate and holds included; ending it resolves the thread. The heartbeat's and prompt-less watchers' findings go to a thread per subject (`heartbeat`, `watch:<id>`), or a note in the chat while 12 are open. Prompt lines for chats and tasks. Negotiations from before T4 stay in their chat.
 - **T5, iOS**.
 
 **Not in threads:** groups, threads inside threads, more than one bot in a thread, moving messages between threads, and the Linux app (it's being removed).

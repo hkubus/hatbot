@@ -28,7 +28,7 @@ test("a percentage is the number when there's no other, and a badge doesn't beat
   expect(counts({ when: "below", value: 20 }, "25%", "15%")).toBe(true);
 });
 
-test("a watcher without a prompt tells you in the chat and by notification, then waits", async () => {
+test("a watcher without a prompt tells you in its thread and by notification, then waits", async () => {
   const t = await testApp();
   const api = await owner(t);
   const url = "https://shop.example/fw16";
@@ -53,8 +53,16 @@ test("a watcher without a prompt tells you in the chat and by notification, then
   t.watchers.tick();
   await t.watchers.idle();
   expect(t.agent.fetched).toHaveLength(2);
-  expect(t.notifier.sent.map((n) => n.title)).toEqual(["Framework 16"]);
-  expect(t.thread.list().at(-1)?.text).toContain("In stock");
+  const [thread] = t.chats.threads(1);
+  expect(t.notifier.sent.map((n) => [n.title, n.click])).toEqual([
+    ["Framework 16", `https://hatbot.test/chat/1?thread=${thread?.id}`],
+  ]);
+  expect(
+    t.chats
+      .thread(thread?.id as number)
+      ?.list()
+      .at(-1)?.text,
+  ).toContain("In stock");
   // The model isn't called for any of it.
   expect(t.taskModel.requests).toHaveLength(0);
 

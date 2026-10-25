@@ -302,13 +302,19 @@ export class Heartbeat {
     }
     if (choice.action === "nothing") return { ...base, action: "nothing", note: choice.message };
     const message = choice.message || list;
-    // Written from logs, monitors and pages, like the task it would have started.
-    this.d.chats.note(botId, `**Heartbeat**: ${message}`, "What the heartbeat found");
+    const path = this.d.chats.finding({
+      botId,
+      title: "Heartbeat",
+      message,
+      key: "heartbeat",
+      // Written from logs, monitors and pages, like the task it would have started.
+      taintedBy: "What the heartbeat found",
+    });
     void this.d.notifier.send({
       title: "Heartbeat",
       message: message.slice(0, 1000),
       priority: 3,
-      click: this.d.publicUrl,
+      click: `${this.d.publicUrl}${path}`,
     });
     return { ...base, action: "notify", note: message };
   }

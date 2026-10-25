@@ -172,7 +172,12 @@ export function negotiateTools(
           messageId: call.messageId,
         });
         neg.askMandate(n);
-        return `Negotiation #${n.id} is made, for want #${wantId}, and waits for the owner to approve its mandate. Once they do, a task sends the opening message; until then nothing goes to the seller. Don't call negotiate_send for it now.`;
+        const inThread =
+          n.conversationId !== null && neg.d.tasks.d.chats.get(n.conversationId)?.kind === "thread";
+        const thread = inThread
+          ? ` It has its own thread with the owner, #${n.conversationId}: they approve the mandate there, and what comes of it is told there.`
+          : "";
+        return `Negotiation #${n.id} is made, for want #${wantId}, and waits for the owner to approve its mandate.${thread} Once they do, a task sends the opening message; until then nothing goes to the seller. Don't call negotiate_send for it now.`;
       },
     }),
 
