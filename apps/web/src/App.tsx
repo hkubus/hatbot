@@ -11,6 +11,7 @@ import { Login, Setup } from "./pages/Login";
 import { Search } from "./pages/Search";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
+import { focusable, moveFocus, useRoving } from "./roving";
 import {
   chatName,
   chatPath,
@@ -194,6 +195,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
   }, [chatMenu]);
+  const sidebar = useRef<HTMLElement>(null);
+  useRoving(sidebar, ".nav .nav-item", "y");
+  const main = useRef<HTMLElement>(null);
   const connected = useStore((s) => s.connected);
   // A blip while reconnecting isn't worth a banner.
   const [down, setDown] = useState(false);
@@ -250,6 +254,27 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     setChatMenu(false);
     setNewMenu(false);
   }, [path]);
+  // A page that took away what had the focus starts it at its own top, not back in the sidebar.
+  const route = path + params.toString();
+  const shownRoute = useRef(route);
+  useEffect(() => {
+    if (shownRoute.current === route) return;
+    shownRoute.current = route;
+    if (!document.activeElement || document.activeElement === document.body)
+      main.current?.focus({ preventScroll: true });
+  }, [route]);
+  // Up and down go through a page's lists of links, as through the sidebar.
+  useEffect(() => {
+    const el = main.current;
+    if (!el) return;
+    const ROWS = ".row-link, .row-main, .link-row a";
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as Element).matches(ROWS)) moveFocus(e, focusable(el, ROWS), "y", false);
+    };
+    el.addEventListener("keydown", onKey);
+    return () => el.removeEventListener("keydown", onKey);
+  }, []);
+
   // One that's gone, e.g. a deleted bot's: back to Hatbot's.
   useEffect(() => {
     if (chatId && chats.length && !chats.some((c) => c.id === chatId)) navigate("/", true);
@@ -316,9 +341,27 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     [],
   );
 
-  // Cmd/Ctrl-K: Search. Escape: closes the chat switcher or the New menu.
+  // Cmd/Ctrl-K: Search. Alt-Up and Alt-Down: the chat above or below. Escape: closes the chat
+  // switcher or the New menu.
+  const onChat = chatId || pageChat?.id || 0;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+        onChat &&
+        !t?.closest("canvas, .live-keys")
+      ) {
+        const i = chats.findIndex((c) => c.id === onChat);
+        const next = chats[i + (e.key === "ArrowUp" ? -1 : 1)];
+        e.preventDefault();
+        if (i >= 0 && next) navigate(chatPath(next.id));
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         if (location.pathname === "/search")
@@ -332,12 +375,12 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [chatMenu, newMenu]);
+  }, [chatMenu, newMenu, chats, onChat]);
 
   return (
     <>
       <div className="app">
-        <aside className="sidebar">
+        <aside className="sidebar" ref={sidebar}>
           <div className="brand">
             <div className="brand-mark">
               <Icon name="hat" />
@@ -369,6 +412,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <Link
                 key={s.title}
                 className={`nav-item ${s === section ? "active" : ""}`}
+                aria-current={s === section ? "page" : undefined}
                 to={s.views[0]}
               >
                 <Icon name={s.icon} filled={s === section} />
@@ -381,7 +425,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           </nav>
         </aside>
 
-        <main className="main">
+        <main className="main" ref={main} tabIndex={-1}>
           <header className="toolbar">
             {chatId ? (
               <div className="tb-title">
@@ -403,13 +447,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 )}
               </div>
             ) : tabs ? (
-              <nav className="tabs" aria-label={section.title}>
-                {section.views.map((v) => (
-                  <Link key={v} className={v === path ? "active" : ""} to={v}>
-                    {titleOf(v)}
-                  </Link>
-                ))}
-              </nav>
+              <SectionTabs label={section.title} views={section.views} path={path} />
             ) : (
               <h1>{pageTitle}</h1>
             )}
@@ -545,9 +583,54 @@ export function PausedBanner() {
   );
 }
 
+function SectionTabs({
+  label,
+  views,
+  path,
+}: {
+  label: string;
+  views: readonly string[];
+  path: string;
+}) {
+  const el = useRef<HTMLElement>(null);
+  useRoving(el, "a", "x");
+  return (
+    <nav className="tabs" aria-label={label} ref={el}>
+      {views.map((v) => (
+        <Link key={v} className={v === path ? "active" : ""} to={v}>
+          {titleOf(v)}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
 /** New bot and New group, from the + by Hatbot's name. */
 function NewMenu({ onClose }: { onClose: () => void }) {
   const el = useRef<HTMLDivElement>(null);
+  useRoving(el, ".nav-item", "y");
+  // It opens on its first item, and Escape goes back to the +.
+  useEffect(() => el.current?.querySelector<HTMLElement>(".nav-item")?.focus(), []);
+  useEffect(() => {
+    const menu = el.current;
+    if (!menu) return;
+    const toggle = () => document.querySelector<HTMLElement>(".brand [aria-expanded]");
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      onClose();
+      toggle()?.focus();
+    };
+    const onOut = (e: FocusEvent) => {
+      const to = e.relatedTarget as Node | null;
+      if (to && !menu.contains(to) && !toggle()?.contains(to)) onClose();
+    };
+    menu.addEventListener("keydown", onKey);
+    menu.addEventListener("focusout", onOut);
+    return () => {
+      menu.removeEventListener("keydown", onKey);
+      menu.removeEventListener("focusout", onOut);
+    };
+  }, [onClose]);
   useEffect(() => {
     const onDown = (e: PointerEvent) => {
       // The + itself toggles it.
@@ -597,7 +680,13 @@ function ChatNav({
     settings?: string,
   ) => {
     const link = (
-      <Link key={to} className={`nav-item ${lit ? "active" : ""}`} to={to} onClick={onPick}>
+      <Link
+        key={to}
+        className={`nav-item ${lit ? "active" : ""}`}
+        aria-current={lit ? "page" : undefined}
+        to={to}
+        onClick={onPick}
+      >
         {icon}
         <span className="nav-name">{name}</span>
         {unread > 0 && <span className="count unread">{unread}</span>}
@@ -607,7 +696,8 @@ function ChatNav({
     return (
       <div key={to} className="nav-row">
         {link}
-        <Link className="tb-btn nav-about" to={settings} title={`About ${name}`}>
+        {/* Not a Tab stop of its own for each chat: the chat's top bar has About too. */}
+        <Link className="tb-btn nav-about" to={settings} title={`About ${name}`} tabIndex={-1}>
           <Icon name="sliders" />
         </Link>
       </div>

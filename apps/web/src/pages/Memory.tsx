@@ -1,5 +1,5 @@
 import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
@@ -10,6 +10,7 @@ import { Link } from "../link";
 import { LoadError, useLoad } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
+import { useRoving } from "../roving";
 import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
 import type { Toast } from "../toast";
 import { Empty } from "../ui";
@@ -99,6 +100,8 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
     [teach],
   );
   const [sel, setSel] = useState<Selection>({ kind: "file", path: open || "INDEX.md" });
+  const treeEl = useRef<HTMLDivElement>(null);
+  useRoving(treeEl, ":is(button, a)", "y");
   const [doc, setDoc] = useState<Doc | null>(null);
   /** Someone else saved the file while you were editing it. */
   const [conflict, setConflict] = useState<{ sha: string; content: string } | null>(null);
@@ -378,7 +381,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   return (
     <section className="view">
       <div className="memory">
-        <div className="tree">
+        <div className="tree" ref={treeEl}>
           {tree.error && !tree.data && <LoadError error={tree.error} retry={tree.retry} />}
           {groups.map(([dir, fs]) => (
             <div key={dir || "/"} style={{ display: "contents" }}>

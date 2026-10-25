@@ -1332,6 +1332,8 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
             }
           }}
           onKeyDown={(e) => {
+            // Alt with the arrows goes to another chat.
+            if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) return;
             if (picked && !e.nativeEvent.isComposing) {
               const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
               if (step) {

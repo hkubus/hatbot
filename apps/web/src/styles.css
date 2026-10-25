@@ -395,6 +395,10 @@ pre.payload,
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
+/* Given the focus after a page change, as where Tab goes on from. */
+.main:focus {
+  outline: none;
+}
 button:disabled,
 input:disabled,
 select:disabled,
@@ -978,14 +982,15 @@ textarea:disabled {
   border-radius: var(--r-pill);
   background: var(--surface-2);
 }
-.seg button {
+.seg label {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  border: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   height: var(--h);
   padding: 0 var(--sp-lg);
   border-radius: calc(var(--h) / 2);
-  background: transparent;
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
   color: var(--text-2);
@@ -994,15 +999,19 @@ textarea:disabled {
     border-radius var(--dur) var(--spring),
     background-color var(--dur-fast) var(--fade);
 }
-.seg button:hover {
+.seg label:hover {
   background-image: linear-gradient(var(--fill-hover), var(--fill-hover));
 }
-.seg button:active {
+.seg label:active {
   border-radius: var(--r-md);
 }
-.seg button.active {
+.seg label.active {
   background-color: var(--primary);
   color: var(--on-primary);
+}
+.seg label:has(:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
 }
 
 .switch {
