@@ -12,6 +12,7 @@ import type {
   BrowserState,
   FetchResult,
   RenderResult,
+  SetFiles,
   ShellResult,
 } from "@hatbot/shared/desktop";
 
@@ -53,6 +54,11 @@ export interface DesktopAgent {
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;
   browserInspect(at: BrowserInspect): Promise<AgentElement | null>;
+  /** Files where the browser can read them, under `stage`, for one task's set_files. */
+  stageFiles(stage: string, files: { name: string; bytes: Uint8Array }[]): Promise<void>;
+  dropFiles(stage: string): Promise<void>;
+  /** Staged files on a file input; desktop-agent refuses any page but an add-listing one. */
+  setFiles(o: SetFiles): Promise<BrowserResult>;
   /** Chromium on this bot's own profile. False where the desktop has one shared profile. */
   useProfile(botId: string): Promise<boolean>;
   /** Closes the tabs earlier tasks left open, down to one blank tab. False on an older desktop-agent. */
@@ -216,6 +222,29 @@ export class HttpDesktopAgent implements DesktopAgent {
   }
   browserInspect(at: BrowserInspect) {
     return this.json<AgentElement | null>("POST", "/browser/inspect", at);
+  }
+  async stageFiles(stage: string, files: { name: string; bytes: Uint8Array }[]) {
+    for (const f of files)
+      await this.unlessOld(
+        () =>
+          this.req(
+            "PUT",
+            `/uploads?stage=${encodeURIComponent(stage)}&name=${encodeURIComponent(f.name)}`,
+            undefined,
+            120_000,
+            f.bytes,
+          ),
+        tooOld("upload photos"),
+      );
+  }
+  async dropFiles(stage: string) {
+    await this.req("DELETE", `/uploads?stage=${encodeURIComponent(stage)}`);
+  }
+  setFiles(o: SetFiles) {
+    return this.unlessOld(
+      () => this.json<BrowserResult>("POST", "/browser/files", o, 45_000),
+      tooOld("upload photos"),
+    );
   }
   useProfile(botId: string) {
     return this.unlessOld(

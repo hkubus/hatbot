@@ -22,6 +22,7 @@ import { EventBus } from "./events";
 import { Backends } from "./hatbox/backends";
 import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
 import { Heartbeat } from "./heartbeat";
+import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
 import { Negotiations } from "./negotiate/service";
@@ -30,6 +31,7 @@ import { DeadManPing } from "./ping";
 import { codePlugin } from "./plugins/code";
 import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
+import { scoutPlugin } from "./plugins/scout";
 import { selfPlugin } from "./plugins/self";
 import { t3Plugin } from "./plugins/t3";
 import { Proxmox } from "./proxmox";
@@ -110,6 +112,18 @@ export async function createServices(o: Outside) {
         },
         fetch: o.fetch,
       }),
+      scoutPlugin({
+        publicUrl,
+        saveToken: async (token) => {
+          await plugins.setSecrets("scout", { SCOUT_TOKEN: token });
+        },
+        connected: () => {
+          const haggler = bots.list().find((b) => b.name.toLowerCase() === "haggler");
+          if (haggler?.plugins && !haggler.plugins.includes("scout"))
+            bots.update(haggler.id, { plugins: [...haggler.plugins, "scout"] });
+        },
+        fetch: o.fetch,
+      }),
       own,
     ],
     {
@@ -186,6 +200,8 @@ export async function createServices(o: Outside) {
   const report = new WeeklyReport({ ...core });
   const negotiations = new Negotiations({ ...core, tasks });
   tasks.negotiations = negotiations;
+  const listings = new Listings({ ...core, tasks });
+  tasks.listings = listings;
   chats.attach({
     tasks,
     schedules,
@@ -242,6 +258,7 @@ export async function createServices(o: Outside) {
     proposals,
     report,
     negotiations,
+    listings,
     updates,
     ping,
     proxmox,

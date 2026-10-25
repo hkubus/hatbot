@@ -280,7 +280,19 @@ export type ApprovalKind =
   | "budget"
   /** A negotiation's mandate: what the bot may do on its own with one seller. */
   | "mandate"
+  /** Posting a flip Scout marked ready on the marketplaces picked for it. */
+  | "listing"
   | "other";
+
+/** Where one channel of a flip Scout marked ready to list is. */
+export type ListingStatus =
+  | "asking"
+  | "queued"
+  | "posting"
+  | "listed"
+  | "failed"
+  | "declined"
+  | "cancelled";
 
 /**
  * How far an approval goes besides this once: `session`, the same tool on the same

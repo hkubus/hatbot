@@ -145,6 +145,7 @@ Env files in `/etc/hatbot/` on the brain still work, for ones written before or 
 | Home Assistant | its address and a long-lived access token (your profile → Security), ideally of a user made for Hatbot |
 | Uptime Kuma | its address and an API key (Settings → API Keys). It only reads monitors; alerts still come in as triggers |
 | T3 Code | T3 Code on your computer, listening where the brain can reach it (`t3 serve --host 0.0.0.0`, or the desktop app's own server on port 3773), and its address on the plugin's page. **Connect** there sends you to T3 Code to let Hatbot in: allow full access. The sign-in lasts 30 days. Its agents work with full access on that computer, so a task that has read outside content asks you first |
+| Scout | Scout's address on the plugin's page (one the brain and your browser both reach), then **Connect**: Scout asks you to let Hatbot in, and you're back, connected. Haggler gets it. Disconnect in Scout's settings, under Connected apps. Needs a Scout that can connect apps |
 | MCP | servers and the secrets they use are added on the plugin's page; a server's headers or environment use a secret as `${NAME}`. Names set in `/etc/hatbot/mcp.env` work too. A "Command" server runs inside the brain as the `hatbot` user, which can read the brain's other secrets, so only run servers you trust there; prefer HTTP servers running elsewhere |
 
 ## When the brain itself is down

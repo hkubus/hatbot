@@ -193,3 +193,36 @@ export type BrowserResult =
 
 /** POST /browser/inspect: by element reference, at a viewport point, or the focused element. */
 export type BrowserInspect = { tab_id?: string; ref?: string; x?: number; y?: number };
+
+/**
+ * POST /browser/files: files staged with PUT /uploads put on a file input, in this order. `ref` is the
+ * input, or a control holding or labelling it; without one, the page's only file input.
+ */
+export type SetFiles = { tab_id?: string; ref?: string; stage: string; names: string[] };
+
+/** The marketplaces' add-listing pages, the only ones a file input may be set on. */
+export const UPLOAD_PAGES = [
+  { channel: "OLX", host: "olx.pl", paths: ["/adding", "/d/adding"] },
+  { channel: "Allegro Lokalnie", host: "allegrolokalnie.pl", paths: ["/o/oferty/wystaw"] },
+  { channel: "Vinted", host: "vinted.pl", paths: ["/items/new"] },
+] as const;
+
+/** The add-listing page `url` is on, if it's one. */
+export function uploadPage(url: string | null | undefined): (typeof UPLOAD_PAGES)[number] | null {
+  let u: URL;
+  try {
+    u = new URL(url ?? "");
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase();
+  const path = u.pathname.replace(/\/+$/, "");
+  return (
+    UPLOAD_PAGES.find(
+      (p) =>
+        (host === p.host || host === `www.${p.host}`) &&
+        p.paths.some((x) => path === x || path.startsWith(`${x}/`)),
+    ) ?? null
+  );
+}

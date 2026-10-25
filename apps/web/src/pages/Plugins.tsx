@@ -79,9 +79,9 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
     await run(() => savePlugin(p.id, { enabled }));
     setTurning(null);
   };
-  const save = async (config: unknown) => {
-    await savePlugin(p.id, { config });
-    toast("Saved");
+  const save = async (config: unknown, turnOn = false) => {
+    await savePlugin(p.id, turnOn ? { config, enabled: true } : { config });
+    if (!turnOn) toast("Saved");
   };
 
   const test = () => {

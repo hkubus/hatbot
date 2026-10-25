@@ -66,6 +66,8 @@ export type PluginTool<I = unknown> = {
   jsonSchema?: Record<string, unknown>;
   /** Only tasks get write tools, and their policy applies; the chat may call read tools directly. */
   access: "read" | "write";
+  /** The brain calls it itself (listing Scout's flips); it's never offered to the model. */
+  brainOnly?: boolean;
   /** Output is untrusted content. Called without `output` before the call: whether it may be. */
   untrusted?: boolean | ((input: I, output?: string) => boolean);
   /** Description and schema written by someone else: whatever is offered it starts tainted. */

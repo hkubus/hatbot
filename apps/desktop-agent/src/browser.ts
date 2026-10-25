@@ -13,6 +13,7 @@ import { comboParts } from "@hatbot/shared/keys";
 import { between, keyGap, type Point, path } from "./human";
 import { keysym, modifier, modifiers } from "./keys";
 import {
+  FILE_INPUT,
   FORM_INPUT,
   INSPECT,
   PAGE_TEXT,
@@ -1254,6 +1255,45 @@ export class Browser {
     return this.run<Inspected | null>(t, INSPECT, o)
       .then((el) => this.intoFrames(t, el))
       .catch(() => null);
+  }
+
+  /**
+   * Puts files on a file input (FILE_INPUT finds it), as choosing them in the file picker would, if
+   * `allowed` says yes to the page's address.
+   */
+  async setFiles(
+    o: { tab_id?: string; ref?: string; paths: string[] },
+    allowed: (url: string) => boolean,
+  ): Promise<BrowserResult> {
+    await this.ready();
+    await this.syncActive();
+    const t = this.targetOf(o.tab_id);
+    const found = await this.run<{ multiple?: boolean; url?: string; error?: string }>(
+      t,
+      FILE_INPUT,
+      { ref: o.ref },
+    );
+    if (found.error) throw new BrowserError(found.error);
+    if (!allowed(found.url ?? ""))
+      throw new BrowserError("Files go only on a marketplace's add-listing page.");
+    if (!found.multiple && o.paths.length > 1)
+      throw new BrowserError("This input takes one file at a time: give one photo.");
+    const session = await this.session(t);
+    const { result } = await this.cdp.send<{ result: { objectId?: string } }>(
+      "Runtime.evaluate",
+      { expression: "globalThis.__hatbotFile", contextId: this.worlds.get(t)?.contextId },
+      session,
+    );
+    if (!result.objectId) throw new BrowserError("The file input went away. Read the page again.");
+    await this.cdp.send(
+      "DOM.setFileInputFiles",
+      { files: o.paths, objectId: result.objectId },
+      session,
+    );
+    return {
+      kind: "text",
+      text: `Put ${o.paths.length} file${o.paths.length === 1 ? "" : "s"} on the input.`,
+    };
   }
 
   /**

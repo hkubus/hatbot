@@ -2,12 +2,14 @@
 import { timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  AgentAction,
-  AgentStatus,
-  BrowserCall,
-  BrowserInspect,
-  LiveInput,
+import {
+  type AgentAction,
+  type AgentStatus,
+  type BrowserCall,
+  type BrowserInspect,
+  type LiveInput,
+  type SetFiles,
+  uploadPage,
 } from "@hatbot/shared/desktop";
 import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
@@ -17,6 +19,14 @@ import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
 import { RENDER_SOCKET } from "./render";
 import { MAX_BODY_BYTES, readUpTo, SHELL_SOCKET } from "./shell";
+import {
+  dropUploads,
+  MAX_UPLOAD_BYTES,
+  putUpload,
+  stagedPaths,
+  sweepUploads,
+  UploadError,
+} from "./uploads";
 import {
   ActionError,
   act,
@@ -58,6 +68,8 @@ const FEATURES = [
   "render",
   // inspect names icon buttons and says which controls toggle or search, for the click and Enter checks.
   "gates",
+  // Files staged for a task go on an add-listing page's file input.
+  "upload",
 ];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
@@ -76,6 +88,8 @@ const live = new LiveCapture(size);
 const downloadDir = stateDir ? join(stateDir, "downloads") : null;
 if (downloadDir) mkdirSync(downloadDir, { recursive: true });
 const browser = new Browser(downloadDir);
+const uploadDir = stateDir ? join(stateDir, "uploads") : null;
+if (uploadDir) setInterval(() => sweepUploads(uploadDir), 10 * 60_000);
 /** A watcher that falls this far behind skips frames instead of seeing the desktop late. */
 const LIVE_BUFFER_BYTES = 256 * 1024;
 /** While locked (the owner has control, or Pause all), the brain's model can't act. Live input still works. */
@@ -90,6 +104,8 @@ const LOCKED = new Set([
   // Before a task's first look at the screen: no input is going on.
   "POST /browser/profile",
   "POST /browser/reset",
+  "PUT /uploads",
+  "POST /browser/files",
 ]);
 
 const authorized = (req: Request) => {
@@ -269,6 +285,30 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           const { name, input } = (await req.json()) as BrowserCall;
           return json(await serial(() => browser.call(name, input ?? {})));
         }
+        case "PUT /uploads": {
+          if (!uploadDir) return json({ error: "uploads aren't enabled; run deploy.sh once" }, 501);
+          const bytes = await readUpTo(req, MAX_UPLOAD_BYTES);
+          if (!bytes?.length)
+            return json({ error: "expected a file under 15 MB" }, bytes ? 400 : 413);
+          sweepUploads(uploadDir);
+          const q = url.searchParams;
+          await putUpload(uploadDir, q.get("stage") ?? "", q.get("name") ?? "", bytes);
+          return json({ ok: true });
+        }
+        case "DELETE /uploads":
+          if (uploadDir) dropUploads(uploadDir, url.searchParams.get("stage") ?? "");
+          return json({ ok: true });
+        case "POST /browser/files": {
+          if (!uploadDir) return json({ error: "uploads aren't enabled; run deploy.sh once" }, 501);
+          const o = (await req.json()) as SetFiles;
+          const paths = stagedPaths(
+            uploadDir,
+            String(o.stage),
+            Array.isArray(o.names) ? o.names : [],
+          );
+          const target = { tab_id: o.tab_id, ref: o.ref, paths };
+          return json(await serial(() => browser.setFiles(target, (u) => uploadPage(u) !== null)));
+        }
         case "POST /browser/profile": {
           const { id } = (await req.json()) as { id: string };
           return json({ profile: await serial(() => useProfile(id, stateDir ?? null, browser)) });
@@ -310,7 +350,12 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           return json({ error: "not found" }, 404);
       }
     } catch (err) {
-      if (err instanceof ActionError || err instanceof BrowserError || err instanceof KeyError)
+      if (
+        err instanceof ActionError ||
+        err instanceof BrowserError ||
+        err instanceof KeyError ||
+        err instanceof UploadError
+      )
         return json({ error: err.message }, 400);
       console.error(route, err);
       return json({ error: err instanceof Error ? err.message : "failed" }, 500);

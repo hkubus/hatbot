@@ -1,37 +1,24 @@
 // T3 Code works in the owner's own projects with full access, so it commits, pushes and opens pull
 // requests itself; Hatbot only hands it the request and reads its last message. Boxes go through
 // box_t3 instead.
-import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Db } from "../../db";
 import { getSetting, setSetting } from "../../settings";
 import { runStats, type T3Code, type T3Project } from "../../t3";
+import { oauthClient } from "../oauth";
 import { allow, ask, block, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
 export const T3_MODELS = { opus: "claude-opus-5-5", haiku: "claude-haiku-5-5" } as const;
 const UNTIL = "t3:signed-in-until";
-const SIGN_IN_MS = 10 * 60_000;
-
-type Pending = { url: string; clientId: string; verifier: string; redirect: string; at: number };
-/** Outside the plugin: saving its address restarts it between Connect and the way back. */
-const pending = new Map<string, Pending>();
-
-const Finish = z.object({ code: z.string().min(1).max(1000), state: z.string().min(1).max(200) });
-
-async function why(res: Response) {
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  const said = body.error_description ?? body.error;
-  return typeof said === "string" ? said : `it answered ${res.status}`;
-}
-
 export const t3Plugin = (d: {
   t3: T3Code;
   db: Db;
   publicUrl: string;
   saveToken: (token: string) => Promise<void>;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
-}) =>
-  definePlugin({
+}) => {
+  const signIn = oauthClient("T3 Code", `${d.publicUrl}/settings/plugins/t3`);
+  return definePlugin({
     id: "t3",
     name: "T3 Code",
     description: "Code work done by T3 Code on your own computer, in your projects",
@@ -44,67 +31,22 @@ export const t3Plugin = (d: {
     start: ({ config, env }) => {
       const http = d.fetch ?? fetch;
       const url = config.url.replace(/\/+$/, "");
-      const redirect = `${d.publicUrl}/settings/plugins/t3`;
       const actions = {
         connect: async () => {
           if (!url) throw new PluginError("Set T3 Code's address first.");
-          const reg = await http(`${url}/oauth/mcp/register`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              client_name: "Hatbot",
-              redirect_uris: [redirect],
-              grant_types: ["authorization_code"],
-              response_types: ["code"],
-              token_endpoint_auth_method: "none",
-            }),
-          }).catch(() => {
-            throw new PluginError(`T3 Code at ${url} didn't answer.`);
-          });
-          if (!reg.ok) throw new PluginError(`T3 Code wouldn't register Hatbot: ${await why(reg)}`);
-          const { client_id: clientId } = (await reg.json()) as { client_id?: string };
-          if (typeof clientId !== "string")
-            throw new PluginError("T3 Code didn't register Hatbot.");
-          const verifier = randomBytes(32).toString("base64url");
-          const state = randomBytes(24).toString("base64url");
-          const now = Date.now();
-          for (const [k, p] of pending) if (now - p.at > SIGN_IN_MS) pending.delete(k);
-          pending.set(state, { url, clientId, verifier, redirect, at: now });
-          const go = new URL(`${url}/oauth/mcp/authorize`);
-          for (const [k, v] of Object.entries({
-            response_type: "code",
-            client_id: clientId,
-            redirect_uri: redirect,
-            state,
-            code_challenge: createHash("sha256").update(verifier).digest("base64url"),
-            code_challenge_method: "S256",
-          }))
-            go.searchParams.set(k, v);
-          return { url: go.href };
+          return signIn.connect(
+            {
+              register: `${url}/oauth/mcp/register`,
+              authorize: `${url}/oauth/mcp/authorize`,
+              token: `${url}/oauth/mcp/token`,
+            },
+            http,
+          );
         },
         finish: async (args: unknown) => {
-          const a = Finish.safeParse(args);
-          const p = a.success && pending.get(a.data.state);
-          if (!a.success || !p || Date.now() - p.at > SIGN_IN_MS)
-            throw new PluginError("That sign-in is out of date: connect again.");
-          pending.delete(a.data.state);
-          const res = await http(`${p.url}/oauth/mcp/token`, {
-            method: "POST",
-            headers: { "content-type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-              grant_type: "authorization_code",
-              code: a.data.code,
-              redirect_uri: p.redirect,
-              client_id: p.clientId,
-              code_verifier: p.verifier,
-            }),
-          });
-          if (!res.ok) throw new PluginError(`T3 Code didn't sign Hatbot in: ${await why(res)}`);
-          const t = (await res.json()) as { access_token?: string; expires_in?: number };
-          if (typeof t.access_token !== "string")
-            throw new PluginError("T3 Code didn't sign Hatbot in.");
-          setSetting(d.db, UNTIL, String(Date.now() + (t.expires_in ?? 0) * 1000));
-          await d.saveToken(t.access_token);
+          const t = await signIn.finish(args, http);
+          setSetting(d.db, UNTIL, String(Date.now() + (t.expiresIn ?? 0) * 1000));
+          await d.saveToken(t.token);
           return {};
         },
       };
@@ -235,3 +177,4 @@ export const t3Plugin = (d: {
       });
     },
   });
+};

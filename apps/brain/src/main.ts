@@ -68,6 +68,8 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   safely("schedules", () => schedules.tick());
   safely("triggers", () => triggers.tick());
   safely("watchers", () => watchers.tick());
+  safely("listings", () => brain.listings.tick());
+  setInterval(() => safely("listings", () => brain.listings.tick()), 5 * 60_000);
   setInterval(() => {
     safely("ping", () => ping.tick());
     safely("schedules", () => schedules.tick());

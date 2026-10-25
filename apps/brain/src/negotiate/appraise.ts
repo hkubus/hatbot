@@ -39,14 +39,14 @@ const currencyOf = (c: string | null) => {
 };
 
 /** It must only read: set to Chat in Settings. */
-async function call(
+export async function readScout(
   t: PluginTool,
   input: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
   if (t.access !== "read")
     throw new PluginError(
-      `${t.name} asks before each use. Set it to Chat in Settings → Plugins → MCP, so negotiations can read it.`,
+      `${t.name} asks before each use. Set it to Chat in Settings → Plugins → MCP, so Hatbot can read it.`,
     );
   const parsed = t.schema.safeParse(input);
   if (!parsed.success) throw new PluginError(`${t.name} doesn't take ${JSON.stringify(input)}.`);
@@ -67,8 +67,8 @@ export async function listingFacts(
   if (!parts) throw new PluginError(`"${key}" isn't a listing key like "OLX:123456".`);
   const detail = scoutTool(tools, "scout_listing_detail");
   if (!detail)
-    throw new PluginError("Scout isn't connected: there's no scout_listing_detail tool.");
-  const d = await call(detail, { key }, signal);
+    throw new PluginError("Scout isn't connected: connect it in Settings → Plugins → Scout.");
+  const d = await readScout(detail, { key }, signal);
   const l = obj(d.listing);
   const url = str(l.url) ?? str(obj(d.descriptionSnapshot).url);
   if (!url) throw new PluginError(`Scout has no address for ${key}.`);
@@ -124,7 +124,7 @@ export async function appraise(
 
   const reference = usable("scout_price_reference");
   if (reference) {
-    const r = await call(
+    const r = await readScout(
       reference,
       { query: listing.title.slice(0, 240), sources: [listing.marketplace] },
       signal,
@@ -147,7 +147,7 @@ export async function appraise(
 
   const analytics = usable("scout_watch_analytics");
   if (typical === null && analytics && listing.watchId) {
-    const a = await call(analytics, { id: listing.watchId }, signal).catch(
+    const a = await readScout(analytics, { id: listing.watchId }, signal).catch(
       () => ({}) as Record<string, unknown>,
     );
     const current = obj(a.current);
@@ -173,7 +173,7 @@ export async function appraise(
   const comparables = usable("scout_comparables");
   let cheapest: number | null = null;
   if (comparables) {
-    const c = await call(comparables, { listingKey: key }, signal).catch(
+    const c = await readScout(comparables, { listingKey: key }, signal).catch(
       () => ({}) as Record<string, unknown>,
     );
     const list = [c.comparables, c.listings, c.items].find(Array.isArray) as unknown[] | undefined;

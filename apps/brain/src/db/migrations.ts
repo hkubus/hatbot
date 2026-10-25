@@ -854,4 +854,34 @@ export const migrations: string[] = [
   UPDATE bots SET plugins = replace(plugins, '"claude"', '"t3"') WHERE plugins LIKE '%"claude"%';
   DELETE FROM settings WHERE key = 'plugin:claude';
   `,
+  // 51: flips Scout marked ready to list, one row per marketplace. A row's task posts it, and its gate
+  // comes from the row.
+  `
+  CREATE TABLE flip_listings (
+    id INTEGER PRIMARY KEY,
+    flip_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    bot_id TEXT NOT NULL,
+    -- Scout's revision of the draft when it was asked about: a newer one is asked about again.
+    flip_updated_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    -- The flip as the owner approved it (JSON): what's posted, whatever Scout says later.
+    draft TEXT NOT NULL,
+    approval_id INTEGER,
+    task_id INTEGER,
+    -- desktop-agent's stage for the task's photos, and their names there (JSON), in order.
+    stage TEXT,
+    photos TEXT,
+    published_at TEXT,
+    url TEXT,
+    error TEXT,
+    -- When Scout was told how it ended.
+    reported_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (flip_id, channel)
+  );
+  CREATE INDEX flip_listings_task ON flip_listings (task_id);
+  CREATE INDEX flip_listings_approval ON flip_listings (approval_id);
+  `,
 ];
