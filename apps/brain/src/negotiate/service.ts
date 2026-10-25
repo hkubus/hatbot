@@ -13,6 +13,7 @@ import {
   type Stated,
   type Task,
 } from "@hatbot/shared";
+import type { Chats } from "../agent/chats";
 import type { ModelClient } from "../agent/model";
 import type { Approvals } from "../approvals";
 import { type Bots, botFolder } from "../bots";
@@ -34,8 +35,8 @@ import {
   quotedTitle,
   widened,
 } from "./mandate";
-import { QUIET_HOURS, type SendFacts, type SendInput } from "./policy";
-import { scamSignals } from "./scam";
+import { QUIET_HOURS, type SendFacts, type SendInput, STALL_ROUNDS, stalled, zl } from "./policy";
+import { disputed, scamSignals } from "./scam";
 import { negotiateTools } from "./tools";
 
 export type NegotiationsDeps = {
@@ -44,6 +45,7 @@ export type NegotiationsDeps = {
   tasks: Tasks;
   approvals: Approvals;
   bots: Bots;
+  chats: Chats;
   memory: MemoryStore;
   desktop: Desktop;
   model: ModelClient;
@@ -118,6 +120,11 @@ const mandateOf = (json: string): Mandate => {
 
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
+type Hold = "scam" | "stalled";
+const HOLD_KINDS: Approval["kind"][] = ["injection_warning", "other"];
+/** After a deal nothing more goes to the seller, so what they write is the owner's. */
+const DEALT: NegotiationStatus[] = ["agreed", "paid", "received"];
+
 export type ConversationReport = { from: "seller" | "us"; text: string }[];
 
 export type Recorded = { text: string; stale: boolean; alreadySent: boolean };
@@ -150,7 +157,7 @@ export class Negotiations {
     const run =
       a.kind === "mandate"
         ? this.mandateDecided(a)
-        : a.kind === "injection_warning"
+        : HOLD_KINDS.includes(a.kind)
           ? this.holdDecided(a)
           : null;
     void run?.catch((err) => console.error(`approval ${a.id} failed`, err));
@@ -523,11 +530,7 @@ export class Negotiations {
       .all();
     for (const w of waiting) {
       const a = this.d.approvals.get(w.approval_id);
-      if (
-        a &&
-        a.status !== "pending" &&
-        !(a.kind === "injection_warning" && a.status === "approved")
-      )
+      if (a && a.status !== "pending" && !(HOLD_KINDS.includes(a.kind) && a.status === "approved"))
         this.decided(a);
     }
     const lapsed = this.d.db
@@ -638,11 +641,15 @@ export class Negotiations {
     const head = `Desktop task #${ended.id} ended: ${ended.status}.`;
     const latest = this.get(n.id);
     const held = latest ? this.held(latest) : null;
+    const dealt =
+      latest && DEALT.includes(latest.status)
+        ? `Negotiation #${n.id} is ${latest.status}: don't answer the seller.${fresh.length ? " The owner has what they wrote." : ""}`
+        : null;
     return `${
       fresh.length
         ? `${head} New from the seller:\n${fresh.map((m) => `- ${m.text}`).join("\n")}`
         : `${head} Nothing new from the seller.`
-    }${held ? `\n${held}` : ""}`;
+    }${held ? `\n${held}` : ""}${dealt ? `\n${dealt}` : ""}`;
   }
 
   private desktopTask(
@@ -734,8 +741,23 @@ export class Negotiations {
   held(n: Negotiation): string | null {
     if (n.status !== "open" || !n.approvalId) return null;
     const a = this.d.approvals.get(n.approvalId);
-    if (a?.kind !== "injection_warning" || a.status !== "pending") return null;
-    return `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
+    if (!a || !HOLD_KINDS.includes(a.kind) || a.status !== "pending") return null;
+    return this.holdOf(n.id) === "stalled"
+      ? `Negotiation #${n.id} is held: the seller hasn't moved in ${STALL_ROUNDS} rounds, and the owner decides whether to carry on. Don't message the seller; wait for the owner. If the seller sold it or took your offer, you may still close it.`
+      : `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
+  }
+
+  /** A scam warning waits for the owner, who ends it or carries on; closing would clear it. */
+  scamHeld(n: Negotiation): string | null {
+    return this.holdOf(n.id) === "scam" ? this.held(n) : null;
+  }
+
+  private holdOf(id: number): Hold {
+    return (
+      this.d.db
+        .query<{ hold: Hold | null }, [number]>("SELECT hold FROM negotiations WHERE id = ?")
+        .get(id)?.hold ?? "scam"
+    );
   }
 
   private hold(n: Negotiation, text: string, signals: string[]) {
@@ -748,7 +770,23 @@ export class Negotiations {
       summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
       reason: `The seller wrote: “${quoted}”\nIt has ${signals.join("; ")}, which is how scams on marketplaces often start. Nothing more goes to the seller until you decide. Approve to carry on, or deny to end the negotiation.`,
     });
-    this.update(n.id, { approval_id: approval.id });
+    // A scam outranks a stall: the stall's question goes, after the row stops pointing at it.
+    const stall = this.held(n) ? n.approvalId : null;
+    this.update(n.id, { approval_id: approval.id, hold: "scam" });
+    if (stall) this.d.approvals.cancel(stall);
+  }
+
+  /** A stall isn't a scam: it can be approved from anywhere. */
+  private holdStalled(n: Negotiation, price: number, at: number) {
+    const approval = this.d.approvals.create({
+      taskId: null,
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      kind: "other",
+      summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
+      reason: `The seller has kept to ${zl(price, n.mandate.currency)} for ${STALL_ROUNDS} rounds. Nothing more goes to them until you decide. Approve to carry on: an offer past the limit still asks you first, and you can tell ${this.d.bots.nameOf(n.botId)} in the chat to wait. Deny to walk away.`,
+    });
+    this.update(n.id, { approval_id: approval.id, hold: "stalled", stalled_at: at });
   }
 
   async holdDecided(a: Approval) {
@@ -758,14 +796,35 @@ export class Negotiations {
         .all(a.id),
     );
     if (!n || a.status === "pending") return;
-    if (a.status === "approved") return this.emit(n.id);
+    const stall = this.holdOf(n.id) === "stalled";
+    // Unanswered, a stall carries on: walking away is the owner's to say.
+    if (a.status === "approved" || (stall && a.status === "expired"))
+      return this.update(n.id, { approval_id: null });
+    const why = stall
+      ? `The seller didn't move in ${STALL_ROUNDS} rounds`
+      : "The seller's message looked like a scam";
     await this.close(
       n,
       "abandoned",
       null,
       a.status === "denied"
-        ? "The seller's message looked like a scam, and the owner ended it."
-        : "The seller's message looked like a scam, and nobody said to carry on.",
+        ? `${why}, and the owner ended it.`
+        : `${why}, and nobody said to carry on.`,
+    );
+  }
+
+  /** The bot doesn't answer after a deal, so the owner hears what the seller wrote. */
+  private afterDeal(n: Negotiation, texts: string[]) {
+    const price = n.agreedPrice !== null ? ` at ${zl(n.agreedPrice, n.mandate.currency)}` : "";
+    const quoted = texts.map((t) => `“${t.length > 500 ? `${t.slice(0, 499)}…` : t}”`).join("\n");
+    const bot = this.d.bots.nameOf(n.botId);
+    const yours = texts.some(disputed)
+      ? `It reads like a dispute. ${bot} doesn't answer sellers after a deal, so it's yours to sort out, through the marketplace's dispute process if it comes to that.`
+      : `${bot} doesn't answer sellers after a deal, so it's yours to answer.`;
+    this.d.chats.note(
+      n.botId,
+      `**Negotiation #${n.id}** (${quotedTitle(n.title)}, ${n.status}${price}): new from the seller:\n${quoted}\n${yours}`,
+      `The seller in negotiation #${n.id}`,
     );
   }
 
@@ -828,6 +887,7 @@ export class Negotiations {
     let added = 0;
     let after = 0;
     let alreadySent = false;
+    const fresh: string[] = [];
     report.forEach((m, i) => {
       const key = keyOf(m.text);
       if (!key) return;
@@ -860,12 +920,15 @@ export class Negotiations {
         )
         .run(n.id, text, this.now());
       added++;
+      fresh.push(text);
       if (i > lastOurs) after++;
       const signals = scamSignals(text, n.mandate.allow);
       // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
       const current = signals.length ? this.get(n.id) : null;
-      if (current?.status === "open" && !this.held(current)) this.hold(current, text, signals);
+      if (current?.status === "open" && !this.scamHeld(current)) this.hold(current, text, signals);
     });
+    if (fresh.length && DEALT.includes(n.status)) this.afterDeal(n, fresh);
+    if (fresh.length) this.stallCheck(n.id);
     // Only a read records the conversation's address here; a send records where it went in sendPassed.
     const mode = row.message_id ? "send" : "read";
     if (tabUrl && !n.conversationUrl && mode === "read" && this.conversationFor(n, tabUrl))
@@ -893,6 +956,21 @@ export class Negotiations {
             ? "Finish the task now."
             : "Now type exactly the approved message into the message box and send it.";
     return { text: `${got} ${next}`, stale, alreadySent };
+  }
+
+  private stallCheck(id: number) {
+    const n = this.get(id);
+    if (n?.status !== "open" || this.held(n)) return;
+    const since =
+      this.d.db
+        .query<{ at: number | null }, [number]>(
+          "SELECT stalled_at AS at FROM negotiations WHERE id = ?",
+        )
+        .get(id)?.at ?? null;
+    const messages = this.messages(id);
+    const price = stalled(n, messages, since);
+    const last = messages.at(-1);
+    if (price !== null && last) this.holdStalled(n, price, last.id);
   }
 
   sendPassed(taskId: number, confirmed: boolean, tabUrl: string | null = null) {

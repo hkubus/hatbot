@@ -884,4 +884,10 @@ export const migrations: string[] = [
   CREATE INDEX flip_listings_task ON flip_listings (task_id);
   CREATE INDEX flip_listings_approval ON flip_listings (approval_id);
   `,
+  // 52: why a negotiation is held for the owner ('scam' or 'stalled'; none is a scam, as before), and the
+  // seller's message a stall was asked at, since only rounds after it count towards another.
+  `
+  ALTER TABLE negotiations ADD COLUMN hold TEXT;
+  ALTER TABLE negotiations ADD COLUMN stalled_at INTEGER;
+  `,
 ];

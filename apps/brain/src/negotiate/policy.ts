@@ -1,6 +1,6 @@
 // negotiate_send's policy, in code rather than by a model. It fails closed: a message goes on its own
 // only when the check can read all of it and finds it inside the mandate. It never sends on a guess.
-import type { MandateContact, Negotiation, Stated } from "@hatbot/shared";
+import type { MandateContact, Negotiation, NegotiationMessage, Stated } from "@hatbot/shared";
 import { askCareful, block, covered, type Verdict } from "../plugins/plugin";
 import { collapse, sameHost } from "./gate";
 
@@ -365,28 +365,7 @@ export function acceptance(raw: string): string | null {
  */
 function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null {
   const worst = (xs: number[]) => (n.role === "buy" ? Math.max(...xs) : Math.min(...xs));
-  const reading = (raw: string) => {
-    const r = read(raw, n.title, n.asking);
-    const t = combine(r);
-    const text = plain(raw);
-    return {
-      // A price, not a shipping fee, a time or "o 100 zł". "Cena bez zmian" is the asking price.
-      values: [
-        ...r.found.flatMap((a) => a.values),
-        ...t.sums.map((x) => x.total),
-        ...t.products.map((x) => x.total),
-        ...(FIRM.test(text) && n.asking !== null ? [n.asking] : []),
-      ].filter((v) => v >= priceFloor(n.mandate)),
-      unclear:
-        relativeIn(text).length > 0 ||
-        SEVERAL_ITEMS.test(text) ||
-        t.each.length > 0 ||
-        r.unclear.length > 0 ||
-        oddNumbers(raw) ||
-        numberWords(raw).length > 0 ||
-        currenciesIn(raw).some((c) => c.code !== n.mandate.currency),
-    };
-  };
+  const reading = (raw: string) => priceReading(n, raw);
   const recent = seller.filter((s) => s.after).map((s) => reading(s.text));
   if (recent.some((r) => r.unclear)) return null;
   const named = recent.flatMap((r) => r.values);
@@ -397,6 +376,74 @@ function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null 
     if (r.values.length) return worst(r.values);
   }
   return n.asking;
+}
+
+function priceReading(n: Negotiation, raw: string) {
+  const r = read(raw, n.title, n.asking);
+  const t = combine(r);
+  const text = plain(raw);
+  return {
+    // A price, not a shipping fee, a time or "o 100 zł". "Cena bez zmian" is the asking price.
+    values: [
+      ...r.found.flatMap((a) => a.values),
+      ...t.sums.map((x) => x.total),
+      ...t.products.map((x) => x.total),
+      ...(FIRM.test(text) && n.asking !== null ? [n.asking] : []),
+    ].filter((v) => v >= priceFloor(n.mandate)),
+    unclear:
+      relativeIn(text).length > 0 ||
+      SEVERAL_ITEMS.test(text) ||
+      t.each.length > 0 ||
+      r.unclear.length > 0 ||
+      oddNumbers(raw) ||
+      numberWords(raw).length > 0 ||
+      currenciesIn(raw).some((c) => c.code !== n.mandate.currency),
+  };
+}
+
+export const STALL_ROUNDS = 3;
+
+/**
+ * The price the seller has kept to through the last three of our offers they answered, each sent after
+ * message `since`, while ours stayed short of it. A round counts only when every reply names a price:
+ * a bare "nie", a question or an acceptance isn't a price kept to. Unlike the send policy's, the reading
+ * takes the best price they named, so a seller who moved at all hasn't stalled.
+ */
+export function stalled(
+  n: Negotiation,
+  messages: NegotiationMessage[],
+  since: number | null,
+): number | null {
+  const best = (xs: number[]) => (n.role === "buy" ? Math.min(...xs) : Math.max(...xs));
+  const theirs = messages.filter((m) => m.direction === "in");
+  const ours = messages.filter(
+    (m) => m.direction === "out" && (m.status === "sent" || m.status === "unconfirmed"),
+  );
+  const rounds = ours.flatMap((o, i) => {
+    const next = ours[i + 1]?.id ?? Number.POSITIVE_INFINITY;
+    const replies = theirs.filter((m) => m.id > o.id && m.id < next);
+    return o.offer !== null && o.id > (since ?? 0) && replies.length
+      ? [{ id: o.id, offer: o.offer, replies: replies.map((m) => priceReading(n, m.text)) }]
+      : [];
+  });
+  const last = rounds.slice(-STALL_ROUNDS);
+  const first = last[0];
+  const latest = last.at(-1);
+  if (!first || !latest || last.length < STALL_ROUNDS) return null;
+  let before = n.asking;
+  for (const m of theirs.filter((x) => x.id < first.id).toReversed()) {
+    const r = priceReading(n, m.text);
+    if (r.unclear) return null;
+    if (r.values.length) {
+      before = best(r.values);
+      break;
+    }
+  }
+  if (before === null) return null;
+  for (const round of last)
+    for (const r of round.replies)
+      if (r.unclear || !r.values.length || best(r.values) !== before) return null;
+  return (n.role === "buy" ? latest.offer < before : latest.offer > before) ? before : null;
 }
 
 const FIRM =
