@@ -113,7 +113,7 @@ export function SafetyPage({ toast }: { toast: Toast }) {
           <Row label="Ask before changes after reading untrusted content">
             <Switch on={safety.untrusted} onChange={(on) => setRule("untrusted", on)} />
           </Row>
-          <Row label="Stop when something read looks like instructions aimed at Hatbot">
+          <Row label="Ask about every change once something read looks like instructions aimed at Hatbot">
             <Switch on={safety.injection} onChange={(on) => setRule("injection", on)} />
           </Row>
           <SavedRow<number>

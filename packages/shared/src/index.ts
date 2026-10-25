@@ -310,7 +310,7 @@ export type SafetySettings = {
   kinds: Record<SafetyKind, ApprovalLevel>;
   /** After reading untrusted content, changes ask first. */
   untrusted: boolean;
-  /** Something read that looks like instructions aimed at a bot stops for you. */
+  /** Once something read looks like instructions aimed at a bot, every change asks you. */
   injection: boolean;
   /** By write tool: always ask you, or never ask. Tools not here do as their plugin says. */
   tools: Record<string, "ask" | "allow">;
