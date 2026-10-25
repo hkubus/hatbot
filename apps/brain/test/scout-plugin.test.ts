@@ -37,7 +37,12 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
       },
     ]),
   );
-  const s = { challenge: "", tokens: new Set<string>(), bearers: [] as string[] };
+  const s = {
+    challenge: "",
+    tokens: new Set<string>(),
+    bearers: [] as string[],
+    posts: [] as string[],
+  };
   const handle = async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     if (u.origin !== SCOUT) return new Response(null, { status: 404 });
@@ -67,6 +72,7 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
       case "/mcp": {
         const auth = new Headers(init?.headers).get("authorization") ?? "";
         s.bearers.push(auth);
+        if (init?.method === "POST") s.posts.push(JSON.parse(String(init.body)).method);
         if (!s.tokens.has(auth.replace(/^Bearer /, ""))) return new Response(null, { status: 401 });
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
@@ -86,6 +92,15 @@ async function connect(t: TestApp, scout: ReturnType<typeof fakeScout>) {
   await t.plugins.update("scout", { enabled: true, config: { url: `${SCOUT}/` } });
   const { url } = (await t.plugins.action("scout", "connect", {})) as { url: string };
   return new URL(url);
+}
+
+async function connected(t: TestApp, scout: ReturnType<typeof fakeScout>) {
+  const go = await connect(t, scout);
+  scout.s.challenge = go.searchParams.get("code_challenge") ?? "";
+  await t.plugins.action("scout", "finish", {
+    code: "the-code",
+    state: go.searchParams.get("state"),
+  });
 }
 
 const named = (tools: PluginTool[], name: string) => {
@@ -151,12 +166,7 @@ test("a Scout that can't connect apps, or sends the sign-in elsewhere, isn't use
 test("only the brain tells Scout how a listing went, never a task", async () => {
   const t = await testApp();
   const scout = fakeScout();
-  const go = await connect(t, scout);
-  scout.s.challenge = go.searchParams.get("code_challenge") ?? "";
-  await t.plugins.action("scout", "finish", {
-    code: "the-code",
-    state: go.searchParams.get("state"),
-  });
+  await connected(t, scout);
   const listed = named(t.plugins.brainTools(), "scout_flip_listed");
   const input = { flipId: 7, channel: "OLX", status: "declined" };
   expect(verdictFor(listed, input, call(), false).action).toBe("allow");
@@ -164,3 +174,14 @@ test("only the brain tells Scout how a listing went, never a task", async () => 
     "block",
   );
 });
+
+test("Scout's calls share one connection, so a flip's photos aren't held back by Scout's rate limit", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const photo = named(t.plugins.brainTools(), "scout_flip_photo");
+  for (let i = 0; i < 12; i++) await runPluginTool(photo, { id: 1 }, call());
+  expect(scout.s.posts.filter((m) => m === "initialize")).toHaveLength(1);
+  expect(scout.s.posts.filter((m) => m === "tools/call")).toHaveLength(12);
+});
+
