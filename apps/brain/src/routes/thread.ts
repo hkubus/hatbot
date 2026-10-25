@@ -1,6 +1,7 @@
 import {
   CreateGroup,
   PostMessage,
+  ReplyInThread,
   SeenMessages,
   type ThreadMessage,
   UpdateGroup,
@@ -8,6 +9,7 @@ import {
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import type { Thread } from "../agent/thread";
+import { ThreadError } from "../agent/tools";
 import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
 import { chartData } from "../chart-data";
@@ -130,7 +132,17 @@ export const threadRoutes = new Hono<AppEnv>()
   .delete("/conversations/:id", (c) =>
     c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
   )
+  .get("/conversations/:id", (c) => found(c, c.var.chats.get(id(c))))
   .get("/conversations/:id/threads", (c) => c.json(c.var.chats.threads(id(c))))
+  .post("/conversations/:id/threads", json(ReplyInThread), (c) => {
+    try {
+      const { conversation } = c.var.chats.replyInThread(id(c), c.req.valid("json").messageId);
+      return c.json(conversation, 201);
+    } catch (err) {
+      if (err instanceof ThreadError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  })
   .post("/conversations/:id/resolve", (c) => {
     const thread = c.var.chats.get(id(c));
     if (thread?.kind !== "thread") return c.json({ error: "That's gone." }, 404);

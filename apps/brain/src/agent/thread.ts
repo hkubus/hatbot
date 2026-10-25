@@ -1626,6 +1626,11 @@ export class Thread {
     ].join("\n");
   }
 
+  /** What the message carries from untrusted content, if anything. */
+  untrustedSource(messageId: number): string | null {
+    return this.untrusted([messageId]).get(messageId)?.source ?? null;
+  }
+
   /** The thread's latest messages, for the main chat's thread_read; `taintedBy` is what they read. */
   readOut(): { text: string; taintedBy: string | null } {
     const messages = this.list(undefined, READ_THREAD_MESSAGES).filter(

@@ -594,7 +594,11 @@ export type Conversation = {
   resolvedAt: string | null;
   /** What a resolved thread came to, in a line. */
   outcome: string | null;
+  /** A thread's latest message, cut short; null for other chats. */
+  latest: string | null;
 };
+/** You open a thread on one of a bot's messages in its chat. */
+export const ReplyInThread = z.object({ messageId: z.number().int() });
 
 /** Most open threads a bot may have. */
 export const MAX_OPEN_THREADS = 12;

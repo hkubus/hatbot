@@ -34,6 +34,11 @@ import { ApiError, api } from "./api";
 import { withDelta } from "./delta";
 import type { Toast } from "./toast";
 
+/** A thread open beside the chat. */
+type Pane = { conversationId: number; messages: ThreadMessage[]; hasEarlier: boolean };
+/** Which chat a list of messages is: the chat's own, or the thread beside it. */
+type Where = { conversationId: number; incognito: boolean };
+
 type State = {
   conversationId: number;
   incognito: boolean;
@@ -79,12 +84,20 @@ type State = {
   botIds: string[];
   /** Your chats: each bot's own, then groups. */
   conversations: Conversation[];
+  side: Pane | null;
+  /** The threads of the chats you've opened, by id. */
+  threads: Record<number, Conversation>;
 };
 
 /** Hatbot's own chat: the first one, made with the database. */
 export const HATBOT_CHAT = 1;
 /** Hatbot's chat is the app's front page. */
 export const chatPath = (id: number) => (id === HATBOT_CHAT ? "/" : `/chat/${id}`);
+/** A thread opens beside its chat. */
+export const threadPath = (t: Pick<Conversation, "id" | "parentId">) =>
+  `${chatPath(t.parentId ?? HATBOT_CHAT)}?thread=${t.id}`;
+/** Where a chat or a thread is. */
+export const pathOf = (c: Conversation) => (c.kind === "thread" ? threadPath(c) : chatPath(c.id));
 
 /** The chat that's incognito in this tab, so a reload stays incognito in it and only in it. */
 const INCOGNITO_KEY = "hatbot:incognito";
@@ -125,6 +138,8 @@ let state: State = {
   bots: {},
   botIds: [],
   conversations: [],
+  side: null,
+  threads: {},
 };
 const listeners = new Set<() => void>();
 const set = (patch: Partial<State>) => {
@@ -168,30 +183,47 @@ const upsert = (list: ThreadMessage[], m: ThreadMessage) =>
     ? list.map((x) => (x.id === m.id ? { ...x, ...m, episodeId: m.episodeId ?? x.episodeId } : x))
     : [...list, m].sort((a, b) => a.id - b.id);
 
-async function loadEpisodes(messages: ThreadMessage[]) {
+async function loadEpisodes(messages: ThreadMessage[], conversationId: number) {
   const ids = [...new Set(messages.map((m) => m.episodeId))].filter(
     (id): id is number => id !== null && !state.episodes[id],
   );
   if (!ids.length) return;
   const list = await api<Episode[]>(
-    `/conversations/${state.conversationId}/episodes?ids=${ids.join(",")}`,
+    `/conversations/${conversationId}/episodes?ids=${ids.join(",")}`,
   );
   merge("episodes", list);
 }
 
-const page = (before?: number) =>
-  `/conversations/${state.conversationId}/messages?limit=${PAGE}${before ? `&before=${before}` : ""}${state.incognito ? "&incognito=1" : ""}`;
+const page = (w: Where, before?: number) =>
+  `/conversations/${w.conversationId}/messages?limit=${PAGE}${before ? `&before=${before}` : ""}${w.incognito ? "&incognito=1" : ""}`;
+
+const mainWhere = (): Where => ({
+  conversationId: state.conversationId,
+  incognito: state.incognito,
+});
+const sideWhere = (): Where | null =>
+  state.side && { conversationId: state.side.conversationId, incognito: false };
+const whereOf = (side: boolean) => (side ? sideWhere() : mainWhere());
+const sameWhere = (a: Where | null, b: Where | null) =>
+  !!a && !!b && a.conversationId === b.conversationId && a.incognito === b.incognito;
+const listOf = (side: boolean) => (side ? (state.side?.messages ?? []) : state.messages);
+/** The pane's messages, and whether there are earlier ones. */
+function setList(side: boolean, messages: ThreadMessage[], hasEarlier?: boolean) {
+  if (!side) return set({ messages, ...(hasEarlier === undefined ? {} : { hasEarlier }) });
+  if (state.side)
+    set({ side: { ...state.side, messages, hasEarlier: hasEarlier ?? state.side.hasEarlier } });
+}
 
 // Message events that come while a page of messages loads: the page was read before them, so they're
 // put onto it again, or a reply that finished meanwhile would stay streaming.
 const missed = new Set<HatbotEvent[]>();
 
-async function messagesPage(before?: number) {
+async function messagesPage(w: Where, before?: number) {
   const events: HatbotEvent[] = [];
   missed.add(events);
   try {
-    const list = await api<ThreadMessage[]>(page(before));
-    await loadEpisodes(list).catch(() => {});
+    const list = await api<ThreadMessage[]>(page(w, before));
+    await loadEpisodes(list, w.conversationId).catch(() => {});
     return { list, events };
   } finally {
     missed.delete(events);
@@ -199,56 +231,64 @@ async function messagesPage(before?: number) {
 }
 
 /** Deltas still waiting for a frame are among the events. A reply being written brings its progress. */
-function caughtUp(list: ThreadMessage[], events: HatbotEvent[]) {
+function caughtUp(list: ThreadMessage[], events: HatbotEvent[], w: Where) {
   flushDeltas();
   for (const m of list) if (m.progress) put("progress", m.id, m.progress);
-  return events.reduce(onMessages, list);
+  return events.reduce((l, e) => onMessages(l, e, w), list);
 }
 
 /** A chat has been shown: the stream's first open catches its thread up too. */
 let threadShown = false;
 
-export async function loadThread() {
-  threadShown = true;
-  const { incognito, conversationId } = state;
-  const { list, events } = await messagesPage();
+/** `side`: the thread beside the chat. */
+export async function loadThread(side = false) {
+  if (!side) threadShown = true;
+  const w = whereOf(side);
+  if (!w) return;
+  const { list, events } = await messagesPage(w);
   // Switched while it loaded: the other conversation's load wins.
-  if (incognito !== state.incognito || conversationId !== state.conversationId) return;
-  set({ messages: caughtUp(list, events), hasEarlier: list.length === PAGE });
+  if (!sameWhere(w, whereOf(side))) return;
+  setList(side, caughtUp(list, events, w), list.length === PAGE);
 }
 
-let earlier: Promise<void> | null = null;
+const earlier = new Map<boolean, Promise<void>>();
 /** Asked for again while it loads, it's the same load. */
-export function loadEarlier(): Promise<void> {
-  earlier ??= (async () => {
-    const first = state.messages[0];
-    if (!first) return;
-    const { incognito, conversationId } = state;
-    const { list, events } = await messagesPage(first.id);
-    // Switched, to incognito too, or loaded again from the bottom: it doesn't go on the top any more.
-    if (
-      incognito !== state.incognito ||
-      conversationId !== state.conversationId ||
-      state.messages[0]?.id !== first.id
-    )
-      return;
-    const have = new Set(state.messages.map((m) => m.id));
-    const older = caughtUp(list, events).filter((m) => !have.has(m.id));
-    set({ messages: [...older, ...state.messages], hasEarlier: list.length === PAGE });
-  })().finally(() => {
-    earlier = null;
-  });
-  return earlier;
+export function loadEarlier(side = false): Promise<void> {
+  const loading =
+    earlier.get(side) ??
+    (async () => {
+      const first = listOf(side)[0];
+      const w = whereOf(side);
+      if (!first || !w) return;
+      const { list, events } = await messagesPage(w, first.id);
+      // Switched, to incognito too, or loaded again from the bottom: it doesn't go on the top any more.
+      if (!sameWhere(w, whereOf(side)) || listOf(side)[0]?.id !== first.id) return;
+      const have = new Set(listOf(side).map((m) => m.id));
+      const older = caughtUp(list, events, w).filter((m) => !have.has(m.id));
+      setList(side, [...older, ...listOf(side)], list.length === PAGE);
+    })().finally(() => {
+      earlier.delete(side);
+    });
+  earlier.set(side, loading);
+  return loading;
 }
 
 /** `clientId`: sent again with it after the answer was lost, the brain posts it once. */
-export async function sendMessage(text: string, attachmentIds: number[] = [], clientId?: string) {
-  const m = await api<ThreadMessage>(`/conversations/${state.conversationId}/messages`, {
-    body: { text, attachmentIds, incognito: state.incognito, clientId },
+export async function sendMessage(
+  text: string,
+  attachmentIds: number[] = [],
+  clientId?: string,
+  side = false,
+) {
+  const w = whereOf(side);
+  if (!w) return;
+  const m = await api<ThreadMessage>(`/conversations/${w.conversationId}/messages`, {
+    body: { text, attachmentIds, incognito: w.incognito, clientId },
     timeout: 30_000,
   });
-  if (!!m.incognito === state.incognito && m.conversationId === state.conversationId)
-    set({ messages: upsert(state.messages, m) });
+  const now = whereOf(side);
+  if (now && !!m.incognito === now.incognito && m.conversationId === now.conversationId)
+    setList(side, upsert(listOf(side), m));
 }
 
 /** It's rewritten in place, through the usual events. */
@@ -257,8 +297,40 @@ export async function retryReply(m: ThreadMessage) {
 }
 
 /** message.deleted takes it off the screen. */
-export async function deleteEpisode(id: number) {
-  await api(`/conversations/${state.conversationId}/episodes/${id}`, { method: "DELETE" });
+export async function deleteEpisode(id: number, conversationId = state.conversationId) {
+  await api(`/conversations/${conversationId}/episodes/${id}`, { method: "DELETE" });
+}
+
+/** Opens a thread beside the chat, or closes it (null). */
+export function openSide(id: number | null) {
+  if ((state.side?.conversationId ?? null) === id) return;
+  set({ side: id === null ? null : { conversationId: id, messages: [], hasEarlier: false } });
+}
+
+export async function loadThreads(parentId: number) {
+  const list = await api<Conversation[]>(`/conversations/${parentId}/threads`);
+  const kept = Object.values(state.threads).filter((t) => t.parentId !== parentId);
+  set({ threads: Object.fromEntries([...kept, ...list].map((t) => [t.id, t])) });
+}
+
+/** A chat or thread on its own, e.g. one a link names. */
+export async function loadConversation(id: number) {
+  const c = await api<Conversation>(`/conversations/${id}`);
+  putConversation(c);
+  return c;
+}
+
+export async function resolveThread(id: number) {
+  putConversation(await api<Conversation>(`/conversations/${id}/resolve`, { body: {} }));
+}
+
+/** A thread that starts with this message of the bot's. */
+export async function replyInThread(m: ThreadMessage) {
+  const c = await api<Conversation>(`/conversations/${m.conversationId}/threads`, {
+    body: { messageId: m.id },
+  });
+  putConversation(c);
+  return c;
 }
 
 /** Out of incognito deletes its conversation. */
@@ -314,6 +386,9 @@ function refreshConversations() {
       (conversations) => set({ conversations }),
       () => {},
     );
+    // A thread's latest message and unread count.
+    if (Object.values(state.threads).some((t) => t.parentId === state.conversationId))
+      void loadThreads(state.conversationId).catch(() => {});
   }, 300);
 }
 
@@ -348,11 +423,13 @@ export async function deleteGroup(id: number) {
   set({ conversations: state.conversations.filter((c) => c.id !== id) });
 }
 const putConversation = (c: Conversation) =>
-  set({
-    conversations: state.conversations.some((x) => x.id === c.id)
-      ? state.conversations.map((x) => (x.id === c.id ? c : x))
-      : [...state.conversations, c],
-  });
+  c.kind === "thread"
+    ? put("threads", c.id, c)
+    : set({
+        conversations: state.conversations.some((x) => x.id === c.id)
+          ? state.conversations.map((x) => (x.id === c.id ? c : x))
+          : [...state.conversations, c],
+      });
 const putBot = (b: Bot) => {
   put("bots", b.id, b);
   if (!state.botIds.includes(b.id)) set({ botIds: [...state.botIds, b.id] });
@@ -365,7 +442,9 @@ export const chatName = (s: State, c: Conversation | undefined) =>
     ? "Chat"
     : c.kind === "group"
       ? c.title || c.botIds.map((id) => botName(s, id)).join(", ")
-      : botName(s, c.botIds[0]);
+      : c.kind === "thread"
+        ? c.title || "Thread"
+        : botName(s, c.botIds[0]);
 export const currentChat = (s: State) => s.conversations.find((c) => c.id === s.conversationId);
 
 /** Messages in an incognito conversation: they're never unread. */
@@ -738,13 +817,12 @@ function patchMessages(
 }
 
 /** What a message event does to the showing chat's messages: the same list when nothing. */
-function onMessages(list: ThreadMessage[], e: HatbotEvent): ThreadMessage[] {
+function onMessages(list: ThreadMessage[], e: HatbotEvent, w: Where): ThreadMessage[] {
   const patch = (id: number, fn: (m: ThreadMessage) => ThreadMessage) =>
     patchMessages((m) => (m.id === id ? fn(m) : m), list);
   switch (e.type) {
     case "message.created":
-      return !!e.message.incognito === state.incognito &&
-        e.message.conversationId === state.conversationId
+      return !!e.message.incognito === w.incognito && e.message.conversationId === w.conversationId
         ? upsert(list, e.message)
         : list;
     case "message.delta":
@@ -800,13 +878,28 @@ function flushDeltas() {
   if (!deltas.size) return;
   const added = new Map(deltas);
   deltas.clear();
-  const messages = patchMessages((m) => {
+  const add = (m: ThreadMessage) => {
     const d = added.get(m.id);
     const text = d === undefined ? m.text : withDelta(m.text, d);
     return text === m.text ? m : { ...m, text };
-  });
-  if (messages !== state.messages) set({ messages });
+  };
+  set(lists((list) => patchMessages(add, list)));
 }
+
+/** Both panes' messages through `fn`; a pane whose list is unchanged keeps it, so it doesn't redraw. */
+function lists(fn: (list: ThreadMessage[], w: Where) => ThreadMessage[]): Partial<State> {
+  const messages = fn(state.messages, mainWhere());
+  const side = state.side;
+  const w = sideWhere();
+  const sideMessages = side && w ? fn(side.messages, w) : null;
+  return {
+    messages,
+    ...(side && sideMessages && sideMessages !== side.messages
+      ? { side: { ...side, messages: sideMessages } }
+      : {}),
+  };
+}
+const onLists = (e: HatbotEvent) => lists((list, w) => onMessages(list, e, w));
 
 function apply(e: HatbotEvent) {
   if (e.type.startsWith("message.")) for (const events of missed) events.push(e);
@@ -827,7 +920,7 @@ function apply(e: HatbotEvent) {
       if (e.message.incognito) incognitoIds.add(e.message.id);
       if (e.message.role === "assistant") refreshConversations();
       return set({
-        messages: onMessages(state.messages, e),
+        ...onLists(e),
         unread:
           // What came of your own command arrives already seen.
           e.message.role === "assistant" && e.message.status !== "streaming" && !e.message.seenAt
@@ -836,12 +929,12 @@ function apply(e: HatbotEvent) {
       });
     case "message.edited":
       refreshConversations();
-      return set({ messages: onMessages(state.messages, e), unread: addUnread(e.id) });
+      return set({ ...onLists(e), unread: addUnread(e.id) });
     case "message.seen":
     case "message.deleted":
       refreshConversations();
       return set({
-        messages: onMessages(state.messages, e),
+        ...onLists(e),
         unread: state.unread.filter((id) => !e.ids.includes(id)),
       });
     case "message.progress": {
@@ -854,7 +947,7 @@ function apply(e: HatbotEvent) {
     case "message.link":
     case "message.negotiation":
     case "message.box":
-      return set({ messages: onMessages(state.messages, e) });
+      return set(onLists(e));
     case "message.usage":
       return put("usage", e.id, { tokens: e.tokens, costUsd: e.costUsd });
     case "message.done": {
@@ -865,7 +958,7 @@ function apply(e: HatbotEvent) {
         progress,
         usage,
         unread: addUnread(e.id),
-        messages: onMessages(state.messages, e),
+        ...onLists(e),
       });
     }
     case "spend.updated":
@@ -959,26 +1052,31 @@ function currentAt(list: ThreadMessage[]): string | undefined {
 }
 
 /** The latest page again, merged into what's loaded: earlier pages stay, so the view doesn't jump. */
-async function refreshThread() {
-  const { incognito, conversationId } = state;
-  const since = currentAt(state.messages);
-  const { list: latest, events } = await messagesPage();
-  if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+async function refreshThread(side = false) {
+  const w = whereOf(side);
+  if (!w) return;
+  const since = currentAt(listOf(side));
+  const { list: latest, events } = await messagesPage(w);
+  if (!sameWhere(w, whereOf(side))) return;
   flushDeltas();
   const first = latest[0];
-  const last = state.messages.at(-1);
+  const last = listOf(side).at(-1);
   // The whole conversation, or a full page past everything loaded (a gap): it starts again from here.
   if (!first || latest.length < PAGE || !last || last.id < first.id)
-    return set({ messages: caughtUp(latest, events), hasEarlier: latest.length === PAGE });
-  const older = state.messages.filter((m) => m.id < first.id);
-  set({ messages: [...older, ...caughtUp(latest, events)] });
+    return setList(side, caughtUp(latest, events, w), latest.length === PAGE);
+  const older = listOf(side).filter((m) => m.id < first.id);
+  setList(side, [...older, ...caughtUp(latest, events, w)]);
   const from = older[0]?.id;
   if (from === undefined || !since) return;
-  await refreshEarlier(from, first.id, since).catch((err) => {
+  await refreshEarlier(side, from, first.id, since).catch((err) => {
     // Not known to be current, and the next load couldn't tell since when: they load again.
     if (err instanceof ApiError && err.status === 404) return;
-    if (incognito !== state.incognito || conversationId !== state.conversationId) return;
-    set({ messages: state.messages.filter((m) => m.id >= first.id), hasEarlier: true });
+    if (!sameWhere(w, whereOf(side))) return;
+    setList(
+      side,
+      listOf(side).filter((m) => m.id >= first.id),
+      true,
+    );
   });
 }
 
@@ -986,30 +1084,28 @@ async function refreshThread() {
  * Earlier pages brought up to date without loading them again: what was deleted meanwhile goes, and
  * what a task's result edited is replaced.
  */
-async function refreshEarlier(from: number, before: number, since: string) {
-  const { incognito, conversationId } = state;
+async function refreshEarlier(side: boolean, from: number, before: number, since: string) {
+  const w = whereOf(side);
+  if (!w) return;
   const events: HatbotEvent[] = [];
   missed.add(events);
   try {
     const { ids, changed } = await api<MessageChanges>(
-      `/conversations/${conversationId}/messages/changes?from=${from}&before=${before}&since=${encodeURIComponent(since)}${incognito ? "&incognito=1" : ""}`,
+      `/conversations/${w.conversationId}/messages/changes?from=${from}&before=${before}&since=${encodeURIComponent(since)}${w.incognito ? "&incognito=1" : ""}`,
     );
-    if (incognito !== state.incognito || conversationId !== state.conversationId) return;
+    if (!sameWhere(w, whereOf(side))) return;
     const kept = new Set(ids);
     const fresh = new Map(changed.map((m) => [m.id, m]));
     const inRange = (m: ThreadMessage) => m.id >= from && m.id < before;
-    const range = state.messages
-      .filter((m) => inRange(m) && kept.has(m.id))
-      .map((m) => fresh.get(m.id) ?? m);
+    const list = listOf(side);
+    const range = list.filter((m) => inRange(m) && kept.has(m.id)).map((m) => fresh.get(m.id) ?? m);
     // What came meanwhile goes on again, onto these only: the rest has it already.
-    const caught = caughtUp(range, events).filter(inRange);
-    set({
-      messages: [
-        ...state.messages.filter((m) => m.id < from),
-        ...caught,
-        ...state.messages.filter((m) => m.id >= before),
-      ],
-    });
+    const caught = caughtUp(range, events, w).filter(inRange);
+    setList(side, [
+      ...list.filter((m) => m.id < from),
+      ...caught,
+      ...list.filter((m) => m.id >= before),
+    ]);
   } finally {
     missed.delete(events);
   }
@@ -1022,6 +1118,7 @@ async function refreshEarlier(from: number, before: number, since: string) {
 async function catchUp(reconnected: boolean) {
   // The chats come with loadLive's bots.
   if (reconnected || threadShown) void refreshThread().catch(() => {});
+  if (state.side) void refreshThread(true).catch(() => {});
   void api<SpendSummary>("/spend/summary").then(
     (s) => set({ todayUsd: s.todayUsd, monthUsd: s.monthUsd }),
     () => {},
@@ -1033,7 +1130,7 @@ async function catchUp(reconnected: boolean) {
   )
     void loadSchedules().catch(() => {});
   // A card in the chat whose one fetch failed tries again.
-  for (const m of state.messages) {
+  for (const m of [...state.messages, ...(state.side?.messages ?? [])]) {
     if (m.taskId) ensureTask(m.taskId);
     if (m.scheduleId) ensureSchedule(m.scheduleId);
     if (m.negotiationId) ensureNegotiation(m.negotiationId);
@@ -1049,6 +1146,8 @@ async function catchUp(reconnected: boolean) {
       void refreshProposals().catch(() => {});
     if (Object.keys(state.plugins).length) void loadPlugins().catch(() => {});
     if (boxesLoaded) void loadBoxes().catch(() => {});
+    for (const parent of new Set(Object.values(state.threads).map((t) => t.parentId)))
+      if (parent !== null) void loadThreads(parent).catch(() => {});
     // A negotiation's page shows its messages; negotiation.updated may have been missed.
     for (const id of Object.keys(state.negotiationMessages))
       void loadNegotiation(Number(id)).catch(() => {});

@@ -21,6 +21,7 @@ import {
   getState,
   HATBOT_CHAT,
   loadApproval,
+  loadConversation,
   loadNegotiations,
   needsYou,
   negotiationOf,
@@ -28,6 +29,7 @@ import {
   reconnectNow,
   setIncognito,
   setPaused,
+  threadPath,
   unreadCount,
   useStore,
 } from "./store";
@@ -181,6 +183,11 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const chats = useStore((s) => s.conversations);
   const chat = useStore(currentChat);
   const title = useStore((s) => chatName(s, currentChat(s)));
+  const openThreads = useStore(
+    (s) =>
+      Object.values(s.threads).filter((t) => t.parentId === s.conversationId && !t.resolvedAt)
+        .length,
+  );
   const [chatMenu, setChatMenu] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
   const manyBots = useStore((s) => s.botIds.length > 1);
@@ -275,10 +282,19 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     return () => el.removeEventListener("keydown", onKey);
   }, []);
 
-  // One that's gone, e.g. a deleted bot's: back to Hatbot's.
+  // A thread opens beside its chat. One that's gone, e.g. a deleted bot's: back to Hatbot's.
+  const message = params.get("message");
   useEffect(() => {
-    if (chatId && chats.length && !chats.some((c) => c.id === chatId)) navigate("/", true);
-  }, [chatId, chats]);
+    if (!chatId || !chats.length || chats.some((c) => c.id === chatId)) return;
+    loadConversation(chatId).then(
+      (c) =>
+        navigate(
+          c.kind === "thread" ? `${threadPath(c)}${message ? `&message=${message}` : ""}` : "/",
+          true,
+        ),
+      () => navigate("/", true),
+    );
+  }, [chatId, chats, message]);
 
   // An approval notification opens /?approval=<id>: show it on its task.
   useEffect(() => {
@@ -452,6 +468,20 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
               <h1>{pageTitle}</h1>
             )}
             <span className="spacer" />
+            {chatId > 0 && chat?.kind === "direct" && (
+              <Link
+                className={`tb-btn ${params.has("thread") || params.has("threads") ? "on" : ""}`}
+                to={
+                  params.has("thread") || params.has("threads")
+                    ? chatPath(chatId)
+                    : `${chatPath(chatId)}?threads`
+                }
+                title="Threads"
+              >
+                <Icon name="forum" />
+                {openThreads > 0 && <span className="tnum">{openThreads}</span>}
+              </Link>
+            )}
             {chatId > 0 && chat?.kind !== "group" && (
               <button
                 type="button"

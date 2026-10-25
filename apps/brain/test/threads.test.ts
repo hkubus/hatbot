@@ -115,3 +115,27 @@ test("a thread opened from a tainted chat starts tainted, and the chat that read
   await t.thread.post("what's in the seller thread?").done;
   expect(tainted(1)).toBe(1);
 });
+
+test("you open a thread on a bot's message: it starts with that message, and the chat counts the thread's unread messages", async () => {
+  const model = new FakeModel([
+    { content: [text("Three options:\n- A\n- B")] },
+    { content: [text("B is cheaper.")] },
+  ]);
+  const t = await testApp(model);
+  const { cookie } = signIn(t);
+  await t.thread.post("options?").done;
+  const [mine, reply] = t.thread.list();
+  const open = (messageId: number) =>
+    t.call("POST", "/conversations/1/threads", { messageId }, { cookie });
+  expect((await open(mine?.id as number)).status).toBe(400);
+  const res = await open(reply?.id as number);
+  expect(res.status).toBe(201);
+  const thread = (await res.json()) as Conversation;
+  expect(thread).toMatchObject({ title: "Three options:", latest: "Three options:\n- A\n- B" });
+  t.chats.markSeen(t.chats.unread());
+
+  await t.chats.thread(thread.id)?.post("which is cheaper?").done;
+  expect(t.chats.get(thread.id)?.unread).toBe(1);
+  expect(t.chats.get(1)?.unread).toBe(1);
+  expect(t.chats.get(thread.id)?.latest).toBe("B is cheaper.");
+});

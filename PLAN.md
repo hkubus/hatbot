@@ -75,12 +75,12 @@ Planned 2026-10-25. A thread is a side conversation in a bot's chat, on one topi
 - **You**: Reply in thread on a bot's message or a task card; Resolve; writing in a resolved thread opens it again.
 - **Tasks**: a task started in a thread reports there. A background task (a schedule, the heartbeat, a watcher, a negotiation) that opens or posts in a thread reports there, not in the main chat, and asks its `ask_owner` questions there.
 - **Taint**: each thread has its own. A thread that reads a seller's messages or logs doesn't taint the main chat; one opened by a tainted task starts tainted, and its opening message is untrusted. A tainted thread's title reaches the main chat as untrusted.
-- **Notifications**: a new thread notifies (it needs you), opening `/chat/:id/threads/:threadId`, with a `hatbot://` link for iOS. Replies in a thread don't, as in the chat.
-- **Clients**: the web and iOS stores hold one chat's messages; they need one list per open conversation, and `message.created` matched to any of them. On the web a thread opens in a panel beside the chat (a full-screen route on a phone); its card shows the title and the latest reply, or the outcome once resolved. A Threads button in the chat's header lists them. A bot's unread count includes its threads'.
+- **Notifications**: a new thread notifies (it needs you), opening `/chat/:id?thread=<threadId>`, with a `hatbot://` link for iOS. Replies in a thread don't, as in the chat.
+- **Clients**: the web and iOS stores hold one chat's messages; they need one list per open conversation, and `message.created` matched to any of them. On the web a thread opens in a panel beside the chat (in the chat's place on a phone); its card shows the title and the latest reply, or the outcome once resolved. A Threads button in the chat's header lists them. A bot's unread count includes its threads'.
 
 ### 4.2 Milestones
-- **T1, brain** is built (2026-10-25): the data, thread conversations and their context, `thread_open`, `thread_read` and `thread_resolve` in the chat, and `GET /conversations/:id/threads` and `POST /conversations/:id/resolve`. Until T2 the web shows a thread's card as a reply whose link opens the thread as a chat.
-- **T2, web**: the store, the panel and route, the card, the threads list, Resolve, and Reply in thread.
+- **T1, brain** is built (2026-10-25): the data, thread conversations and their context, `thread_open`, `thread_read` and `thread_resolve` in the chat, and `GET /conversations/:id/threads` and `POST /conversations/:id/resolve`.
+- **T2, web** is built (2026-10-25): the store's second pane, the panel at `?thread=<id>`, the card, the list at `?threads`, Resolve, and Reply in thread (`POST /conversations/:id/threads`).
 - **T3, tasks**: threads opened by tasks, their results and questions there, notifications and links.
 - **T4, bots**: every negotiation gets its thread when it starts; holds, counter-offers, the agreement and N3's seller replies go there, and closing the negotiation resolves it. The heartbeat's and watchers' findings open a thread instead of a note in the chat. Prompt lines on when to open a thread and when to just answer.
 - **T5, iOS**.

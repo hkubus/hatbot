@@ -245,3 +245,30 @@ test("a reloaded incognito chat stays incognito, and only that chat", async () =
     path: "/conversations/1/incognito",
   });
 });
+
+test("a thread open beside the chat takes its own messages, and the chat keeps its own", async () => {
+  const store = await freshStore("side");
+  store.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  dom.answer((r) =>
+    r.path.startsWith("/conversations/2/messages") ? [msg(10, { conversationId: 2 })] : [msg(1)],
+  );
+  await store.openConversation(1);
+  await store.loadThread();
+  store.openSide(2);
+  await store.loadThread(true);
+  socket.emit({ type: "message.created", message: msg(11, { conversationId: 2, text: "" }) });
+  socket.emit({ type: "message.delta", id: 11, text: "Sure." });
+  socket.emit({ type: "message.created", message: msg(2) });
+  dom.flushFrames();
+  expect(shown(store)).toEqual([
+    [1, "Message 1", "done"],
+    [2, "Message 2", "done"],
+  ]);
+  expect(store.getState().side?.messages.map((m) => [m.id, m.text])).toEqual([
+    [10, "Message 10"],
+    [11, "Sure."],
+  ]);
+  store.disconnect();
+});
