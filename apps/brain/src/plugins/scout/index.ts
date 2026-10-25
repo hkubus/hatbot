@@ -8,7 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { callFailure, resultText } from "../mcp";
+import { callFailure, resultText, unsent } from "../mcp";
 import { discover, oauthClient } from "../oauth";
 import {
   allow,
@@ -24,6 +24,8 @@ import {
 type Http = (url: string, init?: RequestInit) => Promise<Response>;
 
 const CALL_TIMEOUT_MS = 120_000;
+const refusedBy = (err: unknown) =>
+  err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
 const WatchId = z.string().min(1).max(160);
 const Days = z.number().int().min(7).max(180).optional();
@@ -185,8 +187,15 @@ export const scoutPlugin = (d: {
       if (!env.SCOUT_TOKEN) return setup("Connect it to your Scout below.");
       const token = env.SCOUT_TOKEN;
 
-      // Scout's MCP server keeps no sessions, and Hatbot calls it a few times a minute at most.
-      const session = async <T>(fn: (c: Client) => Promise<T>): Promise<T> => {
+      const refused = () =>
+        new PluginError(
+          "Scout doesn't let Hatbot in any more: connect it again in Settings → Plugins → Scout.",
+        );
+      const unreachable = (err: unknown) =>
+        new PluginError(
+          `Can't reach Scout at ${url}: ${err instanceof Error ? err.message.slice(0, 200) : "error"}`,
+        );
+      const open = async () => {
         const client = new Client({ name: "hatbot", version: "1.0.0" });
         try {
           await client.connect(
@@ -196,19 +205,44 @@ export const scoutPlugin = (d: {
             }),
             { timeout: 30_000 },
           );
+          return client;
         } catch (err) {
-          if (err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403))
-            throw new PluginError(
-              "Scout doesn't let Hatbot in any more: connect it again in Settings → Plugins → Scout.",
-            );
-          throw new PluginError(
-            `Can't reach Scout at ${url}: ${err instanceof Error ? err.message.slice(0, 200) : "error"}`,
-          );
-        }
-        try {
-          return await fn(client);
-        } finally {
           await client.close().catch(() => {});
+          throw refusedBy(err) ? refused() : unreachable(err);
+        }
+      };
+      // One client for every call: Scout rate-limits /mcp per request, and a new client costs two
+      // more requests, so a flip's photos would run into the limit.
+      let client: Promise<Client> | null = null;
+      let stopped = false;
+      const drop = (c: Promise<Client>) => {
+        if (client === c) client = null;
+        c.then((x) => x.close()).catch(() => {});
+      };
+      const session = async <T>(fn: (c: Client) => Promise<T>): Promise<T> => {
+        for (let attempt = 0; ; attempt++) {
+          if (stopped) throw new PluginError("Scout restarted; try again.");
+          client ??= open();
+          const c = client;
+          let connected: Client;
+          try {
+            connected = await c;
+          } catch (err) {
+            drop(c);
+            throw err;
+          }
+          try {
+            return await fn(connected);
+          } catch (err) {
+            if (refusedBy(err)) {
+              drop(c);
+              throw refused();
+            }
+            if (!unsent(err)) throw err;
+            drop(c);
+            // It can't have reached Scout, so it's sent again once, on a new client.
+            if (attempt > 0) throw unreachable(err);
+          }
         }
       };
       const call = (name: string, input: unknown, signal: AbortSignal) =>
@@ -223,7 +257,9 @@ export const scoutPlugin = (d: {
               { signal, timeout: CALL_TIMEOUT_MS },
             )
             .catch((err) => {
-              throw signal.aborted ? err : callFailure("Scout", err);
+              throw signal.aborted || unsent(err) || refusedBy(err)
+                ? err
+                : callFailure("Scout", err);
             });
           const text = resultText(r as { content?: unknown; structuredContent?: unknown });
           if (r.isError) throw new PluginError(`Scout says: ${text.slice(0, 2000)}`);
@@ -266,6 +302,10 @@ export const scoutPlugin = (d: {
           return missing.length
             ? `Scout works, but is older than Hatbot: it hasn't ${missing.join(", ")}.`
             : "Scout works.";
+        },
+        stop: async () => {
+          stopped = true;
+          if (client) drop(client);
         },
       });
     },
