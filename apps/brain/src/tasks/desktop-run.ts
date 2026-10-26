@@ -39,7 +39,17 @@ import { destructive } from "../plugins/ssh/policy";
 import { usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";
-import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, textOf, thinkingFor } from "./loop";
+import {
+  addNotes,
+  askOwner,
+  callsOf,
+  endOf,
+  requestsFor,
+  Stop,
+  steerNote,
+  textOf,
+  thinkingFor,
+} from "./loop";
 import {
   checkFor,
   consequential,
@@ -1304,6 +1314,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       await observePage();
       if (warning) results.push({ type: "text", text: warning });
       warning = null;
+      for (const note of tasks.takeInbox(id))
+        results.push({ type: "text", text: steerNote(note.text) });
       record("user", results);
     }
   };

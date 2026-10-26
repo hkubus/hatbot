@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Task } from "@hatbot/shared";
 import { cutOff, modelErrorText, type StreamParams } from "../agent/model";
+import { tagText } from "../agent/untrusted";
 import type { NewApproval, Outcome } from "../approvals";
 import { DesktopError } from "../desktop/client";
 import {
@@ -24,6 +25,9 @@ export class Stop extends Error {
     super(summary);
   }
 }
+
+/** A note the chat sent a running task (`Tasks.steer`). */
+export const steerNote = (note: string) => `<steer from="chat">\n${tagText(note)}\n</steer>`;
 
 /** Models whose between-tool progress notes (`display: "updates"`) are documented. */
 const UPDATES_MODELS = new Set(["claude-opus-5-5"]);
