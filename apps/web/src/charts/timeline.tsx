@@ -9,7 +9,7 @@ const THICK = 8;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** 2024 · Mar 2024 · Mar 15, 2024. */
-function dateText(d: string) {
+export function dateText(d: string) {
   const [y, m, day] = d.split("-");
   if (!m) return y as string;
   const month = MONTHS[Number(m) - 1];

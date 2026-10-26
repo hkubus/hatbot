@@ -12,6 +12,8 @@ Built, but not yet deployed or tried live:
 - **Hand-offs in the other bot's chat, and the code bot** (2026-10-19).
 - **Hatbot handing the other bots their work** (2026-10-20).
 - **Logins from Scout** (2026-10-26): a marketplace login you share in Scout (Settings → Marketplace accounts → Share with connected apps, which needs Scout's sign-in on) goes in Haggler's browser as its task gets the screen. Not tried against a real marketplace: whether a login captured on another computer, with another address and browser, still works there or asks to verify.
+- **Listings blocks** (2026-10-26): things for sale as a row of cards in a reply, their photos fetched by the brain from OLX's, Allegro's and Vinted's image servers only. Not tried: whether those servers answer the brain, and whether the model passes Scout's `image` through as the photo.
+- **More chart kinds** (2026-10-26): reference lines on line and bar charts, and meter, calendar, treemap, compare, offers and gallery blocks, on the web and iOS. Not tried: whether the model picks them when it should. The iOS views haven't been compiled outside CI.
 - **T3 Code** in place of Claude Code (2026-10-22): connecting it, `t3_code` in a real project, and a box made through `box_t3`. Not tried against a real T3 Code: what `t3_thread_launch` answers, and whether item positions in `t3_thread_read` start at 0 or 1.
 
 ## 2. Small gaps

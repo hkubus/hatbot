@@ -1,11 +1,18 @@
 import type { ChartData, ChartFile, ChartSpec } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { api, errorText } from "./api";
+import { CalendarPlot } from "./charts/calendar";
+import { ComparePlot } from "./charts/compare";
+import { GalleryRow } from "./charts/gallery";
+import { ListingsRow } from "./charts/listings";
 import { MatrixPlot } from "./charts/matrix";
+import { MeterPlot } from "./charts/meter";
+import { OffersPlot } from "./charts/offers";
 import { RangePlot } from "./charts/range";
 import { ScatterPlot } from "./charts/scatter";
 import { HEIGHT, SeriesPlot } from "./charts/series";
 import { TimelinePlot } from "./charts/timeline";
+import { TreemapPlot } from "./charts/treemap";
 import { withData } from "./chartspec";
 
 export { useWidth } from "./charts/frame";
@@ -24,6 +31,20 @@ export function Chart({ spec }: { spec: ChartSpec }) {
       return <MatrixPlot spec={spec} />;
     case "timeline":
       return <TimelinePlot spec={spec} />;
+    case "listings":
+      return <ListingsRow spec={spec} />;
+    case "meter":
+      return <MeterPlot spec={spec} />;
+    case "calendar":
+      return <CalendarPlot spec={spec} />;
+    case "treemap":
+      return <TreemapPlot spec={spec} />;
+    case "compare":
+      return <ComparePlot spec={spec} />;
+    case "offers":
+      return <OffersPlot spec={spec} />;
+    case "gallery":
+      return <GalleryRow spec={spec} />;
     default:
       return <SeriesPlot spec={spec} />;
   }

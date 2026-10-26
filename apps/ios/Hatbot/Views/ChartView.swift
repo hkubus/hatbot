@@ -106,7 +106,7 @@ struct ChartView: View {
       switch spec.type {
       case .line, .bar:
         if horizontal {
-          rows().frame(height: CGFloat(n) * rowHeight + (single ? 0 : 24))
+          rows().frame(height: CGFloat(n) * rowHeight + (single ? 0 : 24) + (spec.refs.isEmpty ? 0 : 16))
         } else {
           GeometryReader { geo in
             if spec.type == .bar { bars(width: geo.size.width) } else { lines(width: geo.size.width) }
@@ -121,6 +121,20 @@ struct ChartView: View {
         if let matrix = spec.matrix { MatrixGrid(matrix: matrix) }
       case .timeline:
         if let timeline = spec.timeline { TimelinePlot(timeline: timeline) }
+      case .listings:
+        if let listings = spec.listings { ListingsRow(listings: listings, unit: spec.unit) }
+      case .meter:
+        if let meter = spec.meter { MeterList(meter: meter, unit: spec.unit) }
+      case .calendar:
+        if let days = spec.calendar { CalendarGrid(days: days, unit: spec.unit) }
+      case .treemap:
+        if let treemap = spec.treemap { TreemapPlot(treemap: treemap, unit: spec.unit) }
+      case .compare:
+        if let compare = spec.compare { CompareGrid(compare: compare) }
+      case .offers:
+        if let offers = spec.offers { OffersPlot(offers: offers, unit: spec.unit) }
+      case .gallery:
+        if let gallery = spec.gallery { GalleryRow(gallery: gallery) }
       }
     }
   }
@@ -147,6 +161,7 @@ struct ChartView: View {
         .accessibilityLabel(spec.x[p.index])
         .accessibilityValue(spoken(p.series, p.value))
       }
+      refMarks
       if let i = selected {
         RuleMark(x: .value("x", i))
           .foregroundStyle(Color.secondary.opacity(0.4))
@@ -206,6 +221,7 @@ struct ChartView: View {
         .foregroundStyle(Color.secondary.opacity(0.5))
         .lineStyle(StrokeStyle(lineWidth: 1))
         .accessibilityHidden(true)
+      refMarks
       if let i = selected {
         RuleMark(x: .value("x", String(i)))
           .foregroundStyle(.clear)
@@ -261,6 +277,17 @@ struct ChartView: View {
         .foregroundStyle(Color.secondary.opacity(0.5))
         .lineStyle(StrokeStyle(lineWidth: 1))
         .accessibilityHidden(true)
+      ForEach(spec.refs.indices, id: \.self) { r in
+        let ref = spec.refs[r]
+        RuleMark(x: .value("Value", ref.value))
+          .foregroundStyle(Color.secondary)
+          .lineStyle(Self.refStroke)
+          .annotation(position: .top, spacing: 2, overflowResolution: .init(x: .fit(to: .chart), y: .disabled)) {
+            refLabel(ref)
+          }
+          .accessibilityLabel(ref.label)
+          .accessibilityValue(spec.format(ref.value))
+      }
       if let i = selected {
         RuleMark(y: .value("x", String(i)))
           .foregroundStyle(.clear)
@@ -285,10 +312,34 @@ struct ChartView: View {
     .chartYSelection(value: $selectedBar)
     .chartForegroundStyleScale(domain: spec.names, range: Array(Self.palette.prefix(spec.series.count)))
     .chartLegend(single ? .hidden : .visible)
-    .chartLegend(position: .top, alignment: .leading)
+    // The reference lines' labels go above the rows, where the legend would be.
+    .chartLegend(position: spec.refs.isEmpty ? .top : .bottom, alignment: .leading)
+    .padding(.top, spec.refs.isEmpty ? 0 : 16)
   }
 
   // MARK: Parts
+
+  private static let refStroke = StrokeStyle(lineWidth: 1, dash: [4, 3])
+
+  /// Line and bar charts' reference lines, across the plot with their label at the end.
+  @ChartContentBuilder private var refMarks: some ChartContent {
+    ForEach(spec.refs.indices, id: \.self) { r in
+      let ref = spec.refs[r]
+      RuleMark(y: .value("Value", ref.value))
+        .foregroundStyle(Color.secondary)
+        .lineStyle(Self.refStroke)
+        .annotation(
+          position: .top, alignment: .trailing, spacing: 2,
+          overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
+        ) { refLabel(ref) }
+        .accessibilityLabel(ref.label)
+        .accessibilityValue(spec.format(ref.value))
+    }
+  }
+
+  private func refLabel(_ ref: ChartSpec.Ref) -> some View {
+    Text(ref.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+  }
 
   /// Bars label every category while there's room for a word; otherwise every step-th x, as many as fit.
   private func shownLabels(width: CGFloat, every: Bool) -> [Int] {
@@ -353,7 +404,7 @@ struct ChartView: View {
   }
 }
 
-private struct Readout<Content: View>: View {
+struct Readout<Content: View>: View {
   @ViewBuilder var content: Content
 
   var body: some View {
@@ -366,7 +417,7 @@ private struct Readout<Content: View>: View {
   }
 }
 
-private func valueMarks(unit: String?, position: AxisMarkPosition = .automatic) -> some AxisContent {
+func valueMarks(unit: String?, position: AxisMarkPosition = .automatic) -> some AxisContent {
   AxisMarks(position: position, values: .automatic(desiredCount: 4)) { value in
     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
     AxisValueLabel {
@@ -582,6 +633,82 @@ private struct RangePlot: View {
         }
       }
     }
+  }
+}
+
+// MARK: Listings
+
+private struct ListingsRow: View {
+  let listings: ChartSpec.Listings
+  let unit: String?
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      LazyHStack(alignment: .top, spacing: 12) {
+        ForEach(listings.items.indices, id: \.self) { i in
+          ListingCard(item: listings.items[i], unit: unit)
+        }
+      }
+      .scrollTargetLayout()
+    }
+    .scrollTargetBehavior(.viewAligned)
+  }
+}
+
+private struct ListingCard: View {
+  static let width: CGFloat = 156
+  let item: ChartSpec.Listings.Item
+  let unit: String?
+
+  var body: some View {
+    let card = VStack(alignment: .leading, spacing: 2) {
+      ListingPhoto(url: item.photo, width: Self.width).padding(.bottom, 4)
+      Text(item.title).font(.footnote).lineLimit(2, reservesSpace: true)
+      if let price = item.price {
+        Text(ChartSpec.format(price, unit: unit)).font(.subheadline.weight(.semibold)).monospacedDigit()
+      }
+      let place = item.place
+      if !place.isEmpty {
+        Text(place).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+      }
+    }
+    .frame(width: Self.width, alignment: .leading)
+    .foregroundStyle(.primary)
+    if let url = URL(string: item.url) {
+      Link(destination: url) { card }.buttonStyle(.plain)
+    } else {
+      card
+    }
+  }
+}
+
+/// A listing's photo, 4:3, fetched through the brain. One listingPhoto turns down stays a blank tile.
+struct ListingPhoto: View {
+  let url: String?
+  let width: CGFloat
+  @Environment(AppStore.self) private var store
+  @Environment(\.displayScale) private var scale
+  @State private var loaded: UIImage?
+
+  private var path: String? {
+    url.flatMap { ChartSpec.listingPhoto($0) ? "/listing-photo?url=\(API.query($0))" : nil }
+  }
+
+  private var image: UIImage? {
+    loaded ?? path.flatMap { ImageCache.attachments.cached(store.api, $0, longSide: width * scale) }
+  }
+
+  var body: some View {
+    Rectangle().fill(.quaternary)
+      .frame(width: width, height: width * 3 / 4)
+      .overlay { if let image { Image(uiImage: image).resizable().scaledToFill() } }
+      .clipShape(.rect(cornerRadius: 10))
+      .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+      .task(id: path) {
+        guard image == nil, let path else { return }
+        loaded = try? await ImageCache.attachments.image(
+          store.api, path, longSide: width * scale, onDisk: !store.incognito)
+      }
   }
 }
 

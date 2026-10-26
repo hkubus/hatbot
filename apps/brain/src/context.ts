@@ -11,6 +11,7 @@ import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { Heartbeat } from "./heartbeat";
+import type { ListingPhotos } from "./listing-photos";
 import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
 import type { Negotiations } from "./negotiate/service";
@@ -47,6 +48,7 @@ export type Deps = {
   desktop: Desktop;
   archive: Archive;
   attachments: Attachments;
+  listingPhotos: ListingPhotos;
   /** A function because Settings can change it. */
   proxmox: () => Proxmox;
   updates: Updates;

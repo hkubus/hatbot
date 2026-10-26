@@ -476,6 +476,23 @@ test("a chart that doesn't draw is asked for again once, out of view, and the fi
   expect(model.requests).toHaveLength(4);
 });
 
+test("each kind of chart block draws as written: none is sent back", async () => {
+  const blocks = [
+    { type: "bar", x: ["tank"], series: [{ data: [93] }], refs: [{ value: 90, label: "Alert" }] },
+    { type: "meter", unit: "TB", rows: [{ label: "tank", value: 3.1, max: 4, warn: 3.6 }] },
+    { type: "calendar", days: [{ date: "2026-10-26", value: 1 }] },
+    { type: "treemap", unit: "GB", items: [{ label: "media", value: 812 }] },
+    { type: "compare", columns: ["A", "B"], rows: [{ label: "Fan", values: ["Quiet", null] }] },
+    { type: "offers", unit: "zł", limit: 1900, offers: [{ by: "them", price: 2200 }] },
+    { type: "gallery", photos: ["https://ireland.apollo.olxcdn.com/v1/files/a/image"] },
+  ].map((b) => `\`\`\`chart\n${JSON.stringify(b)}\n\`\`\``);
+  const model = new FakeModel([{ content: [text(blocks.join("\n\n"))] }]);
+  const t = await testApp(model);
+  await t.thread.post("show me").done;
+  expect(t.thread.list().at(-1)?.text).toBe(blocks.join("\n\n"));
+  expect(model.requests).toHaveLength(1);
+});
+
 test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", async () => {
   const code = "```python\nprint(sum(range(10)))\n```";
   const model = new FakeModel([

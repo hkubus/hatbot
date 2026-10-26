@@ -42,6 +42,7 @@ const MessageRange = z.object({
 });
 const EpisodeIds = z.object({ ids: z.string().regex(/^\d+(,\d+){0,199}$/) });
 const ChartQuery = z.object({ type: z.enum(["line", "bar", "scatter"]) });
+const PhotoQuery = z.object({ url: z.string().max(2000) });
 
 export const threadRoutes = new Hono<AppEnv>()
   .use("/thread/*", requireAuth)
@@ -49,6 +50,7 @@ export const threadRoutes = new Hono<AppEnv>()
   .use("/conversations/*", requireAuth)
   .use("/attachments", requireAuth)
   .use("/attachments/*", requireAuth)
+  .use("/listing-photo", requireAuth)
   .post("/attachments", async (c) => {
     if (Number(c.req.header("content-length") ?? 0) > MAX_ATTACHMENT_BYTES + 64 * 1024)
       return c.json({ error: "The file is over 25 MB." }, 413);
@@ -116,6 +118,19 @@ export const threadRoutes = new Hono<AppEnv>()
     return c.json(read.data, 200, {
       "cache-control": cache,
       ...(cache === "no-store" ? {} : { etag }),
+    });
+  })
+  .get("/listing-photo", query(PhotoQuery), async (c) => {
+    const photo = await c.var.listingPhotos.get(c.req.valid("query").url);
+    if (!photo) return c.json({ error: "That photo didn't load." }, 404);
+    return new Response(photo.bytes, {
+      headers: {
+        "content-type": photo.type,
+        "x-content-type-options": "nosniff",
+        "cross-origin-resource-policy": "same-origin",
+        "content-security-policy": "sandbox; default-src 'none'",
+        "cache-control": "private, max-age=86400",
+      },
     });
   })
   .get("/conversations", (c) => c.json(c.var.chats.list()))
