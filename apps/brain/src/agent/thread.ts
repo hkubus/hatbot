@@ -87,6 +87,7 @@ import {
   DESKTOP_TOOLS,
   deferRare,
   INCOGNITO_TOOLS,
+  imageBlocks,
   inBatches,
   invalidInput,
   LOOKUP_TOOLS,
@@ -702,7 +703,7 @@ export class Thread {
     progress: (line: string) => void,
     messageId: number,
     screen?: (source: string, text: string) => void,
-  ): Promise<{ content: string; isError: boolean }> {
+  ): Promise<{ content: string; isError: boolean; images?: ToolImage[] }> {
     const { attachments } = this.d;
     const cc: CallContext = {
       task: null,
@@ -744,7 +745,11 @@ export class Thread {
       this.taint(episodeId, what);
       screen?.(what, r.text);
     }
-    return { content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content, isError: r.isError };
+    return {
+      content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content,
+      isError: r.isError,
+      images: r.images,
+    };
   }
 
   /** Pause all: stops the reply in progress; with `botId`, only that bot's, as it was deleted. */
@@ -2435,7 +2440,7 @@ export class Thread {
             },
             abort.signal,
           );
-          return toolResult(call.id, r.content, r.isError, r.image);
+          return toolResult(call.id, r.content, r.isError, r.images);
         });
         this.appendTurn(episode.id, bot.id, "user", results);
       }
@@ -2527,20 +2532,12 @@ const toolResult = (
   id: string,
   content: string,
   isError = false,
-  image?: ToolImage,
+  images?: ToolImage[],
 ): BlockParam => ({
   type: "tool_result",
   tool_use_id: id,
   is_error: isError,
-  content: image
-    ? [
-        { type: "text", text: content },
-        {
-          type: "image",
-          source: { type: "base64", media_type: image.mediaType, data: image.data },
-        },
-      ]
-    : content,
+  content: images?.length ? [{ type: "text", text: content }, ...imageBlocks(images)] : content,
 });
 
 /**

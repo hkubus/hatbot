@@ -297,6 +297,47 @@ test("the limit comes from the owner or Scout, never the model, and its errors d
   await t.plugins.stopAll();
 });
 
+test("a listing is looked at as it is now, with its own photos, before it's chosen", async () => {
+  const chat = new FakeModel([
+    { content: [toolUse("negotiate_inspect", { listing: "OLX:1001" })] },
+    { content: [text("It has a scratch on the fan.")] },
+  ]);
+  const t = await testApp(chat, new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t);
+  const photo = (n: number) => `https://ireland.apollo.olxcdn.com:443/v1/files/p${n}-PL/image`;
+  const gallery = [3, 4, 5, 6, 7].map((n) => `<img src="${photo(n)};s=200x0">`).join("");
+  t.agent.pages.set(
+    LISTING_URL,
+    `<html><head><script type="application/ld+json">${JSON.stringify({ "@type": "Product", image: [photo(1), photo(2)] })}</script></head>
+     <body><nav>Szukaj</nav><p>Stan: Używane</p><div>Opis</div><div>Rysa na wentylatorze.</div>
+     <img src="https://ads.example.com/banner.jpg">${gallery}</body></html>`,
+  );
+  for (let n = 1; n <= 7; n++)
+    t.agent.images.set(`https://ireland.apollo.olxcdn.com/v1/files/p${n}-PL/image;s=1000x0`, {
+      mediaType: "image/jpeg",
+      data: `cGhvdG${n}`,
+    });
+  t.thread.post("Look at OLX:1001");
+  await t.thread.idle();
+
+  type Block = { type: string; text?: string; source?: { data: string } };
+  const turn = chat.requests[1]?.messages.at(-1)?.content as { content: Block[] }[];
+  const result = turn[0]?.content ?? [];
+  const said = result[0]?.text ?? "";
+  expect(said).toContain('trusted="false"');
+  expect(said).toContain("Stan: Używane");
+  expect(said).toContain("Rysa na wentylatorze.");
+  expect(said).not.toContain("Szukaj");
+  // Its structured photos first, then the gallery in the page's order, at a size the model reads well.
+  expect(result.slice(1).map((b) => b.source?.data)).toEqual(
+    [1, 2, 3, 4, 5].map((n) => `cGhvdG${n}`),
+  );
+  expect(said).toContain("the first 5 of 7");
+  // A page's other pictures aren't the listing's.
+  expect(t.agent.fetched.some((u) => u.includes("ads.example.com"))).toBe(false);
+  await t.plugins.stopAll();
+});
+
 test("a Scout tool that asks isn't called by the negotiate tools", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   const scout = await withScout(t, { scout_listing_detail: "ask" });

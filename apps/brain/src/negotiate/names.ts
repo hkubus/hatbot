@@ -1,5 +1,6 @@
 /** No plugin may take these names. */
 export const NEGOTIATE_TOOL_NAMES = [
+  "negotiate_inspect",
   "negotiate_appraise",
   "negotiate_start",
   "negotiate_list",

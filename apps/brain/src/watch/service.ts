@@ -18,7 +18,7 @@ import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
-import { PluginError } from "../plugins/plugin";
+import { PluginError, textOf } from "../plugins/plugin";
 import { type Plugins, untrustedOf } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
@@ -515,7 +515,7 @@ export class Watchers {
     if (!input.success) throw new WatchError(`${t.name} doesn't take that input.`);
     let out: string;
     try {
-      out = await t.run(input.data, { task: null, signal: AbortSignal.timeout(60_000) });
+      out = textOf(await t.run(input.data, { task: null, signal: AbortSignal.timeout(60_000) }));
     } catch (err) {
       if (err instanceof PluginError) throw new WatchError(err.message);
       throw err;

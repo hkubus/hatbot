@@ -12,6 +12,7 @@ import {
   containerOf,
   DESKTOP_TOOLS,
   DesktopTaskInput,
+  imageBlocks,
   inBatches,
   invalidInput,
   LOOKUP_TOOLS,
@@ -20,6 +21,7 @@ import {
   runTool,
   serverToolWaiting,
   TOOL_PARAMS,
+  type ToolImage,
   toolParam,
   WEB_TOOLS,
   webReads,
@@ -328,10 +330,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     call: Anthropic.Beta.BetaToolUseBlock,
     content: string,
     isError = false,
+    images?: ToolImage[],
   ): BlockParam => ({
     type: "tool_result",
     tool_use_id: call.id,
-    content,
+    content: images?.length ? [{ type: "text", text: content }, ...imageBlocks(images)] : content,
     ...(isError ? { is_error: true } : {}),
   });
 
@@ -640,7 +643,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
     const r = await runPluginTool(t, call.input, cc);
     if (r.untrusted) taint(what, r.text);
-    return result(call, note ? `${r.content}\n\n${ownerNote(note)}` : r.content, r.isError);
+    return result(
+      call,
+      note ? `${r.content}\n\n${ownerNote(note)}` : r.content,
+      r.isError,
+      r.images,
+    );
   };
 
   const wait = async (call: Anthropic.Beta.BetaToolUseBlock) => {

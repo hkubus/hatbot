@@ -57,6 +57,14 @@ export type CallContext = {
   away?: <T>(fn: () => Promise<T>) => Promise<T>;
 };
 
+/** A picture shown to the model with a tool's result. */
+export type ToolImage = {
+  data: string;
+  mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+};
+export type ToolOutput = string | { text: string; images: ToolImage[] };
+export const textOf = (out: ToolOutput) => (typeof out === "string" ? out : out.text);
+
 export type PluginTool<I = unknown> = {
   /** Starts with the plugin's id and an underscore. */
   name: string;
@@ -82,7 +90,7 @@ export type PluginTool<I = unknown> = {
   commands?: (input: I) => number;
   /** Without one, a write is allowed. */
   policy?: (input: I, call: CallContext) => Verdict;
-  run: (input: I, call: CallContext) => Promise<string>;
+  run: (input: I, call: CallContext) => Promise<ToolOutput>;
 };
 
 /** Stored loosely: the registry validates input against `schema` before calling. */

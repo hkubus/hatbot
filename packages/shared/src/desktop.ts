@@ -32,6 +32,16 @@ export type FetchResult = {
   body: string;
 };
 
+/** POST /fetch/image: one picture, fetched the same way (a listing's photos). */
+export type FetchedImage = {
+  mediaType: (typeof IMAGE_TYPES)[number];
+  /** Base64. */
+  data: string;
+};
+export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
+/** Under the API's 5 MB a picture, once in base64. */
+export const MAX_IMAGE_BYTES = 3_500_000;
+
 /** POST /render: a page after its scripts ran, in a headless Chromium on the desktop (watchers). */
 export type RenderResult = {
   /**

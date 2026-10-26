@@ -10,6 +10,7 @@ import type {
   BrowserInspect,
   BrowserResult,
   BrowserState,
+  FetchedImage,
   FetchResult,
   RenderResult,
   SetFiles,
@@ -47,6 +48,8 @@ export interface DesktopAgent {
   getDownload(id: string): Promise<{ name: string; bytes: Uint8Array }>;
   /** A GET from the desktop, which reaches only the internet. */
   fetch(url: string): Promise<FetchResult>;
+  /** A picture, fetched the same way. */
+  fetchImage(url: string): Promise<FetchedImage>;
   /** The page after its scripts ran, in a headless Chromium on the desktop that isn't the bots'. */
   render(url: string): Promise<RenderResult>;
   renderCheck(): Promise<void>;
@@ -199,6 +202,12 @@ export class HttpDesktopAgent implements DesktopAgent {
     return this.unlessOld(
       () => this.json<FetchResult>("POST", "/fetch", { url }, 30_000),
       tooOld("fetch pages"),
+    );
+  }
+  fetchImage(url: string) {
+    return this.unlessOld(
+      () => this.json<FetchedImage>("POST", "/fetch/image", { url }, 30_000),
+      tooOld("fetch pictures"),
     );
   }
   render(url: string) {

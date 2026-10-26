@@ -14,7 +14,7 @@ import {
 } from "@hatbot/shared/desktop";
 import { Browser, BrowserError } from "./browser";
 import { context, inspect } from "./cdp";
-import { FetchError, fetchPage } from "./fetch";
+import { FetchError, fetchImage, fetchPage } from "./fetch";
 import { browserKey, KeyError } from "./keys";
 import { LiveQueue } from "./livequeue";
 import { runningProfile, useProfile } from "./profile";
@@ -73,6 +73,7 @@ const FEATURES = [
   "upload",
   // A login Scout shares goes in a bot's profile.
   "sessions",
+  "fetch-image",
 ];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
@@ -246,12 +247,18 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
         case "POST /exec":
           // Not serialised with input: the shell doesn't touch the screen.
           return relay(req, SHELL_SOCKET, "/exec", 11 * 60_000, "The desktop's shell");
-        case "POST /fetch": {
-          // For watchers: the desktop's firewall lets it reach only the internet, so the brain fetches
-          // pages from here instead of from the LAN. Not serialised: it doesn't touch the screen.
+        case "POST /fetch":
+        case "POST /fetch/image": {
+          // For watchers and listings: the desktop's firewall lets it reach only the internet, so the
+          // brain fetches from here instead of from the LAN. Not serialised: it doesn't touch the screen.
           const { url: target } = (await req.json()) as { url: string };
+          const opts = { own: [host ?? ""] };
           try {
-            return json(await fetchPage(target, { own: [host ?? ""] }));
+            return json(
+              await (url.pathname === "/fetch"
+                ? fetchPage(target, opts)
+                : fetchImage(target, opts)),
+            );
           } catch (err) {
             if (err instanceof FetchError) return json({ error: err.message }, err.status);
             throw err;

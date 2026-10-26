@@ -48,7 +48,7 @@ import { type Backends, cronProblem, NO_GUEST } from "../hatbox/backends";
 import type { Proposals } from "../memory/proposals";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
-import type { PluginTool } from "../plugins/plugin";
+import type { PluginTool, ToolImage } from "../plugins/plugin";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
@@ -107,7 +107,7 @@ export type ToolContext = {
     t: PluginTool,
     input: unknown,
     signal: AbortSignal,
-  ) => Promise<{ content: string; isError: boolean }>;
+  ) => Promise<{ content: string; isError: boolean; images?: ToolImage[] }>;
   /** Asks as a plugin's change asks: Haiku's review, then you. `always`: only you. */
   approve?: (
     call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
@@ -640,7 +640,13 @@ export const BOX_PAGE_RULES =
 export const BOX_FILES_RULES =
   'For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}.';
 
-export type ToolImage = { data: string; mediaType: "image/png" };
+export type { ToolImage };
+
+export const imageBlocks = (images: ToolImage[]) =>
+  images.map((i) => ({
+    type: "image" as const,
+    source: { type: "base64" as const, media_type: i.mediaType, data: i.data },
+  }));
 
 type ToolDef<S extends z.ZodType> = {
   name: string;
@@ -1901,7 +1907,7 @@ export async function runTool(
   input: unknown,
   ctx: ToolContext,
   signal: AbortSignal = new AbortController().signal,
-): Promise<{ content: string; isError: boolean; untrusted?: boolean; image?: ToolImage }> {
+): Promise<{ content: string; isError: boolean; untrusted?: boolean; images?: ToolImage[] }> {
   const tool =
     TOOLS.find((t) => t.name === name) ??
     TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
@@ -1928,7 +1934,7 @@ export async function runTool(
     // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
     const out = await tool.run(parsed.data as any, ctx, signal);
     if (typeof out === "string") return { content: out, isError: false };
-    return { content: out.text, image: out.image, isError: false };
+    return { content: out.text, images: [out.image], isError: false };
   } catch (err) {
     if (
       err instanceof MemoryError ||

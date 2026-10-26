@@ -4,7 +4,12 @@
 // resolves again to somewhere else (DNS rebinding) isn't looked up a second time.
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import type { FetchResult } from "@hatbot/shared/desktop";
+import {
+  type FetchedImage,
+  type FetchResult,
+  IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
+} from "@hatbot/shared/desktop";
 import { privateAddress } from "@hatbot/shared/net";
 import { readStream } from "./shell";
 
@@ -71,7 +76,12 @@ export type FetchOptions = {
   timeoutMs?: number;
 };
 
-export async function fetchPage(target: string, opts: FetchOptions = {}): Promise<FetchResult> {
+/** The last hop's response, every hop's address checked first. */
+async function get(
+  target: string,
+  opts: FetchOptions,
+  accept: string,
+): Promise<{ res: Response; url: string }> {
   const resolve = opts.resolve ?? ((host: string) => resolveHost(host, opts.own ?? []));
   const signal = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
   let url = target;
@@ -93,7 +103,7 @@ export async function fetchPage(target: string, opts: FetchOptions = {}): Promis
       res = await fetch(pinned.href, {
         redirect: "manual",
         signal,
-        headers: { ...HEADERS, host: parsed.host },
+        headers: { ...HEADERS, accept, host: parsed.host },
         ...(named ? { tls: { serverName: parsed.hostname } } : {}),
       });
     } catch (err) {
@@ -106,13 +116,38 @@ export async function fetchPage(target: string, opts: FetchOptions = {}): Promis
       url = new URL(location, parsed).href;
       continue;
     }
-    return {
-      status: res.status,
-      url: parsed.href,
-      contentType: res.headers.get("content-type") ?? "",
-      body: await readText(res.body),
-    };
+    return { res, url: parsed.href };
   }
+}
+
+export async function fetchPage(target: string, opts: FetchOptions = {}): Promise<FetchResult> {
+  const { res, url } = await get(target, opts, HEADERS.accept);
+  return {
+    status: res.status,
+    url,
+    contentType: res.headers.get("content-type") ?? "",
+    body: await readText(res.body),
+  };
+}
+
+/** A picture as the model takes it: JPEG, PNG, WebP or GIF, at most MAX_IMAGE_BYTES. */
+export async function fetchImage(target: string, opts: FetchOptions = {}): Promise<FetchedImage> {
+  const { res } = await get(target, opts, "image/webp,image/png,image/jpeg,image/gif;q=0.9");
+  const type = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new FetchError(`It answered ${res.status}.`, 502);
+  }
+  if (!IMAGE_TYPES.includes(type as FetchedImage["mediaType"])) {
+    await res.body?.cancel();
+    throw new FetchError(`It isn't a picture (${type || "no type"}).`, 415);
+  }
+  const { bytes, over } = await readStream(res.body, MAX_IMAGE_BYTES);
+  if (over) throw new FetchError("The picture is too big.", 413);
+  return {
+    mediaType: type as FetchedImage["mediaType"],
+    data: Buffer.from(bytes).toString("base64"),
+  };
 }
 
 /** A body as text, cut at MAX_FETCH_CHARS: no more than MAX_FETCH_BYTES of it is read. */
