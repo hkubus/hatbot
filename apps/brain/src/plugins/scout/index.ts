@@ -29,6 +29,11 @@ const refusedBy = (err: unknown) =>
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
 const WatchId = z.string().min(1).max(160);
 const Days = z.number().int().min(7).max(180).optional();
+const Checks = z
+  .array(
+    z.object({ text: z.string().trim().min(1).max(120), mode: z.enum(["require", "exclude"]) }),
+  )
+  .max(8);
 
 /** Scout's tools as Hatbot offers them. */
 const READS: { name: string; description: string; schema: z.ZodType; brainOnly?: boolean }[] = [
@@ -103,18 +108,9 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
       terms: z.string().max(240).optional().describe("Words every result must have"),
       excluded: z.string().max(240).optional().describe("Words that rule a result out"),
       ownerType: z.enum(["private", "business"]).nullable().optional(),
-      verificationChecks: z
-        .array(
-          z.object({
-            text: z.string().trim().min(1).max(120),
-            mode: z.enum(["require", "exclude"]),
-          }),
-        )
-        .max(8)
-        .optional()
-        .describe(
-          'What Scout\'s AI checks in each result\'s title and description, e.g. {"text": "includes the charger", "mode": "require"}: an exclude hides clear matches, and a require that holds comes back with jevCheck "passed"',
-        ),
+      verificationChecks: Checks.optional().describe(
+        'What Scout\'s AI checks in each result\'s title and description, e.g. {"text": "includes the charger", "mode": "require"}: an exclude hides clear matches, and a require that holds comes back with jevCheck "passed"',
+      ),
       minPrice: z.number().nonnegative().nullable().optional(),
       maxPrice: z.number().positive().nullable().optional(),
       shippingOnly: z.boolean().optional(),
@@ -181,7 +177,8 @@ Finding something to buy:
 - A search through more than a few listings goes to a task (run_task with effort medium), with every must-have in its goal, so it has room to keep looking.
 - Search widely: scout_listings for what Scout found already, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
 - Look at every promising listing with negotiate_inspect, several at once, and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
-- Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short, and offer to look again every day with schedule_create.
+- Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short, and offer to make a Scout watch for it.
+- When the owner wants something looked for all the time, or until one turns up, make a Scout watch with scout_watch_create, with the must-haves and deal-breakers as its checks and the budget as targetPrice. Never a schedule or a Hatbot watcher for it: Scout already searches every few minutes and alerts on deals.
 - Negotiate with several sellers at once only when the owner asks for it: one negotiate_start, the other listings in alongside. The first agreement ends the others.`;
 
 const FlipListed = z.object({
@@ -317,6 +314,48 @@ export const scoutPlugin = (d: {
             run: (input, c) => call(r.name, input, c.signal),
           }),
         ),
+        tool({
+          name: "scout_watch_create",
+          description:
+            "Make a Scout deal watch: Scout searches for it every few minutes from then on, learns its typical price, and alerts the owner on strong deals and on any listing at or under targetPrice. Look at scout_watches first, so you don't make the same one twice.",
+          access: "write",
+          schema: z.object({
+            name: z.string().trim().min(1).max(120),
+            query: z
+              .string()
+              .trim()
+              .min(1)
+              .max(240)
+              .describe("What to search for, as you'd type it on the marketplace"),
+            sources: z.array(Marketplace).min(1).max(3),
+            terms: z
+              .string()
+              .max(240)
+              .optional()
+              .describe("Comma-separated words every title must have"),
+            excluded: z
+              .string()
+              .max(240)
+              .optional()
+              .describe("Comma-separated words that rule a listing out"),
+            minPrice: z.number().nonnegative().optional(),
+            maxPrice: z.number().positive().optional(),
+            targetPrice: z
+              .number()
+              .positive()
+              .optional()
+              .describe("In PLN: alert on any listing at or under it"),
+            shippingOnly: z.boolean().optional(),
+            olxCategory: z
+              .object({ id: z.number().int().positive(), label: z.string(), path: z.string() })
+              .optional()
+              .describe("OLX only: one category, as scout_olx_categories gives it"),
+            verificationChecks: Checks.optional().describe(
+              "What Scout's AI checks in each listing's description and photos: the must-haves as require, the deal-breakers as exclude",
+            ),
+          }),
+          run: (input, c) => call("scout_watch_create", input, c.signal),
+        }),
         tool({
           name: "scout_flip_listed",
           description: "Tell Scout how posting a flip on one marketplace went.",

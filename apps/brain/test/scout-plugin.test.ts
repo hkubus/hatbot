@@ -192,6 +192,22 @@ test("Scout's calls share one connection, so a flip's photos aren't held back by
   expect(scout.s.posts.filter((m) => m === "tools/call")).toHaveLength(12);
 });
 
+test("Haggler makes a Scout watch for what the owner wants looked for all the time, without asking", async () => {
+  const t = await testApp();
+  await connected(t, fakeScout());
+  const create = named(t.plugins.tools(), "scout_watch_create");
+  const input = {
+    name: "Steam Deck OLED",
+    query: "steam deck oled",
+    sources: ["OLX", "Vinted"],
+    targetPrice: 1700,
+    verificationChecks: [{ text: "not cracked", mode: "require" }],
+  };
+  expect(verdictFor(create, input, call()).action).toBe("allow");
+  const r = await runPluginTool(create, input, call());
+  expect(JSON.parse(r.text).watch).toMatchObject({ id: "watch-1", targetPrice: 1700 });
+});
+
 test("a Haggler made after Scout is connected lists flips", async () => {
   const t = await testApp();
   await connected(t, fakeScout());

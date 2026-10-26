@@ -1,4 +1,4 @@
-// A stand-in for Scout's MCP server, for the negotiation and listing tests: the tools Scout has
+// A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: the tools Scout has
 // today; with `full`, also the price reference and comparables it doesn't have yet; with `flips`,
 // the flips to list, kept in that JSON file, which the tests change; and with `sessions`, the
 // marketplace logins shared with Hatbot, kept the same way. Calls are appended to `log`, one
@@ -84,6 +84,23 @@ export function scoutServer(o: ScoutOptions): McpServer {
           listingCount: 31,
         },
       });
+    },
+  );
+  server.registerTool(
+    "scout_watch_create",
+    {
+      description: "Create a deal watch",
+      inputSchema: {
+        name: z.string(),
+        query: z.string(),
+        sources: z.array(z.string()),
+        targetPrice: z.number().optional(),
+        verificationChecks: z.array(z.object({ text: z.string(), mode: z.string() })).optional(),
+      },
+    },
+    async (input) => {
+      log("scout_watch_create", input);
+      return json({ watch: { id: "watch-1", enabled: true, ...input } });
     },
   );
   if (o.full) {
