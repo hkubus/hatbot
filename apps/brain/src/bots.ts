@@ -265,7 +265,7 @@ const HAND_OVER =
   "When the owner asks for work that needs another bot's plugins, logins or notes, hand it over with ask_bot. What you can do with your own tools, quick questions included, do yourself: the other bot answers in its own chat, and the owner waits for it.";
 
 const ROUTE =
-  "Hand each piece of the owner's work to the bot whose role or plugins it falls under, with ask_bot, and pass on what came of it. That goes for work you have tools for too, like research when a bot's role is research. The plugins another bot has are its alone. Do yourself only what no other bot's role covers, like memory, the to-do list and quick lookups.";
+  "Hand each piece of the owner's work to the bot whose role or plugins it falls under, with ask_bot, and tell the owner briefly what it did; they read its answer in its chat. That goes for work you have tools for too, like research when a bot's role is research. The plugins another bot has are its alone. Do yourself only what no other bot's role covers, like memory, the to-do list and quick lookups.";
 
 const ROUTE_CHAT = [
   "You're the bot the owner talks to first, and the others can't see this chat: give a bot the owner's words and everything that bears on them. When it answers that it needs something only the owner can say, ask them with ask_owner, then hand it their answer; a follow-up on its work goes back to it too.",

@@ -858,6 +858,7 @@ private struct UnreadMark: View {
 private struct ReplyMessage: View {
   let m: ThreadMessage
   @Environment(AppStore.self) private var store
+  @Environment(\.openRoute) private var router
 
   static func ended(_ task: AgentTask) -> Bool {
     !task.isActive && task.status != .cancelled
@@ -887,6 +888,11 @@ private struct ReplyMessage: View {
         if !m.text.isEmpty, let task, !task.isActive { Divider() }
         TaskResult(taskId: taskId)
       }
+    }
+    if ended, m.status != .streaming, let link = m.link {
+      Button(store.openLabel(link)) { router?.message(link) }
+        .glassButton()
+        .controlSize(.small)
     }
   }
 }

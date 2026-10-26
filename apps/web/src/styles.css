@@ -2699,6 +2699,9 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   max-height: 360px;
 }
 .msg .md hr,
+.msg .body > .btn {
+  justify-self: start;
+}
 .msg .body > .result-rule {
   width: 100%;
   margin: var(--sp-2xs) 0;
