@@ -884,7 +884,13 @@ export const migrations: string[] = [
   CREATE INDEX flip_listings_task ON flip_listings (task_id);
   CREATE INDEX flip_listings_approval ON flip_listings (approval_id);
   `,
-  // 52: threads, side conversations in a bot's own chat.
+  // 52: why a negotiation is held for the owner ('scam' or 'stalled'; none is a scam, as before), and the
+  // seller's message a stall was asked at, since only rounds after it count towards another.
+  `
+  ALTER TABLE negotiations ADD COLUMN hold TEXT;
+  ALTER TABLE negotiations ADD COLUMN stalled_at INTEGER;
+  `,
+  // 53: threads, side conversations in a bot's own chat.
   `
   ${REBUILD}
   CREATE TABLE conversations_new (
@@ -909,6 +915,6 @@ export const migrations: string[] = [
   CREATE UNIQUE INDEX conversations_thread_key ON conversations (parent_id, thread_key)
     WHERE thread_key IS NOT NULL AND resolved_at IS NULL AND deleted_at IS NULL;
   `,
-  // 53: a thread a bot marked as needing you, until you write in it or it's resolved.
+  // 54: a thread a bot marked as needing you, until you write in it or it's resolved.
   `ALTER TABLE conversations ADD COLUMN needs_you_at TEXT;`,
 ];

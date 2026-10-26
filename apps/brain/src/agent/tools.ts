@@ -1482,7 +1482,7 @@ export const TOOLS = [
   def({
     name: "ask_bot",
     description:
-      "Hand work to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner what came of it. It can't see this conversation, so give it everything it needs. Don't wait for it.",
+      "Hand work to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner in a sentence or two what it did and whether it's finished, since they read its answer in its chat. It can't see this conversation, so give it everything it needs. Don't wait for it.",
     schema: AskBotInput,
     run: async (
       { bot: to, request },
@@ -1593,6 +1593,26 @@ export const TOOLS = [
         ...(task.summary ? [untrustedBlock("summary", task.summary, from)] : []),
         ...(steps ? [untrustedBlock("steps", steps, from)] : []),
       ].join("\n");
+    },
+  }),
+  def({
+    name: "steer_task",
+    description:
+      "Send a note to a task of yours that's still running (one you started, or a schedule's or trigger's run): a detail the owner added, a change of plan, or to stop and finish with what it has. It reads the note after its current step and follows it over its goal. It can't see this conversation, so say everything it needs.",
+    schema: z.object({
+      id: z.number().int(),
+      note: z.string().min(1).max(4000).describe("What the task should do now, in full"),
+    }),
+    run: async ({ id, note }, { tasks, bot, tainted, suspected, ownerSaid }) => {
+      if (!tasks) return "Tasks aren't available.";
+      const refused = tasks.steer(id, {
+        botId: bot?.id ?? HATBOT_ID,
+        note,
+        taintedBy: chatTaint(tainted?.()),
+        suspected: await suspected?.(),
+        ownerSaid: ownerSaid?.(),
+      });
+      return refused ?? `Sent to task #${id}. It reads it after its current step.`;
     },
   }),
   def({

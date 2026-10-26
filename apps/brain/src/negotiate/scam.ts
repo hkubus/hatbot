@@ -144,6 +144,97 @@ const DISGUISED: Term[] = [
 ];
 const DISGUISED_RE = termsRe(DISGUISED);
 
+// Money before the item is seen, which buyer protection doesn't cover.
+const DEPOSIT: Term[] = [
+  "zaliczk*",
+  "zaliczce",
+  // Not "zadatki", which is mostly "the makings of".
+  "zadatek",
+  "zadatku",
+  "zadatkiem",
+  "kaucj*",
+  "przedplat*",
+  "przedplac*",
+  "platn* rezerwacj*",
+  "rezerwacj* platn*",
+  "oplat* rezerwacyjn*",
+  "oplat* za rezerwacj*",
+  "zaplac* za rezerwacj*",
+  "wplac* za rezerwacj*",
+  "wplat* za rezerwacj*",
+  "deposit*",
+  "down payment",
+];
+const DEPOSIT_RE = termsRe(DEPOSIT);
+
+/** Payment, delivery or the item gone wrong after a deal, or a threat to take it further. */
+const DISPUTE: Term[] = [
+  "zwrot*",
+  "zwroc* pieniadz*",
+  "zwroc* kas*",
+  "zwroc* srodk*",
+  "reklamacj*",
+  "spor",
+  "sporu",
+  "oszust*",
+  "oszuk*",
+  "naciag*",
+  "policj*",
+  "prokurat*",
+  "pozew",
+  "pozwu",
+  "pozwem",
+  "pozwe",
+  "pozwac*",
+  "nie zaplacil*",
+  "nie zaplacon*",
+  "brak platnosci",
+  "brak wplaty",
+  "nie dotarl*",
+  "nie doszl*",
+  { t: "nie przyszl*", not: ["mi", "nam", "do"] },
+  "nie otrzymal*",
+  "nie dostal*",
+  "uszkodz*",
+  "zepsut*",
+  "niezgodn*",
+  "pust* paczk*",
+  "pust* karton*",
+  "refund*",
+  "dispute*",
+  "chargeback",
+  "scam*",
+  "not received",
+  "never arrived",
+  "wrong item",
+  "damaged",
+  "report*",
+];
+const DISPUTE_RE = termsRe(DISPUTE);
+
+// "Bez zaliczki", "nie biorę zaliczki", "zaliczka nie jest potrzebna": turned down, not asked for.
+const NEGATED_BEFORE = new RegExp(
+  `(?<![\\p{L}\\p{N}])(?:${["bez", "nie", "zadn*"].map(stem).join("|")})(?: \\p{L}+){0,2} ?$`,
+  "u",
+);
+const NEGATED_AFTER = new RegExp(
+  `^ ?(?:${["nie", "niepotrzebn*", "zbedn*"].map(stem).join("|")})(?![\\p{L}\\p{N}])`,
+  "u",
+);
+
+function said(re: RegExp, text: string): boolean {
+  const folded = fold(text);
+  for (const m of folded.matchAll(new RegExp(re.source, "gu")))
+    if (
+      !NEGATED_BEFORE.test(folded.slice(Math.max(0, m.index - 40), m.index)) &&
+      !NEGATED_AFTER.test(folded.slice(m.index + m[0].length))
+    )
+      return true;
+  return false;
+}
+
+export const disputed = (text: string) => said(DISPUTE_RE, text);
+
 /** A card's details, unless it's a graphics, memory, SIM or warranty card's. */
 const CARD_KINDS = [
   "graficzn*",
@@ -232,6 +323,7 @@ export function scamSignals(text: string, allow: MandateContact[]): string[] {
   const out: string[] = [];
   const off = OFF_PLATFORM.exec(text)?.[0] ?? disguised(text);
   if (off) out.push(`payment or talk off the platform (“${off}”)`);
+  if (said(DEPOSIT_RE, text)) out.push("a request for a deposit");
   const account = [...plain(text).matchAll(ACCOUNT)].map((m) => m[0]).find(ibanChecks);
   if (account) out.push(`a bank account number (“${account}”)`);
   const link = linksIn(text).find((l) => !ownSite(l));

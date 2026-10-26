@@ -427,6 +427,11 @@ function ReplyMessage({
         {m.boxId && <BoxResult id={m.boxId} />}
         {ended && !finished && m.text && <hr className="result-rule" />}
         {m.taskId && !finished && <TaskResult taskId={m.taskId} />}
+        {handedOff && finished && !streaming && (
+          <Link className="btn sm ghost" to={handedOff.to}>
+            {handedOff.label}
+          </Link>
+        )}
         {m.attachments?.length ? <Files list={m.attachments} /> : null}
       </div>
       {!streaming && (
@@ -438,8 +443,13 @@ function ReplyMessage({
               ? { to: `/negotiations/${m.negotiationId}`, label: "Open negotiation" }
               : m.boxId
                 ? { to: `/boxes/${m.boxId}`, label: "Open box" }
-                : (handedOff ??
-                  (m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined))
+                : handedOff
+                  ? finished
+                    ? undefined
+                    : handedOff
+                  : m.taskId
+                    ? { to: `/tasks/${m.taskId}`, label: "Open task" }
+                    : undefined
           }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
           thread={

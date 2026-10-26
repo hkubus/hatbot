@@ -68,6 +68,10 @@ export type TasksDeps = {
 
 const BACKGROUND_SLOTS = 3;
 export const MAX_HANDOFFS = 3;
+/** Owner's words kept for a task's review, its request and what they said when steering it. */
+const REQUEST_CHARS = 24_000;
+
+export type InboxItem = { kind: "event" | "note"; text: string };
 
 type Row = {
   id: number;
@@ -185,8 +189,8 @@ export class Tasks {
   negotiations?: Negotiations;
   listings?: Listings;
   private running = new Map<number, AbortController>();
-  /** Events for running tasks, delivered with their next tool results. */
-  private inbox = new Map<number, string[]>();
+  /** Events and the chat's notes for running tasks, delivered with their next tool results. */
+  private inbox = new Map<number, InboxItem[]>();
   private wakers = new Map<number, () => void>();
   private runs = new Set<Promise<void>>();
   readonly clock: () => number;
@@ -893,9 +897,47 @@ export class Tasks {
     return row;
   }
 
-  tell(id: number, event: string) {
-    this.inbox.set(id, [...(this.inbox.get(id) ?? []), event]);
+  tell(id: number, event: string, kind: InboxItem["kind"] = "event") {
+    this.inbox.set(id, [...(this.inbox.get(id) ?? []), { kind, text: event }]);
     this.wakers.get(id)?.();
+  }
+
+  /**
+   * A note from `botId`'s chat to a running task of its own, read after its current step. What the
+   * chat had read taints the task, and what the owner said there joins its request for the review.
+   */
+  steer(
+    id: number,
+    input: {
+      botId: string;
+      note: string;
+      taintedBy?: string | null;
+      suspected?: boolean;
+      ownerSaid?: string;
+    },
+  ): string | null {
+    const task = this.get(id);
+    if (!task || (task.botId !== input.botId && task.requestedBy !== input.botId))
+      return `No task #${id} of yours.`;
+    if (FINAL.includes(task.status)) return `Task #${id} has ended: ${task.status}.`;
+    if (task.requestedBy)
+      return `Task #${id} is answered in ${this.d.bots.nameOf(task.botId)}'s chat, so it can't be steered. Use ask_bot again.`;
+    if (this.boxJobOf(id))
+      return `Task #${id} works in T3 Code, so it can't be steered from here. The owner can steer it in T3 Code.`;
+    if (!this.running.has(id)) return `Task #${id} isn't running.`;
+    if (input.taintedBy) this.taint(id, input.taintedBy);
+    if (input.suspected) this.mark(id, "injection_suspected");
+    const was = this.requestOf(id);
+    const said = input.ownerSaid;
+    if (said && !was?.includes(said)) {
+      const request = !was || said.includes(was) ? said : `${was}\n\n${said}`;
+      this.d.db
+        .query("UPDATE tasks SET request = ? WHERE id = ?")
+        .run(request.slice(-REQUEST_CHARS), id);
+    }
+    this.addStep(id, { kind: "note", name: "Note from the chat", detail: input.note, url: null });
+    this.tell(id, input.note, "note");
+    return null;
   }
 
   nextEvent(id: number, ms: number, signal: AbortSignal): Promise<boolean> {
@@ -999,7 +1041,7 @@ export class Tasks {
     this.d.db.query("UPDATE tasks SET conversation_id = ? WHERE id = ?").run(threadId, task.id);
   }
 
-  takeInbox(id: number): string[] {
+  takeInbox(id: number): InboxItem[] {
     const events = this.inbox.get(id) ?? [];
     this.inbox.delete(id);
     return events;

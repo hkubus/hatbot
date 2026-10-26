@@ -12,7 +12,6 @@ Built, but not yet deployed or tried live:
 - **Hand-offs in the other bot's chat, and the code bot** (2026-10-19).
 - **Hatbot handing the other bots their work** (2026-10-20).
 - **T3 Code** in place of Claude Code (2026-10-22): connecting it, `t3_code` in a real project, and a box made through `box_t3`. Not tried against a real T3 Code: what `t3_thread_launch` answers, and whether item positions in `t3_thread_read` start at 0 or 1.
-- **The Linux app** (L1–L6, 2026-10-20 and 2026-10-21). Done when you can chat, approve and take over from it.
 
 ## 2. Small gaps
 - Check everything has no line for the boxes guest; only `verify.sh` checks it, from the host.
@@ -101,16 +100,16 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
 - The mandate check works from word lists. It holds an IBAN written like a phone number as a phone number, and can't catch an acceptance in words it doesn't know while naming our price inside the mandate, new plain words for paying off the platform, or trades ("300 zł i moją starą kartę").
 - Research has no page reader that runs JavaScript (it could send out what the task has read; such pages go to `run_desktop_task`), and isn't started from schedules.
-- Settings → Plugins, Approvals and guardrails, and teach mode stay web-only; the iOS and Linux apps have only the safety review's switch.
+- Settings → Plugins, Approvals and guardrails, and teach mode stay web-only; the iOS app has only the safety review's switch.
 - To-do items aren't handed to other bots with `@name`; ask the bot in the chat instead.
 - T3 Code: its sign-in lasts 30 days with no refresh, so it has to be connected again; threads to carry on are kept in memory, which a restart forgets; a box's files over 100 KB can't be handed to it in one message.
 
 **Not planned:**
-- Messengers (Signal, Telegram, Matrix): Hatbot's own web, iOS and Linux apps are enough.
+- Messengers (Signal, Telegram, Matrix): Hatbot's own web and iOS apps are enough.
 - Email and calendar, until after v1. Proton Bridge needs a paid Proton plan.
 - Open-ended goals, and more than one user.
 - Boxes shared by public link, WebSockets from box backends, and box languages other than TypeScript.
-- The Linux app's disk cache of chats, tray icon or running in the background, and Flatpak.
+- A Linux app (one was built and dropped, 2026-10-26): the web app is enough.
 
 ## 6. Maybe later
 - Teams.

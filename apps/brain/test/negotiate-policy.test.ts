@@ -1,7 +1,7 @@
 // negotiate_send's policy, one rule at a time: a case it must hold and a near miss that
 // must go. The check fails closed, so the near misses are what keep it usable.
 import { describe, expect, test } from "bun:test";
-import type { Negotiation } from "@hatbot/shared";
+import type { Negotiation, NegotiationMessage } from "@hatbot/shared";
 import {
   allowance,
   amountsIn,
@@ -12,6 +12,7 @@ import {
   type SendFacts,
   type SendInput,
   sendPolicy,
+  stalled,
 } from "../src/negotiate/policy";
 
 const NOW = Date.parse("2026-10-09T12:00:00Z");
@@ -503,11 +504,49 @@ describe("how it asks", () => {
       verdict("Mogę dać 1600 zł."),
       verdict("Dam 1100 zł.", { offer: 1100 }, negotiation(), ranOut),
     ])
-      expect(v).toMatchObject({ action: "ask", kind: "purchase" });
+      expect(v).toMatchObject({ action: "ask", kind: "purchase", careful: true });
     expect(verdict("Zdjęcia: https://imgur.com/a/x")).toMatchObject({
       action: "ask",
       kind: "send",
     });
     expect(verdict("Mój numer 600 100 200")).toMatchObject({ action: "ask", kind: "send" });
   });
+});
+
+/** Our offers and the seller's replies, alternating from ours, as recorded. */
+const talk = (...turns: (number | string | null)[]): NegotiationMessage[] =>
+  turns.map((x, i) => ({
+    id: i + 1,
+    negotiationId: 7,
+    direction: i % 2 === 0 ? "out" : "in",
+    text: typeof x === "string" ? x : `Mogę dać ${x} zł.`,
+    offer: typeof x === "number" ? x : null,
+    agree: false,
+    stated: null,
+    status: i % 2 === 0 ? "sent" : "received",
+    taskId: null,
+    createdAt: "2026-10-09T11:00:00.000Z",
+    sentAt: null,
+  }));
+
+test("three offers the seller answers with the same price stall; a reply that names none doesn't count", () => {
+  const n = negotiation({ asking: 1500 });
+  expect(
+    stalled(n, talk(1060, "1500 zł.", 1100, "Nie, 1500.", 1150, "Zostaję przy 1500 zł."), null),
+  ).toBe(1500);
+  // Taking our offer in words, or a question, isn't a price kept to.
+  expect(
+    stalled(n, talk(1060, "1500 zł.", 1100, "Nie, 1500.", 1150, "Dobra, niech będzie."), null),
+  ).toBeNull();
+  expect(stalled(n, talk(1060, "Aktualne.", null, "Po 17.", 1100, "1500 zł."), null)).toBeNull();
+  // A seller who comes down at all, even beside the old price, has moved.
+  expect(
+    stalled(
+      n,
+      talk(1060, "1500 zł.", 1100, "Z 1500 zł mogę zejść na 1450 zł.", 1150, "1450 zł."),
+      null,
+    ),
+  ).toBeNull();
+  // Only rounds after the owner last decided count.
+  expect(stalled(n, talk(1060, "1500 zł.", 1100, "Nie, 1500.", 1150, "1500 zł."), 3)).toBeNull();
 });

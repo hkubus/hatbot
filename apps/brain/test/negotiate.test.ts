@@ -184,7 +184,7 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
         text("Starting."),
         toolUse("negotiate_start", {
           listing: "OLX:1001",
-          mandate: { opening: 1060, target: 1250, limit: 1400, delivery: "OLX delivery" },
+          mandate: { opening: 1060, target: 1250, owner_max: 1450, delivery: "OLX delivery" },
           want: "an RTX 3070 for the media PC",
         }),
       ],
@@ -223,7 +223,7 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   const t = await testApp(chat, work, {}, [mcpPlugin], {});
   await withScout(t);
   messageBox(t);
-  t.thread.post("Haggle for OLX:1001, up to 1400");
+  t.thread.post("Haggle for OLX:1001, up to 1450");
   await t.thread.idle();
 
   expect(results(chat, 1)).toContain('trusted=\\"false\\"');
@@ -233,11 +233,11 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   expect(thread?.title).toBe("an RTX 3070 for the media PC");
   const approval = t.approvals.list(true)[0] as Approval;
   expect(approval).toMatchObject({ kind: "mandate", taskId: null, conversationId: thread?.id });
-  expect(approval.summary).toContain("pay at most 1,400 zł");
+  expect(approval.summary).toContain("pay at most 1,450 zł");
   expect(t.negotiations.get(1)).toMatchObject({
     status: "awaiting_mandate",
     approvalId: approval.id,
-    mandate: { opening: 1060, target: 1250, limit: 1400 },
+    mandate: { opening: 1060, target: 1250, limit: 1450 },
   });
   expect(t.negotiations.messages(1)).toEqual([]);
   expect(t.tasks.list()).toEqual([]);
@@ -258,6 +258,9 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   expect(t.negotiations.messages(1)[0]).toMatchObject({ status: "sent", offer: 1060 });
   // What it told the seller is kept, so later messages keep to it.
   expect(t.negotiations.get(1)?.claims.max).toBe(1200);
+  // The tasks that talk to the seller never read the limit, nor Scout's walk-away price.
+  const read = JSON.stringify(work.requests);
+  for (const limit of ["1450", "1,450", "1400", "1,400"]) expect(read).not.toContain(limit);
   await t.plugins.stopAll();
 });
 
@@ -270,22 +273,35 @@ test("closing a negotiation resolves its thread with what came of it", async () 
   expect(t.chats.get(thread?.id as number)).toMatchObject({ outcome: "agreed at 1,250 zł" });
 });
 
-test("a mandate's numbers must make sense, in the listing's currency", async () => {
+test("the limit comes from the owner or Scout, never the model, and its errors don't name it", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   await withScout(t);
   const start = named(negotiateTools(t, t.plugins.tools()), "negotiate_start");
-  // Scout prices this one at 300 EUR.
-  const tryIt = (mandate: Record<string, number>) =>
-    runPluginTool(
-      start,
-      { listing: "Vinted:2002", mandate: { delivery: "Vinted shipping", ...mandate } },
-      call(),
-    );
-  await tryIt({ opening: 270, target: 260, limit: 290 });
-  await tryIt({ opening: 220, target: 260, limit: 310 });
+  const tryIt = (listing: string, mandate: Record<string, number>) =>
+    runPluginTool(start, { listing, mandate: { delivery: "Shipping", ...mandate } }, call());
+  // Vinted:2002 asks 300 EUR.
+  await tryIt("Vinted:2002", { opening: 270, target: 260 });
+  await tryIt("Vinted:2002", { opening: 220, target: 310 });
+  await tryIt("Vinted:2002", { opening: 220, target: 260, owner_max: 250 });
+  // Scout puts OLX:1001's walk-away at 1400 zł, under its asking price.
+  const above = await tryIt("OLX:1001", { opening: 1060, target: 1450 });
+  expect(above.isError).toBe(true);
+  expect(above.text).not.toMatch(/1[,.]?400/);
   expect(t.negotiations.list()).toEqual([]);
-  expect((await tryIt({ opening: 220, target: 260, limit: 290 })).isError).toBe(false);
-  expect(t.negotiations.list()[0]?.mandate).toMatchObject({ currency: "EUR", limit: 290 });
+
+  expect((await tryIt("OLX:1001", { opening: 1060, target: 1250 })).isError).toBe(false);
+  expect((await tryIt("Vinted:2002", { opening: 220, target: 260, owner_max: 400 })).isError).toBe(
+    false,
+  );
+  const limits = Object.fromEntries(
+    t.negotiations.list().map((n) => [n.listingKey, [n.mandate.currency, n.mandate.limit]]),
+  );
+  // No paying more than asked, whatever the owner said.
+  expect(limits).toEqual({ "OLX:1001": ["PLN", 1400], "Vinted:2002": ["EUR", 300] });
+  const get = named(negotiateTools(t, t.plugins.tools()), "negotiate_get");
+  const read = await runPluginTool(get, { negotiation: 1 }, call());
+  expect(read.text).toContain("aim for 1,250 zł");
+  expect(read.text).not.toMatch(/1[,.]?400/);
   await t.plugins.stopAll();
 });
 
@@ -494,6 +510,9 @@ test("closing as agreed past the mandate asks, and nothing is agreed before the 
   const close = named(negotiateTools(t), "negotiate_close");
   const over = close.schema.parse({ negotiation: n.id, outcome: "agreed", price: 1450 });
   expect(verdictFor(close, over, call(), true)).toMatchObject({ action: "ask", kind: "purchase" });
+  // The model doesn't know the limit, so letting the tool run in Settings can't pass it either.
+  const allowed = { tools: { negotiate_close: "allow" as const }, untrusted: false };
+  expect(verdictFor(close, over, call(), false, allowed)).toMatchObject({ action: "ask" });
   const within = close.schema.parse({
     negotiation: n.id,
     outcome: "agreed",
@@ -700,6 +719,92 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
 });
 
+/** Reads the conversation in a desktop task that finds `text` from the seller. */
+async function readSeller(t: TestApp, n: Negotiation, text: string) {
+  t.taskModel.script.push(
+    { content: [toolUse("record_conversation", { messages: [{ from: "seller", text }] })] },
+    finish(),
+  );
+  await t.negotiations.check(t.negotiations.get(n.id) as Negotiation, call());
+  await t.tasks.idle();
+}
+
+test("a seller who doesn't move in three rounds holds the negotiation; only rounds after you decide count again", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  const round = async (offer: number, reply: string) => {
+    const id = t.negotiations.claimSend(t.negotiations.get(n.id) as Negotiation, {
+      text: `Mogę dać ${offer} zł.`,
+      offer,
+      agree: false,
+      stated: null,
+    });
+    t.db.query("UPDATE negotiation_messages SET status = 'sent' WHERE id = ?").run(id);
+    await readSeller(t, n, reply);
+  };
+  const pending = () => t.approvals.list(true);
+  await round(1060, "Cena 1500 zł, jak w ogłoszeniu.");
+  await round(1100, "Nie, 1500 zł.");
+  expect(pending()).toEqual([]);
+  await round(1150, "Zostaję przy 1500 zł.");
+  const hold = await waitFor(() => pending()[0]);
+  // Not a scam: it can be approved from the lock screen.
+  expect(hold.kind).toBe("other");
+  expect(hold.reason).toContain("1,500 zł");
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: "Mogę dać 1200 zł.", offer: 1200 });
+  expect(verdictFor(send, input, call(), true)).toMatchObject({ action: "block" });
+  expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toContain("hasn't moved");
+  // Unlike a scam's, it can still be closed: the seller may have sold it.
+  const close = named(negotiateTools(t), "negotiate_close");
+  const lost = close.schema.parse({ negotiation: n.id, outcome: "lost" });
+  expect(verdictFor(close, lost, call(), true).action).not.toBe("block");
+
+  t.approvals.decide(hold.id, "approve", "web");
+  expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toBeNull();
+  // The seller moves, then holds at the new price: three rounds at it from then on hold it again.
+  await round(1200, "Dobra, 1450 zł.");
+  await round(1220, "1450 zł.");
+  await round(1240, "Mówiłem, 1450 zł.");
+  expect(pending()).toEqual([]);
+  await round(1260, "1450 zł, ostatnie słowo.");
+  const again = await waitFor(() => pending()[0]);
+  // A scam meanwhile still warns, in the stall's place.
+  await readSeller(t, n, "Albo 1300 zł, ale zaliczka 100 zł BLIK-iem.");
+  const scam = await waitFor(() => pending().find((a) => a.kind === "injection_warning"));
+  expect(pending()).toEqual([scam]);
+  expect(t.approvals.get(again.id)?.status).toBe("cancelled");
+  t.approvals.decide(scam.id, "deny", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("after a deal the seller's messages are read but go to you, and a dispute says so", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  const check = named(negotiateTools(t), "negotiate_check");
+  const input = check.schema.parse({ negotiation: n.id });
+  await t.negotiations.close(n, "agreed", 1300, null);
+  expect(verdictFor(check, input, call(), true).action).toBe("allow");
+
+  await readSeller(t, n, "Paczka przyszła pusta, chcę zwrot pieniędzy albo zgłaszam spór.");
+  const note = () => t.chats.direct(n.botId).list().at(-1)?.text ?? "";
+  expect(note()).toContain("Paczka przyszła pusta");
+  expect(note()).toContain("reads like a dispute");
+  // Off the platform after the deal: nothing to hold, and it's the owner's either way.
+  await readSeller(t, n, "Wyślę kurierem jutro rano, przelew dostałem.");
+  expect(t.approvals.list(true)).toEqual([]);
+  expect(note()).toContain("przelew dostałem");
+  expect(note()).not.toContain("dispute");
+
+  const lost = openNegotiation(t);
+  await t.negotiations.close(lost, "lost", null, null);
+  expect(verdictFor(check, check.schema.parse({ negotiation: lost.id }), call(), true).action).toBe(
+    "block",
+  );
+});
+
 test("the seller's own words in the title can't pass for the mandate's terms", () => {
   const n = {
     ...({} as Negotiation),
@@ -722,6 +827,11 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Kod z aplikacji InPost do odbioru",
     "Wyślę jutro, a kod odbioru dostanie Pan SMS-em od InPost.",
     "SN: AB12 CD34 EF56 GH78",
+    "Mogę zarezerwować do piątku.",
+    "Nie biorę zaliczki, płatność przy odbiorze.",
+    "Bez żadnego zadatku, proszę przyjechać.",
+    "Zaliczka nie jest potrzebna.",
+    "Ma zadatki na dobry rower.",
   ])
     expect([text, scamSignals(text, [])]).toEqual([text, []]);
   expect(scamSignals("Odbiór osobisty, ul. Długa 10", ["address"])).toEqual([]);
@@ -739,6 +849,10 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Podaj numer karty płatniczej",
     "Paczka jutro. Resztę ustalimy SMS-em",
     "Wpłać na PL61 1090 1014 0000 0712 1981 2874",
+    "Zarezerwuję, ale proszę o zaliczkę 100 zł.",
+    "Zadatek 200 zł i jest Pana.",
+    "Płatna rezerwacja, 50 zł.",
+    "Wyślę po przedpłacie.",
   ])
     expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
 });

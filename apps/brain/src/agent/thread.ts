@@ -2014,10 +2014,16 @@ export class Thread {
       }
       // Telling you about a task shown under its reply: that reply is written again, not a new one.
       rewrite = !user && !group?.nudged ? this.taskReply(ended) : null;
-      const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: a task they started from the chat ended. ${
-        rewrite
-          ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
-          : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
+      // The owner reads another bot's whole answer in its chat, which the app links to from here.
+      const handedOff = ended.length > 0 && ended.every((t) => t.botId !== bot.id);
+      const taskNews = `[${localStamp(new Date(this.clock()))}]\n(No message from the owner: ${
+        handedOff
+          ? `the bot you asked ended. ${rewrite ? "What you write now replaces your reply that asked it. " : ""}In a sentence or two, say what it did and whether it's finished, without repeating its answer: the owner reads that in its chat, linked from here. If it needs something only the owner can say, ask that.`
+          : `a task they started from the chat ended. ${
+              rewrite
+                ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
+                : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
+            }`
       })`;
       // What the app tells the bot goes as a system message: the owner didn't write it.
       let note: string | null = null;
