@@ -933,4 +933,10 @@ export const migrations: string[] = [
   CREATE UNIQUE INDEX negotiation_messages_market ON negotiation_messages (negotiation_id, market_id)
     WHERE market_id IS NOT NULL;
   `,
+  // 56: Haggler's instructions, where they're still as made: it greets once and matches the seller's tone.
+  `
+  UPDATE bots SET instructions = replace(instructions,
+    'Keep each message brief, a sentence or two, as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits.',
+    'Keep each message brief, a sentence or two, as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits. Greet only in your first message, and match how the seller writes: if they''re casual (no greeting, "hej", "xD"), be casual back, and don''t open each message the same way.');
+  `,
 ];

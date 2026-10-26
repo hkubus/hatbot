@@ -9,6 +9,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { askedIfBot } from "../src/negotiate/bot-question";
 import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
+import { replyPause } from "../src/negotiate/service";
 import { mcpPlugin } from "../src/plugins/mcp";
 import type { CallContext, PluginTool } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
@@ -17,6 +18,9 @@ import { computer, FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
+replyPause.minMs = 0;
+replyPause.maxMs = 0;
+replyPause.everyMs = 1;
 
 const LISTING_URL = "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001.html";
 const CHAT_URL = "https://www.olx.pl/myaccount/answers/555";
@@ -965,6 +969,40 @@ test("what you write to the seller yourself is recorded as yours, once, and the 
     call(),
   );
   expect(JSON.stringify(got)).toContain("The owner: Piszę przez asystenta");
+});
+
+test("a reply waits a short while after the seller's message", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  await readSeller(t, n, "Cena 1500 zł, jak w ogłoszeniu.");
+  replyPause.minMs = replyPause.maxMs = 60_000;
+  try {
+    const send = named(negotiateTools(t), "negotiate_send");
+    const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
+    const desktopTasks = () =>
+      t.tasks.list().filter((x) => x.title.startsWith("Message the seller"));
+    // Stopped during the pause, nothing has gone to the desktop and nothing is left claimed.
+    const stop = new AbortController();
+    const stopped = runPluginTool(send, input, { task: null, signal: stop.signal });
+    stop.abort();
+    await stopped.catch(() => null);
+    expect(desktopTasks()).toEqual([]);
+    expect(t.negotiations.messages(n.id).filter((m) => m.status === "sending")).toEqual([]);
+    t.taskModel.script.push(finish());
+    const sending = runPluginTool(
+      send,
+      send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 }),
+      call(),
+    );
+    const wrote = Date.parse(t.negotiations.messages(n.id)[0]?.createdAt ?? "");
+    expect(t.negotiations.replyAt(t.negotiations.get(n.id) as Negotiation)).toBe(wrote + 60_000);
+    t.advance(60_000);
+    expect(JSON.stringify(await sending)).toContain("Sending it in desktop task");
+    await t.tasks.idle();
+  } finally {
+    replyPause.minMs = replyPause.maxMs = 0;
+  }
 });
 
 test("the bot question is caught however it's asked, and a bot that's the item isn't one", () => {

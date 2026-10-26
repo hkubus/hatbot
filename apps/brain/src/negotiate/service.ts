@@ -135,6 +135,8 @@ export type Recorded = { text: string; stale: boolean; alreadySent: boolean };
 
 const FINAL_TASK = ["done", "failed", "cancelled"];
 export const MAX_TEXT = 400;
+/** A reply goes a short while after the seller's message, picked at random, rather than at once. */
+export const replyPause = { minMs: 20_000, maxMs: 60_000, everyMs: 1000 };
 
 export class Negotiations {
   readonly clock: () => number;
@@ -609,6 +611,25 @@ export class Negotiations {
       // The listing's title is the seller's words, so it isn't among the owner's.
       request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateAims(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
     });
+  }
+
+  /** When a reply to the seller's latest message may go; null when there's nothing to reply to. */
+  replyAt(n: Negotiation): number | null {
+    const last = this.d.db
+      .query<{ at: string }, [number]>(
+        "SELECT created_at AS at FROM negotiation_messages WHERE negotiation_id = ? AND direction = 'in' ORDER BY id DESC LIMIT 1",
+      )
+      .get(n.id);
+    const { minMs, maxMs } = replyPause;
+    return last ? Date.parse(last.at) + minMs + Math.random() * (maxMs - minMs) : null;
+  }
+
+  async replyPause(n: Negotiation, signal: AbortSignal) {
+    const until = this.replyAt(n) ?? 0;
+    while (this.clock() < until) {
+      signal.throwIfAborted();
+      await Bun.sleep(Math.min(replyPause.everyMs, until - this.clock()));
+    }
   }
 
   /** An older desktop-agent can't run the exact-text check. */
