@@ -321,7 +321,9 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
           const { profile, state } = (await req.json()) as SignIn;
           return json(
             await serial(async () => {
-              await useProfile(String(profile), stateDir ?? null, browser);
+              // With one profile for every bot, one bot's login would be all of theirs.
+              if ((await useProfile(String(profile), stateDir ?? null, browser)) !== profile)
+                throw new BrowserError("This desktop has one browser profile for every bot.");
               return browser.signIn(state);
             }),
           );

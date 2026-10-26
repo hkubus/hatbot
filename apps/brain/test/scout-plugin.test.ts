@@ -254,4 +254,11 @@ test("Haggler's tasks sign its browser in with the logins shared in Scout, once 
   t.advance(10 * 60_000);
   await look(haggler.id);
   expect(t.agent.signIns.map((x) => x.state)).toEqual([state("one"), state("two")]);
+
+  // A desktop with one profile for every bot: Haggler's login would be all of theirs.
+  t.agent.oneProfile = true;
+  scout.share([{ marketplace: "OLX", label: "", revision: "r3", storageState: state("three") }]);
+  t.advance(10 * 60_000);
+  await look(haggler.id);
+  expect(t.agent.signIns).toHaveLength(2);
 });

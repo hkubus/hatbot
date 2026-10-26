@@ -13,11 +13,19 @@ test("a login from Scout for a site that isn't a marketplace is refused whole", 
   // Nothing listens here: it's refused before Chromium is asked.
   const browser = new Browser(null, "http://127.0.0.1:9");
   const olx = { name: "a", value: "1", domain: ".olx.pl", path: "/" };
+  const elsewhere = [
+    ".olx.pl.evil.example",
+    "evil.example/.olx.pl",
+    "evil.example?.olx.pl",
+    "evil.example#.olx.pl",
+    "evil.example\\.olx.pl",
+    "olx.pl.",
+  ];
   for (const state of [
-    {
-      cookies: [olx, { name: "b", value: "2", domain: ".olx.pl.evil.example", path: "/" }],
+    ...elsewhere.map((domain) => ({
+      cookies: [olx, { name: "b", value: "2", domain, path: "/" }],
       origins: [],
-    },
+    })),
     {
       cookies: [olx],
       origins: [{ origin: "https://evil.example", localStorage: [{ name: "k", value: "v" }] }],
@@ -30,7 +38,7 @@ test("a login from Scout for a site that isn't a marketplace is refused whole", 
     await expect(browser.signIn(state)).rejects.toThrow(/only be for|isn't an address/);
 });
 
-live("a login from Scout signs the profile in, without asking the marketplace", async () => {
+live("a login from Scout signs the profile in", async () => {
   if (!chromium) throw new Error("no Chromium");
   const browser = new Browser(null, chromium.endpoint);
   const r = await browser.signIn({
@@ -87,33 +95,34 @@ live("a login from Scout signs the profile in, without asking the marketplace", 
   // The background tab it wrote localStorage in is gone; the profile keeps what it wrote.
   const { targetInfos = [] } = await send("Target.getTargets");
   expect(targetInfos.filter((t) => t.url.includes("olx.pl"))).toEqual([]);
+  // Reading it back takes the origin's page too, answered here as well.
   const { targetId } = await send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
+  await send("Page.enable", {}, sessionId);
   await send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId);
-  ws.addEventListener("message", (e) => {
-    const m = JSON.parse(String(e.data));
-    if (m.method === "Fetch.requestPaused")
-      void send(
-        "Fetch.fulfillRequest",
-        { requestId: m.params.requestId, responseCode: 200, body: "" },
-        sessionId,
-      );
+  const asked: string[] = [];
+  const loaded = new Promise<void>((ok) => {
+    ws.addEventListener("message", (e) => {
+      const m = JSON.parse(String(e.data));
+      if (m.method === "Fetch.requestPaused") {
+        asked.push(m.params.request.url);
+        void send(
+          "Fetch.fulfillRequest",
+          { requestId: m.params.requestId, responseCode: 200, body: "" },
+          sessionId,
+        );
+      }
+      if (m.method === "Page.loadEventFired" && asked.length) ok();
+    });
   });
   await send("Page.navigate", { url: "https://www.olx.pl/" }, sessionId);
-  let stored: unknown = null;
-  for (let i = 0; i < 50 && stored === null; i++) {
-    const v = await send(
-      "Runtime.evaluate",
-      {
-        expression:
-          "location.origin === 'https://www.olx.pl' ? localStorage.getItem('user') : null",
-        returnByValue: true,
-      },
-      sessionId,
-    );
-    stored = v.result?.value ?? null;
-    if (stored === null) await Bun.sleep(100);
-  }
+  await loaded;
+  const v = await send(
+    "Runtime.evaluate",
+    { expression: "localStorage.getItem('user')", returnByValue: true },
+    sessionId,
+  );
+  const stored = v.result?.value;
   expect(stored).toBe('{"id":7}');
   ws.close();
 });

@@ -1304,7 +1304,12 @@ export class Browser {
           secure: c.secure,
           httpOnly: c.httpOnly,
           sameSite: c.sameSite,
-          ...(typeof c.expires === "number" && c.expires > 0 ? { expires: c.expires } : {}),
+          // Chromium here doesn't restore its last session, so a session cookie would go at the next
+          // profile switch: it's kept a month instead.
+          expires:
+            typeof c.expires === "number" && c.expires > 0
+              ? c.expires
+              : Math.floor(Date.now() / 1000) + 30 * 86_400,
         })),
       });
     for (const p of pages) await this.writeStorage(p.origin, p.items);
@@ -1316,14 +1321,25 @@ export class Browser {
       url: "about:blank",
       background: true,
     });
-    let answer: Listener | null = null;
+    let listen: Listener | null = null;
     try {
       const { sessionId: s } = await this.cdp.send<{ sessionId: string }>("Target.attachToTarget", {
         targetId,
         flatten: true,
       });
-      answer = (method, p, sessionId) => {
-        if (method !== "Fetch.requestPaused" || sessionId !== s) return;
+      let loaded = () => {};
+      const load = new Promise<void>((resolve) => {
+        loaded = resolve;
+      });
+      let there = false;
+      listen = (method, p, sessionId) => {
+        if (sessionId !== s) return;
+        // The load that counts is the origin's, not about:blank's.
+        const frame = p.frame as { parentId?: string; url?: string } | undefined;
+        if (method === "Page.frameNavigated" && !frame?.parentId)
+          there = String(frame?.url).startsWith(origin);
+        if (method === "Page.loadEventFired" && there) loaded();
+        if (method !== "Fetch.requestPaused") return;
         void this.cdp
           .send(
             "Fetch.fulfillRequest",
@@ -1337,24 +1353,26 @@ export class Browser {
           )
           .catch(() => {});
       };
-      this.cdp.on(answer);
+      this.cdp.on(listen);
+      await this.cdp.send("Page.enable", {}, s);
+      // A service worker the site left in the profile would answer before the network, so bypass it.
+      await this.cdp.send("Network.setBypassServiceWorker", { bypass: true }, s).catch(() => {});
       await this.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, s);
       await this.cdp.send("Page.navigate", { url: `${origin}/` }, s);
+      const late = Symbol();
+      const timer = Bun.sleep(5000).then(() => late);
+      if ((await Promise.race([load, timer])) === late)
+        throw new BrowserError(`Couldn't open ${origin} to sign in there.`);
       const write = `(() => { if (location.origin !== ${JSON.stringify(origin)}) return false; for (const [k, v] of ${JSON.stringify(items.map((i) => [String(i.name), String(i.value)]))}) localStorage.setItem(k, v); return true; })()`;
-      for (let tries = 0; ; tries++) {
-        const r = await this.cdp
-          .send<{ result: { value?: boolean } }>(
-            "Runtime.evaluate",
-            { expression: write, returnByValue: true },
-            s,
-          )
-          .catch(() => null);
-        if (r?.result.value) return;
-        if (tries >= 50) throw new BrowserError(`Couldn't open ${origin} to sign in there.`);
-        await Bun.sleep(100);
-      }
+      const r = await this.cdp.send<{ result: { value?: boolean } }>(
+        "Runtime.evaluate",
+        { expression: write, returnByValue: true },
+        s,
+        5000,
+      );
+      if (!r.result.value) throw new BrowserError(`Couldn't open ${origin} to sign in there.`);
     } finally {
-      if (answer) this.cdp.off(answer);
+      if (listen) this.cdp.off(listen);
       await this.cdp.send("Target.closeTarget", { targetId }).catch(() => {});
     }
   }

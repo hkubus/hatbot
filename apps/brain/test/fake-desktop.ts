@@ -37,7 +37,10 @@ export class FakeDesktop implements DesktopAgent {
     timedOut: false,
   });
 
+  /** One browser profile for every bot, as an older desktop has. */
+  oneProfile = false;
   async useProfile(botId: string) {
+    if (this.oneProfile) return false;
     if (this.profiles.at(-1) !== botId) this.profiles.push(botId);
     return true;
   }

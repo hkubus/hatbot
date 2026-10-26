@@ -254,6 +254,8 @@ export const SESSION_HOSTS = ["olx.pl", "allegrolokalnie.pl", "allegro.pl", "vin
 
 /** Whether a cookie's domain or an origin's host is one of SESSION_HOSTS or under one. */
 export function sessionHost(host: string): boolean {
-  const h = host.trim().toLowerCase().replace(/^\.+/, "");
+  // Only a bare hostname: Chromium reads "evil.example/.olx.pl" as evil.example.
+  if (!/^\.?[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host)) return false;
+  const h = host.toLowerCase().replace(/^\./, "");
   return SESSION_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
 }

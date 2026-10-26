@@ -10,6 +10,8 @@ import type { DesktopAgent } from "./client";
 
 /** How often a bot's tasks ask Scout whether a login changed. */
 const CHECK_EVERY_MS = 5 * 60_000;
+/** The task holds the screen meanwhile. */
+const SCOUT_TIMEOUT_MS = 15_000;
 
 export type LoginsDeps = { db: Db; bots: Bots; plugins: Plugins; clock?: () => number };
 
@@ -31,13 +33,17 @@ export class Logins {
     const list = tools.find((t) => t.name === "scout_shared_sessions");
     const one = tools.find((t) => t.name === "scout_shared_session");
     if (!list || !one) return;
+    const within = AbortSignal.any([signal, AbortSignal.timeout(SCOUT_TIMEOUT_MS)]);
     try {
-      const { sessions } = await readScout(list, {}, signal);
+      const { sessions } = await readScout(list, {}, within);
       for (const s of Array.isArray(sessions) ? sessions : []) {
         const { marketplace, revision } = s as { marketplace?: unknown; revision?: unknown };
         if (typeof marketplace !== "string" || typeof revision !== "string") continue;
         if (this.revision(botId, marketplace) === revision) continue;
-        const got = await readScout(one, { marketplace }, signal);
+        // Its error could quote the answer, which signs a browser in.
+        const got = await readScout(one, { marketplace }, within).catch(() => {
+          throw new Error(`Scout's ${marketplace} login couldn't be read.`);
+        });
         if (got.revision !== revision) continue;
         if (!(await agent.signIn({ profile: botId, state: got.storageState as SessionState })))
           return;
@@ -49,8 +55,7 @@ export class Logins {
           .run(botId, marketplace, revision, this.now());
       }
     } catch (err) {
-      // The task goes on without it, and asks the owner to log in if it has to.
-      this.checked.delete(botId);
+      // The task goes on without it, and asks the owner to log in if it has to; tried again in 5 minutes.
       if (!signal.aborted)
         console.warn(`marketplace logins for ${botId}: ${(err as Error).message.slice(0, 300)}`);
     }
