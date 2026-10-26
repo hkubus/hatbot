@@ -17,6 +17,7 @@ import { Checks, type ChecksDeps } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
 import type { DesktopAgent } from "./desktop/client";
+import { Logins } from "./desktop/logins";
 import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { Backends } from "./hatbox/backends";
@@ -202,6 +203,7 @@ export async function createServices(o: Outside) {
   tasks.negotiations = negotiations;
   const listings = new Listings({ ...core, tasks });
   tasks.listings = listings;
+  tasks.logins = new Logins({ ...core });
   chats.attach({
     tasks,
     schedules,

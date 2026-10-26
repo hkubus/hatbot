@@ -14,6 +14,7 @@ import type {
   RenderResult,
   SetFiles,
   ShellResult,
+  SignIn,
 } from "@hatbot/shared/desktop";
 
 export class DesktopError extends Error {
@@ -61,6 +62,8 @@ export interface DesktopAgent {
   setFiles(o: SetFiles): Promise<BrowserResult>;
   /** Chromium on this bot's own profile. False where the desktop has one shared profile. */
   useProfile(botId: string): Promise<boolean>;
+  /** A marketplace login from Scout in that bot's profile. False on an older desktop-agent. */
+  signIn(o: SignIn): Promise<boolean>;
   /** Closes the tabs earlier tasks left open, down to one blank tab. False on an older desktop-agent. */
   resetBrowser(): Promise<boolean>;
   lock(): Promise<void>;
@@ -258,6 +261,15 @@ export class HttpDesktopAgent implements DesktopAgent {
         return res.profile !== null;
       },
       // An older desktop-agent: one profile for every bot.
+      () => false,
+    );
+  }
+  signIn(o: SignIn) {
+    return this.unlessOld(
+      async () => {
+        await this.req("POST", "/browser/session", o, 45_000);
+        return true;
+      },
       () => false,
     );
   }

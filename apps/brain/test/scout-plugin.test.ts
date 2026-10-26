@@ -20,6 +20,8 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
   const dir = mkdtempSync(join(tmpdir(), "hatbot-scout-"));
   tempDirs.push(dir);
   const flips = join(dir, "flips.json");
+  const sessions = join(dir, "sessions.json");
+  writeFileSync(sessions, "[]");
   writeFileSync(
     flips,
     JSON.stringify([
@@ -79,13 +81,17 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
         });
-        await scoutServer({ flips }).connect(transport);
+        await scoutServer({ flips, sessions }).connect(transport);
         return transport.handleRequest(new Request(url, init));
       }
     }
     return new Response(null, { status: 404 });
   };
-  return { s, handle };
+  return {
+    s,
+    handle,
+    share: (shared: unknown[]) => writeFileSync(sessions, JSON.stringify(shared)),
+  };
 }
 
 async function connect(t: TestApp, scout: ReturnType<typeof fakeScout>) {
@@ -195,4 +201,64 @@ test("a Haggler made after Scout is connected lists flips", async () => {
   const haggler = t.bots.create(made);
   await t.listings.tick();
   expect(t.approvals.list(true).map((a) => [a.kind, a.botId])).toEqual([["listing", haggler.id]]);
+});
+
+test("Haggler's tasks sign its browser in with the logins shared in Scout, once each time one is imported", async () => {
+  const t = await testApp();
+  const haggler = t.bots.create({
+    name: "Haggler",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: ["self"],
+  });
+  const chef = t.bots.create({
+    name: "Chef",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: ["self"],
+  });
+  const scout = fakeScout();
+  await connected(t, scout);
+  const state = (value: string) => ({
+    cookies: [{ name: "access_token", value, domain: ".olx.pl", path: "/" }],
+    origins: [],
+  });
+  scout.share([{ marketplace: "OLX", label: "", revision: "r1", storageState: state("one") }]);
+  const look = async (botId: string) => {
+    t.tasks.createDesktopTask({
+      title: "Look",
+      goal: "Look",
+      successCriteria: "",
+      origin: "chat",
+      botId,
+    });
+    await t.tasks.idle();
+  };
+
+  // The model is never offered the logins.
+  const offered = t.plugins.tools().map((x) => x.name);
+  expect(offered).not.toContain("scout_shared_sessions");
+  expect(offered).not.toContain("scout_shared_session");
+
+  await look(haggler.id);
+  expect(t.agent.signIns).toEqual([{ profile: haggler.id, state: state("one") }]);
+  // Not again for the same import, nor in a bot without Scout.
+  t.advance(10 * 60_000);
+  await look(haggler.id);
+  await look(chef.id);
+  expect(t.agent.signIns).toHaveLength(1);
+
+  scout.share([{ marketplace: "OLX", label: "", revision: "r2", storageState: state("two") }]);
+  t.advance(10 * 60_000);
+  await look(haggler.id);
+  expect(t.agent.signIns.map((x) => x.state)).toEqual([state("one"), state("two")]);
+
+  // A desktop with one profile for every bot: Haggler's login would be all of theirs.
+  t.agent.oneProfile = true;
+  scout.share([{ marketplace: "OLX", label: "", revision: "r3", storageState: state("three") }]);
+  t.advance(10 * 60_000);
+  await look(haggler.id);
+  expect(t.agent.signIns).toHaveLength(2);
 });

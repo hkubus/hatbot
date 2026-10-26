@@ -18,6 +18,7 @@ import type { Bots } from "../bots";
 import type { Boxes } from "../boxes";
 import type { Config } from "../config";
 import type { Db } from "../db";
+import type { Logins } from "../desktop/logins";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { Listings } from "../listings/service";
@@ -187,6 +188,7 @@ export class Tasks {
   /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks. */
   negotiations?: Negotiations;
   listings?: Listings;
+  logins?: Logins;
   private running = new Map<number, AbortController>();
   /** Events and the chat's notes for running tasks, delivered with their next tool results. */
   private inbox = new Map<number, InboxItem[]>();

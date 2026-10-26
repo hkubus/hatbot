@@ -400,8 +400,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     d.desktop.setActiveTask(id, task.botId);
     tasks.setStatus(id, "running");
     // Its bot's logins, not another's. Another task may have switched it while this one was away.
+    let ownProfile = false;
     try {
-      await agent.useProfile(task.botId);
+      ownProfile = await agent.useProfile(task.botId);
     } catch (err) {
       release();
       throw new Stop(
@@ -409,6 +410,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         `Couldn't open ${d.bots.nameOf(task.botId)}'s browser profile: ${(err as Error).message}`,
       );
     }
+    // Only in its own profile: with one shared profile, its logins would be every bot's.
+    if (ownProfile) await tasks.logins?.signIn(task.botId, agent, signal);
   };
   const release = () => {
     if (!holding) return;

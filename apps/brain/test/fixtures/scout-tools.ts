@@ -1,12 +1,13 @@
 // A stand-in for Scout's MCP server, for the negotiation and listing tests: the tools Scout has
-// today; with `full`, also the price reference and comparables it doesn't have yet; and with `flips`,
-// the flips to list, kept in that JSON file, which the tests change. Calls are appended to `log`, one
+// today; with `full`, also the price reference and comparables it doesn't have yet; with `flips`,
+// the flips to list, kept in that JSON file, which the tests change; and with `sessions`, the
+// marketplace logins shared with Hatbot, kept the same way. Calls are appended to `log`, one
 // JSON line each.
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-export type ScoutOptions = { log?: string; full?: boolean; flips?: string };
+export type ScoutOptions = { log?: string; full?: boolean; flips?: string; sessions?: string };
 
 export function scoutServer(o: ScoutOptions): McpServer {
   const log = (tool: string, input: unknown) => {
@@ -214,6 +215,37 @@ export function scoutServer(o: ScoutOptions): McpServer {
         f.listed = [...(f.listed ?? []), input];
         writeFileSync(flipsFile, JSON.stringify(all));
         return json({ ok: true });
+      },
+    );
+  }
+  const sessionsFile = o.sessions;
+  if (sessionsFile) {
+    type Shared = { marketplace: string; label: string; revision: string; storageState: unknown };
+    const shared = (): Shared[] => JSON.parse(readFileSync(sessionsFile, "utf8"));
+    server.registerTool(
+      "scout_shared_sessions",
+      {
+        description: "The marketplace sessions shared with connected apps",
+        inputSchema: {},
+        annotations: { readOnlyHint: true },
+      },
+      async () => {
+        log("scout_shared_sessions", {});
+        return json({ sessions: shared().map(({ storageState: _, ...s }) => s) });
+      },
+    );
+    server.registerTool(
+      "scout_shared_session",
+      {
+        description: "One shared marketplace session",
+        inputSchema: { marketplace: z.string() },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ marketplace }) => {
+        log("scout_shared_session", { marketplace });
+        const s = shared().find((x) => x.marketplace === marketplace);
+        if (!s) return { isError: true, content: [{ type: "text" as const, text: "Not shared." }] };
+        return json(s);
       },
     );
   }

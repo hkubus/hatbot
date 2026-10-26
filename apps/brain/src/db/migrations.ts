@@ -890,4 +890,15 @@ export const migrations: string[] = [
   ALTER TABLE negotiations ADD COLUMN hold TEXT;
   ALTER TABLE negotiations ADD COLUMN stalled_at INTEGER;
   `,
+  // 53: the marketplace logins Scout shared that are in a bot's browser, by Scout's revision of each,
+  // so one is put there again only once the owner imports it again in Scout.
+  `
+  CREATE TABLE marketplace_logins (
+    bot_id TEXT NOT NULL,
+    marketplace TEXT NOT NULL,
+    revision TEXT NOT NULL,
+    signed_in_at INTEGER NOT NULL,
+    PRIMARY KEY (bot_id, marketplace)
+  );
+  `,
 ];
