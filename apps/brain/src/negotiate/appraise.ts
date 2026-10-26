@@ -1,7 +1,7 @@
 // Scout's tools are called by name through the MCP plugin, as watchers call plugin tools; only ones set
 // to Chat (read) are used, so nothing here asks.
 import type { Appraisal, AppraisalSource } from "@hatbot/shared";
-import { PluginError, type PluginTool } from "../plugins/plugin";
+import { PluginError, type PluginTool, textOf } from "../plugins/plugin";
 import { zl } from "./policy";
 
 export type ListingFacts = {
@@ -50,7 +50,7 @@ export async function readScout(
     );
   const parsed = t.schema.safeParse(input);
   if (!parsed.success) throw new PluginError(`${t.name} doesn't take ${JSON.stringify(input)}.`);
-  const out = await t.run(parsed.data, { task: null, signal });
+  const out = textOf(await t.run(parsed.data, { task: null, signal }));
   try {
     return obj(JSON.parse(out));
   } catch {
@@ -63,12 +63,17 @@ export async function listingFacts(
   key: string,
   signal: AbortSignal,
 ): Promise<ListingFacts> {
-  const parts = parseKey(key);
-  if (!parts) throw new PluginError(`"${key}" isn't a listing key like "OLX:123456".`);
+  if (!parseKey(key)) throw new PluginError(`"${key}" isn't a listing key like "OLX:123456".`);
   const detail = scoutTool(tools, "scout_listing_detail");
   if (!detail)
     throw new PluginError("Scout isn't connected: connect it in Settings → Plugins → Scout.");
-  const d = await readScout(detail, { key }, signal);
+  return factsFrom(key, await readScout(detail, { key }, signal));
+}
+
+/** From scout_listing_detail's answer. */
+export function factsFrom(key: string, d: Record<string, unknown>): ListingFacts {
+  const parts = parseKey(key);
+  if (!parts) throw new PluginError(`"${key}" isn't a listing key like "OLX:123456".`);
   const l = obj(d.listing);
   const url = str(l.url) ?? str(obj(d.descriptionSnapshot).url);
   if (!url) throw new PluginError(`Scout has no address for ${key}.`);

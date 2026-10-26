@@ -17,6 +17,8 @@ import {
   type PluginInstance,
   type PluginSignal,
   type PluginTool,
+  type ToolImage,
+  textOf,
   type Verdict,
 } from "./plugin";
 
@@ -418,7 +420,13 @@ export async function runPluginTool(
   t: PluginTool,
   input: unknown,
   call: CallContext,
-): Promise<{ content: string; isError: boolean; untrusted: boolean; text: string }> {
+): Promise<{
+  content: string;
+  isError: boolean;
+  untrusted: boolean;
+  text: string;
+  images?: ToolImage[];
+}> {
   const parsed = t.schema.safeParse(input);
   if (!parsed.success) {
     const content = `Invalid input: ${z.prettifyError(parsed.error)}`;
@@ -427,8 +435,11 @@ export async function runPluginTool(
   const label = (text: string, untrusted: boolean) =>
     untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
+  let images: ToolImage[] | undefined;
   try {
-    out = await t.run(parsed.data, call);
+    const r = await t.run(parsed.data, call);
+    out = textOf(r);
+    if (typeof r !== "string" && r.images.length) images = r.images;
   } catch (err) {
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
@@ -448,7 +459,7 @@ export async function runPluginTool(
   const untrusted = untrustedOf(t, parsed.data, out);
   if (out.length > MAX_OUTPUT_CHARS)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
-  return { content: label(out, untrusted), isError: false, untrusted, text: out };
+  return { content: label(out, untrusted), isError: false, untrusted, text: out, images };
 }
 
 export function untrustedDefinitions(tools: PluginTool[]): string | null {

@@ -24,10 +24,11 @@ Built, but not yet deployed or tried live:
 ## 3. Negotiation
 Hatbot haggles on OLX, Allegro Lokalnie and Vinted as the Haggler bot, inside a mandate you approve, with market data from Scout (`../scout`) over the MCP plugin. N1 and N2 are built (2026-10-16) and tested against a stand-in desktop-agent and Scout, but not tried live: there's no marketplace account yet.
 
+Built 2026-10-26, not tried live: `negotiate_inspect` (a listing's live page and up to 5 photos, read from the desktop, which needs Update for `/fetch/image`), the search method in Scout's notes (keep looking until a listing meets every must-have), and N4, several sellers at once under one approval, where the first agreement ends the others. The sellers it drops aren't told; a short "bought elsewhere" would need a send past the mandate check. Photos are picked by the marketplaces' image hosts and page order, checked against one page from each site on 2026-10-26.
+
 ### 3.1 Milestones
 - **N1, finish**: once Haggler has its own marketplace account, show it one negotiation per site (teach-by-showing) for its playbook skill. Done when one OLX negotiation runs end to end.
 - **N3, waking**: Scout's inbox tools. A poller without the model reads `scout_inbox` every 10 minutes while any negotiation is open, taking over `negotiate_check`'s routine reads. A new seller message is stored and screened (the scam check on recorded messages is built), then starts a short background task for that negotiation with its record; nothing waits in a long task for days. When the follow-up time passes without a reply, a task starts to nudge the seller or give up. Approving a scam hold should wake Haggler too. Done when a seller's reply gets an answer within 15 minutes, with nobody in the chat.
-- **N4, several sellers**: more than one open negotiation per want (now one per listing and one per want). The first agreement locks the want, and `negotiate_close` declines the others.
 - **N5, selling**: answering buyers on your listings. The floor comes from Scout's flips: the buy price, fees and a margin.
 - **N6, listing** (planned 2026-10-22): you mark a flip "Ready to list" in Scout, approve it with one tap, and Haggler posts it on the marketplaces you picked. See 3.3.
 - **Maybe later**: `scout_send_message`, if sending from the desktop turns out too slow.

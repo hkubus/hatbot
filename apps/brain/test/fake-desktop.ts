@@ -9,6 +9,7 @@ import type {
   BrowserInspect,
   BrowserResult,
   BrowserState,
+  FetchedImage,
   FetchResult,
   SetFiles,
   ShellResult,
@@ -129,6 +130,13 @@ export class FakeDesktop implements DesktopAgent {
       ...r,
       body,
     };
+  }
+  images = new Map<string, FetchedImage>();
+  async fetchImage(url: string): Promise<FetchedImage> {
+    this.fetched.push(url);
+    const image = this.images.get(url);
+    if (!image) throw new DesktopError("It answered 404.", 502);
+    return image;
   }
   /** Pages as they are once their scripts ran, by address. */
   rendered = new Map<string, string>();

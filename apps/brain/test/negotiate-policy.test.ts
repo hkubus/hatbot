@@ -72,6 +72,7 @@ const facts = (over: Partial<SendFacts> = {}): SendFacts => ({
   inFlight: false,
   starts: false,
   startedToday: 0,
+  dealtElsewhere: null,
   unansweredSince: null,
   seller: [],
   ...over,

@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { type FetchError, fetchPage, privateAddress, resolveHost } from "../src/fetch";
+import { MAX_IMAGE_BYTES } from "@hatbot/shared/desktop";
+import { type FetchError, fetchImage, fetchPage, privateAddress, resolveHost } from "../src/fetch";
 
 const server = Bun.serve({
   port: 0,
@@ -11,6 +12,12 @@ const server = Bun.serve({
       return n ? Response.redirect(`/hop?n=${n - 1}`, 302) : new Response("arrived");
     if (url.pathname === "/to") return Response.redirect(url.searchParams.get("u") ?? "/", 302);
     if (url.pathname === "/host") return new Response(req.headers.get("host"));
+    if (url.pathname === "/photo.webp")
+      return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/webp" } });
+    if (url.pathname === "/huge.jpg")
+      return new Response(new Uint8Array(MAX_IMAGE_BYTES + 1), {
+        headers: { "content-type": "image/jpeg" },
+      });
     return new Response("not found", { status: 404 });
   },
 });
@@ -51,4 +58,19 @@ test("every hop is checked: the desktop is refused as the address or a redirect'
   // Up to five redirects are followed.
   expect((await fetchPage(`${site}/hop?n=5`, { resolve })).body).toBe("arrived");
   await expect(fetchPage(`${site}/hop?n=6`, { resolve })).rejects.toThrow("redirects");
+});
+
+test("a picture comes back as base64 only when it is one, under the size the API takes", async () => {
+  // Through the same checked hops as a page.
+  const to = encodeURIComponent("/photo.webp");
+  expect(await fetchImage(`${site}/to?u=${to}`, { resolve })).toEqual({
+    mediaType: "image/webp",
+    data: Buffer.from([1, 2, 3]).toString("base64"),
+  });
+  const refused = (path: string) =>
+    fetchImage(`${site}${path}`, { resolve }).catch((e: FetchError) => e.status);
+  expect(await refused("/host")).toBe(415);
+  expect(await refused("/huge.jpg")).toBe(413);
+  expect(await refused("/missing.png")).toBe(502);
+  await expect(fetchImage("http://[::1]:9222/x.png", { resolve })).rejects.toThrow("local address");
 });

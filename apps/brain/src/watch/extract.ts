@@ -77,7 +77,7 @@ const ENTITIES: Record<string, string> = {
   apos: "'",
   nbsp: " ",
 };
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e: string) => {
     if (e[0] === "#")
       return String.fromCodePoint(

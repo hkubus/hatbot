@@ -3,7 +3,7 @@ import { type BoxFeedValue, MAX_BOX_VALUE } from "@hatbot/shared";
 import type { Bots } from "./bots";
 import { BoxError } from "./boxes";
 import type { Db } from "./db";
-import { PluginError } from "./plugins/plugin";
+import { PluginError, textOf } from "./plugins/plugin";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
 
@@ -211,11 +211,13 @@ export class BoxFeeds {
     if (!ok.success) throw new Stopped(`${t.name} doesn't take that input.`);
     let out: string;
     try {
-      out = await t.run(ok.data, {
-        task: null,
-        signal: AbortSignal.timeout(60_000),
-        feed: true,
-      });
+      out = textOf(
+        await t.run(ok.data, {
+          task: null,
+          signal: AbortSignal.timeout(60_000),
+          feed: true,
+        }),
+      );
     } catch (err) {
       if (err instanceof PluginError) throw new BoxError(err.message);
       throw err;

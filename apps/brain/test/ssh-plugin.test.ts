@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Task } from "@hatbot/shared";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
+import { textOf } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { spawnRun, sshPlugin } from "../src/plugins/ssh";
 import { commandCount, destructive, statusOnly } from "../src/plugins/ssh/policy";
@@ -531,9 +532,11 @@ test("output is kept to its start and end, endless output is stopped, and a comm
   // What the model reads is shorter still.
   const t = await ssh();
   const exec = t.tool("ssh_exec");
-  const out = await exec.run(
-    { host: "nas", command: "head -c 100000 /dev/zero | tr '\\0' a; echo; echo the end" },
-    call,
+  const out = textOf(
+    await exec.run(
+      { host: "nas", command: "head -c 100000 /dev/zero | tr '\\0' a; echo; echo the end" },
+      call,
+    ),
   );
   expect(out.length).toBeLessThan(16_000);
   expect(out).toEndWith("the end");

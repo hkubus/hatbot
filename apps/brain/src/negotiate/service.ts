@@ -29,6 +29,8 @@ import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { collapse, namesListing, type SendGate, sameAddress, sameHost } from "./gate";
 import {
   applyNote,
+  groupReason,
+  groupSummary,
   mandateAims,
   mandateReason,
   mandateSummary,
@@ -338,13 +340,39 @@ export class Negotiations {
     if (done) this.d.events.emit({ type: "message.negotiation", id: messageId, negotiationId });
   }
 
-  busy(listingKey: string, wantId: number): Negotiation | null {
+  busy(listingKey: string): Negotiation | null {
     const rows = this.d.db
-      .query<Row, [string, number]>(
-        `${SELECT} WHERE n.status IN (${OPEN}) AND (n.listing_key = ? OR n.want_id = ?) LIMIT 1`,
-      )
-      .all(listingKey, wantId);
+      .query<Row, [string]>(`${SELECT} WHERE n.status IN (${OPEN}) AND n.listing_key = ? LIMIT 1`)
+      .all(listingKey);
     return this.negotiations(rows)[0] ?? null;
+  }
+
+  openFor(wantId: number): number {
+    return (
+      this.d.db
+        .query<{ c: number }, [number]>(
+          `SELECT COUNT(*) AS c FROM negotiations WHERE want_id = ? AND status IN (${OPEN})`,
+        )
+        .get(wantId)?.c ?? 0
+    );
+  }
+
+  /**
+   * Another seller for the same want has a deal, or our agreement is on its way to them: the first
+   * one holds, and nothing more goes to the others.
+   */
+  dealtElsewhere(n: Pick<Negotiation, "id" | "wantId">): number | null {
+    return (
+      this.d.db
+        .query<{ id: number }, [number, number]>(
+          `SELECT n.id FROM negotiations n WHERE n.want_id = ? AND n.id != ?
+             AND (n.status IN ('agreed', 'paid', 'received') OR (n.status = 'open' AND EXISTS (
+               SELECT 1 FROM negotiation_messages m WHERE m.negotiation_id = n.id AND m.direction = 'out'
+                 AND m.agree = 1 AND m.status IN ('sending', 'sent', 'unconfirmed'))))
+           ORDER BY n.id LIMIT 1`,
+        )
+        .get(n.wantId, n.id)?.id ?? null
+    );
   }
 
   inFlight(id: number): { messageId: number; taskId: number | null } | null {
@@ -419,6 +447,7 @@ export class Negotiations {
       now,
       hour: new Date(now).getHours(),
       inFlight: this.inFlight(n.id) !== null,
+      dealtElsewhere: this.dealtElsewhere(n),
       starts,
       startedToday,
       unansweredSince: last && !answered ? Date.parse(last.at) : null,
@@ -427,31 +456,41 @@ export class Negotiations {
   }
 
   askMandate(n: Negotiation, before?: string): Approval {
-    const reason = mandateReason(n, this.d.bots.nameOf(n.botId));
+    return this.askMandates([n], before);
+  }
+
+  /** One approval for several sellers started together. */
+  askMandates(ns: Negotiation[], before?: string): Approval {
+    const [n] = ns;
+    if (!n) throw new Error("no negotiation to ask about");
+    const bot = this.d.bots.nameOf(n.botId);
+    const reason = ns.length > 1 ? groupReason(ns, bot) : mandateReason(n, bot);
     const approval = this.d.approvals.create({
       taskId: null,
       botId: n.botId,
       conversationId: n.conversationId ?? undefined,
       kind: "mandate",
-      summary: mandateSummary(n),
+      summary: ns.length > 1 ? groupSummary(ns) : mandateSummary(n),
       reason: before ? `${before}\n\n${reason}` : reason,
     });
-    this.update(n.id, { approval_id: approval.id });
+    for (const x of ns) this.update(x.id, { approval_id: approval.id });
     return approval;
   }
 
   async mandateDecided(a: Approval) {
-    if (a.kind !== "mandate" || this.applying.has(a.id)) return;
-    const [n] = this.negotiations(
+    if (a.kind !== "mandate" || this.applying.has(a.id) || a.status === "pending") return;
+    const ns = this.negotiations(
       this.d.db
-        .query<Row, [number]>(`${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate'`)
+        .query<Row, [number]>(
+          `${SELECT} WHERE n.approval_id = ? AND n.status = 'awaiting_mandate' ORDER BY n.id`,
+        )
         .all(a.id),
     );
-    if (!n || a.status === "pending") return;
+    if (!ns.length) return;
     // The event and the minute tick can both bring it while Haiku applies the note.
     this.applying.add(a.id);
     try {
-      await this.applyDecision(n, a);
+      for (const n of ns) await this.applyDecision(n, a);
     } finally {
       this.applying.delete(a.id);
     }
@@ -1048,7 +1087,15 @@ export class Negotiations {
     // A send already queued mustn't go now.
     this.stopTasks(id, from);
     const approval = this.get(id)?.approvalId;
-    if (approval && this.d.approvals.get(approval)?.status === "pending")
+    // A mandate shared with sellers still waiting on it stays for them.
+    const shared =
+      approval &&
+      this.d.db
+        .query<{ id: number }, [number]>(
+          "SELECT id FROM negotiations WHERE approval_id = ? AND status = 'awaiting_mandate' LIMIT 1",
+        )
+        .get(approval);
+    if (approval && !shared && this.d.approvals.get(approval)?.status === "pending")
       this.d.approvals.cancel(approval);
     return true;
   }
@@ -1061,8 +1108,21 @@ export class Negotiations {
     from: number | null = null,
   ): Promise<string | null> {
     if (!this.end(n.id, outcome, price, from)) return null;
-    if (outcome === "agreed")
+    if (outcome === "agreed") {
       this.d.db.query("UPDATE wants SET status = 'agreed' WHERE id = ?").run(n.wantId);
+      const others = this.d.db
+        .query<Row, [number, number]>(
+          `${SELECT} WHERE n.want_id = ? AND n.id != ? AND n.status IN (${OPEN})`,
+        )
+        .all(n.wantId, n.id);
+      for (const o of this.negotiations(others))
+        await this.close(
+          o,
+          "abandoned",
+          null,
+          `Agreed with another seller, in negotiation #${n.id}.`,
+        );
+    }
     const lines = [
       `## ${this.now().slice(0, 10)} · ${n.title}`,
       `${n.listingKey} ${n.listingUrl}`,
