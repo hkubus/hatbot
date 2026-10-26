@@ -351,6 +351,100 @@ test("a Scout tool that asks isn't called by the negotiate tools", async () => {
   await t.plugins.stopAll();
 });
 
+test("several sellers at once: one approval opens them all, and the first agreement ends the others", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel([later, later]), {}, [mcpPlugin], {});
+  await withScout(t);
+  const tools = negotiateTools(t, t.plugins.tools());
+  const started = await runPluginTool(
+    named(tools, "negotiate_start"),
+    {
+      listing: "OLX:1001",
+      mandate: { opening: 1060, target: 1250, delivery: "OLX delivery" },
+      alongside: [
+        {
+          listing: "Vinted:2002",
+          mandate: { opening: 220, target: 260, owner_max: 400, delivery: "Vinted shipping" },
+        },
+      ],
+      want: "a warm jacket",
+    },
+    call(),
+  );
+  expect(started.isError).toBe(false);
+  const [approval, ...more] = t.approvals.list(true);
+  expect(more).toEqual([]);
+  expect(approval?.summary).toContain("2 sellers");
+  t.approvals.decide((approval as Approval).id, "approve", "web");
+  await waitFor(() => t.negotiations.list().every((n) => n.status === "open"));
+  await t.tasks.idle();
+
+  const [second, first] = t.negotiations.list() as [Negotiation, Negotiation];
+  expect(second.wantId).toBe(first.wantId);
+  // Our agreement is on its way to the first seller: nothing more goes to the second.
+  t.negotiations.claimSend(first, {
+    text: "Biorę za 1200 zł.",
+    offer: 1200,
+    agree: true,
+    stated: null,
+  });
+  const send = named(tools, "negotiate_send");
+  const offer = send.schema.parse({
+    negotiation: second.id,
+    text: "Mogę dać 250 EUR.",
+    offer: 250,
+  });
+  expect(verdictFor(send, offer, call(), true)).toMatchObject({
+    action: "block",
+    why: expect.stringContaining(`negotiation #${first.id}`),
+  });
+  const close = named(tools, "negotiate_close");
+  const agreed = close.schema.parse({ negotiation: second.id, outcome: "agreed", price: 250 });
+  expect(verdictFor(close, agreed, call(), true).action).toBe("block");
+
+  await t.negotiations.close(first, "agreed", 1200, null);
+  expect(t.negotiations.get(second.id)?.status).toBe("abandoned");
+  expect(await t.memory.read("negotiations.md")).toContain(
+    `Agreed with another seller, in negotiation #${first.id}.`,
+  );
+  await t.plugins.stopAll();
+});
+
+test("closing one of several sellers waiting on their mandate leaves the others' approval", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel([later]));
+  const bot = t.bots.hatbot();
+  const wantId = t.negotiations.wantFor(bot, "an RTX 3070", "RTX 3070");
+  const make = (id: string) =>
+    t.negotiations.create({
+      bot,
+      wantId,
+      listing: {
+        key: `OLX:${id}`,
+        marketplace: "OLX",
+        title: "Karta graficzna RTX 3070 8GB",
+        url: `https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID${id}.html`,
+        asking: 1500,
+        currency: "PLN",
+        typical: null,
+        watchId: null,
+        negotiable: true,
+        listedAt: null,
+        history: [],
+      },
+      mandate: MANDATE,
+      appraisal: null,
+      status: "awaiting_mandate",
+      conversationId: null,
+    });
+  const [a, b] = [make("1001"), make("1002")];
+  const approval = t.negotiations.askMandates([a, b]);
+  await t.negotiations.stop(a.id);
+  expect(t.approvals.get(approval.id)?.status).toBe("pending");
+  t.approvals.decide(approval.id, "approve", "web");
+  await waitFor(() => t.negotiations.get(b.id)?.status === "open");
+  expect(t.negotiations.get(a.id)?.status).toBe("abandoned");
+  await t.tasks.idle();
+});
+
 test("a note on the mandate changes its numbers, held at what it may cost; one that can't be applied asks again", async () => {
   const work = new FakeModel();
   const t = await testApp(new FakeModel(), work);

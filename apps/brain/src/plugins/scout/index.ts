@@ -181,7 +181,8 @@ Finding something to buy:
 - A search through more than a few listings goes to a task (run_task with effort medium), with every must-have in its goal, so it has room to keep looking.
 - Search widely: scout_listings for what Scout found already, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
 - Look at every promising listing with negotiate_inspect, several at once, and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
-- Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short, and offer to look again every day with schedule_create.`;
+- Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short, and offer to look again every day with schedule_create.
+- Negotiate with several sellers at once only when the owner asks for it: one negotiate_start, the other listings in alongside. The first agreement ends the others.`;
 
 const FlipListed = z.object({
   flipId: z.number().int().positive(),

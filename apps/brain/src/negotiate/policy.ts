@@ -15,6 +15,8 @@ export type SendFacts = {
   now: number;
   hour: number;
   inFlight: boolean;
+  /** Another seller for the same want has our agreement: its negotiation. */
+  dealtElsewhere: number | null;
   /** Nothing has gone to this seller yet: this message starts a conversation. */
   starts: boolean;
   startedToday: number;
@@ -43,6 +45,10 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
   if (n.status !== "open") return block(`Negotiation #${n.id} is ${n.status}.`);
   if (f.inFlight)
     return block(`A message in negotiation #${n.id} is being sent already. Wait for it.`);
+  if (f.dealtElsewhere !== null)
+    return block(
+      `You agreed with another seller for this, in negotiation #${f.dealtElsewhere}, so nothing more goes to this one. If that deal falls through, close it as lost first.`,
+    );
   if (n.conversationUrl && !sameHost(n.conversationUrl, n.listingUrl))
     return block("The recorded conversation isn't on the listing's site, so nothing goes there.");
   if (input.agree && input.offer === null) return block("Put the price you agree to in offer.");

@@ -131,7 +131,7 @@ const day = (iso: string) =>
 
 const contacts = (allow: string[]) => (allow.length ? allow.join(", ") : "none");
 
-export function mandateReason(n: Negotiation, botName: string): string {
+function listingReason(n: Negotiation): string[] {
   const m = n.mandate;
   const a = n.appraisal;
   const extra = n.role === "buy" ? allowance(m.delivery, m.limit) : 0;
@@ -142,8 +142,30 @@ export function mandateReason(n: Negotiation, botName: string): string {
       ? `Scout: open at ${zl(a.opening, a.currency)}, aim for ${zl(a.target, a.currency)}, walk away ${n.role === "buy" ? "above" : "below"} ${zl(a.walkAway, a.currency)}. ${a.basis}`
       : "No appraisal from Scout.",
     `Delivery: ${m.delivery}.${extra ? ` Up to ${zl(extra, m.currency)} on top of the limit for shipping.` : ""} Until ${day(m.expiresAt)}. Contact details: ${contacts(m.allow)}.`,
+  ];
+}
+
+export function mandateReason(n: Negotiation, botName: string): string {
+  return [
+    ...listingReason(n),
     `Inside this, ${botName} sends and agrees on its own; outside it, it asks you. A note can change the numbers.`,
   ].join("\n");
+}
+
+/** Several sellers for one want, approved together. */
+export function groupSummary(ns: Negotiation[]): string {
+  const limits = ns.map((n) => zl(n.mandate.limit, n.mandate.currency)).join(" / ");
+  return `Negotiate with ${ns.length} sellers: pay at most ${limits} · ${quotedTitle(ns[0]?.want ?? "")}`;
+}
+
+export function groupReason(ns: Negotiation[], botName: string): string {
+  return [
+    `${ns.length} sellers at once. The first deal ends the others.`,
+    ...ns.map((n, i) =>
+      [`${i + 1}. ${quotedTitle(n.title)}: ${mandateTerms(n)}`, ...listingReason(n)].join("\n"),
+    ),
+    `Inside these, ${botName} sends and agrees on its own; outside them, it asks you. A note can change the numbers of each.`,
+  ].join("\n\n");
 }
 
 /** What a mandate made from a note allows beyond the one approved. */
