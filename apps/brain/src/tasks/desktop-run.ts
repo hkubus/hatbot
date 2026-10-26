@@ -409,6 +409,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         `Couldn't open ${d.bots.nameOf(task.botId)}'s browser profile: ${(err as Error).message}`,
       );
     }
+    await tasks.logins?.signIn(task.botId, agent, signal);
   };
   const release = () => {
     if (!holding) return;

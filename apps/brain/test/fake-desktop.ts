@@ -12,6 +12,7 @@ import type {
   FetchResult,
   SetFiles,
   ShellResult,
+  SignIn,
 } from "@hatbot/shared/desktop";
 import { uploadPage } from "@hatbot/shared/desktop";
 import { type DesktopAgent, DesktopError } from "../src/desktop/client";
@@ -38,6 +39,12 @@ export class FakeDesktop implements DesktopAgent {
 
   async useProfile(botId: string) {
     if (this.profiles.at(-1) !== botId) this.profiles.push(botId);
+    return true;
+  }
+  signIns: SignIn[] = [];
+  async signIn(o: SignIn) {
+    if (this.locked) throw new DesktopError("The owner has control of the desktop.", 423);
+    this.signIns.push(o);
     return true;
   }
   resets = 0;

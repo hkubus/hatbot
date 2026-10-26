@@ -9,6 +9,7 @@ import {
   type BrowserInspect,
   type LiveInput,
   type SetFiles,
+  type SignIn,
   uploadPage,
 } from "@hatbot/shared/desktop";
 import { Browser, BrowserError } from "./browser";
@@ -70,6 +71,8 @@ const FEATURES = [
   "gates",
   // Files staged for a task go on an add-listing page's file input.
   "upload",
+  // A login Scout shares goes in a bot's profile.
+  "sessions",
 ];
 
 // The display may still be starting (Xvnc restarting, say): wait for it rather than exit and be restarted.
@@ -106,6 +109,7 @@ const LOCKED = new Set([
   "POST /browser/reset",
   "PUT /uploads",
   "POST /browser/files",
+  "POST /browser/session",
 ]);
 
 const authorized = (req: Request) => {
@@ -312,6 +316,15 @@ const server = Bun.serve<{ off?: () => void; behind?: Uint8Array; input?: boolea
         case "POST /browser/profile": {
           const { id } = (await req.json()) as { id: string };
           return json({ profile: await serial(() => useProfile(id, stateDir ?? null, browser)) });
+        }
+        case "POST /browser/session": {
+          const { profile, state } = (await req.json()) as SignIn;
+          return json(
+            await serial(async () => {
+              await useProfile(String(profile), stateDir ?? null, browser);
+              return browser.signIn(state);
+            }),
+          );
         }
         case "POST /browser/reset":
           return json(await serial(() => browser.reset()));

@@ -143,6 +143,20 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
     schema: z.object({ id: z.number().int().positive() }),
     brainOnly: true,
   },
+  // Marketplace logins the owner shared: the brain puts them in the bot's browser (desktop/logins.ts).
+  // They sign a browser in, so the model never sees them.
+  {
+    name: "scout_shared_sessions",
+    description: "The marketplace logins the owner shared.",
+    schema: z.object({}),
+    brainOnly: true,
+  },
+  {
+    name: "scout_shared_session",
+    description: "One shared marketplace login.",
+    schema: z.object({ marketplace: Marketplace }),
+    brainOnly: true,
+  },
 ];
 
 const FlipListed = z.object({

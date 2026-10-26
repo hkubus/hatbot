@@ -2,12 +2,14 @@
 // browser-level connection, a session per tab, and element references from page.ts. Input goes in through CDP, so
 // it reaches the right tab whatever window is on top.
 import { join } from "node:path";
-import type {
-  AgentElement,
-  BrowserResult,
-  BrowserState,
-  BrowserStateChange,
-  BrowserTab,
+import {
+  type AgentElement,
+  type BrowserResult,
+  type BrowserState,
+  type BrowserStateChange,
+  type BrowserTab,
+  type SessionState,
+  sessionHost,
 } from "@hatbot/shared/desktop";
 import { comboParts } from "@hatbot/shared/keys";
 import { between, keyGap, type Point, path } from "./human";
@@ -123,6 +125,10 @@ class Connection {
 
   on(fn: Listener) {
     this.listeners.add(fn);
+  }
+
+  off(fn: Listener) {
+    this.listeners.delete(fn);
   }
 
   private receive(raw: string) {
@@ -1255,6 +1261,102 @@ export class Browser {
     return this.run<Inspected | null>(t, INSPECT, o)
       .then((el) => this.intoFrames(t, el))
       .catch(() => null);
+  }
+
+  /**
+   * Signs the running profile in with a login from Scout: its cookies, and each origin's localStorage,
+   * written in a background tab whose page is answered here, so the marketplace isn't asked for it.
+   * Anything for a site that isn't a marketplace refuses the whole login.
+   */
+  async signIn(state: SessionState): Promise<{ cookies: number; origins: number }> {
+    const cookies = Array.isArray(state?.cookies) ? state.cookies : [];
+    const origins = (Array.isArray(state?.origins) ? state.origins : []).filter(
+      (o) => o.localStorage?.length,
+    );
+    if (cookies.length > 500 || origins.length > 50)
+      throw new BrowserError("That login is too big.");
+    for (const c of cookies)
+      if (typeof c.domain !== "string" || !sessionHost(c.domain))
+        throw new BrowserError(
+          "A login from Scout may only be for OLX, Allegro Lokalnie or Vinted.",
+        );
+    const pages = origins.map((o) => {
+      let u: URL;
+      try {
+        u = new URL(o.origin);
+      } catch {
+        throw new BrowserError("A login from Scout has an origin that isn't an address.");
+      }
+      if (u.protocol !== "https:" || !sessionHost(u.hostname))
+        throw new BrowserError(
+          "A login from Scout may only be for OLX, Allegro Lokalnie or Vinted.",
+        );
+      return { origin: u.origin, items: o.localStorage ?? [] };
+    });
+    await this.ready();
+    if (cookies.length)
+      await this.cdp.send("Storage.setCookies", {
+        cookies: cookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          secure: c.secure,
+          httpOnly: c.httpOnly,
+          sameSite: c.sameSite,
+          ...(typeof c.expires === "number" && c.expires > 0 ? { expires: c.expires } : {}),
+        })),
+      });
+    for (const p of pages) await this.writeStorage(p.origin, p.items);
+    return { cookies: cookies.length, origins: pages.length };
+  }
+
+  private async writeStorage(origin: string, items: { name: string; value: string }[]) {
+    const { targetId } = await this.cdp.send<{ targetId: string }>("Target.createTarget", {
+      url: "about:blank",
+      background: true,
+    });
+    let answer: Listener | null = null;
+    try {
+      const { sessionId: s } = await this.cdp.send<{ sessionId: string }>("Target.attachToTarget", {
+        targetId,
+        flatten: true,
+      });
+      answer = (method, p, sessionId) => {
+        if (method !== "Fetch.requestPaused" || sessionId !== s) return;
+        void this.cdp
+          .send(
+            "Fetch.fulfillRequest",
+            {
+              requestId: p.requestId,
+              responseCode: 200,
+              responseHeaders: [{ name: "Content-Type", value: "text/html" }],
+              body: Buffer.from("<!doctype html><title></title>").toString("base64"),
+            },
+            s,
+          )
+          .catch(() => {});
+      };
+      this.cdp.on(answer);
+      await this.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, s);
+      await this.cdp.send("Page.navigate", { url: `${origin}/` }, s);
+      const write = `(() => { if (location.origin !== ${JSON.stringify(origin)}) return false; for (const [k, v] of ${JSON.stringify(items.map((i) => [String(i.name), String(i.value)]))}) localStorage.setItem(k, v); return true; })()`;
+      for (let tries = 0; ; tries++) {
+        const r = await this.cdp
+          .send<{ result: { value?: boolean } }>(
+            "Runtime.evaluate",
+            { expression: write, returnByValue: true },
+            s,
+          )
+          .catch(() => null);
+        if (r?.result.value) return;
+        if (tries >= 50) throw new BrowserError(`Couldn't open ${origin} to sign in there.`);
+        await Bun.sleep(100);
+      }
+    } finally {
+      if (answer) this.cdp.off(answer);
+      await this.cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+    }
   }
 
   /**

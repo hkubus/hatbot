@@ -226,3 +226,34 @@ export function uploadPage(url: string | null | undefined): (typeof UPLOAD_PAGES
     ) ?? null
   );
 }
+
+/** A cookie in Playwright's storage state, as Scout keeps a marketplace login. */
+export type SessionCookie = {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  /** Seconds since the epoch; -1 or none for a session cookie. */
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "Strict" | "Lax" | "None";
+};
+
+/** Playwright's storage state: a marketplace login Scout shares. */
+export type SessionState = {
+  cookies: SessionCookie[];
+  origins: { origin: string; localStorage?: { name: string; value: string }[] }[];
+};
+
+/** POST /browser/session: a login from Scout, put in `profile`'s browser. */
+export type SignIn = { profile: string; state: SessionState };
+
+/** The sites a login from Scout may be for: the marketplaces, and allegro.pl, which signs Allegro Lokalnie in. */
+export const SESSION_HOSTS = ["olx.pl", "allegrolokalnie.pl", "allegro.pl", "vinted.pl"] as const;
+
+/** Whether a cookie's domain or an origin's host is one of SESSION_HOSTS or under one. */
+export function sessionHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\.+/, "");
+  return SESSION_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
+}

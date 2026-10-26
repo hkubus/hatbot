@@ -11,6 +11,7 @@ Built, but not yet deployed or tried live:
 - **Boxes** (2026-10-18 and 2026-10-19). Not tried yet: a real `hatbot-boxes` guest under systemd (the units, polkit, DynamicUser, the firewall, and the runner reading its secrets inside `hatbox@`'s sandbox); `box_look` drawn by `hatbot-render` under systemd; boxes in the iOS app on a device; `hatbox.ask` and `hatbox.feed` against a brain; and the model making a box, a server box, or one that uses ask, send, feed, notifications or secrets.
 - **Hand-offs in the other bot's chat, and the code bot** (2026-10-19).
 - **Hatbot handing the other bots their work** (2026-10-20).
+- **Logins from Scout** (2026-10-26): a marketplace login you share in Scout (Settings → Marketplace accounts → Share with Hatbot) goes in Haggler's browser as its task gets the screen. Not tried against a real marketplace: whether a login captured on another computer, with another address and browser, still works there or asks to verify.
 - **T3 Code** in place of Claude Code (2026-10-22): connecting it, `t3_code` in a real project, and a box made through `box_t3`. Not tried against a real T3 Code: what `t3_thread_launch` answers, and whether item positions in `t3_thread_read` start at 0 or 1.
 
 ## 2. Small gaps
@@ -37,6 +38,8 @@ This goes in Scout's own repo, as a handoff there, in the shapes the brain reads
 - **`scout_comparables {listingKey}`** → `comparables|listings|items[].{title, price, url}`: live alternatives for the same item, the fallback and honest leverage.
 - **`scout_listing_detail`** gains days listed, price drops, relists, the seller's other listings and the negotiable flag, and `live: true` (P1-3), to check the listing before an offer and before paying. The brain already reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`.
 - **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions (N3).
+
+For logins (built in Scout, 2026-10-26): **`scout_shared_sessions`** → `sessions[].{marketplace, label, revision}` and **`scout_shared_session {marketplace}`** → `{revision, storageState}`, Playwright storage state. Only connected apps get them, only for the sessions you shared, and the brain alone calls them (`desktop/logins.ts`); desktop-agent takes cookies only for the marketplaces' sites.
 
 One write tool:
 - **`scout_record_outcome {listingKey, outcome, price, asking, currency}`**: the final price, kept apart from Scout's asking-price statistics, as flips are, and shown as a figure of its own ("you pay about 84% of asking for GPUs on OLX").
