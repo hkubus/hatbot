@@ -144,7 +144,10 @@ export function NegotiationPage({ id }: { id: number }) {
                   <span className="t">{timeOrDay(x.sentAt ?? x.createdAt)}</span>
                   <div className="tl-text">
                     <div>
-                      <b>{x.direction === "in" ? "Seller" : bot}</b> {x.text}
+                      <b>
+                        {x.direction === "in" ? "Seller" : x.direction === "owner" ? "You" : bot}
+                      </b>{" "}
+                      {x.text}
                     </div>
                     {OUT[x.status] && (
                       <div className="muted">

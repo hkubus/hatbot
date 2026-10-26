@@ -37,6 +37,7 @@ export function negotiationText(n: Negotiation): string {
           : "Writing to the seller.";
       }
       if (last.direction === "in") return `The seller wrote ${quote(last.text)}`;
+      if (last.direction === "owner") return `You wrote ${quote(last.text)}`;
       if (last.status === "sending") return `Sending ${quote(last.text)}`;
       if (last.status === "unconfirmed") return `Sent, but not confirmed: ${quote(last.text)}`;
       return `Sent ${quote(last.text)}`;

@@ -60,15 +60,15 @@ export type NegotiationStatus =
 export type NegotiationMessage = {
   id: number;
   negotiationId: number;
-  /** in: the seller's. out: Hatbot's. */
-  direction: "in" | "out";
+  /** in: the seller's. out: Hatbot's. owner: what the owner wrote to the seller themselves. */
+  direction: "in" | "out" | "owner";
   text: string;
   offer: number | null;
   agree: boolean;
   stated: Stated | null;
   /**
    * out: sending (its desktop task is running), sent, unconfirmed (clicked, but the composer didn't
-   * clear), failed (never sent). in: received.
+   * clear), failed (never sent). in and owner: received.
    */
   status: "sending" | "sent" | "unconfirmed" | "failed" | "received";
   /** The desktop task that sends it. */

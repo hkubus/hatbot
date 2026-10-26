@@ -785,8 +785,10 @@ test("a seller's reply that came meanwhile stops the send", async () => {
   await sendOffer(t, n);
   await t.tasks.idle();
   expect(clicks(t)).toBe(0);
+  // The first line isn't the bot's: the owner wrote it.
   expect(t.negotiations.messages(n.id).map((m) => [m.direction, m.status])).toEqual([
     ["out", "failed"],
+    ["owner", "received"],
     ["in", "received"],
   ]);
 });
@@ -930,6 +932,39 @@ test("a seller asking whether it's a bot holds the negotiation for you to answer
   const again = await waitFor(() => pending()[0]);
   t.approvals.decide(again.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("what you write to the seller yourself is recorded as yours, once, and the bot reads it", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  const ours =
+    "Dzień dobry, czy przyjmie Pan 1060 zł za kartę? Mogę odebrać jeszcze dziś wieczorem.";
+  const id = t.negotiations.claimSend(n, { text: ours, offer: 1060, agree: false, stated: null });
+  t.db.query("UPDATE negotiation_messages SET status = 'sent' WHERE id = ?").run(id);
+  const conversation = [
+    // The page cut the bot's message short: still the bot's.
+    { from: "us", text: ours.slice(0, 60) },
+    { from: "seller", text: "Czy rozmawiam z botem?" },
+    { from: "us", text: "Piszę przez asystenta, ale to ja kupuję. Odbiorę dziś." },
+  ];
+  const read = async () => {
+    t.taskModel.script.push(
+      { content: [toolUse("record_conversation", { messages: conversation })] },
+      finish(),
+    );
+    await t.negotiations.check(t.negotiations.get(n.id) as Negotiation, call());
+    await t.tasks.idle();
+  };
+  await read();
+  await read();
+  expect(t.negotiations.messages(n.id).map((m) => m.direction)).toEqual(["out", "in", "owner"]);
+  const got = await runPluginTool(
+    named(negotiateTools(t), "negotiate_get"),
+    { negotiation: n.id },
+    call(),
+  );
+  expect(JSON.stringify(got)).toContain("The owner: Piszę przez asystenta");
 });
 
 test("the bot question is caught however it's asked, and a bot that's the item isn't one", () => {

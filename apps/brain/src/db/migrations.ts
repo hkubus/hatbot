@@ -910,4 +910,27 @@ export const migrations: string[] = [
     '- If a seller asks whether you''re a bot, don''t deny it: say you''re an assistant writing for the buyer, and carry on. Bluffing covers our position (price, other offers, timing), not who is writing.',
     '- If a seller asks whether you''re a bot or an AI, don''t answer it: that''s the owner''s. It holds the negotiation for them; if it doesn''t, tell the owner, quoting the question, and wait. Never claim to be a person either: bluffing covers our position (price, other offers, timing), not who is writing.');
   `,
+  // 55: what the owner wrote to the seller themselves, read off the conversation like the seller's.
+  `
+  ${REBUILD}
+  CREATE TABLE negotiation_messages_new (
+    id INTEGER PRIMARY KEY,
+    negotiation_id INTEGER NOT NULL REFERENCES negotiations(id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('in', 'out', 'owner')),
+    text TEXT NOT NULL,
+    offer REAL,
+    agree INTEGER NOT NULL DEFAULT 0,
+    stated TEXT,
+    status TEXT NOT NULL CHECK (status IN ('sending', 'sent', 'unconfirmed', 'failed', 'received')),
+    market_id TEXT,
+    created_at TEXT NOT NULL,
+    sent_at TEXT
+  );
+  INSERT INTO negotiation_messages_new SELECT * FROM negotiation_messages;
+  DROP TABLE negotiation_messages;
+  ALTER TABLE negotiation_messages_new RENAME TO negotiation_messages;
+  CREATE INDEX negotiation_messages_negotiation ON negotiation_messages (negotiation_id, id);
+  CREATE UNIQUE INDEX negotiation_messages_market ON negotiation_messages (negotiation_id, market_id)
+    WHERE market_id IS NOT NULL;
+  `,
 ];

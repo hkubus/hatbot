@@ -83,7 +83,7 @@ type Row = {
 type MessageRow = {
   id: number;
   negotiation_id: number;
-  direction: "in" | "out";
+  direction: NegotiationMessage["direction"];
   text: string;
   offer: number | null;
   agree: number;
@@ -842,7 +842,7 @@ export class Negotiations {
       conversationId: n.conversationId ?? undefined,
       kind: "other",
       summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
-      reason: `The seller asked whether they're writing to a bot: “${clip(text)}”\nThat's yours to answer: reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on, or deny to end the negotiation.`,
+      reason: `The seller asked whether they're writing to a bot: “${clip(text)}”\nThat's yours to answer: reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself, and ${bot} reads what you wrote. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on, or deny to end the negotiation.`,
     });
     const before = this.held(n) ? n.approvalId : null;
     this.update(n.id, { approval_id: approval.id, hold: "bot" });
@@ -935,8 +935,17 @@ export class Negotiations {
     if (!row || !n)
       return { text: "This task has no negotiation.", stale: false, alreadySent: false };
     const stored = new Map<string, number>();
-    for (const m of this.messages(n.id))
-      if (m.direction === "in") stored.set(keyOf(m.text), (stored.get(keyOf(m.text)) ?? 0) + 1);
+    const owners = new Map<string, number>();
+    const bots: string[] = [];
+    for (const m of this.messages(n.id)) {
+      const k = keyOf(m.text);
+      if (m.direction === "in") stored.set(k, (stored.get(k) ?? 0) + 1);
+      else if (m.direction === "owner") owners.set(k, (owners.get(k) ?? 0) + 1);
+      else bots.push(k);
+    }
+    // A page may cut a long message short, so the bot's own words, cut or whole, are still its.
+    const botWrote = (k: string) =>
+      bots.some((b) => b === k || (k.length >= 20 && (b.includes(k) || k.includes(b))));
     const outgoing = row.message_id ? this.message(row.message_id) : null;
     // The same words sent earlier in this negotiation don't show this one went.
     const sentBefore = new Set(
@@ -967,6 +976,15 @@ export class Negotiations {
             this.setStatus(outgoing.id, "sent");
           }
         }
+        const had = owners.get(key) ?? 0;
+        if (had > 0) owners.set(key, had - 1);
+        else if (!botWrote(key))
+          this.d.db
+            .query(
+              `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at)
+               VALUES (?, 'owner', ?, 'received', ?)`,
+            )
+            .run(n.id, collapse(m.text).slice(0, 4000), this.now());
         return;
       }
       const seen = stored.get(key) ?? 0;
