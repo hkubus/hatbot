@@ -169,7 +169,7 @@ export const RunTaskInput = z.object({
     .enum(["medium", "high"])
     .optional()
     .describe(
-      'Leave out for routine work. "medium" for writing or changing code; "high" when the owner asks for it or an earlier attempt failed',
+      'Leave out for routine work. "medium" for writing or changing code, or a long search; "high" when the owner asks for it or an earlier attempt failed',
     ),
 });
 

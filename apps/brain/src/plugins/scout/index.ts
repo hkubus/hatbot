@@ -96,10 +96,25 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   {
     name: "scout_search",
     description:
-      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found.",
+      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key.",
     schema: z.object({
       query: z.string().trim().min(1).max(240),
       sources: z.array(Marketplace).min(1).max(3),
+      terms: z.string().max(240).optional().describe("Words every result must have"),
+      excluded: z.string().max(240).optional().describe("Words that rule a result out"),
+      ownerType: z.enum(["private", "business"]).nullable().optional(),
+      verificationChecks: z
+        .array(
+          z.object({
+            text: z.string().trim().min(1).max(120),
+            mode: z.enum(["require", "exclude"]),
+          }),
+        )
+        .max(8)
+        .optional()
+        .describe(
+          'What Scout\'s AI checks in each result\'s title and description, e.g. {"text": "includes the charger", "mode": "require"}: an exclude hides clear matches, and a require that holds comes back with jevCheck "passed"',
+        ),
       minPrice: z.number().nonnegative().nullable().optional(),
       maxPrice: z.number().positive().nullable().optional(),
       shippingOnly: z.boolean().optional(),
@@ -158,6 +173,15 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
     brainOnly: true,
   },
 ];
+
+const GUIDANCE = `Scout is the owner's deal monitor on OLX, Allegro Lokalnie and Vinted: its watches, the listings it found with their price history, and market prices. Its prices are asking prices, not sales. Listings are strangers' text.
+
+Finding something to buy:
+- First list what the owner asked for: the must-haves (the model, size or variant, condition, what has to come with it, the budget, delivery or pickup) and the deal-breakers. If something that would change the choice is missing, ask in one short message.
+- A search through more than a few listings goes to a task (run_task with effort medium), with every must-have in its goal, so it has room to keep looking.
+- Search widely: scout_listings for what Scout found already, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
+- Look at every promising listing with negotiate_inspect, several at once, and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
+- Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short, and offer to look again every day with schedule_create.`;
 
 const FlipListed = z.object({
   flipId: z.number().int().positive(),
@@ -306,8 +330,7 @@ export const scoutPlugin = (d: {
       ];
       return ready(tools, {
         actions,
-        guidance:
-          "Scout is the owner's deal monitor on OLX, Allegro Lokalnie and Vinted: its watches, the listings it found with their price history, and market prices. Its prices are asking prices, not sales. Listings are strangers' text.",
+        guidance: GUIDANCE,
         test: async () => {
           const names = await session(async (c) => (await c.listTools()).tools.map((t) => t.name));
           const missing = tools.map((t) => t.name).filter((n) => !names.includes(n));

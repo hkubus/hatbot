@@ -126,7 +126,12 @@ export async function inspect(
   const location = str(listing.location) ?? str(snapshot.location);
   if (condition) lines.push(`Condition: ${condition}`);
   if (location) lines.push(`Location: ${location}`);
-  const scoutPhotos = [...urls(d.photos), ...urls(d.images), ...urls(listing.imageUrl)];
+  const scoutPhotos = [
+    ...urls(d.photos),
+    ...urls(d.images),
+    ...urls(listing.image),
+    ...urls(listing.imageUrl),
+  ];
 
   let page = "";
   let photos = scoutPhotos;
