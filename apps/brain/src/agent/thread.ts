@@ -458,7 +458,7 @@ export class Thread {
     });
     // Writing again instead of answering an approval moves on without it.
     if (this.waiting !== null) this.d.approvals?.cancel(this.waiting);
-    if (this.parent() !== null) this.d.chats?.reopenThread(this.conversationId);
+    if (this.parent() !== null) this.d.chats?.ownerWrote(this.conversationId);
     // Stopping can't wait its turn behind the reply it stops.
     if (command?.name === "stop") {
       this.stop(command.arg, message);
@@ -1611,7 +1611,7 @@ export class Thread {
       .filter((c) => !c.resolvedAt || c.resolvedAt >= since);
     if (!shown.length) return "";
     const line = (c: (typeof shown)[number]) =>
-      `#${c.id} "${c.title ?? ""}": ${c.resolvedAt ? `resolved, ${c.outcome ?? "by the owner"}` : "open"}`;
+      `#${c.id} "${c.title ?? ""}": ${c.resolvedAt ? `resolved, ${c.outcome ?? "by the owner"}` : c.needsYou ? "open, waiting for the owner" : "open"}`;
     const plain = shown.filter((c) => !chats.threadTaint(c.id));
     const read = shown.filter((c) => chats.threadTaint(c.id));
     return [

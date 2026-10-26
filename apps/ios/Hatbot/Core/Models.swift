@@ -512,6 +512,8 @@ struct Conversation: Codable, Identifiable, Equatable, Sendable {
   var outcome: String?
   /// A thread's latest message, cut short.
   var latest: String?
+  /// A thread its bot marked as needing your answer, until you write in it or it's resolved.
+  var needsYou: Bool?
 
   var isThread: Bool { kind == .thread && parentId != nil }
 }

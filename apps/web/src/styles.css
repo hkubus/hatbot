@@ -4512,6 +4512,27 @@ a.thread-card:hover {
   background: var(--primary);
   color: var(--on-primary);
 }
+.thread-card.attn {
+  border-color: transparent;
+  background: var(--attention-soft);
+  color: var(--on-attention-soft);
+}
+a.thread-card.attn:hover {
+  background: color-mix(in srgb, var(--attention-soft), var(--text) 6%);
+}
+.thread-card.attn > svg.i {
+  color: inherit;
+}
+.tb-btn > .tnum.attn {
+  min-width: 18px;
+  padding: 0 var(--sp-xs);
+  border-radius: var(--r-pill);
+  background: var(--attention);
+  color: var(--on-attention);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  text-align: center;
+}
 .thread-list {
   display: flex;
   flex-direction: column;

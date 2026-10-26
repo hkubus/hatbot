@@ -742,6 +742,13 @@ final class AppStore {
 
   // MARK: Threads
 
+  /// Its bot marked it, or an approval or a question waits in it.
+  func threadNeedsYou(_ t: Conversation) -> Bool {
+    t.needsYou == true
+      || approvals.values.contains { $0.status == .pending && $0.conversationId == t.id }
+      || questions.values.contains { $0.status == .pending && $0.conversationId == t.id }
+  }
+
   func loadThreads(_ parentId: Int) async throws {
     let list: [Conversation] = try await api.get("/conversations/\(parentId)/threads")
     for (id, t) in threads where t.parentId == parentId { threads[id] = nil }

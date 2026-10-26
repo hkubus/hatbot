@@ -234,3 +234,46 @@ test("you open a thread on a task's card once the task has ended", async () => {
     latest: "Both backups passed.",
   });
 });
+
+test("a thread a bot marks as needing you shows so until you write in it, and a task's mark notifies you", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("thread_post", { key: "backups", message: "Retry them?", needs_you: true }),
+      ],
+    },
+    finish(),
+  ]);
+  const t = await testApp(
+    new FakeModel([{ content: [text("Hi.")] }, { content: [text("Retrying.")] }]),
+    work,
+  );
+  const { conversation } = t.chats.openThread({
+    botId: "hatbot",
+    title: "Backups",
+    message: "Failed.",
+    key: "backups",
+  });
+  const id = conversation.id;
+  expect(conversation.needsYou).toBe(false);
+  const task = scheduled(t, "Check");
+  await ended(t, task.id);
+  expect(t.chats.get(id)?.needsYou).toBe(true);
+  expect(t.notifier.sent.map((n) => n.click)).toContain(`https://hatbot.test/chat/1?thread=${id}`);
+
+  // It comes first among the open threads, and the chat knows it's waiting.
+  t.advance(60_000);
+  t.chats.openThread({ botId: "hatbot", title: "Other", message: "News." });
+  expect(t.chats.threads(1)[0]?.id).toBe(id);
+  await t.thread.post("hi").done;
+  expect(lastUserText(t.model.requests.at(-1))).toContain(
+    `#${id} \\"Backups\\": open, waiting for the owner`,
+  );
+
+  await t.chats.thread(id)?.post("yes, retry").done;
+  expect(t.chats.get(id)?.needsYou).toBe(false);
+
+  const asked = t.chats.openThread({ botId: "hatbot", title: "Q", message: "?", needsYou: true });
+  expect(asked.conversation.needsYou).toBe(true);
+  expect(t.chats.resolveThread(asked.conversation.id, null)?.needsYou).toBe(false);
+});

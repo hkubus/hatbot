@@ -118,6 +118,13 @@ export type ToolContext = {
   ) => Promise<{ content: string; isError: boolean }>;
 };
 
+export const NeedsYou = z
+  .boolean()
+  .optional()
+  .describe(
+    "True when you need the owner's answer or view before you go on. The thread shows as needing them until they write in it. Not for news or a report.",
+  );
+
 export const ThreadOpenInput = z.object({
   title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
   message: z
@@ -134,6 +141,7 @@ export const ThreadOpenInput = z.object({
     .describe(
       'One thread per subject, e.g. "backups": while one with this key is open, your message goes there instead',
     ),
+  needs_you: NeedsYou,
 });
 
 export const DesktopTaskInput = z.object({
@@ -1501,13 +1509,14 @@ export const TOOLS = [
     name: "thread_open",
     description: `Open a thread: a side conversation with the owner in your chat, on one topic, apart from this one. For something that needs its own back-and-forth (findings to go through, a decision with several parts) and would crowd this chat. Not for a quick answer, nor for what the owner is talking about now. Your message opens it: say what it's about and what you need from them. They answer there when they can, and you reply there. At most ${MAX_OPEN_THREADS} open at once.`,
     schema: ThreadOpenInput,
-    run: async ({ title, message, key }, { chats, bot, tainted }) => {
+    run: async ({ title, message, key, needs_you }, { chats, bot, tainted }) => {
       if (!chats || !bot) return "Threads aren't available here.";
       const { conversation, opened } = chats.openThread({
         botId: bot.id,
         title,
         message,
         key,
+        needsYou: needs_you,
         taintedBy: chatTaint(tainted?.()) || null,
       });
       return opened

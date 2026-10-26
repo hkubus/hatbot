@@ -33,6 +33,7 @@ import { useSyncExternalStore } from "react";
 import { ApiError, api } from "./api";
 import { withDelta } from "./delta";
 import type { Toast } from "./toast";
+import { needsYouIn } from "./waiting";
 
 /** A thread open beside the chat. */
 type Pane = { conversationId: number; messages: ThreadMessage[]; hasEarlier: boolean };
@@ -791,6 +792,10 @@ export const recording = (s: State) =>
 /** Messages you haven't seen: each chat counts them all, the ids are only each chat's newest. */
 export const unreadCount = (s: State) =>
   s.conversations.length ? s.conversations.reduce((n, c) => n + c.unread, 0) : s.unread.length;
+
+/** A thread its bot marked as needing you, or one with an approval or a question waiting in it. */
+export const threadNeedsYou = (s: State, t: Conversation | undefined) =>
+  !!t && needsYouIn(t, [...Object.values(s.approvals), ...Object.values(s.questions)]);
 
 export const needsYou = (s: State) =>
   Object.values(s.approvals).filter((a) => a.status === "pending").length +
