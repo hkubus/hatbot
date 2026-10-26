@@ -901,4 +901,13 @@ export const migrations: string[] = [
     PRIMARY KEY (bot_id, marketplace)
   );
   `,
+  // 54: Haggler's instructions from its template, where they're still as made: messages are brief, and
+  // whether it's a bot is the owner's to answer.
+  `
+  UPDATE bots SET instructions = replace(replace(instructions,
+    'Write as a polite private buyer, in the seller''s language (Polish on OLX and Allegro Lokalnie), in one short paragraph, with amounts in digits.',
+    'Keep each message brief, a sentence or two, as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits.'),
+    '- If a seller asks whether you''re a bot, don''t deny it: say you''re an assistant writing for the buyer, and carry on. Bluffing covers our position (price, other offers, timing), not who is writing.',
+    '- If a seller asks whether you''re a bot or an AI, don''t answer it: that''s the owner''s. It holds the negotiation for them; if it doesn''t, tell the owner, quoting the question, and wait. Never claim to be a person either: bluffing covers our position (price, other offers, timing), not who is writing.');
+  `,
 ];

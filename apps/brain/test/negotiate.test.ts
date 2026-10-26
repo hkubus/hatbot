@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Approval, Mandate, Negotiation, Task } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { askedIfBot } from "../src/negotiate/bot-question";
 import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
 import { mcpPlugin } from "../src/plugins/mcp";
@@ -904,6 +905,59 @@ test("a seller who doesn't move in three rounds holds the negotiation; only roun
   expect(t.approvals.get(again.id)?.status).toBe("cancelled");
   t.approvals.decide(scam.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("a seller asking whether it's a bot holds the negotiation for you to answer", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  const pending = () => t.approvals.list(true);
+  const send = named(negotiateTools(t), "negotiate_send");
+  const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
+  await readSeller(t, n, "Mogę zejść do 1450 zł. A tak w ogóle, czy rozmawiam z botem?");
+  const hold = await waitFor(() => pending()[0]);
+  // Not a scam: it can be approved from the lock screen.
+  expect(hold.kind).toBe("other");
+  expect(hold.reason).toContain("czy rozmawiam z botem");
+  expect(verdictFor(send, input, call(), true).action).toBe("block");
+  // Asked again meanwhile, it's the same question.
+  await readSeller(t, n, "Halo, jesteś AI?");
+  expect(pending()).toEqual([hold]);
+  t.approvals.decide(hold.id, "approve", "web");
+  expect(verdictFor(send, input, call(), true).action).toBe("allow");
+
+  await readSeller(t, n, "To bot?");
+  const again = await waitFor(() => pending()[0]);
+  t.approvals.decide(again.id, "deny", "web");
+  await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("the bot question is caught however it's asked, and a bot that's the item isn't one", () => {
+  const title = "Karta graficzna RTX 3070 8GB";
+  for (const text of [
+    "Czy jesteś botem?",
+    "Czy to bot?",
+    "To jakiś bot odpisuje?",
+    "Pisze Pan sam, czy to ChatGPT?",
+    "Czy piszę z człowiekiem?",
+    "Pan jest prawdziwą osobą?",
+    "Człowiek czy bot?",
+    "Ok, 1300. Jesteś A.I.?",
+    "Bot?",
+    "Are you a bot?",
+    "Am I talking to a human?",
+  ])
+    expect([text, askedIfBot(text, title)]).toEqual([text, true]);
+  for (const text of [
+    "Czy to ma funkcje AI?",
+    "Czy jest Pan zainteresowany odbiorem?",
+    "Czy to dla człowieka dorosłego?",
+    "Cena 1500 zł, jak w ogłoszeniu.",
+  ])
+    expect([text, askedIfBot(text, title)]).toEqual([text, false]);
+  expect(askedIfBot("Jest pan pewny, że robot sam jeździ?", "Robot sprzątający Roomba")).toBe(
+    false,
+  );
 });
 
 test("after a deal the seller's messages are read but go to you, and a dispute says so", async () => {

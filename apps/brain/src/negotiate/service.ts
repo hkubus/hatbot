@@ -26,6 +26,7 @@ import { runPluginTool, verdictFor } from "../plugins/registry";
 import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
+import { askedIfBot } from "./bot-question";
 import { collapse, namesListing, type SendGate, sameAddress, sameHost } from "./gate";
 import {
   applyNote,
@@ -121,8 +122,9 @@ const mandateOf = (json: string): Mandate => {
 };
 
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+const clip = (text: string) => (text.length > 500 ? `${text.slice(0, 499)}…` : text);
 
-type Hold = "scam" | "stalled";
+type Hold = "scam" | "stalled" | "bot";
 const HOLD_KINDS: Approval["kind"][] = ["injection_warning", "other"];
 /** After a deal nothing more goes to the seller, so what they write is the owner's. */
 const DEALT: NegotiationStatus[] = ["agreed", "paid", "received"];
@@ -132,7 +134,7 @@ export type ConversationReport = { from: "seller" | "us"; text: string }[];
 export type Recorded = { text: string; stale: boolean; alreadySent: boolean };
 
 const FINAL_TASK = ["done", "failed", "cancelled"];
-export const MAX_TEXT = 1000;
+export const MAX_TEXT = 400;
 
 export class Negotiations {
   readonly clock: () => number;
@@ -781,9 +783,12 @@ export class Negotiations {
     if (n.status !== "open" || !n.approvalId) return null;
     const a = this.d.approvals.get(n.approvalId);
     if (!a || !HOLD_KINDS.includes(a.kind) || a.status !== "pending") return null;
-    return this.holdOf(n.id) === "stalled"
-      ? `Negotiation #${n.id} is held: the seller hasn't moved in ${STALL_ROUNDS} rounds, and the owner decides whether to carry on. Don't message the seller; wait for the owner. If the seller sold it or took your offer, you may still close it.`
-      : `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
+    const hold = this.holdOf(n.id);
+    if (hold === "stalled")
+      return `Negotiation #${n.id} is held: the seller hasn't moved in ${STALL_ROUNDS} rounds, and the owner decides whether to carry on. Don't message the seller; wait for the owner. If the seller sold it or took your offer, you may still close it.`;
+    if (hold === "bot")
+      return `Negotiation #${n.id} is held: the seller asked whether they're writing to a bot, which is the owner's to answer. Don't answer it or message the seller; wait for the owner. If the seller sold it, you may still close it.`;
+    return `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
   }
 
   /** A scam warning waits for the owner, who ends it or carries on; closing would clear it. */
@@ -800,7 +805,7 @@ export class Negotiations {
   }
 
   private hold(n: Negotiation, text: string, signals: string[]) {
-    const quoted = text.length > 500 ? `${text.slice(0, 499)}…` : text;
+    const quoted = clip(text);
     const approval = this.d.approvals.create({
       taskId: null,
       botId: n.botId,
@@ -828,6 +833,22 @@ export class Negotiations {
     this.update(n.id, { approval_id: approval.id, hold: "stalled", stalled_at: at });
   }
 
+  /** Like a stall it can be approved from anywhere, and like a scam it takes a stall's place. */
+  private holdAsked(n: Negotiation, text: string) {
+    const bot = this.d.bots.nameOf(n.botId);
+    const approval = this.d.approvals.create({
+      taskId: null,
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      kind: "other",
+      summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
+      reason: `The seller asked whether they're writing to a bot: “${clip(text)}”\nThat's yours to answer: reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on, or deny to end the negotiation.`,
+    });
+    const before = this.held(n) ? n.approvalId : null;
+    this.update(n.id, { approval_id: approval.id, hold: "bot" });
+    if (before) this.d.approvals.cancel(before);
+  }
+
   async holdDecided(a: Approval) {
     const [n] = this.negotiations(
       this.d.db
@@ -841,7 +862,9 @@ export class Negotiations {
       return this.update(n.id, { approval_id: null });
     const why = stall
       ? `The seller didn't move in ${STALL_ROUNDS} rounds`
-      : "The seller's message looked like a scam";
+      : this.holdOf(n.id) === "bot"
+        ? "The seller asked whether they were writing to a bot"
+        : "The seller's message looked like a scam";
     await this.close(
       n,
       "abandoned",
@@ -855,7 +878,7 @@ export class Negotiations {
   /** The bot doesn't answer after a deal, so the owner hears what the seller wrote. */
   private afterDeal(n: Negotiation, texts: string[]) {
     const price = n.agreedPrice !== null ? ` at ${zl(n.agreedPrice, n.mandate.currency)}` : "";
-    const quoted = texts.map((t) => `“${t.length > 500 ? `${t.slice(0, 499)}…` : t}”`).join("\n");
+    const quoted = texts.map((t) => `“${clip(t)}”`).join("\n");
     const bot = this.d.bots.nameOf(n.botId);
     const yours = texts.some(disputed)
       ? `It reads like a dispute. ${bot} doesn't answer sellers after a deal, so it's yours to sort out, through the marketplace's dispute process if it comes to that.`
@@ -962,9 +985,13 @@ export class Negotiations {
       fresh.push(text);
       if (i > lastOurs) after++;
       const signals = scamSignals(text, n.mandate.allow);
+      const asked = !signals.length && askedIfBot(text, n.title);
       // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
-      const current = signals.length ? this.get(n.id) : null;
-      if (current?.status === "open" && !this.scamHeld(current)) this.hold(current, text, signals);
+      const current = signals.length || asked ? this.get(n.id) : null;
+      if (current?.status !== "open" || this.scamHeld(current)) return;
+      if (signals.length) this.hold(current, text, signals);
+      else if (!(this.held(current) && this.holdOf(current.id) === "bot"))
+        this.holdAsked(current, text);
     });
     if (fresh.length && DEALT.includes(n.status)) this.afterDeal(n, fresh);
     if (fresh.length) this.stallCheck(n.id);
@@ -1213,7 +1240,7 @@ function openingGoal(n: Negotiation, note: string | null): string {
     `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
     "",
     `1. negotiate_get ${n.id} for the listing, the mandate and anything said so far.`,
-    "2. Write the opening message as your instructions say, in the listing's language, offering exactly the mandate's opening price.",
+    "2. Write a brief opening message as your instructions say, in the listing's language, offering exactly the mandate's opening price.",
     "3. Send it once with negotiate_send: the price in offer, and what it claims about our side in stated.",
     "4. Finish with what you sent, or why nothing went.",
     ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),
