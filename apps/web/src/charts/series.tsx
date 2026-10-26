@@ -18,10 +18,14 @@ export function SeriesPlot({ spec }: { spec: SeriesChart }) {
   return spec.type === "bar" && spec.horizontal ? <Rows spec={spec} /> : <Columns spec={spec} />;
 }
 
-const plotted = (spec: SeriesChart, spans: ([number, number] | null)[][]) =>
-  isStacked(spec)
+/** What the value axis must cover: the values, and the reference lines. */
+const plotted = (spec: SeriesChart, spans: ([number, number] | null)[][]) => [
+  ...(isStacked(spec)
     ? spans.flat().flatMap((sp) => sp ?? [])
-    : spec.series.flatMap((s) => s.data).filter((v): v is number => v !== null);
+    : spec.series.flatMap((s) => s.data).filter((v): v is number => v !== null)),
+  ...(spec.refs ?? []).map((r) => r.value),
+];
+const REF_H = 16;
 
 function Columns({ spec }: { spec: SeriesChart }) {
   const labels = spec.x.map(String);
@@ -100,6 +104,15 @@ function Columns({ spec }: { spec: SeriesChart }) {
           />
           <text x={left - 8} y={y(t)} className="tick y">
             {tickText[i]}
+          </text>
+        </g>
+      ))}
+      {spec.refs?.map((r, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: two lines can share a value
+        <g key={i}>
+          <line x1={left} x2={left + plotW} y1={y(r.value)} y2={y(r.value)} className="ref" />
+          <text x={left + plotW} y={y(r.value) - 7} className="tick ref" textAnchor="end">
+            {r.label}
           </text>
         </g>
       ))}
@@ -203,7 +216,9 @@ function Rows({ spec }: { spec: SeriesChart }) {
   const k = stacked ? 1 : spec.series.length;
   const thick = k === 1 ? 14 : 10;
   const rowH = k * thick + 2 * (k - 1) + ROW_GAP;
-  const height = n * rowH;
+  // The reference lines' labels go above the rows.
+  const refTop = spec.refs?.length ? REF_H : 0;
+  const height = refTop + n * rowH;
 
   const values = plotted(spec, spans);
   const lo = Math.min(0, ...values);
@@ -222,7 +237,7 @@ function Rows({ spec }: { spec: SeriesChart }) {
   const negRoom = lo < 0 ? tipW(true) : 0;
   const plotW = Math.max(40, width - left - negRoom - tipW(false));
   const v = (val: number) => left + negRoom + ((val - lo) / (hi - lo || 1)) * plotW;
-  const rowTop = (i: number) => i * rowH + ROW_GAP / 2;
+  const rowTop = (i: number) => refTop + i * rowH + ROW_GAP / 2;
 
   const tip = (val: number, cy: number, end: number, key: string) => (
     <text
@@ -241,7 +256,7 @@ function Rows({ spec }: { spec: SeriesChart }) {
       {...frame(spec)}
       p={p}
       height={height}
-      pick={(_, py) => Math.min(n - 1, Math.max(0, Math.floor(py / rowH)))}
+      pick={(_, py) => Math.min(n - 1, Math.max(0, Math.floor((py - refTop) / rowH)))}
       tip={(i) =>
         rowTop(i) + rowH < height / 2 || n < 4
           ? { left, top: rowTop(i) + rowH }
@@ -259,7 +274,16 @@ function Rows({ spec }: { spec: SeriesChart }) {
           {cutTo(l, cut)}
         </text>
       ))}
-      <line x1={v(0)} x2={v(0)} y1={0} y2={height} className="baseline" />
+      <line x1={v(0)} x2={v(0)} y1={refTop} y2={height} className="baseline" />
+      {spec.refs?.map((r, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: two lines can share a value
+        <g key={i}>
+          <line x1={v(r.value)} x2={v(r.value)} y1={refTop - 2} y2={height} className="ref" />
+          <text x={v(r.value)} y={REF_H / 2 - 2} className="tick ref" textAnchor="middle">
+            {r.label}
+          </text>
+        </g>
+      ))}
       {stacked &&
         spans.map((stack, i) => {
           const cy = rowTop(i) + thick / 2;

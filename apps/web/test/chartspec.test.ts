@@ -15,6 +15,21 @@ const matrix = { type: "matrix", rows: ["A"], columns: [{ name: "Price" }], valu
 const timeline = { type: "timeline", events: [{ date: "2024", label: "A" }] };
 const listing = { title: "RTX 3080", url: "https://www.olx.pl/d/oferta/rtx-3080.html" };
 const listings = { type: "listings", items: [listing] };
+const meter = { type: "meter", rows: [{ label: "tank", value: 3.1, max: 4 }] };
+const calendar = { type: "calendar", days: [{ date: "2026-10-26", value: 1 }] };
+const tiles = { type: "treemap", items: [{ label: "media", value: 812 }] };
+const compare = {
+  type: "compare",
+  columns: ["A", "B"],
+  rows: [{ label: "Fan", values: ["Quiet", null], best: 0 }],
+};
+const offers = { type: "offers", offers: [{ by: "them", price: 2400 }] };
+const gallery = { type: "gallery", photos: ["https://ireland.apollo.olxcdn.com/v1/files/a/image"] };
+const days = (n: number, from = Date.UTC(2025, 0, 6)) =>
+  Array.from({ length: n }, (_, i) => ({
+    date: new Date(from + i * 86_400_000).toISOString().slice(0, 10),
+    value: i,
+  }));
 const sources = [
   ...[
     base,
@@ -105,6 +120,58 @@ const sources = [
     { ...listings, items: [{ ...listing, price: "1850" }] },
     { ...listings, items: [{ ...listing, note: "x".repeat(81) }] },
     { ...listings, data: 3 },
+    { ...base, refs: [{ value: 1.5, label: "limit", z: 1 }] },
+    { ...base, refs: [] },
+    { ...base, refs: Array(4).fill({ value: 1, label: "a" }) },
+    { ...base, refs: [{ value: 1, label: "" }] },
+    { ...base, refs: [{ value: "1", label: "a" }] },
+    { type: "bar", data: 3, refs: [{ value: 1, label: "a" }] },
+    { type: "bar", data: 3, refs: [{ value: 1 }] },
+    { ...meter, title: "T", unit: "TB", rows: [{ label: "a", value: 5, max: 4, warn: 3.6, z: 1 }] },
+    { ...meter, rows: [{ label: "a", value: -1, max: 4 }] },
+    { ...meter, rows: [{ label: "a", value: 1, max: 0 }] },
+    { ...meter, rows: [{ label: "a", value: 1, max: 4, warn: 5 }] },
+    { ...meter, rows: [] },
+    { ...calendar, title: "T", unit: "$", days: days(371) },
+    { ...calendar, days: [...days(370), { date: "2026-01-12", value: 1 }] },
+    { ...calendar, days: [...days(1), ...days(1)] },
+    { ...calendar, days: days(2, Date.UTC(2025, 0, 6)).concat(days(1, Date.UTC(2026, 0, 13))) },
+    { ...calendar, days: [{ date: "2026-10", value: 1 }] },
+    { ...calendar, days: [{ date: "2026-10-26", value: null }] },
+    {
+      ...tiles,
+      unit: "GB",
+      items: [
+        { label: "a", value: 1, z: 1 },
+        { label: "b", value: 2 },
+      ],
+    },
+    { ...tiles, items: [{ label: "a", value: 0 }] },
+    { ...tiles, items: Array(61).fill({ label: "a", value: 1 }) },
+    { ...compare, title: "T" },
+    { ...compare, columns: ["A"] },
+    { ...compare, columns: ["A", "B", "C", "D", "E"] },
+    { ...compare, rows: [{ label: "Fan", values: ["Quiet"] }] },
+    { ...compare, rows: [{ label: "Fan", values: ["a", "b"], best: 2 }] },
+    { ...compare, rows: [{ label: "Fan", values: ["a", "b"], best: 0.5 }] },
+    { ...compare, rows: [{ label: "Fan", values: ["a", "x".repeat(81)] }] },
+    {
+      ...offers,
+      title: "T",
+      unit: "zł",
+      them: "Seller",
+      limit: 2100,
+      offers: [{ by: "you", price: 1800, note: "cash today", z: 1 }],
+    },
+    { ...offers, offers: [{ by: "me", price: 1 }] },
+    { ...offers, offers: [{ by: "you", price: -1 }] },
+    { ...offers, them: "" },
+    { ...offers, offers: Array(41).fill({ by: "you", price: 1 }) },
+    { ...gallery, title: "T", url: "https://www.olx.pl/d/oferta/a.html" },
+    { ...gallery, url: "javascript:alert(1)" },
+    { ...gallery, photos: ["http://ireland.apollo.olxcdn.com/a"] },
+    { ...gallery, photos: Array(21).fill(gallery.photos[0]) },
+    { ...gallery, photos: [] },
     { type: "line", title: "T", unit: "%", stacked: false, horizontal: true, data: 3, z: 1 },
     { type: "scatter", xName: "Price", yUnit: "dB", data: 3 },
     { ...base, data: 3 },

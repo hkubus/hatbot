@@ -16,6 +16,15 @@ export const CHART_MAX_EVENTS = 60;
 /** Timeline lanes are told apart by row, not colour, but each needs its own row. */
 export const CHART_MAX_LANES = 8;
 export const CHART_MAX_LISTINGS = 30;
+/** Reference lines on a line or bar chart. */
+export const CHART_MAX_REFS = 3;
+/** A calendar's days: a year, with a week to spare at each end. */
+export const CHART_MAX_DAYS = 371;
+export const CHART_MAX_TILES = 60;
+/** Side by side, as many as fit across a phone. */
+export const CHART_MAX_COMPARED = 4;
+export const CHART_MAX_OFFERS = 40;
+export const CHART_MAX_PHOTOS = 20;
 
 /** Where listing photos may come from: the marketplaces' image servers, as Scout keeps them. */
 const PHOTO_HOSTS = ["olxcdn.com", "allegroimg.com", "vinted.net"];
@@ -49,6 +58,21 @@ const unit = z.string().max(12).optional();
 const label = z.string().min(1).max(60);
 const DATE = /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/;
 const date = z.string().regex(DATE, "a date is YYYY, YYYY-MM or YYYY-MM-DD");
+const DAY = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+const day = z.string().regex(DAY, "a day is YYYY-MM-DD");
+const link = z
+  .string()
+  .max(2000)
+  .refine((s) => webAddress(s), "must be an http or https address");
+const photo = z
+  .string()
+  .max(2000)
+  .refine((s) => webAddress(s, true), "a photo must be an https address");
+/** Lines across the values: a limit, a typical price, a threshold. */
+const refs = z
+  .array(z.object({ value: z.number(), label: z.string().min(1).max(40) }))
+  .max(CHART_MAX_REFS)
+  .optional();
 /** Values and a file together: which would it draw? */
 const notWithData = z.never({ error: "give the values or data, not both" }).optional();
 const noData = z.never({ error: "only line, bar and scatter can draw from a file" }).optional();
@@ -63,6 +87,7 @@ const SeriesChart = z
     stacked: z.boolean().optional(),
     /** Bars: one row per x, for rankings and long names. */
     horizontal: z.boolean().optional(),
+    refs,
     data: notWithData,
     x: z
       .array(z.union([z.string().max(60), z.number()]))
@@ -199,17 +224,10 @@ const ListingsChart = z.object({
     .array(
       z.object({
         title: z.string().min(1).max(200),
-        url: z
-          .string()
-          .max(2000)
-          .refine((s) => webAddress(s), "url must be an http or https address"),
+        url: link,
         price: z.number().optional(),
         /** The listing's photo; only listingPhoto's are shown. */
-        photo: z
-          .string()
-          .max(2000)
-          .refine((s) => webAddress(s, true), "photo must be an https address")
-          .optional(),
+        photo: photo.optional(),
         /** "OLX", "Vinted". */
         site: z.string().max(40).optional(),
         /** A few words the title doesn't say: "Like new, Kraków". */
@@ -221,6 +239,124 @@ const ListingsChart = z.object({
 });
 export type ListingsChart = z.infer<typeof ListingsChart>;
 
+/** How full things are: disks, datastores, a spending limit. */
+const MeterChart = z.object({
+  type: z.literal("meter"),
+  title,
+  unit,
+  data: noData,
+  rows: z
+    .array(
+      z
+        .object({
+          label,
+          value: z.number().min(0),
+          max: z.number().positive(),
+          /** From here on the bar shows as a warning. */
+          warn: z.number().positive().optional(),
+        })
+        .refine((r) => r.warn === undefined || r.warn <= r.max, { message: "warn is above max" }),
+    )
+    .min(1)
+    .max(CHART_MAX_ROWS),
+});
+export type MeterChart = z.infer<typeof MeterChart>;
+
+/** A value a day, as a grid of weeks: backups, spend, uptime. */
+const CalendarChart = z
+  .object({
+    type: z.literal("calendar"),
+    title,
+    unit,
+    data: noData,
+    days: z
+      .array(z.object({ date: day, value: z.number() }))
+      .min(1)
+      .max(CHART_MAX_DAYS),
+  })
+  .refine((s) => new Set(s.days.map((d) => d.date)).size === s.days.length, {
+    message: "a day comes twice",
+  })
+  .refine((s) => calendarWeeks(s.days.map((d) => d.date)).length <= 54, {
+    message: "the days span more than a year",
+  });
+export type CalendarChart = z.infer<typeof CalendarChart>;
+
+/** Parts of a whole as nested boxes, sized by value: what fills a disk, where money went. */
+const TreemapChart = z.object({
+  type: z.literal("treemap"),
+  title,
+  unit,
+  data: noData,
+  items: z
+    .array(z.object({ label, value: z.number().positive() }))
+    .min(1)
+    .max(CHART_MAX_TILES),
+});
+export type TreemapChart = z.infer<typeof TreemapChart>;
+
+/** Two to four things side by side, a row per property, in words. */
+const CompareChart = z
+  .object({
+    type: z.literal("compare"),
+    title,
+    data: noData,
+    columns: z.array(label).min(2).max(CHART_MAX_COMPARED),
+    rows: z
+      .array(
+        z.object({
+          label,
+          /** One per column; null where it isn't known. */
+          values: z.array(z.string().max(80).nullable()),
+          /** The column that's best on this row, from 0. */
+          best: z.number().int().min(0).optional(),
+        }),
+      )
+      .min(1)
+      .max(CHART_MAX_ROWS),
+  })
+  .refine((s) => s.rows.every((r) => r.values.length === s.columns.length), {
+    message: "each row needs one value per column",
+  })
+  .refine((s) => s.rows.every((r) => r.best === undefined || r.best < s.columns.length), {
+    message: "best is past the last column",
+  });
+export type CompareChart = z.infer<typeof CompareChart>;
+
+/** A haggle's offers in turn, yours and theirs, under your limit. */
+const OffersChart = z.object({
+  type: z.literal("offers"),
+  title,
+  unit,
+  /** Who "them" is: "Seller", "Buyer". */
+  them: z.string().min(1).max(40).optional(),
+  /** The most you'd pay, or the least you'd take. */
+  limit: z.number().optional(),
+  data: noData,
+  offers: z
+    .array(
+      z.object({
+        by: z.enum(["you", "them"]),
+        price: z.number().min(0),
+        note: z.string().max(60).optional(),
+      }),
+    )
+    .min(1)
+    .max(CHART_MAX_OFFERS),
+});
+export type OffersChart = z.infer<typeof OffersChart>;
+
+/** One listing's photos, to look it over. */
+const GalleryChart = z.object({
+  type: z.literal("gallery"),
+  title,
+  /** The listing. */
+  url: link.optional(),
+  data: noData,
+  photos: z.array(photo).min(1).max(CHART_MAX_PHOTOS),
+});
+export type GalleryChart = z.infer<typeof GalleryChart>;
+
 /** An attachment's id: a CSV, TSV or JSON file holding the values (apps/brain/src/chart-data.ts). */
 const data = z.number().int().positive();
 const SeriesFile = z.object({
@@ -229,6 +365,7 @@ const SeriesFile = z.object({
   unit,
   stacked: z.boolean().optional(),
   horizontal: z.boolean().optional(),
+  refs,
   data,
   x: notWithData,
   series: notWithData,
@@ -263,6 +400,12 @@ const KINDS = {
   matrix: MatrixChart,
   timeline: TimelineChart,
   listings: ListingsChart,
+  meter: MeterChart,
+  calendar: CalendarChart,
+  treemap: TreemapChart,
+  compare: CompareChart,
+  offers: OffersChart,
+  gallery: GalleryChart,
 };
 type Kind = keyof typeof KINDS;
 
@@ -273,8 +416,92 @@ export const ChartSpec = z.union([
   MatrixChart,
   TimelineChart,
   ListingsChart,
+  MeterChart,
+  CalendarChart,
+  TreemapChart,
+  CompareChart,
+  OffersChart,
+  GalleryChart,
 ]);
 export type ChartSpec = z.infer<typeof ChartSpec>;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * A calendar's weeks, Monday first, from the week of the first day to the week of the last: each a
+ * list of seven UTC days in milliseconds.
+ */
+export function calendarWeeks(dates: string[]): number[][] {
+  if (!dates.length) return [];
+  const ms = dates.map((d) => dateRange(d)[0]);
+  const lo = Math.min(...ms);
+  const hi = Math.max(...ms);
+  const start = lo - ((new Date(lo).getUTCDay() + 6) % 7) * DAY_MS;
+  const weeks: number[][] = [];
+  for (let w = start; w <= hi; w += 7 * DAY_MS)
+    weeks.push(Array.from({ length: 7 }, (_, i) => w + i * DAY_MS));
+  return weeks;
+}
+
+export type Tile = { i: number; x: number; y: number; w: number; h: number };
+
+/**
+ * Squarified treemap (Bruls, Huizing and van Wijk): boxes for `values` in a w×h rectangle, as close to
+ * square as it gets, largest first. `i` is each box's index in `values`.
+ */
+export function treemap(values: number[], w: number, h: number): Tile[] {
+  const order = values.map((v, i) => ({ v, i })).sort((a, b) => b.v - a.v);
+  const total = order.reduce((n, o) => n + o.v, 0);
+  if (!total || w <= 0 || h <= 0) return [];
+  const scale = (w * h) / total;
+  const tiles: Tile[] = [];
+  let x = 0;
+  let y = 0;
+  let rw = w;
+  let rh = h;
+  const worst = (row: number[], side: number) => {
+    const sum = row.reduce((a, b) => a + b, 0);
+    const max = Math.max(...row);
+    const min = Math.min(...row);
+    return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
+  };
+  let row: { v: number; i: number }[] = [];
+  const lay = () => {
+    const areas = row.map((o) => o.v * scale);
+    const sum = areas.reduce((a, b) => a + b, 0);
+    if (rw >= rh) {
+      // A column down the left of what's left.
+      const cw = sum / rh;
+      let cy = y;
+      row.forEach((o, k) => {
+        const th = (areas[k] as number) / cw;
+        tiles.push({ i: o.i, x, y: cy, w: cw, h: th });
+        cy += th;
+      });
+      x += cw;
+      rw -= cw;
+    } else {
+      const ch = sum / rw;
+      let cx = x;
+      row.forEach((o, k) => {
+        const tw = (areas[k] as number) / ch;
+        tiles.push({ i: o.i, x: cx, y, w: tw, h: ch });
+        cx += tw;
+      });
+      y += ch;
+      rh -= ch;
+    }
+    row = [];
+  };
+  for (const o of order) {
+    const side = Math.min(rw, rh);
+    const now = row.map((r) => r.v * scale);
+    if (row.length && worst([...now, o.v * scale], side) > worst(now, side)) lay();
+    row.push(o);
+  }
+  if (row.length) lay();
+  return tiles;
+}
 
 /** The first and last day a timeline date covers, as UTC milliseconds: 2024-03 is all of March. */
 export function dateRange(d: string): [number, number] {
