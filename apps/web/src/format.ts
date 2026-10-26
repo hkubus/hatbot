@@ -60,6 +60,10 @@ export const tokens = (n: number) =>
 /** A commit as git shows it short. */
 export const shortSha = (sha?: string | null) => sha?.slice(0, 7) ?? "";
 
+/** Forgejo's merge commits wrap the pull request's title; just the title. */
+export const prTitle = (subject: string) =>
+  /^Merge pull request '(.+)' \(#\d+\) from \S+ into \S+$/.exec(subject)?.[1] ?? subject;
+
 /** Worked out from the id so a new model has a name too. */
 export function modelName(id: string): string {
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id);

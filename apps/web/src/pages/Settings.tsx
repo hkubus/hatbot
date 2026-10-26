@@ -11,7 +11,7 @@ import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
 import { clearDrafts } from "../drafts";
-import { shortSha, stamp } from "../format";
+import { prTitle, shortSha, stamp } from "../format";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
@@ -523,7 +523,7 @@ function UpdateRow({ toast }: { toast: Toast }) {
   const notes = !busy && info.status?.state === "done" ? info.status.notes : [];
 
   return (
-    <div className="row">
+    <div className="row update">
       <div className="txt">
         <b>Software update</b>
         {error && <span className="form-error">{error}</span>}
@@ -533,7 +533,7 @@ function UpdateRow({ toast }: { toast: Toast }) {
       </div>
       <span className="val">
         {info.current?.sha
-          ? `${shortSha(info.current.sha)}${info.current.subject ? ` ${info.current.subject}` : ""}`
+          ? `${shortSha(info.current.sha)}${info.current.subject ? ` ${prTitle(info.current.subject)}` : ""}`
           : "Unknown"}
       </span>
       {info.source ? (

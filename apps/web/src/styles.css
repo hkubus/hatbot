@@ -1677,6 +1677,7 @@ dialog.ask p {
    group's large ones outside. An item you can press rounds off under the pointer. */
 .group-box {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-2xs);
   border-radius: var(--r-lg);
 }
@@ -1893,6 +1894,7 @@ dialog.ask,
   margin: 0 auto;
   padding: var(--sp-xl) var(--gutter) var(--sp-3xl);
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--sp-xl);
   align-content: start;
 }
@@ -2018,6 +2020,12 @@ dialog.ask,
   color: var(--muted);
   font-size: var(--fs-md);
   text-align: right;
+}
+.row.update .txt {
+  min-width: min-content;
+}
+.row.update .txt b {
+  white-space: nowrap;
 }
 .row .val.bad {
   color: var(--danger-text);
