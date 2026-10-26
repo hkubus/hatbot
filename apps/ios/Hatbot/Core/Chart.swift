@@ -4,7 +4,13 @@ import Foundation
 
 struct ChartSpec: Decodable, Equatable, Sendable {
   enum Kind: String, Decodable, Sendable {
-    case line, bar, scatter, range, matrix, timeline, listings
+    case line, bar, scatter, range, matrix, timeline, listings, meter, calendar, treemap, compare, offers, gallery
+  }
+
+  /// A line across a line or bar chart's values: a limit, a typical price.
+  struct Ref: Decodable, Equatable, Sendable {
+    var value: Double
+    var label: String
   }
 
   struct Series: Equatable, Sendable {
@@ -129,6 +135,99 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     var items: [Item]
   }
 
+  /// How full things are: disks, datastores, a spending limit.
+  struct Meter: Decodable, Equatable, Sendable {
+    struct Row: Decodable, Equatable, Sendable {
+      var label: String
+      var value: Double
+      var max: Double
+      /// From here on the bar shows as a warning.
+      var warn: Double?
+
+      var warning: Bool { value > max || warn.map { value >= $0 } ?? false }
+    }
+
+    var rows: [Row]
+  }
+
+  /// A value a day, as a grid of weeks.
+  struct Days: Decodable, Equatable, Sendable {
+    struct Day: Decodable, Equatable, Sendable {
+      /// YYYY-MM-DD.
+      var date: String
+      var value: Double
+    }
+
+    var days: [Day]
+  }
+
+  /// Parts of a whole as boxes sized by value.
+  struct Treemap: Decodable, Equatable, Sendable {
+    struct Item: Decodable, Equatable, Sendable {
+      var label: String
+      var value: Double
+    }
+
+    var items: [Item]
+  }
+
+  /// One of `treemap`'s boxes; `i` is its index in the values.
+  struct Tile: Equatable, Sendable {
+    var i: Int
+    var x: Double
+    var y: Double
+    var w: Double
+    var h: Double
+  }
+
+  /// Two to four things side by side, a row per property, in words.
+  struct Compare: Decodable, Equatable, Sendable {
+    struct Row: Decodable, Equatable, Sendable {
+      var label: String
+      /// One per column; nil where it isn't known.
+      var values: [String?]
+      /// The column that's best on this row, from 0.
+      var best: Int?
+
+      /// Two or more known values, all the same: nothing on this row tells them apart.
+      var alike: Bool {
+        let known = values.compactMap { $0 }
+        return known.count > 1 && Set(known).count == 1
+      }
+    }
+
+    var columns: [String]
+    var rows: [Row]
+  }
+
+  /// A haggle's offers in turn, yours and theirs, under your limit.
+  struct Offers: Decodable, Equatable, Sendable {
+    enum Side: String, Decodable, Sendable {
+      case you, them
+    }
+
+    struct Offer: Decodable, Equatable, Sendable {
+      var by: Side
+      var price: Double
+      var note: String?
+    }
+
+    /// Who "them" is: "Seller", "Buyer".
+    var them: String?
+    /// The most you'd pay, or the least you'd take.
+    var limit: Double?
+    var offers: [Offer]
+
+    var themName: String { them ?? "Them" }
+  }
+
+  /// One listing's photos.
+  struct Gallery: Decodable, Equatable, Sendable {
+    /// The listing.
+    var url: String?
+    var photos: [String]
+  }
+
   /// Where listing photos may come from (listingPhoto in packages/shared/src/chart.ts).
   static let photoHosts = ["olxcdn.com", "allegroimg.com", "vinted.net"]
 
@@ -158,6 +257,13 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   /// Timeline lanes are told apart by row, not colour, but each needs its own row.
   static let maxLanes = 8
   static let maxListings = 30
+  static let maxRefs = 3
+  /// A calendar's days: a year, with a week to spare at each end.
+  static let maxDays = 371
+  static let maxTiles = 60
+  static let maxCompared = 4
+  static let maxOffers = 40
+  static let maxPhotos = 20
 
   var type: Kind
   var title: String?
@@ -167,6 +273,8 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   var stacked = false
   /// Bars: one row per x, for rankings and long names.
   var horizontal = false
+  /// Line and bar: lines across the values.
+  var refs: [Ref] = []
   var x: [String] = []
   var series: [Series] = []
   var scatter: Scatter?
@@ -174,9 +282,16 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   var matrix: Matrix?
   var timeline: Timeline?
   var listings: Listings?
+  var meter: Meter?
+  var calendar: Days?
+  var treemap: Treemap?
+  var compare: Compare?
+  var offers: Offers?
+  var gallery: Gallery?
 
   private enum CodingKeys: String, CodingKey {
-    case type, title, unit, stacked, horizontal, x, series, markName, rows, columns, values, events, items, data
+    case type, title, unit, stacked, horizontal, refs, x, series, markName, rows, columns, values, events, items, data
+    case days, them, limit, offers, url, photos
   }
 
   /// x labels are strings or numbers.
@@ -206,6 +321,7 @@ struct ChartSpec: Decodable, Equatable, Sendable {
       unit = try c.optional(.unit)
       stacked = try c.optional(.stacked) ?? false
       horizontal = try c.optional(.horizontal) ?? false
+      refs = try c.optional(.refs) ?? []
       x = try c.decode([Label].self, forKey: .x).map(\.text)
       series = try c.decode([Series].self, forKey: .series)
     case .scatter:
@@ -220,6 +336,22 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     case .listings:
       unit = try c.optional(.unit)
       listings = try Listings(from: decoder)
+    case .meter:
+      unit = try c.optional(.unit)
+      meter = try Meter(from: decoder)
+    case .calendar:
+      unit = try c.optional(.unit)
+      calendar = try Days(from: decoder)
+    case .treemap:
+      unit = try c.optional(.unit)
+      treemap = try Treemap(from: decoder)
+    case .compare:
+      compare = try Compare(from: decoder)
+    case .offers:
+      unit = try c.optional(.unit)
+      offers = try Offers(from: decoder)
+    case .gallery:
+      gallery = try Gallery(from: decoder)
     }
   }
 
@@ -240,6 +372,7 @@ struct ChartSpec: Decodable, Equatable, Sendable {
         && series.allSatisfy { fits($0.name, 60) && $0.data.count == x.count }
         && series.contains { $0.data.contains { $0 != nil } }
         && (!(type == .bar && horizontal) || x.count <= Self.maxRows)
+        && refs.count <= Self.maxRefs && refs.allSatisfy { (1...40).contains($0.label.utf16.count) }
     case .scatter:
       guard let s = scatter else { return false }
       return fits(s.xName, 60) && fits(s.xUnit, 12) && fits(s.yName, 60) && fits(s.yUnit, 12)
@@ -277,6 +410,40 @@ struct ChartSpec: Decodable, Equatable, Sendable {
             && (it.photo.map { fits($0, 2000) && Self.webAddress($0, https: true) } ?? true)
             && fits(it.site, 40) && fits(it.note, 80)
         }
+    case .meter:
+      guard let m = meter else { return false }
+      return (1...Self.maxRows).contains(m.rows.count)
+        && m.rows.allSatisfy { r in
+          isLabel(r.label) && r.value >= 0 && r.max > 0 && (r.warn.map { $0 > 0 && $0 <= r.max } ?? true)
+        }
+    case .calendar:
+      guard let d = calendar else { return false }
+      let dates = d.days.map(\.date)
+      return (1...Self.maxDays).contains(dates.count)
+        && dates.allSatisfy { $0.split(separator: "-").count == 3 && Self.dateRange($0) != nil }
+        && Set(dates).count == dates.count
+        && Self.calendarWeeks(dates).count <= 54
+    case .treemap:
+      guard let t = treemap else { return false }
+      return (1...Self.maxTiles).contains(t.items.count) && t.items.allSatisfy { isLabel($0.label) && $0.value > 0 }
+    case .compare:
+      guard let k = compare else { return false }
+      return (2...Self.maxCompared).contains(k.columns.count) && k.columns.allSatisfy { isLabel($0) }
+        && (1...Self.maxRows).contains(k.rows.count)
+        && k.rows.allSatisfy { r in
+          isLabel(r.label) && r.values.count == k.columns.count && r.values.allSatisfy { fits($0, 80) }
+            && (r.best.map { $0 >= 0 && $0 < k.columns.count } ?? true)
+        }
+    case .offers:
+      guard let o = offers else { return false }
+      return (o.them.map { (1...40).contains($0.utf16.count) } ?? true)
+        && (1...Self.maxOffers).contains(o.offers.count)
+        && o.offers.allSatisfy { $0.price >= 0 && fits($0.note, 60) }
+    case .gallery:
+      guard let g = gallery else { return false }
+      return (g.url.map { fits($0, 2000) && Self.webAddress($0) } ?? true)
+        && (1...Self.maxPhotos).contains(g.photos.count)
+        && g.photos.allSatisfy { fits($0, 2000) && Self.webAddress($0, https: true) }
     }
   }
 
@@ -351,6 +518,81 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     }
     guard let first, let last else { return nil }
     return (first, last)
+  }
+
+  /// A calendar's weeks, Monday first, from the week of the first day to the week of the last: each
+  /// seven UTC midnights.
+  static func calendarWeeks(_ dates: [String]) -> [[Date]] {
+    let days = dates.compactMap { dateRange($0)?.first }
+    guard let lo = days.min(), let hi = days.max() else { return [] }
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    // .weekday is 1 for Sunday.
+    let back = (calendar.component(.weekday, from: lo) + 5) % 7
+    var week = lo.addingTimeInterval(-Double(back) * 86_400)
+    var weeks: [[Date]] = []
+    while week <= hi {
+      weeks.append((0..<7).map { week.addingTimeInterval(Double($0) * 86_400) })
+      week = week.addingTimeInterval(7 * 86_400)
+    }
+    return weeks
+  }
+
+  /// Squarified treemap (Bruls, Huizing and van Wijk): boxes for `values` in a w×h rectangle, as close
+  /// to square as it gets, largest first. Step for step packages/shared's, so both draw the same boxes.
+  static func treemap(_ values: [Double], _ w: Double, _ h: Double) -> [Tile] {
+    // Ties keep their order, as JavaScript's stable sort does.
+    let order = values.enumerated().map { (v: $0.element, i: $0.offset) }
+      .sorted { $0.v != $1.v ? $0.v > $1.v : $0.i < $1.i }
+    let total = order.reduce(0) { $0 + $1.v }
+    guard total != 0, w > 0, h > 0 else { return [] }
+    let scale = w * h / total
+    var tiles: [Tile] = []
+    var x = 0.0
+    var y = 0.0
+    var rw = w
+    var rh = h
+    func worst(_ row: [Double], _ side: Double) -> Double {
+      let sum = row.reduce(0, +)
+      let most = row.max() ?? 0
+      let least = row.min() ?? 0
+      return max(side * side * most / (sum * sum), sum * sum / (side * side * least))
+    }
+    var row: [(v: Double, i: Int)] = []
+    func lay() {
+      let areas = row.map { $0.v * scale }
+      let sum = areas.reduce(0, +)
+      if rw >= rh {
+        let cw = sum / rh
+        var cy = y
+        for (k, o) in row.enumerated() {
+          let th = areas[k] / cw
+          tiles.append(Tile(i: o.i, x: x, y: cy, w: cw, h: th))
+          cy += th
+        }
+        x += cw
+        rw -= cw
+      } else {
+        let ch = sum / rw
+        var cx = x
+        for (k, o) in row.enumerated() {
+          let tw = areas[k] / ch
+          tiles.append(Tile(i: o.i, x: cx, y: y, w: tw, h: ch))
+          cx += tw
+        }
+        y += ch
+        rh -= ch
+      }
+      row = []
+    }
+    for o in order {
+      let side = min(rw, rh)
+      let now = row.map { $0.v * scale }
+      if !row.isEmpty && worst(now + [o.v * scale], side) > worst(now, side) { lay() }
+      row.append(o)
+    }
+    if !row.isEmpty { lay() }
+    return tiles
   }
 
   /// 1,284 · 12.9K · 0.42 · $4.20 · 87% · 3.1 GiB. Compact from 1,000 up when `compact`.
@@ -552,6 +794,61 @@ extension ChartSpec.Listings.Item {
     photo = try c.optional(.photo)
     site = try c.optional(.site)
     note = try c.optional(.note)
+  }
+}
+
+extension ChartSpec.Meter.Row {
+  private enum CodingKeys: String, CodingKey { case label, value, max, warn }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    label = try c.decode(String.self, forKey: .label)
+    value = try c.decode(Double.self, forKey: .value)
+    max = try c.decode(Double.self, forKey: .max)
+    warn = try c.optional(.warn)
+  }
+}
+
+extension ChartSpec.Compare.Row {
+  private enum CodingKeys: String, CodingKey { case label, values, best }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    label = try c.decode(String.self, forKey: .label)
+    values = try c.decode([String?].self, forKey: .values)
+    best = try c.optional(.best)
+  }
+}
+
+extension ChartSpec.Offers {
+  private enum CodingKeys: String, CodingKey { case them, limit, offers }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    them = try c.optional(.them)
+    limit = try c.optional(.limit)
+    offers = try c.decode([Offer].self, forKey: .offers)
+  }
+}
+
+extension ChartSpec.Offers.Offer {
+  private enum CodingKeys: String, CodingKey { case by, price, note }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    by = try c.decode(ChartSpec.Offers.Side.self, forKey: .by)
+    price = try c.decode(Double.self, forKey: .price)
+    note = try c.optional(.note)
+  }
+}
+
+extension ChartSpec.Gallery {
+  private enum CodingKeys: String, CodingKey { case url, photos }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    url = try c.optional(.url)
+    photos = try c.decode([String].self, forKey: .photos)
   }
 }
 

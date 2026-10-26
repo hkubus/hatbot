@@ -442,6 +442,99 @@ final class ChatTests: XCTestCase {
     XCTAssertFalse(ChartSpec.listingPhoto("https://olxcdn.com.evil.example/a.jpg"))
     XCTAssertNil(ChartSpec.parse(listings.replacingOccurrences(of: "%@", with: #""javascript:alert(1)""#)))
   }
+
+  /// Line and bar charts take up to three reference lines, and one drawn from a file keeps its own.
+  func testChartRefs() throws {
+    let line = #"{"type":"line","x":[1,2],"series":[{"data":[1,2]}],"refs":%@}"#
+    let spec = try XCTUnwrap(ChartSpec.parse(line.replacingOccurrences(of: "%@", with: #"[{"value":5,"label":"Limit"}]"#)))
+    XCTAssertEqual(spec.refs, [ChartSpec.Ref(value: 5, label: "Limit")])
+    let four = Array(repeating: #"{"value":1,"label":"a"}"#, count: 4).joined(separator: ",")
+    XCTAssertNil(ChartSpec.parse(line.replacingOccurrences(of: "%@", with: "[\(four)]")))
+    XCTAssertNil(ChartSpec.parse(line.replacingOccurrences(of: "%@", with: #"[{"value":1,"label":""}]"#)))
+    XCTAssertNil(ChartSpec.parse(line.replacingOccurrences(of: "%@", with: "null")))
+
+    let file = try XCTUnwrap(ChartFile.parse(#"{"type":"bar","data":7,"refs":[{"value":3,"label":"Typical"}]}"#))
+    let merged = try XCTUnwrap(file.spec(merging: Data(#"{"x":["a"],"series":[{"data":[1]}],"refs":[]}"#.utf8)))
+    XCTAssertEqual(merged.refs.map(\.value), [3])
+    XCTAssertNil(ChartFile.parse(#"{"type":"bar","data":7,"refs":[{"value":3}]}"#))
+  }
+
+  func testMeterChart() throws {
+    let meter = #"{"type":"meter","unit":"GB","rows":[{"label":"Disk","value":%@,"max":100,"warn":90},{"label":"Spend","value":120,"max":100}]}"#
+    let m = try XCTUnwrap(ChartSpec.parse(meter.replacingOccurrences(of: "%@", with: "40"))?.meter)
+    XCTAssertEqual(m.rows.map(\.warning), [false, true])
+    XCTAssertEqual(ChartSpec.parse(meter.replacingOccurrences(of: "%@", with: "90"))?.meter?.rows[0].warning, true)
+    XCTAssertNil(ChartSpec.parse(meter.replacingOccurrences(of: "%@", with: "-1")))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"meter","rows":[{"label":"Disk","value":1,"max":0}]}"#))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"meter","rows":[{"label":"Disk","value":1,"max":10,"warn":11}]}"#))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"meter","rows":[{"label":"Disk","value":1,"max":10,"warn":null}]}"#))
+  }
+
+  /// A calendar's weeks start on Monday, in UTC, and a calendar spans at most 54 of them.
+  func testCalendarChart() throws {
+    let utc = ISO8601DateFormatter()
+    let weeks = ChartSpec.calendarWeeks(["2026-10-26", "2026-10-25"])
+    XCTAssertEqual(weeks.map { utc.string(from: $0[0]) }, ["2026-10-19T00:00:00Z", "2026-10-26T00:00:00Z"])
+    XCTAssertEqual(weeks[0].map { utc.string(from: $0) }.last, "2026-10-25T00:00:00Z")
+    XCTAssertEqual(ChartSpec.calendarWeeks(["2026-11-01", "2026-10-26"]).count, 1)
+
+    let calendar = #"{"type":"calendar","unit":"GB","days":[{"date":"2025-01-01","value":1},{"date":%@,"value":3}]}"#
+    let c = try XCTUnwrap(ChartSpec.parse(calendar.replacingOccurrences(of: "%@", with: #""2026-01-11""#))?.calendar)
+    XCTAssertEqual(c.days.map(\.value), [1, 3])
+    XCTAssertNil(ChartSpec.parse(calendar.replacingOccurrences(of: "%@", with: #""2026-01-12""#)))
+    XCTAssertNil(ChartSpec.parse(calendar.replacingOccurrences(of: "%@", with: #""2025-01-01""#)))
+    XCTAssertNil(ChartSpec.parse(calendar.replacingOccurrences(of: "%@", with: #""2025-01""#)))
+  }
+
+  /// The same boxes as packages/shared's treemap, so web and phone draw one picture.
+  func testTreemapMatchesTheWeb() throws {
+    let tiles = ChartSpec.treemap([6, 6, 4, 3, 2, 2, 1], 6, 4)
+    let want: [(Int, Double, Double, Double, Double)] = [
+      (0, 0, 0, 3, 2), (1, 0, 2, 3, 2), (2, 3, 0, 1.7143, 2.3333), (3, 4.7143, 0, 1.2857, 2.3333),
+      (4, 3, 2.3333, 1.2, 1.6667), (5, 4.2, 2.3333, 1.2, 1.6667), (6, 5.4, 2.3333, 0.6, 1.6667),
+    ]
+    XCTAssertEqual(tiles.count, want.count)
+    for (t, w) in zip(tiles, want) {
+      XCTAssertEqual(t.i, w.0)
+      for (a, b) in [(t.x, w.1), (t.y, w.2), (t.w, w.3), (t.h, w.4)] { XCTAssertEqual(a, b, accuracy: 0.001) }
+    }
+
+    let treemap = #"{"type":"treemap","unit":"GB","items":[{"label":"media","value":%@}]}"#
+    XCTAssertEqual(ChartSpec.parse(treemap.replacingOccurrences(of: "%@", with: "812"))?.treemap?.items[0].value, 812)
+    XCTAssertNil(ChartSpec.parse(treemap.replacingOccurrences(of: "%@", with: "0")))
+  }
+
+  func testCompareChart() throws {
+    let compare = #"{"type":"compare","columns":["A","B"],"rows":[{"label":"Price","values":["1,850 zł",null],"best":%@},{"label":"RAM","values":["16 GB","16 GB"]}]}"#
+    let k = try XCTUnwrap(ChartSpec.parse(compare.replacingOccurrences(of: "%@", with: "1"))?.compare)
+    XCTAssertEqual(k.rows[0].values, ["1,850 zł", nil])
+    XCTAssertEqual(k.rows.map(\.alike), [false, true])
+    XCTAssertNil(ChartSpec.parse(compare.replacingOccurrences(of: "%@", with: "2")))
+    XCTAssertNil(ChartSpec.parse(compare.replacingOccurrences(of: "%@", with: "0.5")))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"compare","columns":["A","B"],"rows":[{"label":"Price","values":["1"]}]}"#))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"compare","columns":["A"],"rows":[{"label":"Price","values":["1"]}]}"#))
+  }
+
+  func testOffersChart() throws {
+    let offers = #"{"type":"offers","unit":"zł","them":"Seller","limit":2300,"offers":[{"by":"them","price":2500},{"by":%@,"price":2000,"note":"cash"}]}"#
+    let o = try XCTUnwrap(ChartSpec.parse(offers.replacingOccurrences(of: "%@", with: #""you""#))?.offers)
+    XCTAssertEqual(o.offers.map(\.by), [.them, .you])
+    XCTAssertEqual([o.themName, ChartSpec.Offers(offers: []).themName], ["Seller", "Them"])
+    XCTAssertNil(ChartSpec.parse(offers.replacingOccurrences(of: "%@", with: #""me""#)))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"offers","offers":[{"by":"you","price":-1}]}"#))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"offers","them":"","offers":[{"by":"you","price":1}]}"#))
+  }
+
+  func testGalleryChart() throws {
+    let gallery = #"{"type":"gallery","url":"https://www.olx.pl/d/a.html","photos":[%@]}"#
+    let photo = #""https://ireland.apollo.olxcdn.com/v1/files/a/image""#
+    XCTAssertEqual(ChartSpec.parse(gallery.replacingOccurrences(of: "%@", with: photo))?.gallery?.photos.count, 1)
+    XCTAssertNil(ChartSpec.parse(gallery.replacingOccurrences(of: "%@", with: #""http://olxcdn.com/a.jpg""#)))
+    XCTAssertNil(ChartSpec.parse(gallery.replacingOccurrences(of: "%@", with: "")))
+    let many = Array(repeating: photo, count: 21).joined(separator: ",")
+    XCTAssertNil(ChartSpec.parse(gallery.replacingOccurrences(of: "%@", with: many)))
+    XCTAssertNil(ChartSpec.parse(#"{"type":"gallery","url":"javascript:alert(1)","photos":[\#(photo)]}"#))
+  }
 }
 
 final class FormTests: XCTestCase {
