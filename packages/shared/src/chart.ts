@@ -15,6 +15,33 @@ export const CHART_MAX_COLUMNS = 8;
 export const CHART_MAX_EVENTS = 60;
 /** Timeline lanes are told apart by row, not colour, but each needs its own row. */
 export const CHART_MAX_LANES = 8;
+export const CHART_MAX_LISTINGS = 30;
+
+/** Where listing photos may come from: the marketplaces' image servers, as Scout keeps them. */
+const PHOTO_HOSTS = ["olxcdn.com", "allegroimg.com", "vinted.net"];
+
+/** An http or https address written out in full; with `https`, only https. */
+export function webAddress(s: string, https = false): boolean {
+  if (!/^https?:\/\//i.test(s)) return false;
+  try {
+    const u = new URL(s);
+    return !!u.hostname && (u.protocol === "https:" || (!https && u.protocol === "http:"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the brain fetches this photo for a listings block. Anything else would let a reply make it
+ * ask any server for an address of its choosing, with whatever the reply put in it.
+ */
+export function listingPhoto(s: string): boolean {
+  if (!webAddress(s, true)) return false;
+  const u = new URL(s);
+  if (u.port || u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  return PHOTO_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
 
 const title = z.string().max(120).optional();
 /** "%", "GiB", "ms", or a currency symbol ("$", "€"), which goes in front. */
@@ -161,6 +188,39 @@ const TimelineChart = z
   });
 export type TimelineChart = z.infer<typeof TimelineChart>;
 
+/** Things for sale, as a row of cards to scroll: a photo, the title, the price and where it is. */
+const ListingsChart = z.object({
+  type: z.literal("listings"),
+  title,
+  /** The prices' currency: "zł", "€". */
+  unit,
+  data: noData,
+  items: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(200),
+        url: z
+          .string()
+          .max(2000)
+          .refine((s) => webAddress(s), "url must be an http or https address"),
+        price: z.number().optional(),
+        /** The listing's photo; only listingPhoto's are shown. */
+        photo: z
+          .string()
+          .max(2000)
+          .refine((s) => webAddress(s, true), "photo must be an https address")
+          .optional(),
+        /** "OLX", "Vinted". */
+        site: z.string().max(40).optional(),
+        /** A few words the title doesn't say: "Like new, Kraków". */
+        note: z.string().max(80).optional(),
+      }),
+    )
+    .min(1)
+    .max(CHART_MAX_LISTINGS),
+});
+export type ListingsChart = z.infer<typeof ListingsChart>;
+
 /** An attachment's id: a CSV, TSV or JSON file holding the values (apps/brain/src/chart-data.ts). */
 const data = z.number().int().positive();
 const SeriesFile = z.object({
@@ -202,6 +262,7 @@ const KINDS = {
   range: RangeChart,
   matrix: MatrixChart,
   timeline: TimelineChart,
+  listings: ListingsChart,
 };
 type Kind = keyof typeof KINDS;
 
@@ -211,6 +272,7 @@ export const ChartSpec = z.union([
   RangeChart,
   MatrixChart,
   TimelineChart,
+  ListingsChart,
 ]);
 export type ChartSpec = z.infer<typeof ChartSpec>;
 

@@ -434,6 +434,13 @@ final class ChatTests: XCTestCase {
     XCTAssertEqual(feb.last.timeIntervalSince(feb.first), 28 * 86400)
     XCTAssertNil(ChartSpec.parse(timeline.replacingOccurrences(of: "%@", with: #""2024-13""#)))
     XCTAssertNil(ChartSpec.parse(timeline.replacingOccurrences(of: "%@", with: #""2023-12-31""#)))
+
+    let listings = #"{"type":"listings","unit":"zł","items":[{"title":"RTX 3080","price":1850,"url":%@,"photo":"https://ireland.apollo.olxcdn.com/v1/files/a/image"}]}"#
+    let l = try XCTUnwrap(ChartSpec.parse(listings.replacingOccurrences(of: "%@", with: #""https://www.olx.pl/d/a.html""#))?.listings)
+    XCTAssertEqual(l.items[0].place, "olx.pl")
+    XCTAssertTrue(ChartSpec.listingPhoto(try XCTUnwrap(l.items[0].photo)))
+    XCTAssertFalse(ChartSpec.listingPhoto("https://olxcdn.com.evil.example/a.jpg"))
+    XCTAssertNil(ChartSpec.parse(listings.replacingOccurrences(of: "%@", with: #""javascript:alert(1)""#)))
   }
 }
 

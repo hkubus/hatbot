@@ -23,6 +23,7 @@ import { EventBus } from "./events";
 import { Backends } from "./hatbox/backends";
 import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
 import { Heartbeat } from "./heartbeat";
+import { ListingPhotos } from "./listing-photos";
 import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
@@ -261,6 +262,7 @@ export async function createServices(o: Outside) {
     report,
     negotiations,
     listings,
+    listingPhotos: new ListingPhotos(o.fetch),
     updates,
     ping,
     proxmox,

@@ -2921,6 +2921,116 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
 .reply-chart .chart-matrix td.on {
   box-shadow: inset 0 0 0 1.5px var(--text-2);
 }
+.reply-listings {
+  max-width: 100%;
+  margin: var(--sp-2xs) 0;
+  display: grid;
+  gap: var(--sp-sm);
+}
+.listings-frame {
+  position: relative;
+  min-width: 0;
+}
+.listings-row {
+  display: flex;
+  gap: var(--sp-md);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 3px;
+  scrollbar-width: thin;
+  /* Room for the focus ring inside the scrolling box. */
+  padding: 3px 3px var(--sp);
+  margin: -3px;
+}
+a.listing {
+  flex: 0 0 168px;
+  scroll-snap-align: start;
+  display: grid;
+  align-content: start;
+  gap: var(--sp-2xs);
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--r-md);
+}
+a.listing:hover {
+  text-decoration: none;
+}
+a.listing:hover .listing-title {
+  text-decoration: underline;
+}
+.listing-photo {
+  aspect-ratio: 4 / 3;
+  margin-bottom: var(--sp-xs);
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--grid);
+  overflow: hidden;
+}
+.md .listing-photo img,
+.listing-photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
+  object-fit: cover;
+}
+.listing-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.listing-price {
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.listing-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+/* Over the photos, for a mouse: a trackpad or a finger scrolls the row itself. */
+.listings-page {
+  position: absolute;
+  top: calc(168px * 3 / 8 - 18px);
+  right: var(--sp-xs);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text);
+}
+.listings-page:hover {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface));
+}
+.listings-page.back {
+  right: auto;
+  left: var(--sp-xs);
+}
+.listings-page.back svg {
+  transform: rotate(180deg);
+}
+.listings-page svg.i {
+  width: 20px;
+  height: 20px;
+}
+@media (pointer: coarse) {
+  .listings-page {
+    display: none;
+  }
+}
 .sr-only {
   position: absolute;
   width: 1px;

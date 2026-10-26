@@ -121,6 +121,8 @@ struct ChartView: View {
         if let matrix = spec.matrix { MatrixGrid(matrix: matrix) }
       case .timeline:
         if let timeline = spec.timeline { TimelinePlot(timeline: timeline) }
+      case .listings:
+        if let listings = spec.listings { ListingsRow(listings: listings, unit: spec.unit) }
       }
     }
   }
@@ -586,6 +588,71 @@ private struct RangePlot: View {
 }
 
 // MARK: Matrix
+
+private struct ListingsRow: View {
+  let listings: ChartSpec.Listings
+  let unit: String?
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      LazyHStack(alignment: .top, spacing: 12) {
+        ForEach(listings.items.indices, id: \.self) { i in
+          ListingCard(item: listings.items[i], unit: unit)
+        }
+      }
+      .scrollTargetLayout()
+    }
+    .scrollTargetBehavior(.viewAligned)
+  }
+}
+
+private struct ListingCard: View {
+  static let width: CGFloat = 156
+  let item: ChartSpec.Listings.Item
+  let unit: String?
+  @Environment(AppStore.self) private var store
+  @Environment(\.displayScale) private var scale
+  @State private var loaded: UIImage?
+
+  private var path: String? {
+    item.photo.flatMap { ChartSpec.listingPhoto($0) ? "/listing-photo?url=\(API.query($0))" : nil }
+  }
+
+  private var image: UIImage? {
+    loaded ?? path.flatMap { ImageCache.attachments.cached(store.api, $0, longSide: Self.width * scale) }
+  }
+
+  var body: some View {
+    let card = VStack(alignment: .leading, spacing: 2) {
+      Rectangle().fill(.quaternary)
+        .aspectRatio(4 / 3, contentMode: .fit)
+        .overlay { if let image { Image(uiImage: image).resizable().scaledToFill() } }
+        .clipShape(.rect(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+        .padding(.bottom, 4)
+      Text(item.title).font(.footnote).lineLimit(2, reservesSpace: true)
+      if let price = item.price {
+        Text(ChartSpec.format(price, unit: unit)).font(.subheadline.weight(.semibold)).monospacedDigit()
+      }
+      let place = item.place
+      if !place.isEmpty {
+        Text(place).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+      }
+    }
+    .frame(width: Self.width, alignment: .leading)
+    .foregroundStyle(.primary)
+    .task(id: path) {
+      guard image == nil, let path else { return }
+      loaded = try? await ImageCache.attachments.image(
+        store.api, path, longSide: Self.width * scale, onDisk: !store.incognito)
+    }
+    if let url = URL(string: item.url) {
+      Link(destination: url) { card }.buttonStyle(.plain)
+    } else {
+      card
+    }
+  }
+}
 
 private struct MatrixGrid: View {
   let matrix: ChartSpec.Matrix

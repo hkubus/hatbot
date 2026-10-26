@@ -13,6 +13,8 @@ const scatter = { type: "scatter", series: [{ points: [{ x: 1, y: 2 }] }] };
 const range = { type: "range", rows: [{ label: "A", low: 1, high: 3 }] };
 const matrix = { type: "matrix", rows: ["A"], columns: [{ name: "Price" }], values: [[1]] };
 const timeline = { type: "timeline", events: [{ date: "2024", label: "A" }] };
+const listing = { title: "RTX 3080", url: "https://www.olx.pl/d/oferta/rtx-3080.html" };
+const listings = { type: "listings", items: [listing] };
 const sources = [
   ...[
     base,
@@ -78,6 +80,31 @@ const sources = [
       events: Array.from({ length: 9 }, (_, i) => ({ date: "2024", label: "A", lane: `${i}` })),
     },
     { ...timeline, events: Array(61).fill(timeline.events[0]) },
+    {
+      ...listings,
+      title: "T",
+      unit: "zł",
+      items: [
+        {
+          ...listing,
+          price: 1850,
+          photo: "https://ireland.apollo.olxcdn.com/v1/files/a/image",
+          site: "OLX",
+          note: "Like new, Kraków",
+          z: 1,
+        },
+        { ...listing, url: "http://shop.example/a", photo: "https://cdn.example/a.jpg" },
+      ],
+    },
+    { ...listings, items: [] },
+    { ...listings, items: Array(31).fill(listing) },
+    { ...listings, items: [{ ...listing, title: "" }] },
+    { ...listings, items: [{ ...listing, url: "javascript:alert(1)" }] },
+    { ...listings, items: [{ ...listing, url: "www.olx.pl/d/oferta" }] },
+    { ...listings, items: [{ ...listing, photo: "http://cdn.example/a.jpg" }] },
+    { ...listings, items: [{ ...listing, price: "1850" }] },
+    { ...listings, items: [{ ...listing, note: "x".repeat(81) }] },
+    { ...listings, data: 3 },
     { type: "line", title: "T", unit: "%", stacked: false, horizontal: true, data: 3, z: 1 },
     { type: "scatter", xName: "Price", yUnit: "dB", data: 3 },
     { ...base, data: 3 },

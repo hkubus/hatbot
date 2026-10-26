@@ -4,6 +4,7 @@ import {
   CHART_MAX_COLUMNS,
   CHART_MAX_EVENTS,
   CHART_MAX_LANES,
+  CHART_MAX_LISTINGS,
   CHART_MAX_POINTS,
   CHART_MAX_ROWS,
   CHART_MAX_SERIES,
@@ -11,11 +12,13 @@ import {
   type ChartFile,
   type ChartSpec,
   dateRange,
+  type ListingsChart,
   type MatrixChart,
   type RangeChart,
   type ScatterChart,
   type SeriesChart,
   type TimelineChart,
+  webAddress,
 } from "@hatbot/shared";
 
 type Obj = Record<string, unknown>;
@@ -61,6 +64,8 @@ export function parseChart(source: string): ChartSpec | null {
       return matrix(o);
     case "timeline":
       return timeline(o);
+    case "listings":
+      return listings(o);
     default:
       return null;
   }
@@ -174,4 +179,23 @@ function timeline(o: Obj): TimelineChart | null {
   }
   if (new Set(parsed.map((e) => e.lane ?? "")).size > CHART_MAX_LANES) return null;
   return pick(o, ["type", "title"], { events: parsed });
+}
+
+function listings(o: Obj): ListingsChart | null {
+  const { unit, items } = o;
+  if (!optString(unit, 12) || !list(items, 1, CHART_MAX_LISTINGS)) return null;
+  const parsed: ListingsChart["items"] = [];
+  for (const it of items) {
+    if (!isObject(it) || typeof it.title !== "string" || !it.title || it.title.length > 200)
+      return null;
+    if (typeof it.url !== "string" || it.url.length > 2000 || !webAddress(it.url)) return null;
+    if (
+      it.photo !== undefined &&
+      !(optString(it.photo, 2000) && webAddress(it.photo as string, true))
+    )
+      return null;
+    if (!optNumber(it.price) || !optString(it.site, 40) || !optString(it.note, 80)) return null;
+    parsed.push(pick(it, ["title", "url", "price", "photo", "site", "note"], {}));
+  }
+  return pick(o, ["type", "title", "unit"], { items: parsed });
 }

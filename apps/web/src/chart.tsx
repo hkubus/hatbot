@@ -1,6 +1,7 @@
 import type { ChartData, ChartFile, ChartSpec } from "@hatbot/shared";
 import { useEffect, useState } from "react";
 import { api, errorText } from "./api";
+import { ListingsRow } from "./charts/listings";
 import { MatrixPlot } from "./charts/matrix";
 import { RangePlot } from "./charts/range";
 import { ScatterPlot } from "./charts/scatter";
@@ -24,6 +25,8 @@ export function Chart({ spec }: { spec: ChartSpec }) {
       return <MatrixPlot spec={spec} />;
     case "timeline":
       return <TimelinePlot spec={spec} />;
+    case "listings":
+      return <ListingsRow spec={spec} />;
     default:
       return <SeriesPlot spec={spec} />;
   }

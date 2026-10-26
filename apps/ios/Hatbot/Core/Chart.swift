@@ -4,7 +4,7 @@ import Foundation
 
 struct ChartSpec: Decodable, Equatable, Sendable {
   enum Kind: String, Decodable, Sendable {
-    case line, bar, scatter, range, matrix, timeline
+    case line, bar, scatter, range, matrix, timeline, listings
   }
 
   struct Series: Equatable, Sendable {
@@ -106,6 +106,47 @@ struct ChartSpec: Decodable, Equatable, Sendable {
     }
   }
 
+  /// Things for sale, as a row of cards to scroll.
+  struct Listings: Decodable, Equatable, Sendable {
+    struct Item: Decodable, Equatable, Sendable {
+      var title: String
+      var url: String
+      var price: Double?
+      /// Only listingPhoto's are shown, through the brain.
+      var photo: String?
+      var site: String?
+      /// A few words the title doesn't say: "Like new, Kraków".
+      var note: String?
+
+      /// The site's name, or the address's host without www.
+      var place: String {
+        let site = site.flatMap { $0.isEmpty ? nil : $0 }
+          ?? URL(string: url)?.host().map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 } ?? ""
+        return [site, note ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+      }
+    }
+
+    var items: [Item]
+  }
+
+  /// Where listing photos may come from (listingPhoto in packages/shared/src/chart.ts).
+  static let photoHosts = ["olxcdn.com", "allegroimg.com", "vinted.net"]
+
+  /// An http or https address written out in full; with `https`, only https.
+  static func webAddress(_ s: String, https: Bool = false) -> Bool {
+    let lower = s.lowercased()
+    guard lower.hasPrefix("https://") || (!https && lower.hasPrefix("http://")),
+      let host = URL(string: s)?.host(), !host.isEmpty else { return false }
+    return true
+  }
+
+  /// Whether the brain fetches this photo for a listings block.
+  static func listingPhoto(_ s: String) -> Bool {
+    guard webAddress(s, https: true), let u = URLComponents(string: s), let host = u.host?.lowercased(),
+      u.port == nil, u.user == nil, u.password == nil else { return false }
+    return photoHosts.contains { host == $0 || host.hasSuffix(".\($0)") }
+  }
+
   /// Past three series the colours stop telling apart for colour-blind readers.
   static let maxSeries = 3
   static let maxPoints = 500
@@ -116,6 +157,7 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   static let maxEvents = 60
   /// Timeline lanes are told apart by row, not colour, but each needs its own row.
   static let maxLanes = 8
+  static let maxListings = 30
 
   var type: Kind
   var title: String?
@@ -131,9 +173,10 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   var ranges: Ranges?
   var matrix: Matrix?
   var timeline: Timeline?
+  var listings: Listings?
 
   private enum CodingKeys: String, CodingKey {
-    case type, title, unit, stacked, horizontal, x, series, markName, rows, columns, values, events, data
+    case type, title, unit, stacked, horizontal, x, series, markName, rows, columns, values, events, items, data
   }
 
   /// x labels are strings or numbers.
@@ -174,6 +217,9 @@ struct ChartSpec: Decodable, Equatable, Sendable {
       matrix = try Matrix(from: decoder)
     case .timeline:
       timeline = try Timeline(from: decoder)
+    case .listings:
+      unit = try c.optional(.unit)
+      listings = try Listings(from: decoder)
     }
   }
 
@@ -223,6 +269,14 @@ struct ChartSpec: Decodable, Equatable, Sendable {
           return Self.dateRange(end).map { start.first <= $0.last } ?? false
         }
         && t.lanes.count <= Self.maxLanes
+    case .listings:
+      guard let l = listings else { return false }
+      return (1...Self.maxListings).contains(l.items.count)
+        && l.items.allSatisfy { it in
+          (1...200).contains(it.title.utf16.count) && fits(it.url, 2000) && Self.webAddress(it.url)
+            && (it.photo.map { fits($0, 2000) && Self.webAddress($0, https: true) } ?? true)
+            && fits(it.site, 40) && fits(it.note, 80)
+        }
     }
   }
 
@@ -484,6 +538,20 @@ extension ChartSpec.Matrix.Column {
     name = try c.decode(String.self, forKey: .name)
     unit = try c.optional(.unit)
     better = try c.optional(.better)
+  }
+}
+
+extension ChartSpec.Listings.Item {
+  private enum CodingKeys: String, CodingKey { case title, url, price, photo, site, note }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    title = try c.decode(String.self, forKey: .title)
+    url = try c.decode(String.self, forKey: .url)
+    price = try c.optional(.price)
+    photo = try c.optional(.photo)
+    site = try c.optional(.site)
+    note = try c.optional(.note)
   }
 }
 
