@@ -5,7 +5,7 @@ import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { signIn, type TestApp, testApp, waitFor } from "./helpers";
+import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
   content: [toolUse("finish_task", { outcome: "done", summary })],
@@ -14,6 +14,11 @@ const finish = (summary = "Booked it.") => ({
 function startTask(t: TestApp, goal = "Book a table") {
   return t.tasks.createDesktopTask({ title: goal, goal, successCriteria: "", origin: "chat" });
 }
+
+/** finish_task for a background task, which also says whether to notify. */
+const done = (summary: string) => ({
+  content: [toolUse("finish_task", { outcome: "done", summary, notify: false })],
+});
 
 const pending = (t: TestApp) => waitFor(() => t.approvals.list(true)[0]);
 
@@ -740,4 +745,90 @@ test("an ended task runs again with its goal as you edited it, still tainted", a
   expect((await t.call("POST", `/tasks/${again.id}/rerun`, {}, { cookie })).status).toBe(409);
   await t.tasks.idle();
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("Deploy main again");
+});
+
+test("the chat steers its running task: the note wakes it and comes with its next step, and the owner's words join its request", async () => {
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title: "Buy filters", goal: "Order one water filter" })] },
+    { content: [text("On it.")] },
+  ]);
+  const work = new FakeModel([
+    { content: [toolUse("wait", { minutes: 30, for: "the shop to confirm" })] },
+    done("Ordered two."),
+  ]);
+  const t = await testApp(chat, work);
+  t.thread.post("order a water filter");
+  await t.thread.idle();
+  const task = t.tasks.list().find((x) => x.title === "Buy filters") as Task;
+  await waitFor(() => t.tasks.steps(task.id).find((s) => s.name === "wait"));
+
+  chat.script.push(
+    { content: [toolUse("steer_task", { id: task.id, note: "Order two filters, not one." })] },
+    { content: [text("Told it.")] },
+    { content: [text("It ordered two.")] },
+  );
+  t.thread.post("make it two");
+  await t.tasks.idle();
+  expect(lastText(work.requests[1])).toContain(
+    '<steer from=\\"chat\\">\\nOrder two filters, not one.\\n</steer>',
+  );
+  expect(t.tasks.steps(task.id).find((s) => s.name === "Note from the chat")?.detail).toBe(
+    "Order two filters, not one.",
+  );
+  expect(t.tasks.requestOf(task.id)).toContain("make it two");
+  expect(t.tasks.requestOf(task.id)).toContain("order a water filter");
+  await t.thread.idle();
+});
+
+test("a desktop task reads a note from the chat with its next step", async () => {
+  const { promise: gate, resolve } = Promise.withResolvers<void>();
+  const work = new FakeModel([
+    { content: [computer("screenshot")], wait: gate },
+    finish("Booked for four."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await waitFor(() => work.requests.length === 1);
+  expect(t.tasks.steer(task.id, { botId: task.botId, note: "Book for four people." })).toBeNull();
+  resolve();
+  await t.tasks.idle();
+  expect(lastText(work.requests[1])).toContain("Book for four people.");
+});
+
+test("only a bot's own task that's still running can be steered", async () => {
+  const work = new FakeModel([
+    done("Done."),
+    { content: [toolUse("wait", { minutes: 30, for: "a reply" })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const ended = t.tasks.createBackgroundTask({ title: "A", goal: "A", origin: "chat" }) as Task;
+  await t.tasks.idle();
+  expect(t.tasks.steer(ended.id, { botId: ended.botId, note: "More" })).toContain("has ended");
+  const running = t.tasks.createBackgroundTask({ title: "B", goal: "B", origin: "chat" }) as Task;
+  await waitFor(() => t.tasks.steps(running.id).find((s) => s.name === "wait"));
+  const other = bot(t, "Scout");
+  expect(t.tasks.steer(running.id, { botId: other.id, note: "Stop" })).toBe(
+    `No task #${running.id} of yours.`,
+  );
+  expect(t.tasks.steps(running.id).some((s) => s.name === "Note from the chat")).toBe(false);
+  t.tasks.cancel(running.id);
+  await t.tasks.idle();
+});
+
+test("a note from a tainted chat taints the task it steers", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("wait", { minutes: 30, for: "a reply" })] },
+    done("Done."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "A", goal: "A", origin: "chat" }) as Task;
+  await waitFor(() => t.tasks.steps(task.id).find((s) => s.name === "wait"));
+  expect(task.tainted).toBe(false);
+  t.tasks.steer(task.id, {
+    botId: task.botId,
+    note: "Go on",
+    taintedBy: "The chat had read: A web page",
+  });
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.taintedBy).toBe("The chat had read: A web page");
 });

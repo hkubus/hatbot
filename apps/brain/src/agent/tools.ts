@@ -1502,6 +1502,26 @@ export const TOOLS = [
     },
   }),
   def({
+    name: "steer_task",
+    description:
+      "Send a note to a task of yours that's still running (one you started, or a schedule's or trigger's run): a detail the owner added, a change of plan, or to stop and finish with what it has. It reads the note after its current step and follows it over its goal. It can't see this conversation, so say everything it needs.",
+    schema: z.object({
+      id: z.number().int(),
+      note: z.string().min(1).max(4000).describe("What the task should do now, in full"),
+    }),
+    run: async ({ id, note }, { tasks, bot, tainted, suspected, ownerSaid }) => {
+      if (!tasks) return "Tasks aren't available.";
+      const refused = tasks.steer(id, {
+        botId: bot?.id ?? HATBOT_ID,
+        note,
+        taintedBy: chatTaint(tainted?.()),
+        suspected: await suspected?.(),
+        ownerSaid: ownerSaid?.(),
+      });
+      return refused ?? `Sent to task #${id}. It reads it after its current step.`;
+    },
+  }),
+  def({
     name: "schedule_create",
     description:
       "Schedule a background task that runs on its own, repeating (cron) or once (at). Each run gets your memory and tools, can use the desktop, and reports back in this thread, with a notification when there's something to tell. Write `prompt` as complete instructions for that future run: it can't see this conversation. If the owner's timing is vague, ask before creating it. The owner sees it in Schedules, where they can change or turn it off.",

@@ -40,7 +40,16 @@ import {
 } from "../plugins/registry";
 import { usesReserve } from "../spend";
 import { alertMessageSource, alertParts } from "../triggers";
-import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, thinkingFor } from "./loop";
+import {
+  addNotes,
+  askOwner,
+  callsOf,
+  endOf,
+  requestsFor,
+  Stop,
+  steerNote,
+  thinkingFor,
+} from "./loop";
 import {
   FinishResearch,
   finishResearch,
@@ -485,8 +494,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
   };
 
-  const ownerWords = (): string | null =>
-    task.origin === "chat" ? tasks.requestOf(id) : standingWords();
+  const ownerWords = (): string | null => {
+    const request = tasks.requestOf(id);
+    if (task.origin === "chat") return request;
+    // What the owner said in the chat when it steered the task.
+    return request
+      ? `${standingWords() ?? ""}\n\nWhat the owner said in the chat while it ran:\n${request}`.trim()
+      : standingWords();
+  };
 
   const withNotes = (words: string | null): string | null =>
     notes.length
@@ -938,7 +953,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // apart from an alert's message. Not while the web tools' code is still running: then only tool
       // results may follow.
       if (!serverToolWaiting(res.content))
-        for (const event of tasks.takeInbox(id)) {
+        for (const { kind, text: event } of tasks.takeInbox(id)) {
+          if (kind === "note") {
+            results.push({ type: "text", text: steerNote(event) });
+            continue;
+          }
           const alert = alertParts(event);
           if (alert?.message)
             taint(alertMessageSource(String(JSON.parse(alert.alert).monitor)), alert.message);
