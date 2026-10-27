@@ -28,10 +28,12 @@ import { DesktopBusy } from "../desktop/service";
 import { listingCheck, listingRefused } from "../listings/gate";
 import {
   collapse,
+  conversationPage,
   type GateState,
   gateCheck,
   gateHeld,
   refused,
+  sameAddress,
   typesText,
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
@@ -372,6 +374,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const listing = tasks.listings?.gateFor(id) ?? null;
   /** Text was typed or pasted in this task: what's in a box may be ours, not sent. */
   let typed = false;
+  /** The last click was on the listing page, so a conversation it opens is this seller's. */
+  let fromListing = false;
   const sources = new Set<string>();
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   /** Archive paths of the images in `messages`, so the stored transcript references files. */
@@ -528,6 +532,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const url = ctx?.url?.split("#")[0] ?? null;
     if (!url || url === lastUrl) return;
     lastUrl = url;
+    if (gate && fromListing && !gate.conversationUrl && conversationPage(url, gate.listingUrl)) {
+      gate.conversationUrl = url;
+      tasks.negotiations?.conversationOpened(id, url);
+    }
+    fromListing = false;
     if (armed && !armed.hold && !samePage(url, armed.page)) armed = null;
     if (!/^https?:/.test(url)) return;
     sources.add(url.slice(0, 300));
@@ -739,6 +748,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // The model went on to something else: an approval it asks for next isn't for the held step.
     if (check || typesText(call.name, input) || call.name === "navigate") lastHeld = null;
     if (gate && typesText(call.name, input)) gateState.typed = true;
+    if (gate && (check || call.name === "navigate"))
+      fromListing = check?.press === "click" && !!lastUrl && sameAddress(lastUrl, gate.listingUrl);
     const step = tasks.addStep(id, {
       kind: call.name === "screenshot" ? "screenshot" : "action",
       name: call.name,

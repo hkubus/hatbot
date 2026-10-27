@@ -8,6 +8,7 @@ import {
   type Hold,
   heldWhat,
   hostOf,
+  onHost,
   type Press,
   pathOf,
   pressOf,
@@ -68,6 +69,21 @@ export function onConversation(tab: string, gate: SendGate): boolean {
   if (sameAddress(tab, gate.listingUrl)) return true;
   if (gate.conversationUrl && sameAddress(tab, gate.conversationUrl)) return true;
   return namesListing(tab, gate.listingUrl, gate.listingId);
+}
+
+// A conversation's address names neither the listing nor the seller, so one counts only when a click on
+// the listing page opened it.
+const CONVERSATION_PATHS: [string, RegExp][] = [
+  ["allegrolokalnie.pl", /^\/konwersacje\/[\w-]{8,}$/],
+  ["olx.pl", /^\/myaccount\/answers\/\d+$/],
+  ["vinted.pl", /^\/inbox\/\d+$/],
+];
+
+export function conversationPage(url: string, listingUrl: string): boolean {
+  if (!sameHost(url, listingUrl)) return false;
+  const host = hostOf(url) ?? "";
+  const path = pathOf(new URL(url).pathname);
+  return CONVERSATION_PATHS.some(([h, re]) => onHost(host, h) && re.test(path));
 }
 
 export function namesListing(tab: string, listingUrl: string, listingId: string): boolean {

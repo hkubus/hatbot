@@ -767,6 +767,55 @@ test("the send gate: exactly the approved text, once, after the conversation is 
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 });
 
+test("a conversation opened from the listing page is the negotiation's, and one opened by address isn't", async () => {
+  const steps = [
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("key", { text: "Return" })] },
+    finish(),
+  ];
+  const opened = async (from: string) => {
+    const t = await testApp(new FakeModel(), new FakeModel(structuredClone(steps)));
+    messageBox(t, from);
+    // What's clicked first is the listing's link to write to the seller.
+    const ask: AgentElement = {
+      tag: "a",
+      role: null,
+      type: null,
+      label: "Napisz do sprzedającego",
+      inForm: false,
+      url: from,
+      editable: false,
+      fields: [],
+      href: CHAT_URL,
+    };
+    const inspect = t.agent.inspect as (x?: number) => Promise<AgentElement | null>;
+    t.agent.inspect = async (x?: number) =>
+      x !== undefined && t.agent.page.url === LISTING_URL ? ask : inspect(x);
+    const send = t.agent.afterAction;
+    // The first click, with nothing typed, opens the conversation.
+    t.agent.afterAction = (name, input) => {
+      if (name === "left_click" && t.agent.page.url === LISTING_URL)
+        t.agent.page = { url: CHAT_URL, title: "OLX", text: "" };
+      else if (name === "left_click") return;
+      else send?.(name, input);
+    };
+    const n = openNegotiation(t);
+    await sendOffer(t, n);
+    await t.tasks.idle();
+    return { t, n };
+  };
+
+  const { t, n } = await opened(LISTING_URL);
+  expect(t.negotiations.messages(n.id)[0]?.status).toBe("sent");
+  expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
+
+  const other = await opened("https://www.olx.pl/myaccount/answers/777");
+  expect(other.t.negotiations.messages(other.n.id)[0]?.status).not.toBe("sent");
+  expect(other.t.negotiations.get(other.n.id)?.conversationUrl).toBeNull();
+});
+
 test("a seller's reply that came meanwhile stops the send", async () => {
   const work = new FakeModel([
     {

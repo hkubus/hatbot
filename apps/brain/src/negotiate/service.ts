@@ -1098,6 +1098,12 @@ export class Negotiations {
     this.setStatus(row.message_id, confirmed ? "sent" : "unconfirmed");
   }
 
+  conversationOpened(taskId: number, url: string) {
+    const row = this.taskRow(taskId);
+    if (row && !this.get(row.negotiation_id)?.conversationUrl)
+      this.update(row.negotiation_id, { conversation_url: url });
+  }
+
   // By the listing's id in the path: not the query, which the model can add to, nor the page's text,
   // where other conversations list their listings' titles.
   private conversationFor(n: Negotiation, url: string): boolean {
