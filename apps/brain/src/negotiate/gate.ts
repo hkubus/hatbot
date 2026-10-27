@@ -74,7 +74,7 @@ export function onConversation(tab: string, gate: SendGate): boolean {
 // A conversation's address names neither the listing nor the seller, so one counts only when a click on
 // the listing page opened it.
 const CONVERSATION_PATHS: [string, RegExp][] = [
-  ["allegrolokalnie.pl", /^\/konwersacje\/[\w-]{8,}$/],
+  ["allegrolokalnie.pl", /^\/(?:konwersacje|wiadomosci)\/[\w-]{8,}$/],
   ["olx.pl", /^\/myaccount\/answers\/\d+$/],
   ["vinted.pl", /^\/inbox\/\d+$/],
 ];
