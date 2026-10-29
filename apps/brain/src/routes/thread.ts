@@ -1,4 +1,4 @@
-import { BudgetError, MAX_ATTACHMENT_BYTES } from "@hatbot/plugin-sdk";
+import { BudgetError, found, idParam, MAX_ATTACHMENT_BYTES } from "@hatbot/plugin-sdk";
 import {
   CreateGroup,
   PostMessage,
@@ -12,7 +12,7 @@ import type { Thread } from "../agent/thread";
 import { requireAuth } from "../auth/middleware";
 import { chartData } from "../chart-data";
 import type { AppEnv } from "../context";
-import { found, id, json, query, signedOut } from "./util";
+import { json, query, signedOut } from "./util";
 
 /** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */
 const rfc5987 = (s: string) =>
@@ -139,10 +139,12 @@ export const threadRoutes = new Hono<AppEnv>()
     return c.json(c.var.chats.createGroup(title, botIds), 201);
   })
   .patch("/conversations/:id", json(UpdateGroup), (c) =>
-    found(c, c.var.chats.updateGroup(id(c), c.req.valid("json"))),
+    found(c, c.var.chats.updateGroup(idParam(c), c.req.valid("json"))),
   )
   .delete("/conversations/:id", (c) =>
-    c.var.chats.deleteGroup(id(c)) ? c.json({ ok: true }) : c.json({ error: "That's gone." }, 404),
+    c.var.chats.deleteGroup(idParam(c))
+      ? c.json({ ok: true })
+      : c.json({ error: "That's gone." }, 404),
   )
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
@@ -156,7 +158,10 @@ type Ctx = Context<AppEnv, string, any>;
 // Each chat's own routes: Hatbot's at /thread/…, and any chat's at /conversations/:id/….
 for (const [at, threadOf] of [
   ["/thread", (c: Ctx) => c.var.chats.hatbot()],
-  ["/conversations/:id", (c: Ctx) => (Number.isInteger(id(c)) ? c.var.chats.thread(id(c)) : null)],
+  [
+    "/conversations/:id",
+    (c: Ctx) => (Number.isInteger(idParam(c)) ? c.var.chats.thread(idParam(c)) : null),
+  ],
 ] as const) {
   const on = (f: (c: Ctx, t: Thread) => Response | Promise<Response>) => (c: Ctx) => {
     const thread = threadOf(c);

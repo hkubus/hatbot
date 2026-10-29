@@ -1,7 +1,7 @@
+import { idParam } from "@hatbot/plugin-sdk";
 import { Hono } from "hono";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { id } from "./util";
 
 const STATUSES = ["pending", "applied", "dismissed", "stale"] as const;
 
@@ -20,8 +20,8 @@ export const proposalRoutes = new Hono<AppEnv>()
     c.var.proposals.startTidy();
     return c.json({ started: true }, 202);
   })
-  .post("/proposals/:id/apply", async (c) => c.json(await c.var.proposals.apply(id(c))))
-  .post("/proposals/:id/dismiss", (c) => c.json(c.var.proposals.dismiss(id(c))))
+  .post("/proposals/:id/apply", async (c) => c.json(await c.var.proposals.apply(idParam(c))))
+  .post("/proposals/:id/dismiss", (c) => c.json(c.var.proposals.dismiss(idParam(c))))
   .get("/skills", async (c) => c.json(await c.var.proposals.skillStatus()))
   .post("/skills/:name/fix", async (c) => {
     if (c.var.settings.get().paused) return c.json({ error: "Hatbot is paused." }, 409);

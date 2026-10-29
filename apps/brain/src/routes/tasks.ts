@@ -1,10 +1,11 @@
+import { found, idParam } from "@hatbot/plugin-sdk";
 import { DecideApproval, TokenDecision } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { pauseAll } from "./admin";
-import { found, id, json, query } from "./util";
+import { json, query } from "./util";
 
 const Rerun = z.object({ goal: z.string().max(8000).optional() });
 const TokenPause = z.object({ exp: z.number().int(), sig: z.string().min(1).max(200) });
@@ -44,7 +45,7 @@ export const taskRoutes = new Hono<AppEnv>()
     "/tasks/:id",
     query(z.object({ afterStep: z.coerce.number().int().min(0).optional() })),
     (c) => {
-      const taskId = id(c);
+      const taskId = idParam(c);
       const task = c.var.tasks.get(taskId);
       if (!task) return c.json({ error: "That's gone." }, 404);
       return c.json({
@@ -55,7 +56,7 @@ export const taskRoutes = new Hono<AppEnv>()
     },
   )
   .post("/tasks/:id/rerun", json(Rerun), (c) => {
-    const old = c.var.tasks.get(id(c));
+    const old = c.var.tasks.get(idParam(c));
     if (!old) return c.json({ error: "That's gone." }, 404);
     if (old.parentId || old.lane !== "background")
       return c.json({ error: "Run the task that started it again." }, 400);
@@ -69,11 +70,11 @@ export const taskRoutes = new Hono<AppEnv>()
     );
   })
   .post("/tasks/:id/cancel", (c) => {
-    if (!c.var.tasks.cancel(id(c))) return c.json({ error: "That task isn't running." }, 409);
+    if (!c.var.tasks.cancel(idParam(c))) return c.json({ error: "That task isn't running." }, 409);
     return c.json({ ok: true });
   })
   .get("/tasks/:id/screens/:stepId", (c) => {
-    const step = c.var.tasks.step(id(c), Number(c.req.param("stepId")));
+    const step = c.var.tasks.step(idParam(c), Number(c.req.param("stepId")));
     const file = step?.screenshot ? c.var.archive.file(step.screenshot) : null;
     if (!file) return c.json({ error: "That's gone." }, 404);
     return new Response(file, {
@@ -89,7 +90,7 @@ export const taskRoutes = new Hono<AppEnv>()
 export const approvalRoutes = new Hono<AppEnv>()
   // An ntfy button: no session, the signed token is the authority.
   .post("/approvals/:id/token-decision", json(TokenDecision), (c) => {
-    const approvalId = id(c);
+    const approvalId = idParam(c);
     const { decision, exp, sig } = c.req.valid("json");
     if (!c.var.approvals.verify(approvalId, decision, exp, sig))
       return c.json({ error: "This link has expired." }, 403);
@@ -124,19 +125,19 @@ export const approvalRoutes = new Hono<AppEnv>()
       return c.json(c.var.approvals.list(pending === "1", before));
     },
   )
-  .get("/approvals/:id", (c) => found(c, c.var.approvals.get(id(c))))
+  .get("/approvals/:id", (c) => found(c, c.var.approvals.get(idParam(c))))
   .post("/approvals/:id", json(DecideApproval), (c) => {
     const { decision, note, scope } = c.req.valid("json");
-    const asked = c.var.approvals.get(id(c));
+    const asked = c.var.approvals.get(idParam(c));
     if (scope && asked && !asked.scopes.includes(scope))
       return c.json({ error: "This approval can only be given once." }, 400);
-    const approval = c.var.approvals.decide(id(c), decision, "web", note, scope);
+    const approval = c.var.approvals.decide(idParam(c), decision, "web", note, scope);
     if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json(approval);
   })
   .get("/approval-rules", (c) => c.json(c.var.approvals.rules()))
   .delete("/approval-rules/:id", (c) =>
-    c.var.approvals.removeRule(id(c))
+    c.var.approvals.removeRule(idParam(c))
       ? c.json({ ok: true })
       : c.json({ error: "That's gone." }, 404),
   );

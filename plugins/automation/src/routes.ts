@@ -1,4 +1,11 @@
-import { bodyOf, type PluginEnv, PluginError, pluginRoutes } from "@hatbot/plugin-sdk";
+import {
+  bodyOf,
+  found,
+  idParam,
+  type PluginEnv,
+  PluginError,
+  pluginRoutes,
+} from "@hatbot/plugin-sdk";
 import {
   CreateSchedule,
   CreateTrigger,
@@ -28,7 +35,6 @@ type Parts = {
   report: WeeklyReport;
 } & Pick<Deps, "settings" | "bots">;
 
-const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
 const GONE = { error: "That's gone." };
 const PAUSED = { error: "Hatbot is paused." };
 const Preview = z.object({ source: WatchSourceInput, botId: z.string().optional() });
@@ -38,8 +44,6 @@ export function routes(p: Parts) {
   const knownBot = (botId: string | undefined) => {
     if (botId !== undefined && !p.bots.active(botId)) throw new PluginError("No such bot.");
   };
-  const found = <T extends object>(c: Context, x: T | null | undefined) =>
-    x ? c.json(x) : c.json(GONE, 404);
   return pluginRoutes()
     .get("/schedules", (c) => c.json(schedules.list()))
     .post("/schedules", async (c) => {
@@ -47,20 +51,20 @@ export function routes(p: Parts) {
       knownBot(body.botId);
       return c.json(schedules.create(body, "owner"), 201);
     })
-    .get("/schedules/:id", (c) => found(c, schedules.get(id(c))))
+    .get("/schedules/:id", (c) => found(c, schedules.get(idParam(c))))
     .patch("/schedules/:id", async (c) => {
       const body = await bodyOf(c, UpdateSchedule);
       knownBot(body.botId);
-      return found(c, schedules.update(id(c), body));
+      return found(c, schedules.update(idParam(c), body));
     })
-    .post("/schedules/:id/trust", (c) => found(c, schedules.trust(id(c))))
+    .post("/schedules/:id/trust", (c) => found(c, schedules.trust(idParam(c))))
     .delete("/schedules/:id", (c) =>
-      schedules.delete(id(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
+      schedules.delete(idParam(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
     )
     .post("/schedules/:id/run", (c) => {
-      if (!schedules.get(id(c))) return c.json(GONE, 404);
+      if (!schedules.get(idParam(c))) return c.json(GONE, 404);
       if (settings.get().paused) return c.json(PAUSED, 409);
-      const task = schedules.runNow(id(c));
+      const task = schedules.runNow(idParam(c));
       return task ? c.json(task, 201) : c.json({ error: "Its last run is still going." }, 409);
     })
     .get("/triggers", (c) => c.json(triggers.list()))
@@ -69,15 +73,15 @@ export function routes(p: Parts) {
       knownBot(body.botId);
       return c.json(triggers.create(body), 201);
     })
-    .get("/triggers/:id", (c) => found(c, triggers.get(id(c))))
+    .get("/triggers/:id", (c) => found(c, triggers.get(idParam(c))))
     .patch("/triggers/:id", async (c) => {
       const body = await bodyOf(c, UpdateTrigger);
       knownBot(body.botId);
-      return found(c, triggers.update(id(c), body));
+      return found(c, triggers.update(idParam(c), body));
     })
-    .post("/triggers/:id/secret", (c) => found(c, triggers.rotate(id(c))))
+    .post("/triggers/:id/secret", (c) => found(c, triggers.rotate(idParam(c))))
     .delete("/triggers/:id", (c) =>
-      triggers.delete(id(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
+      triggers.delete(idParam(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
     )
     .get("/watchers", (c) => c.json(watchers.list()))
     .post("/watchers", async (c) => {
@@ -90,25 +94,25 @@ export function routes(p: Parts) {
       knownBot(botId);
       return c.json(await watchers.preview(source, botId ?? HATBOT_ID));
     })
-    .get("/watchers/:id", (c) => found(c, watchers.get(id(c))))
+    .get("/watchers/:id", (c) => found(c, watchers.get(idParam(c))))
     .get("/watchers/:id/values", (c) => {
-      if (!watchers.get(id(c))) return c.json(GONE, 404);
+      if (!watchers.get(idParam(c))) return c.json(GONE, 404);
       const limit = Math.min(500, Math.max(1, Number(c.req.query("limit") ?? 100) || 100));
-      return c.json(watchers.values(id(c), limit));
+      return c.json(watchers.values(idParam(c), limit));
     })
     .patch("/watchers/:id", async (c) => {
       const body = await bodyOf(c, UpdateWatcher);
       knownBot(body.botId);
-      return found(c, await watchers.update(id(c), body));
+      return found(c, await watchers.update(idParam(c), body));
     })
     .post("/watchers/:id/check", async (c) => {
-      if (!watchers.get(id(c))) return c.json(GONE, 404);
+      if (!watchers.get(idParam(c))) return c.json(GONE, 404);
       if (settings.get().paused) return c.json(PAUSED, 409);
-      return c.json(await watchers.checkNow(id(c)));
+      return c.json(await watchers.checkNow(idParam(c)));
     })
-    .post("/watchers/:id/trust", (c) => found(c, watchers.trust(id(c))))
+    .post("/watchers/:id/trust", (c) => found(c, watchers.trust(idParam(c))))
     .delete("/watchers/:id", (c) =>
-      watchers.delete(id(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
+      watchers.delete(idParam(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
     )
     .get("/heartbeat", (c) => c.json(heartbeat.info()))
     .post("/heartbeat/run", async (c) => {
@@ -196,7 +200,7 @@ const kumaHook = async (c: Context<PluginEnv>, triggers: Triggers) => {
   const token =
     c.req.header("authorization") ??
     (c.req.query("token") ? `Bearer ${c.req.query("token")}` : undefined);
-  if (!triggers.verifyKuma(id(c), token)) {
+  if (!triggers.verifyKuma(idParam(c), token)) {
     console.log(
       `${hook}: refused, ${token ? "wrong secret" : "no secret"} or no such Kuma trigger`,
     );
@@ -210,7 +214,7 @@ const kumaHook = async (c: Context<PluginEnv>, triggers: Triggers) => {
     );
     return c.json({ error: "expected Uptime Kuma's JSON" }, 400);
   }
-  const r = triggers.receiveKuma(id(c), event);
+  const r = triggers.receiveKuma(idParam(c), event);
   console.log(
     `${hook}: ${r.status === "skipped" ? `skipped (${r.reason})` : r.status === "started" ? `started task #${r.task.id}` : r.status === "waiting" ? `waiting for more checks until ${r.until}` : "test message"}`,
   );
@@ -222,13 +226,13 @@ const webhook = async (c: Context<PluginEnv>, triggers: Triggers) => {
   const hook = `hook ${c.req.param("id")}`;
   const bytes = await body(c.req.raw);
   if (!bytes) return c.json({ error: "too large" }, 413);
-  const check = triggers.verifyWebhook(id(c), (h) => c.req.header(h), bytes);
+  const check = triggers.verifyWebhook(idParam(c), (h) => c.req.header(h), bytes);
   if (!check.ok) {
     console.log(`${hook}: refused, missing or wrong signature, or no such webhook trigger`);
     return c.json({ error: "Wrong or missing signature." }, 401);
   }
   const r = triggers.receiveWebhook(
-    id(c),
+    idParam(c),
     new TextDecoder().decode(bytes),
     check.replay,
     check.keys,

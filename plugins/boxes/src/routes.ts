@@ -1,4 +1,4 @@
-import { bodyOf, pluginRoutes } from "@hatbot/plugin-sdk";
+import { bodyOf, found, idParam, pluginRoutes } from "@hatbot/plugin-sdk";
 import { BoxCall, OpenBox, RevertBox, SetBoxSecrets } from "@hatbot/shared";
 import { type Boxes, FRAME_CSP } from "./boxes";
 
@@ -18,8 +18,6 @@ const FRAME_HEADERS = {
 
 const GONE = { error: "That box is gone." };
 
-const id = (c: { req: { param: (k: string) => string | undefined } }) => Number(c.req.param("id"));
-
 export function routes(boxes: Boxes) {
   return (
     pluginRoutes()
@@ -27,7 +25,7 @@ export function routes(boxes: Boxes) {
       .get("/boxes/:id/frame", (c) => {
         const q = (k: string) => c.req.query(k) ?? "";
         const page = boxes.frame(
-          id(c),
+          idParam(c),
           Number(q("v")),
           Number(q("exp")),
           q("sig"),
@@ -42,15 +40,15 @@ export function routes(boxes: Boxes) {
       })
       .get("/boxes", (c) => c.json(boxes.list()))
       .get("/boxes/:id", (c) => {
-        const box = boxes.detail(id(c));
-        return box ? c.json(box) : c.json(GONE, 404);
+        const box = boxes.detail(idParam(c));
+        return found(c, box, GONE.error);
       })
       .get("/boxes/:id/versions/:n", (c) => {
-        const page = boxes.page(id(c), Number(c.req.param("n")));
-        return page ? c.json(page) : c.json(GONE, 404);
+        const page = boxes.page(idParam(c), Number(c.req.param("n")));
+        return found(c, page, GONE.error);
       })
       .get("/boxes/:id/preview", async (c) => {
-        const png = await boxes.preview(id(c), c.req.query("dark") === "1");
+        const png = await boxes.preview(idParam(c), c.req.query("dark") === "1");
         if (!png) return c.json({ error: "There's no picture of that box." }, 404);
         return new Response(png, {
           headers: { "content-type": "image/png", "cache-control": "private, no-cache" },
@@ -58,7 +56,7 @@ export function routes(boxes: Boxes) {
       })
       .post("/boxes/:id/open", async (c) => {
         const { version, dark } = await bodyOf(c, OpenBox);
-        const box = boxes.get(id(c));
+        const box = boxes.get(idParam(c));
         const n = version ?? box?.version;
         if (!box || !n || !boxes.page(box.id, n)) return c.json(GONE, 404);
         return c.json({ url: boxes.address(box.id, n, dark ?? false) });
@@ -66,22 +64,24 @@ export function routes(boxes: Boxes) {
       // Your own revert, as a new version: what tainted work wrote stays marked on the box.
       .post("/boxes/:id/revert", async (c) => {
         const { version } = await bodyOf(c, RevertBox);
-        if (!boxes.get(id(c))) return c.json(GONE, 404);
-        boxes.revert(id(c), version, { messageId: null });
-        const box = boxes.detail(id(c));
-        return box ? c.json(box) : c.json(GONE, 404);
+        if (!boxes.get(idParam(c))) return c.json(GONE, 404);
+        boxes.revert(idParam(c), version, { messageId: null });
+        const box = boxes.detail(idParam(c));
+        return found(c, box, GONE.error);
       })
       // Yours to set, on the box's page: only its backend gets them, and no answer carries a value.
       .put("/boxes/:id/secrets", async (c) => {
         const { values } = await bodyOf(c, SetBoxSecrets);
-        if (!boxes.get(id(c))) return c.json(GONE, 404);
-        return c.json(await boxes.setSecrets(id(c), values));
+        if (!boxes.get(idParam(c))) return c.json(GONE, 404);
+        return c.json(await boxes.setSecrets(idParam(c), values));
       })
       .post("/boxes/:id/call", async (c) => {
         const call = await bodyOf(c, BoxCall);
-        if (!boxes.get(id(c))) return c.json(GONE, 404);
-        return c.json(await boxes.call(id(c), call));
+        if (!boxes.get(idParam(c))) return c.json(GONE, 404);
+        return c.json(await boxes.call(idParam(c), call));
       })
-      .delete("/boxes/:id", (c) => (boxes.delete(id(c)) ? c.json({ ok: true }) : c.json(GONE, 404)))
+      .delete("/boxes/:id", (c) =>
+        boxes.delete(idParam(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
+      )
   );
 }

@@ -32,15 +32,6 @@ export const json = <S extends z.ZodType>(schema: S) =>
 export const query = <S extends z.ZodType>(schema: S) =>
   zValidator("query", schema, (r, c) => (r.success ? undefined : badRequest(c, r.error)));
 
-export const id = (c: { req: { param: (k: string) => string | undefined } }) =>
-  Number(c.req.param("id"));
-
 export const knownBot = (c: { var: AppEnv["Variables"] }, botId: string | undefined) => {
   if (botId !== undefined && !c.var.bots.active(botId)) throw new UserError("No such bot.");
 };
-
-export const found = <T extends object>(
-  c: Context,
-  x: T | null | undefined,
-  gone = "That's gone.",
-) => (x ? c.json(x) : c.json({ error: gone }, 404));

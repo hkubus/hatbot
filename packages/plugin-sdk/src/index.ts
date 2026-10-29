@@ -9,7 +9,7 @@ import {
   type Task,
 } from "@hatbot/shared";
 import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desktop";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { z } from "zod";
 import type { PluginCheck, SearchRoutine, TaskOrigin } from "./host";
@@ -351,6 +351,17 @@ export type PluginEnv = {
     onSignOut: (fn: () => void) => () => void;
   };
 };
+
+/** A route's :id, as a number. */
+export const idParam = (c: { req: { param: (k: string) => string | undefined } }) =>
+  Number(c.req.param("id"));
+
+/** It, or a 404 saying it's gone. */
+export const found = <T extends object>(
+  c: Context,
+  x: T | null | undefined,
+  gone = "That's gone.",
+) => (x ? c.json(x) : c.json({ error: gone }, 404));
 
 /** Under the API's prefix; a PluginError is shown as it is, anything else as "Something went wrong." */
 export function pluginRoutes(): Hono<PluginEnv> {

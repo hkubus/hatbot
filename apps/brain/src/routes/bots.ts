@@ -1,3 +1,4 @@
+import { found } from "@hatbot/plugin-sdk";
 import { BOT_TEMPLATES, CreateBot, UpdateBot } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -6,7 +7,7 @@ import { briefBot } from "../bots";
 import type { AppEnv } from "../context";
 import { modelProblem } from "../models-known";
 import { spendDays } from "./admin";
-import { found, json, query } from "./util";
+import { json, query } from "./util";
 
 export const botRoutes = new Hono<AppEnv>()
   .use("/bots", requireAuth)
