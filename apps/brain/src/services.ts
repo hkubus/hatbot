@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { automationPlugin } from "@hatbot/plugin-automation";
 import { boxesPlugin, type HatboxAgent } from "@hatbot/plugin-boxes";
 import { codePlugin } from "@hatbot/plugin-code";
+import { type DesktopAgent, type DesktopService, desktopPlugin } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import { researchPlugin } from "@hatbot/plugin-research";
 import { scoutPlugin } from "@hatbot/plugin-scout";
 import type {
-  DesktopHost,
   HOST_SERVICES,
   MemoryHost,
   ModelHost,
@@ -35,15 +35,13 @@ import { Bots } from "./bots";
 import { Checks, type ChecksDeps } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
-import type { DesktopAgent } from "./desktop/client";
-import { Logins } from "./desktop/logins";
-import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { ListingPhotos } from "./listing-photos";
 import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
 import { MemoryConflict, MemoryStore } from "./memory/store";
 import { modelName } from "./models-known";
+import { Logins } from "./negotiate/logins";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
@@ -66,7 +64,8 @@ export type Outside = {
   /** Tests' own; the brain's sends each model to the provider plugin that offers it. */
   model?: ModelClient;
   taskModel?: ModelClient;
-  agent: DesktopAgent;
+  /** Tests' stand-in for desktop-agent. */
+  agent?: DesktopAgent;
   /** Tests' stand-in for the boxes guest. */
   hatbox?: HatboxAgent;
   notifications: Notifier;
@@ -86,7 +85,7 @@ export type Outside = {
 
 /** Plugins aren't started: the caller starts them. */
 export async function createServices(o: Outside) {
-  const { config, db, agent } = o;
+  const { config, db } = o;
   const clock = o.clock ?? Date.now;
   const publicUrl = config.publicUrl;
   const auth = new AuthService(db, clock, o.passwordCost);
@@ -101,11 +100,12 @@ export async function createServices(o: Outside) {
   const archive = new Archive(config.archiveDir, clock);
   const attachments = new Attachments({ db, archive, events }, clock);
   const storage = new Storage({ db, archive, clock });
-  const desktop = new Desktop(agent, events, db);
-  const files = { desktop: agent, attachments };
+  const files = { attachments };
+  const desktop = () => plugins.service<DesktopService>("desktop");
   const plugins = new Plugins(
     [
       ...o.plugins,
+      desktopPlugin(o.agent),
       codePlugin,
       t3Plugin,
       scoutPlugin,
@@ -122,7 +122,7 @@ export async function createServices(o: Outside) {
         tasks,
         schedules: () => plugins.service<SchedulesService>("schedules"),
         attachments,
-        desktop: agent,
+        desktop: desktop()?.agent,
         proposals,
         settings,
       })),
@@ -138,6 +138,7 @@ export async function createServices(o: Outside) {
       publicUrl,
       fetch: o.fetch,
       clock,
+      release: () => updates.info().current?.sha ?? null,
       services: {
         tasks: () => tasks,
         chats: () => chats,
@@ -177,19 +178,13 @@ export async function createServices(o: Outside) {
         plugins: (): PluginsHost => ({
           list: () => plugins.list(),
           tools: (only) => plugins.tools(only ?? null),
-          signals: async () => [
-            ...(agent.configured && !desktop.get().online
-              ? [{ key: "desktop", text: "The desktop isn't answering." }]
-              : []),
-            ...(await plugins.signals()),
-          ],
+          signals: () => plugins.signals(),
           readyFor: (id, bot) => plugins.readyFor(id, bot.plugins, bots.leftToOthers(bot)),
           ownerOf: (tool) => {
             const p = plugins.pluginOf(tool);
             return (p && plugins.list().find((x) => x.id === p.id)) ?? null;
           },
         }),
-        desktop: (): DesktopHost => agent,
       } satisfies Record<(typeof HOST_SERVICES)[number], () => unknown>,
     },
   );
@@ -251,7 +246,7 @@ export async function createServices(o: Outside) {
     if (e.type === "task.updated" && !ACTIVE_TASK_STATUSES.includes(e.task.status))
       plugins.service<T3Code>("t3")?.forget(`task-${e.task.id}`);
   });
-  const teach = new Teach({ ...core, lane: tasks.lane });
+  const teach = new Teach({ ...core });
   const todoReminders = new TodoReminders({ ...core });
   const proposals = new Proposals({ ...core, tasks });
   const negotiations = new Negotiations({ ...core, tasks });
@@ -263,7 +258,6 @@ export async function createServices(o: Outside) {
     tasks,
     approvals,
     attachments,
-    desktop: agent,
     negotiations,
     proposals,
   });
@@ -298,7 +292,6 @@ export async function createServices(o: Outside) {
   const services = {
     ...core,
     models,
-    agent,
     auth,
     loginLimits,
     tasks,

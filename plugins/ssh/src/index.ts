@@ -191,8 +191,9 @@ export const sshPlugin = definePlugin({
   name: "SSH",
   description: "Run commands on your hosts",
   env: [{ name: "HATBOT_BRAIN_ID", optional: true, hint: "101" }],
+  uses: ["sandbox"],
   config: Config,
-  start: ({ env, config, files, configOf }) => {
+  start: ({ env, config, files, configOf, optional }) => {
     const home = env.HOME ?? homedir();
     const key = env.HATBOT_SSH_KEY ?? join(home, ".ssh/id_ed25519");
     const knownHosts = env.HATBOT_SSH_KNOWN_HOSTS ?? join(home, ".ssh/known_hosts");
@@ -405,9 +406,10 @@ export const sshPlugin = definePlugin({
 
     /** The desktop's sandbox, stopping with the call; what it says when it fails is fine to show. */
     const sandbox = async <T>(signal: AbortSignal, use: (d: Sandbox) => Promise<T>): Promise<T> => {
-      if (!files?.desktop.configured) throw new PluginError("The desktop's sandbox isn't set up.");
+      const desktop = optional<Sandbox>("sandbox");
+      if (!desktop?.configured) throw new PluginError("The desktop's sandbox isn't set up.");
       try {
-        return await use(files.desktop.withSignal?.(signal) ?? files.desktop);
+        return await use(desktop.withSignal?.(signal) ?? desktop);
       } catch (err) {
         throw err instanceof SandboxError ? new PluginError(err.message) : err;
       }

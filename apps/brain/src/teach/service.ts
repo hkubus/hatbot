@@ -1,16 +1,15 @@
 // Teach-by-showing: record the owner doing a chore, have Opus draft a skill, save it once reviewed.
 import type Anthropic from "@anthropic-ai/sdk";
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import { SKILL_NAME, type TeachSession } from "@hatbot/shared";
 import { type ModelClient, modelErrorText, oneShot } from "../agent/model";
 import { TEACH_PROMPT } from "../agent/prompt";
 import type { Archive } from "../archive";
 import type { Db } from "../db";
-import type { Desktop } from "../desktop/service";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { SettingsStore } from "../settings";
 import { BudgetError, type Spend } from "../spend";
-import type { ScreenLane } from "../tasks/lane";
 import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
 import { type Skills, skillPath } from "./skills";
 
@@ -23,8 +22,8 @@ export class TeachError extends UserError {}
 export type TeachDeps = {
   db: Db;
   events: EventBus;
-  desktop: Desktop;
-  lane: ScreenLane;
+  /** Null while the Desktop plugin is off. */
+  desktop: () => DesktopService | null;
   archive: Archive;
   model: ModelClient;
   spend: Spend;
@@ -70,8 +69,14 @@ function nameOf(skill: string, fallback: string): string {
 }
 
 export class Teach {
-  private rec: { id: number; recorder: Recorder; timer: ReturnType<typeof setInterval> } | null =
-    null;
+  private rec: {
+    id: number;
+    recorder: Recorder;
+    timer: ReturnType<typeof setInterval>;
+    desk: DesktopService;
+    /** Stops hearing the live view. */
+    off: () => void;
+  } | null = null;
   private clock: () => number;
 
   constructor(private d: TeachDeps) {
@@ -152,10 +157,12 @@ export class Teach {
 
   /** `replaces`: the skill this records again, whose name the draft keeps. */
   async start(replaces?: string): Promise<TeachSession> {
-    const { desktop, lane, archive } = this.d;
+    const { archive } = this.d;
     if (this.rec) throw new TeachError("Already recording.", 409);
-    if (!desktop.agent.configured || !desktop.get().online)
+    const desk = this.d.desktop();
+    if (!desk?.agent.configured || !desk.control.get().online)
       throw new TeachError("The desktop isn't answering.", 503);
+    const { control: desktop, lane, agent } = desk;
     if (lane.holderId !== null)
       throw new TeachError("A task is using the desktop. Wait for it, or cancel it first.", 409);
     await lane.acquire(TEACH_LANE, new AbortController().signal);
@@ -173,7 +180,7 @@ export class Teach {
     const recorder = new Recorder({
       clock: this.clock,
       secretField: async () => {
-        const el = await desktop.agent.inspect();
+        const el = await agent.inspect();
         // No page on screen, or the keyboard is elsewhere (the address bar, another window): the typing
         // went somewhere CDP can't see.
         if (!el || el.pageFocus === false) throw new OffPage("the keyboard isn't on a page");
@@ -188,10 +195,10 @@ export class Teach {
       },
       screen: async () => {
         const [bytes, page] = await Promise.all([
-          desktop.agent.screenshot(),
+          agent.screenshot(),
           // A page that can't say whether it shows a secret may show one. An older desktop-agent that
           // doesn't say at all is taken at its word.
-          desktop.agent.context(false, true).catch(() => null),
+          agent.context(false, true).catch(() => null),
         ]);
         return page && !page.secretShown ? { bytes, url: page.url } : null;
       },
@@ -199,24 +206,35 @@ export class Teach {
     });
     const poll = async () => {
       try {
-        const page = await desktop.agent.context();
+        const page = await agent.context();
         if (this.rec?.id === id) recorder.page(page.url, page.title);
       } catch {
         // Chromium is busy or closed; the next poll tries again.
       }
     };
-    this.rec = { id, recorder, timer: setInterval(poll, PAGE_POLL_MS) };
+    const offInput = desk.live.onInput((m) => this.input(m));
+    const offGone = desk.live.onViewerGone(() => this.viewerGone());
+    this.rec = {
+      id,
+      recorder,
+      timer: setInterval(poll, PAGE_POLL_MS),
+      desk,
+      off: () => {
+        offInput();
+        offGone();
+      },
+    };
     void poll();
     this.emit(id);
     return this.get(id) as TeachSession;
   }
 
-  input(m: Parameters<Recorder["input"]>[0]) {
+  private input(m: Parameters<Recorder["input"]>[0]) {
     this.rec?.recorder.input(m);
   }
 
   /** A live view that sent input closed: desktop-agent let go of the keys it held, and its key ups are lost. */
-  viewerGone() {
+  private viewerGone() {
     this.rec?.recorder.keysUp();
   }
 
@@ -225,9 +243,10 @@ export class Teach {
     if (rec?.id !== id) return null;
     this.rec = null;
     clearInterval(rec.timer);
+    rec.off();
     const steps = await rec.recorder.finish();
-    await this.d.desktop.handback();
-    this.d.lane.release(TEACH_LANE);
+    await rec.desk.control.handback();
+    rec.desk.lane.release(TEACH_LANE);
     return steps;
   }
 

@@ -119,7 +119,8 @@ export function negotiateTools(
       untrusted: true,
       label: "Looking at the listing",
       describe: ({ listing }) => `Look at ${listing}`,
-      run: ({ listing }, call) => inspect(available, neg.d.desktop.agent, listing, call.signal),
+      run: ({ listing }, call) =>
+        inspect(available, neg.d.desktop()?.agent ?? null, listing, call.signal),
     }),
 
     tool({

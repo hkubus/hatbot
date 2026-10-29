@@ -514,7 +514,7 @@ test("tasks a restart stopped are told in their chat, with one notification", as
   ]);
   const t = await testApp(chat);
   // The screen is busy, so the task waits in line when the brain goes down.
-  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.lane.acquire(-5, new AbortController().signal);
   await t.thread.post("book a table").done;
   t.tasks.createBackgroundTask({ title: "Nightly check", goal: "Check", origin: "schedule" });
   const queued = t.tasks.list({ status: "active" });

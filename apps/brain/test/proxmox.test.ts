@@ -60,7 +60,7 @@ test("Settings lists the desktop's snapshots, newest first, and rolls back to on
   expect((await rollback("nightly_20261008")).status).toBe(200);
   expect(pve.seen.find((s) => s.method === "POST")?.body).toBe("start=1");
   expect(pve.seen.at(-1)?.path).toContain("/tasks/UPID");
-  expect(t.tasks.lane.holderId).toBeNull();
+  expect(t.lane.holderId).toBeNull();
   const before = pve.seen.length;
   expect((await rollback("../../etc")).status).toBe(400);
   expect(pve.seen.length).toBe(before);

@@ -18,6 +18,7 @@
         "@hatbot/plugin-automation": "workspace:*",
         "@hatbot/plugin-boxes": "workspace:*",
         "@hatbot/plugin-code": "workspace:*",
+        "@hatbot/plugin-desktop": "workspace:*",
         "@hatbot/plugin-forgejo": "workspace:*",
         "@hatbot/plugin-github": "workspace:*",
         "@hatbot/plugin-homeassistant": "workspace:*",
@@ -120,6 +121,7 @@
       "name": "@hatbot/plugin-boxes",
       "version": "1.0.0",
       "dependencies": {
+        "@hatbot/plugin-desktop": "workspace:*",
         "@hatbot/plugin-sdk": "workspace:*",
         "@hatbot/plugin-t3": "workspace:*",
         "@hatbot/shared": "workspace:*",
@@ -133,6 +135,16 @@
       "version": "1.0.0",
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
+        "zod": "^4.6.5",
+      },
+    },
+    "plugins/desktop": {
+      "name": "@hatbot/plugin-desktop",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/shared": "workspace:*",
+        "hono": "^4.13.13",
         "zod": "^4.6.5",
       },
     },
@@ -327,6 +339,8 @@
     "@hatbot/plugin-boxes": ["@hatbot/plugin-boxes@workspace:plugins/boxes"],
 
     "@hatbot/plugin-code": ["@hatbot/plugin-code@workspace:plugins/code"],
+
+    "@hatbot/plugin-desktop": ["@hatbot/plugin-desktop@workspace:plugins/desktop"],
 
     "@hatbot/plugin-forgejo": ["@hatbot/plugin-forgejo@workspace:plugins/forgejo"],
 

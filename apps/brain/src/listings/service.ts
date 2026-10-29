@@ -1,14 +1,15 @@
 // Flips Scout marks ready to list: Hatbot asks once for all their marketplaces, then the bot that
 // holds the marketplace logins posts each in a desktop task of its own, and Scout hears how it went.
 // Scout's tools are called by name through its plugin (or the MCP plugin), without the model.
+
 import { randomUUID } from "node:crypto";
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import { PluginError, type PluginTool } from "@hatbot/plugin-sdk";
 import type { Approval, Bot, ListingStatus, Task } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
 import type { Approvals } from "../approvals";
 import type { Bots } from "../bots";
 import type { Db } from "../db";
-import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import { readScout, scoutTool } from "../negotiate/appraise";
 import { type Plugins, runPluginTool, verdictFor } from "../plugins/registry";
@@ -35,7 +36,7 @@ export type ListingsDeps = {
   bots: Bots;
   plugins: Plugins;
   chats: Chats;
-  desktop: Desktop;
+  desktop: () => DesktopService | null;
   clock?: () => number;
 };
 
@@ -222,7 +223,11 @@ export class Listings {
     if (asked && this.d.approvals.get(r.approval_id as number)?.status === "pending")
       this.d.approvals.cancel(r.approval_id as number);
     if (r.status === "posting" && r.task_id) this.d.tasks.cancel(r.task_id);
-    if (r.stage) void this.d.desktop.agent.dropFiles(r.stage).catch(() => {});
+    if (r.stage)
+      void this.d
+        .desktop()
+        ?.agent.dropFiles(r.stage)
+        .catch(() => {});
   }
 
   private async ask(
@@ -309,9 +314,9 @@ export class Listings {
 
   /** False: the desktop is down, and it's tried again on the next tick. */
   private async post(l: { bot: Bot; tools: PluginTool[] }, r: Row): Promise<boolean> {
-    const agent = this.d.desktop.agent;
-    const status = await agent.status().catch(() => null);
-    if (!status) return false;
+    const agent = this.d.desktop()?.agent;
+    const status = await agent?.status().catch(() => null);
+    if (!agent || !status) return false;
     if (!status.features?.includes("upload"))
       throw new Error(
         "desktop-agent is older than the brain and can't upload photos. Run Update, then mark it ready in Scout again.",
@@ -403,7 +408,11 @@ export class Listings {
   private async taskEnded(task: Task) {
     const r = this.rows("task_id = ?", task.id)[0];
     if (!r) return;
-    if (r.stage) void this.d.desktop.agent.dropFiles(r.stage).catch(() => {});
+    if (r.stage)
+      void this.d
+        .desktop()
+        ?.agent.dropFiles(r.stage)
+        .catch(() => {});
     if (r.status !== "posting") return;
     const ended: Row = r.url
       ? { ...r, status: "listed", error: null }

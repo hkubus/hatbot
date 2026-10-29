@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
 import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   containerOf,
@@ -31,7 +32,6 @@ import { z } from "zod";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
 import type { Db } from "../db";
-import { type DesktopAgent, DesktopError } from "../desktop/client";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";

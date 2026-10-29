@@ -8,6 +8,7 @@ import {
   needsSetup,
   PluginError,
   ready,
+  type Sandbox,
   tool,
 } from "@hatbot/plugin-sdk";
 import { basicAuth } from "@hatbot/plugin-sdk/checkout";
@@ -70,7 +71,8 @@ export const forgejoPlugin = definePlugin({
     { name: "FORGEJO_TOKEN", secret: true },
   ],
   config: z.object({}),
-  start: ({ env, files, dataDir }) => {
+  uses: ["sandbox"],
+  start: ({ env, optional, dataDir }) => {
     const base = env.FORGEJO_URL?.replace(/\/$/, "");
     const token = env.FORGEJO_TOKEN;
     if (!base || !token)
@@ -87,7 +89,8 @@ export const forgejoPlugin = definePlugin({
       me ??= await api<{ login: string; email: string }>("GET", "/user");
       return me;
     };
-    const desktop = files?.desktop.configured ? files.desktop : null;
+    const sandbox = optional<Sandbox>("sandbox");
+    const desktop = sandbox?.configured ? sandbox : null;
     /** Default branches, so policy can tell a commit to main from one to a new branch. */
     const defaults = new Map<string, string>();
     /** Repositories whose default branch holds only what was merged there: not forks or mirrors. */

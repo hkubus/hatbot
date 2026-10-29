@@ -1,7 +1,7 @@
 // The brain never runs a box's code: it serves the page sandboxed, on an opaque origin with no network,
 // and keeps what the page saves through the app, which answers only that box's frame.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { DesktopHost } from "@hatbot/plugin-sdk";
+import type { DesktopAgent } from "@hatbot/plugin-desktop";
 import {
   BudgetError,
   type CreateParams,
@@ -589,7 +589,7 @@ export class Boxes {
     return drawn;
   }
 
-  private async drawPreview(id: number, n: number, dark: boolean, desktop: DesktopHost) {
+  private async drawPreview(id: number, n: number, dark: boolean, desktop: DesktopAgent) {
     const page = this.page(id, n);
     if (!page) return null;
     const saves = this.saves.get(id);

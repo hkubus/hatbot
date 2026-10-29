@@ -7,6 +7,7 @@ import {
   needsSetup,
   PluginError,
   ready,
+  type Sandbox,
   SandboxError,
   type SchedulesService,
   tool,
@@ -85,8 +86,9 @@ export const selfPlugin = definePlugin({
   ],
   config: z.object({}),
   needs: ["schedules"],
-  start: ({ env, files, dataDir, store, service }) => {
-    const desktop = files?.desktop;
+  uses: ["sandbox"],
+  start: ({ env, optional, dataDir, store, service }) => {
+    const desktop = optional<Sandbox>("sandbox");
     if (!desktop?.configured)
       return needsSetup("The desktop isn't set up yet; Hatbot reads and tests its code there.");
     const base = env.FORGEJO_URL?.replace(/\/$/, "");

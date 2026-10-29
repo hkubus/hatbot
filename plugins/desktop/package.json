@@ -1,0 +1,16 @@
+{
+  "name": "@hatbot/plugin-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hatbot/plugin-sdk": "workspace:*",
+    "@hatbot/shared": "workspace:*",
+    "hono": "^4.13.13",
+    "zod": "^4.6.5"
+  }
+}

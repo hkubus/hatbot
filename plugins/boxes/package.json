@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@hatbot/plugin-desktop": "workspace:*",
     "@hatbot/plugin-sdk": "workspace:*",
     "@hatbot/plugin-t3": "workspace:*",
     "@hatbot/shared": "workspace:*",

@@ -340,7 +340,14 @@ export type PluginPrincipal = { kind: "session" | "token"; id: number };
 
 /** A route sees who's asking in `c.env`: null only on a public route. */
 export type PluginEnv = {
-  Bindings: { principal: PluginPrincipal | null; clientIp: string };
+  Bindings: {
+    principal: PluginPrincipal | null;
+    clientIp: string;
+    /** For `upgradeWebSocket` from hono/bun, on a path in `sockets`. */
+    server?: unknown;
+    /** Calls `fn` once the caller signs out or its token is revoked; returns what stops that. */
+    onSignOut: (fn: () => void) => () => void;
+  };
 };
 
 /** Under the API's prefix; a PluginError is shown as it is, anything else as "Something went wrong." */
@@ -387,7 +394,6 @@ export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boo
   typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
 
 export type PluginFiles = {
-  desktop: Sandbox;
   attachments: PluginAttachments;
 };
 
@@ -420,6 +426,8 @@ export type PluginContext<C> = {
   configOf: (id: string) => unknown;
   /** Tells the host something happened, as "<id>:<event>". */
   emit: (event: string) => void;
+  /** The commit the brain runs, once it was deployed from a release. */
+  release: () => string | null;
 };
 
 export type PluginVault = {
@@ -471,13 +479,22 @@ export type Plugin<C = unknown> = {
   routes?: string[];
   /** Ones anybody may call, as Hono patterns ("/hooks/:name"); the route checks who it is. */
   publicRoutes?: string[];
+  /** WebSockets for signed-in callers, as Hono patterns; a browser's must come from Hatbot's address. */
+  sockets?: string[];
   start: (ctx: PluginContext<C>) => Promise<PluginInstance> | PluginInstance;
 };
 
 export const definePlugin = <C>(p: Plugin<C>) => p as unknown as Plugin;
 
-export const ready = (tools: PluginTool[], extra: Omit<PluginInstance, "status" | "tools"> = {}) =>
-  ({ status: { state: "ready" }, tools, ...extra }) satisfies PluginInstance;
+/** Keeps `extra`'s getters, such as checks made afresh for each run. */
+export const ready = (
+  tools: PluginTool[],
+  extra: Omit<PluginInstance, "status" | "tools"> = {},
+): PluginInstance =>
+  Object.defineProperties(
+    { status: { state: "ready" }, tools } as PluginInstance,
+    Object.getOwnPropertyDescriptors(extra),
+  );
 export const needsSetup = (message: string): PluginInstance => ({
   status: { state: "needs_setup", message },
   tools: [],

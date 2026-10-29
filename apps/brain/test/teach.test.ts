@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { DesktopService, Live } from "@hatbot/plugin-desktop";
 import type { TeachSession } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { TEACH_PROMPT } from "../src/agent/prompt";
@@ -185,13 +186,15 @@ test("INDEX.md's Skills section follows the files in skills/, and the rest of IN
   expect((await t.memory.log(1))[0]?.sha).toBe(last?.sha);
 });
 
+/** What the owner does in the live view, as it reaches Teach. */
+const live = (t: TestApp) => t.plugins.service<DesktopService>("desktop")?.live as Live;
+
 /** A test app whose task model writes SKILL when asked to draft. */
 async function teachApp() {
   const work = new FakeModel();
   const t = await testApp(new FakeModel(), work);
   work.onCreate = (p) =>
     p.system === TEACH_PROMPT ? SKILL : '{"suspected": false, "excerpt": ""}';
-  await t.desktop.refresh();
   const { cookie } = signIn(t);
   const call = (method: string, path: string, body?: unknown) =>
     t.call(method, path, body, { cookie });
@@ -213,15 +216,15 @@ async function record(t: TestApp, call: Call, show?: () => void) {
   const res = await call("POST", "/teach/start", {});
   expect(res.status).toBe(200);
   const session = (await res.json()) as TeachSession;
-  for (const m of click(400, 300)) t.teach.input(m);
+  for (const m of click(400, 300)) live(t).input(m);
   if (show) show();
   else {
     t.agent.element = { tag: "input", role: null, type: "password", label: "", inForm: true };
-    for (const m of typeText("s3cret-pw")) t.teach.input(m);
+    for (const m of typeText("s3cret-pw")) live(t).input(m);
     t.agent.element = { tag: "input", role: null, type: "text", label: "Search", inForm: true };
-    for (const m of click(500, 120)) t.teach.input(m);
-    for (const m of typeText("Dune")) t.teach.input(m);
-    for (const m of press("Enter")) t.teach.input(m);
+    for (const m of click(500, 120)) live(t).input(m);
+    for (const m of typeText("Dune")) live(t).input(m);
+    for (const m of press("Enter")) live(t).input(m);
   }
   await waitFor(() => screensOf(t, session.id).length);
   return session;
@@ -255,12 +258,12 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   const session = await record(t, call);
   expect(t.desktop.get().control).toBe("owner");
   expect(t.agent.locked).toBe(true);
-  expect(t.tasks.lane.holderId).not.toBeNull();
+  expect(t.lane.holderId).not.toBeNull();
   expect(holding()).toBe(false);
 
   const body = await drafted(t, work, call, session.id);
   expect(t.desktop.get().control).toBe("hatbot");
-  expect(t.tasks.lane.holderId).toBeNull();
+  expect(t.lane.holderId).toBeNull();
   expect(t.teach.get(session.id)).toMatchObject({ name: "renew-library-books", draft: SKILL });
   expect(heldMeanwhile).toBe(true);
   expect(t.db.query("SELECT purpose FROM spend_ledger").all()).toContainEqual({
@@ -295,14 +298,14 @@ test("typing where the page hasn't the keyboard, or into a frame, isn't kept, no
   const session = await record(t, call, () => {
     // A card number the page shows.
     t.agent.page = { ...t.agent.page, secretShown: true };
-    for (const m of click(600, 300)) t.teach.input(m);
+    for (const m of click(600, 300)) live(t).input(m);
     t.agent.page = { ...t.agent.page, secretShown: false };
     // The page too busy to say whether one shows.
     t.agent.context = async (withText = false, secrets = false) => {
       if (secrets) throw new Error("The operation timed out.");
       return context(withText, secrets);
     };
-    for (const m of click(650, 300)) t.teach.input(m);
+    for (const m of click(650, 300)) live(t).input(m);
     t.agent.context = context;
     // The address bar has the keyboard, though the page's search box still has focus there.
     t.agent.element = {
@@ -313,11 +316,11 @@ test("typing where the page hasn't the keyboard, or into a frame, isn't kept, no
       inForm: true,
       pageFocus: false,
     };
-    for (const m of typeText("my-pin-1234")) t.teach.input(m);
+    for (const m of typeText("my-pin-1234")) live(t).input(m);
     // A frame, which can't be seen into.
     t.agent.element = { tag: "frame", role: null, type: null, label: "", inForm: false };
-    for (const m of click(500, 400)) t.teach.input(m);
-    for (const m of typeText("4111111111111111")) t.teach.input(m);
+    for (const m of click(500, 400)) live(t).input(m);
+    for (const m of typeText("4111111111111111")) live(t).input(m);
   });
   const body = await drafted(t, work, call, session.id);
   expect(body).toContain("left click at (400, 300) [screenshot 1]");
@@ -334,7 +337,7 @@ test("a recording discarded while Stop hands the desktop back stays discarded", 
   await t.teach.discard(session.id);
   expect((await stopping).status).toBe("discarded");
   expect(t.desktop.get().control).toBe("hatbot");
-  expect(t.tasks.lane.holderId).toBeNull();
+  expect(t.lane.holderId).toBeNull();
   expect(work.creates.some((p) => p.system === TEACH_PROMPT)).toBe(false);
 });
 
@@ -350,8 +353,7 @@ test("discarding a recording deletes its screenshots, a restart's too", async ()
   const again = new Teach({
     db: t.db,
     events: { on: () => {}, emit: () => {} } as unknown as EventBus,
-    desktop: t.desktop,
-    lane: t.tasks.lane,
+    desktop: () => t.plugins.service<DesktopService>("desktop"),
     archive: t.archive,
     model: new FakeModel(),
     spend: t.spend,

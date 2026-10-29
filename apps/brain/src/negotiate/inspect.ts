@@ -1,6 +1,7 @@
 // A listing as a buyer looks at it before choosing: Scout's record, then the live page and its photos,
 // fetched from the desktop, which reaches only the internet.
 
+import type { DesktopAgent } from "@hatbot/plugin-desktop";
 import {
   decodeEntities,
   PluginError,
@@ -8,7 +9,6 @@ import {
   type ToolImage,
   type ToolOutput,
 } from "@hatbot/plugin-sdk";
-import type { DesktopAgent } from "../desktop/client";
 import { factsFrom, readScout, scoutTool } from "./appraise";
 import { zl } from "./policy";
 

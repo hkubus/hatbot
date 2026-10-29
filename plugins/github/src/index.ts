@@ -9,6 +9,7 @@ import {
   needsSetup,
   PluginError,
   ready,
+  type Sandbox,
   tool,
 } from "@hatbot/plugin-sdk";
 import { basicAuth } from "@hatbot/plugin-sdk/checkout";
@@ -128,7 +129,8 @@ export const githubPlugin = definePlugin({
     { name: "GITHUB_API_URL", optional: true, hint: "https://ghe.example.com/api/v3" },
   ],
   config: z.object({}),
-  start: ({ env, files, dataDir }) => {
+  uses: ["sandbox"],
+  start: ({ env, optional, dataDir }) => {
     const base = (env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, "");
     const token = env.GITHUB_TOKEN;
     if (!token)
@@ -150,7 +152,8 @@ export const githubPlugin = definePlugin({
       me ??= await api<{ login: string; id: number; email: string | null }>("GET", "/user");
       return me;
     };
-    const desktop = files?.desktop.configured ? files.desktop : null;
+    const sandbox = optional<Sandbox>("sandbox");
+    const desktop = sandbox?.configured ? sandbox : null;
     const refPath = (branch: string) =>
       branch.split("/").filter(Boolean).map(encodeURIComponent).join("/");
     /** Default branches, so policy can tell a commit to main from one to a new branch. */

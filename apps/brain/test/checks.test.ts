@@ -91,7 +91,6 @@ async function ntfyCheck(t: TestApp, env: Record<string, string>, answers: Recor
     memory: t.memory,
     archive: t.archive,
     storage: t.storage,
-    desktop: t.desktop,
     plugins: t.plugins,
     approvals: t.approvals,
     proxmox: t.proxmox,

@@ -11,8 +11,6 @@ import type { Config } from "./config";
 import type { Db } from "./db";
 import { migrations } from "./db/migrations";
 import { inWorker } from "./db/worker";
-import { DesktopError } from "./desktop/client";
-import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
 import { modelName } from "./models-known";
 import { guessableTopic, type NtfyNotifier } from "./notify";
@@ -29,7 +27,6 @@ const LOW_DISK_BYTES = 5 * 1024 ** 3;
 /** A write-ahead log this big means checkpoints aren't keeping up: something holds a read open. */
 const BIG_WAL_BYTES = 512 * 1024 ** 2;
 const SNAPSHOT_MAX_AGE_MS = 36 * 3600_000;
-const DESKTOP_FEATURES = ["profiles", "exec", "files", "fields", "gates"];
 const NEW_TOPIC = "Pick a random one in Settings → Notifications → ntfy server.";
 const ONLY_YOU = "Allow only your ntfy user to read the topic.";
 
@@ -42,7 +39,6 @@ export type ChecksDeps = {
   memory: MemoryStore;
   archive: Archive;
   storage: Storage;
-  desktop: Desktop;
   plugins: Plugins;
   approvals: Approvals;
   /** Made as it's set now: Settings can change it. */
@@ -56,8 +52,6 @@ export type ChecksDeps = {
   ping?: Pick<DeadManPing, "configured" | "lastPing">;
   /** Whether any model provider is on. */
   modelsReady?: () => boolean;
-  /** The brain's time zone; the desktop's should match it. */
-  timeZone?: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
   clock?: () => number;
 };
@@ -169,7 +163,6 @@ export class Checks {
       { id: "notifications", name: "Notifications", run: () => this.notifications() },
       { id: "ping", name: "Dead-man ping", run: async () => this.ping() },
       { id: "proxmox", name: "Desktop snapshots", run: () => this.snapshots() },
-      ...this.desktopChecks(),
       { id: "approvals", name: "Approvals", run: async () => this.approvals() },
     ];
     for (const p of d.plugins.list().filter((p) => p.enabled)) {
@@ -362,136 +355,6 @@ export class Checks {
     return ok(
       `${snaps.length} snapshots, the newest from ${new Date(newest).toLocaleString("en-GB")}.`,
     );
-  }
-
-  private desktopChecks(): Check[] {
-    const agent = this.d.desktop.agent;
-    if (!agent.configured)
-      return [
-        { id: "desktop", name: "Desktop", run: async () => skip("DESKTOP_AGENT_URL isn't set.") },
-      ];
-    const status = agent.status(true);
-    // Every desktop check waits on the one health call.
-    const reachable = status.then(
-      () => true,
-      () => false,
-    );
-    const ifUp =
-      (f: () => Promise<Omit<CheckResult, "id" | "name">>) =>
-      async (): Promise<Omit<CheckResult, "id" | "name">> =>
-        (await reachable) ? f() : skip("The desktop isn't answering.");
-    const brainSha = this.d.updates.info().current?.sha;
-    return [
-      {
-        id: "desktop",
-        name: "Desktop",
-        run: async () => {
-          let s: Awaited<typeof status>;
-          try {
-            s = await status;
-          } catch (err) {
-            return fail(`desktop-agent isn't answering: ${errorText(err)}`);
-          }
-          if (s.x === false)
-            return fail(
-              "desktop-agent answers, but no frame came from the screen. Restart the desktop.",
-            );
-          if (s.cdp === false)
-            return fail(
-              "Chromium's DevTools isn't answering. Restart hatbot-chromium on the desktop.",
-            );
-          const missing = DESKTOP_FEATURES.filter((f) => !s.features?.includes(f));
-          if (missing.length)
-            return warn("desktop-agent is older than the brain. Run Update, or infra/deploy.sh.");
-          if (brainSha && s.version && s.version !== brainSha)
-            return warn(
-              `desktop-agent is ${s.version.slice(0, 7)}, the brain ${brainSha.slice(0, 7)}. Run Update.`,
-            );
-          if (s.locked) return warn("You have control of it. Hand it back when you're done.");
-          return ok(`${s.width}×${s.height}${s.version ? `, ${s.version.slice(0, 7)}` : ""}.`);
-        },
-      },
-      {
-        id: "desktop.profiles",
-        name: "Browser profiles",
-        run: ifUp(async () => {
-          const s = await status;
-          if (s.profile === undefined) return skip("desktop-agent is too old to say.");
-          if (s.profile === null)
-            return warn(
-              "Every bot shares one browser profile. Run infra/deploy.sh once on the host to install hatbot-chromium.service.",
-            );
-          return ok(`Chromium runs per bot; now on ${s.profile}'s profile.`);
-        }),
-      },
-      {
-        id: "desktop.timezone",
-        name: "Desktop time zone",
-        run: ifUp(async () => {
-          const s = await status;
-          const brain = this.d.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-          if (!s.timeZone) return skip("desktop-agent is too old to say.");
-          if (s.timeZone !== brain)
-            return warn(
-              `The desktop is on ${s.timeZone} and the brain on ${brain}. Pages see the desktop's, so set it to yours.`,
-            );
-          return ok(s.timeZone);
-        }),
-      },
-      {
-        id: "desktop.shell",
-        name: "Desktop shell",
-        run: ifUp(async () => {
-          try {
-            const r = await agent.exec("echo ok", 10);
-            if (r.exitCode !== 0 || !r.output.includes("ok"))
-              return fail(`A test command exited with ${r.exitCode}.`);
-            return ok("Runs commands.");
-          } catch (err) {
-            if (err instanceof DesktopError && err.status === 423)
-              return skip("You have control of the desktop.");
-            if (err instanceof DesktopError && err.status === 503)
-              return fail("The shell isn't running. Run infra/deploy.sh once.");
-            throw err;
-          }
-        }),
-      },
-      {
-        id: "desktop.render",
-        name: "Page scripts",
-        run: ifUp(async () => {
-          if (!(await status).features?.includes("render"))
-            return warn("desktop-agent is too old to run a page's scripts. Run Update.");
-          try {
-            await agent.renderCheck();
-            return ok("Watchers can run a page's scripts.");
-          } catch (err) {
-            if (err instanceof DesktopError && err.status === 503)
-              return fail("The renderer isn't running. Run infra/deploy.sh once.");
-            if (err instanceof DesktopError) return fail(err.message);
-            throw err;
-          }
-        }),
-      },
-      {
-        id: "desktop.browser",
-        name: "Desktop browser",
-        run: ifUp(async () => {
-          const s = await agent.browserState();
-          const tab = s.tabs.find((t) => t.active) ?? s.tabs[0];
-          // Only the site: the report is kept, and a page's address can carry what you typed or a token.
-          let site = "";
-          try {
-            site = tab?.url ? new URL(tab.url).host : "";
-          } catch {
-            // Not an address with a host, like about:blank.
-          }
-          return ok(
-            `${s.tabs.length} tab${s.tabs.length === 1 ? "" : "s"} open${site ? `, on ${site}` : ""}.`,
-          );
-        }),
-      },
-    ];
   }
 
   private approvals() {

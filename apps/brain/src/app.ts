@@ -4,7 +4,7 @@ import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
-import { requireAuth } from "./auth/middleware";
+import { principalOf, requireAuth } from "./auth/middleware";
 import type { AuthService } from "./auth/service";
 import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
@@ -73,8 +73,9 @@ export function createApp(deps: Deps) {
   app.route("/", searchRoutes);
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
-  for (const { id, routes, publicRoutes } of deps.plugins.routed()) {
+  for (const { id, routes, publicRoutes, sockets } of deps.plugins.routed()) {
     for (const path of publicRoutes) app.all(path, toPlugin(id));
+    for (const path of sockets) app.get(path, socketAuth, toPlugin(id));
     for (const path of routes) app.on(ALL, [path, `${path}/*`], requireAuth, toPlugin(id));
   }
 
@@ -103,10 +104,24 @@ const ALL = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 const toPlugin = (id: string) => async (c: Context<AppEnv>) => {
   const routes = c.var.plugins.routesOf(id);
   if (!routes) return c.json({ error: "That's gone." }, 404);
+  const principal = c.var.principal ?? null;
   return routes.fetch(c.req.raw, {
-    principal: c.var.principal ?? null,
+    principal,
     clientIp: c.var.clientIp,
+    server: c.env,
+    onSignOut: (fn: () => void) => (principal ? c.var.auth.onEnd(principal, fn) : () => {}),
   });
+};
+
+/** As /stream: a cookie needs the public Origin, an app uses its bearer token. */
+const socketAuth = async (c: Context<AppEnv>, next: Next) => {
+  const principal = principalOf(c, { renew: false });
+  if (!principal) return c.json({ error: "You're not signed in." }, 401);
+  const { publicUrl } = c.var.config;
+  if (principal.kind === "session" && c.req.header("origin") !== publicUrl)
+    return c.json({ error: `Open Hatbot at ${publicUrl} to make changes.` }, 403);
+  c.set("principal", principal);
+  await next();
 };
 
 const TOO_LARGE = "That's too large.";

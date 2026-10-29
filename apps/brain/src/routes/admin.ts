@@ -12,11 +12,10 @@ export const spendDays = query(
   z.object({ days: z.coerce.number().int().min(1).max(366).default(30) }),
 );
 
-export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events">) {
+export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "events">) {
   v.settings.update({ paused: true });
   v.chats.abortAll();
   v.tasks.cancelAll();
-  void v.desktop.setPaused(true);
   v.events.emit({ type: "paused", paused: true });
 }
 
@@ -84,7 +83,6 @@ export const adminRoutes = new Hono<AppEnv>()
   })
   .post("/resume", (c) => {
     c.var.settings.update({ paused: false });
-    void c.var.desktop.setPaused(false);
     c.var.events.emit({ type: "paused", paused: false });
     return c.json({ paused: false });
   })

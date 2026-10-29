@@ -10,6 +10,7 @@ import type {
   WeeklyReport,
 } from "@hatbot/plugin-automation";
 import type { Boxes } from "@hatbot/plugin-boxes";
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Plugin } from "@hatbot/plugin-sdk";
 import { stepOf, totpAt } from "../src/auth/totp";
@@ -174,6 +175,14 @@ export async function testApp(
     },
     get boxes() {
       return service<Boxes>("boxes");
+    },
+    /** Who has the desktop. */
+    get desktop() {
+      return service<DesktopService>("desktop").control;
+    },
+    /** The one screen tasks and Teach take turns at. */
+    get lane() {
+      return service<DesktopService>("desktop").lane;
     },
   };
 }

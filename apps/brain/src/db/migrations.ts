@@ -957,4 +957,8 @@ export const migrations: string[] = [
   ALTER TABLE tasks RENAME COLUMN box_job TO job;
   UPDATE tasks SET runner = 'box' WHERE job IS NOT NULL;
   `,
+  // 60: who has the desktop is the Desktop plugin's.
+  `
+  UPDATE settings SET key = 'desktop:control' WHERE key = 'desktop_control';
+  `,
 ];

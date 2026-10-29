@@ -9,10 +9,7 @@ import {
 import { BotError } from "../bots";
 import { resultText, Thread, type ThreadDeps } from "./thread";
 
-type Parts = Pick<
-  ThreadDeps,
-  "tasks" | "approvals" | "attachments" | "desktop" | "negotiations" | "proposals"
->;
+type Parts = Pick<ThreadDeps, "tasks" | "approvals" | "attachments" | "negotiations" | "proposals">;
 
 /** Must stay word for word messages_unread's condition. */
 const UNREAD = `role = 'assistant' AND status != 'streaming' AND incognito = 0

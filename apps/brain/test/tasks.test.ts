@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "@hatbot/plugin-desktop";
 import type { Task, TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
-import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "../src/desktop/client";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -333,13 +333,13 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
   const a = startTask(t, "A");
   await waitFor(() => t.tasks.get(a.id)?.status === "waiting_takeover");
   expect(t.desktop.get().request).toEqual({ taskId: a.id, reason: "Solve the captcha" });
-  expect(t.tasks.lane.holderId).toBeNull();
+  expect(t.lane.holderId).toBeNull();
   const b = startTask(t, "B");
   await waitFor(() => work.requests.length === 2);
-  expect(t.tasks.lane.holderId).toBe(b.id);
+  expect(t.lane.holderId).toBe(b.id);
 
   expect((await t.call("POST", "/desktop/takeover", undefined, { cookie })).status).toBe(200);
-  expect(t.tasks.lane.holderId).toBe(a.id);
+  expect(t.lane.holderId).toBe(a.id);
   expect(t.agent.locked).toBe(true);
   done();
   await waitFor(() => t.tasks.get(b.id)?.status === "queued");

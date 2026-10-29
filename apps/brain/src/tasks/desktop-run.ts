@@ -7,6 +7,7 @@ import {
   type BetaBrowserState,
 } from "@anthropic-ai/sdk/helpers/beta/toolsets";
 import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
+import { type DesktopAgent, DesktopBusy, DesktopError } from "@hatbot/plugin-desktop";
 import { destructive } from "@hatbot/plugin-sdk/shell";
 import type { ApprovalKind } from "@hatbot/shared";
 import {
@@ -24,8 +25,6 @@ import { localStamp } from "../agent/thread";
 import { untrustedBlock } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
-import { type DesktopAgent, DesktopError } from "../desktop/client";
-import { DesktopBusy } from "../desktop/service";
 import { listingCheck, listingRefused } from "../listings/gate";
 import { modelInfo, modelName } from "../models-known";
 import {
@@ -351,8 +350,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const { d } = tasks;
   const task = tasks.get(id);
   if (!task) return;
+  const desk = d.desktop();
+  if (!desk) return tasks.finish(id, "failed", "Not started: the Desktop plugin is off.");
+  const { control: desktop, lane } = desk;
   // Its requests end when the task is cancelled, not when they would have.
-  const agent = d.desktop.agent.withSignal?.(signal) ?? d.desktop.agent;
+  const agent = desk.agent.withSignal?.(signal) ?? desk.agent;
   let model = task.model;
   const requests = requestsFor(tasks, task, signal);
 
@@ -390,15 +392,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
   /** `first`: ahead of the line, for the task you took over for. `wait`: how long it may wait. */
   const acquire = async (first = false, wait = signal) => {
-    await tasks.lane.acquire(id, wait, first);
+    await lane.acquire(id, wait, first);
     holding = true;
     yieldAsked = false;
-    tasks.lane.onYield(id, () => {
+    lane.onYield(id, () => {
       if (thinking) giveWay();
       else yieldAsked = true;
     });
     since = tasks.clock();
-    d.desktop.setActiveTask(id, task.botId);
+    desktop.setActiveTask(id, task.botId);
     tasks.setStatus(id, "running");
     // Its bot's logins, not another's. Another task may have switched it while this one was away.
     let ownProfile = false;
@@ -418,9 +420,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (!holding) return;
     activeMs += tasks.clock() - since;
     holding = false;
-    tasks.lane.release(id);
-    const holder = tasks.lane.holderId;
-    d.desktop.setActiveTask(holder, holder === null ? null : (tasks.get(holder)?.botId ?? null));
+    lane.release(id);
+    const holder = lane.holderId;
+    desktop.setActiveTask(holder, holder === null ? null : (tasks.get(holder)?.botId ?? null));
   };
   const away = async <T>(fn: () => Promise<T>): Promise<T> => {
     release();
@@ -514,7 +516,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     tasks.setStatus(id, "waiting_takeover");
     activeMs += tasks.clock() - since;
     await forOwner("Nobody handed the desktop back within 24 hours.", (until) =>
-      d.desktop.waitForHandback(until),
+      desktop.waitForHandback(until),
     );
     since = tasks.clock();
     tasks.setStatus(id, "running");
@@ -620,7 +622,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const toolsetCall = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> => {
     const input = (call.input ?? {}) as Record<string, unknown>;
     const isBrowser = call.toolset_name === "browser";
-    if (d.desktop.get().control === "owner") {
+    if (desktop.get().control === "owner") {
       await waitForOwner();
       return textResult(
         call,
@@ -897,7 +899,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
 
   const setFiles = withInput(SetFiles, async (call, input) => {
     if (!listing || !tasks.listings) return textResult(call, "This task has no listing.", true);
-    if (d.desktop.get().control === "owner") await waitForOwner();
+    if (desktop.get().control === "owner") await waitForOwner();
     const names = tasks.listings.photoNames(id, input.photos);
     if (typeof names === "string") return textResult(call, names, true);
     const tab = await agent.context(false).catch(() => null);
@@ -1028,7 +1030,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** Destructive patterns ask, as on your hosts, unless the review finds them safe. */
   const shellCall = withInput(DesktopShell, async (call, input) => {
     const { command, timeout_s: timeoutS = 60 } = input;
-    if (d.desktop.get().control === "owner") await waitForOwner();
+    if (desktop.get().control === "owner") await waitForOwner();
     const danger = destructive(command);
     let note: string | null = null;
     if (danger) {
@@ -1079,7 +1081,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   });
 
   const requestTakeover = withInput(RequestTakeover, async (call, input) => {
-    d.desktop.requestTakeover(id, input.reason);
+    desktop.requestTakeover(id, input.reason);
     tasks.addStep(id, {
       kind: "takeover",
       name: "Asked you to take over",
@@ -1096,13 +1098,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // gives it back, and the next gives it again.
     let off = () => {};
     try {
-      if (d.desktop.get().control === "hatbot") {
+      if (desktop.get().control === "hatbot") {
         // Until you take over, other tasks may use the screen; when you do, it's this task's first.
         release();
         tasks.setStatus(id, "waiting_takeover");
         let failed: unknown = null;
         let taken = () => {};
-        off = d.desktop.onTakeover(id, async () => {
+        off = desktop.onTakeover(id, async () => {
           const late = AbortSignal.timeout(limits.takeoverReadyMs);
           try {
             const had = holding;
@@ -1151,7 +1153,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       tasks.setStatus(id, "queued");
       await acquire();
     }
-    d.desktop.clearRequest(id);
+    desktop.clearRequest(id);
     tasks.addStep(id, { kind: "takeover", name: "You handed back", detail: "", url: lastUrl });
     return textResult(call, await look("After takeover", "The owner handed the desktop back."));
   });
@@ -1243,7 +1245,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (!(await requests.hold(requests.ceiling(params), askApproval))) continue;
 
       // The model doesn't need the screen to think: a task you took over for may have it meanwhile.
-      if (yieldAsked && tasks.lane.waiting) giveWay();
+      if (yieldAsked && lane.waiting) giveWay();
       thinking = true;
       const res = await requests.stream(params).finally(() => {
         thinking = false;
@@ -1420,6 +1422,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     requests.release();
     release();
     d.approvals.cancelForTask(id);
-    d.desktop.clearRequest(id);
+    desktop.clearRequest(id);
   }
 }

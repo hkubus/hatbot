@@ -1,3 +1,4 @@
+import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
 import type {
   AgentAction,
   AgentContext,
@@ -16,7 +17,6 @@ import type {
   SignIn,
 } from "@hatbot/shared/desktop";
 import { uploadPage } from "@hatbot/shared/desktop";
-import { type DesktopAgent, DesktopError } from "../src/desktop/client";
 
 /** A desktop that records what it's asked to do. Set `page` and `element` to shape what the policy sees. */
 export class FakeDesktop implements DesktopAgent {

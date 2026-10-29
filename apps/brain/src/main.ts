@@ -2,7 +2,6 @@ import { join } from "node:path";
 import { websocket } from "hono/bun";
 import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
-import { HttpDesktopAgent } from "./desktop/client";
 import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Secrets } from "./secrets";
@@ -16,14 +15,13 @@ secrets.onChange(() => ntfy.configure(secrets.ntfy()));
 const brain = await createServices({
   config,
   db: openDb(config.dbPath),
-  agent: new HttpDesktopAgent(),
   notifications: ntfy,
   ntfy,
   plugins: PLUGINS,
   pingUrl: process.env.HATBOT_PING_URL,
   secrets,
 });
-const { app, auth, approvals, chats, desktop, negotiations, plugins, settings, tasks } = brain;
+const { app, auth, approvals, chats, negotiations, plugins, tasks } = brain;
 const { proposals, storage, ping } = brain;
 await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
@@ -31,8 +29,6 @@ const pluginsStarted = plugins
   .startAll()
   .catch((err) => console.error("plugins failed to start", err));
 await chats.endIncognito();
-await desktop.setPaused(settings.get().paused);
-await desktop.refresh();
 // The last line of defence: a failure nothing waited for is logged, rather than restarting the brain
 // and stopping every task in flight.
 process.on("unhandledRejection", (err) => console.error("unhandled rejection", err));
@@ -45,7 +41,6 @@ const safely = (name: string, fn: () => unknown) => {
     console.error(`${name} failed`, err);
   }
 };
-setInterval(() => safely("desktop refresh", () => desktop.refresh()), 30_000);
 setInterval(() => safely("approvals", () => approvals.expireDue()), 60_000);
 setInterval(() => safely("questions", () => brain.questions.expireDue()), 60_000);
 setInterval(() => safely("sign-in prune", () => auth.prune()), 3600_000);

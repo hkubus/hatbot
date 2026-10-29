@@ -1,9 +1,18 @@
-import type { HatbotEvent } from "@hatbot/shared";
+import type { DesktopState, HatbotEvent } from "@hatbot/shared";
 import { type Context, Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { principalOf } from "../auth/middleware";
 import { briefBot } from "../bots";
 import type { AppEnv } from "../context";
+
+/** With the Desktop plugin off. */
+const NO_DESKTOP: DesktopState = {
+  online: false,
+  control: "hatbot",
+  request: null,
+  activeTaskId: null,
+  botId: null,
+};
 
 const BATCH_MS = 50;
 
@@ -83,7 +92,7 @@ export const streamRoutes = new Hono<AppEnv>().get(
           conversations: v.chats.list(),
           approvals: v.approvals.list(true),
           questions: v.questions.pending(),
-          desktop: v.desktop.get(),
+          desktop: v.desktop()?.control.get() ?? NO_DESKTOP,
           unread: v.chats.unread(),
         } satisfies HatbotEvent);
         // Apps from before the snapshot.

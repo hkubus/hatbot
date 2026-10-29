@@ -1,3 +1,4 @@
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import type { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Chats } from "./agent/chats";
 import type { Models } from "./agent/models";
@@ -9,7 +10,6 @@ import type { Bots } from "./bots";
 import type { Checks } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
-import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
 import type { ListingPhotos } from "./listing-photos";
 import type { Proposals } from "./memory/proposals";
@@ -39,7 +39,8 @@ export type Deps = {
   tasks: Tasks;
   approvals: Approvals;
   questions: Questions;
-  desktop: Desktop;
+  /** Null while the Desktop plugin is off. */
+  desktop: () => DesktopService | null;
   archive: Archive;
   attachments: Attachments;
   listingPhotos: ListingPhotos;

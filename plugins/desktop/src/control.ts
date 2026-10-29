@@ -1,8 +1,6 @@
 // Who controls the desktop: Hatbot, or you after Take over.
+import type { EventsHost, PluginStore } from "@hatbot/plugin-sdk";
 import type { DesktopState } from "@hatbot/shared";
-import type { Db } from "../db";
-import type { EventBus } from "../events";
-import { getSetting, setSetting } from "../settings";
 import type { DesktopAgent } from "./client";
 
 /** Take over couldn't give the task that asked the screen: another task is mid-step, or it ended. */
@@ -31,12 +29,12 @@ export class Desktop {
 
   constructor(
     readonly agent: DesktopAgent,
-    private events: EventBus,
+    private events: EventsHost,
     /** Where your control is kept, so a brain restart doesn't hand the desktop back. */
-    private db?: Db,
+    private store?: PluginStore,
   ) {
     // A request isn't kept: a restart ends the task that asked.
-    if (db && getSetting(db, "desktop_control") === "owner") this.state.control = "owner";
+    if (store?.get("control") === "owner") this.state.control = "owner";
   }
 
   get(): DesktopState {
@@ -46,8 +44,7 @@ export class Desktop {
   private set(patch: Partial<DesktopState>) {
     const next = { ...this.state, ...patch };
     if (JSON.stringify(next) === JSON.stringify(this.state)) return;
-    if (next.control !== this.state.control && this.db)
-      setSetting(this.db, "desktop_control", next.control);
+    if (next.control !== this.state.control) this.store?.set("control", next.control);
     this.state = next;
     this.events.emit({ type: "desktop.state", state: this.get() });
   }

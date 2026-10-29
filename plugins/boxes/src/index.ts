@@ -1,9 +1,9 @@
 // Boxes: small web apps a bot makes, kept and opened from the chat. The brain serves their pages
 // sandboxed; their backends build and run on the boxes guest.
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import {
   type BotsHost,
   type ChatsHost,
-  type DesktopHost,
   definePlugin,
   type EventsHost,
   type ModelHost,
@@ -30,7 +30,7 @@ export { BoxError, Boxes, FRAME_CSP, NOTIFY_PER_DAY, previewed } from "./boxes";
 export { type BoxRequest, type HatboxAgent, HatboxError, HttpHatboxAgent } from "./client";
 export { BoxFeeds, MAX_BOX_FEEDS } from "./feeds";
 
-const CHAT = `- The tools for boxes load when you need them: find them with tool_search_tool_regex (a pattern like "box_"), then call them.
+const CHAT = `- The tools for boxes load when you need them: find them with tool_search_tool_regex (a pattern like "boxes_"), then call them.
 - When the owner wants a tool to keep and come back to (a tracker, a calculator, a planner, a page of numbers they update), make a box with boxes_create: a small web app they open from the chat, which keeps its own data. Change it with boxes_edit when they ask for changes; boxes_list shows the ones you made. A one-off answer stays in your reply.
 - A box that needs data from the web or work on a schedule gets files with a backend (server.ts) and the hosts it may reach in box.json. Try its backend with boxes_call, and read boxes_logs when it misbehaves.`;
 
@@ -78,7 +78,7 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
         vault: ctx.vault,
         publicUrl: ctx.publicUrl,
         clock: ctx.clock,
-        desktop: () => ctx.optional<DesktopHost>("desktop"),
+        desktop: () => ctx.optional<DesktopService>("desktop")?.agent ?? null,
         t3: () => ctx.optional<T3Code>("t3"),
       };
       const boxes = new Boxes(d);

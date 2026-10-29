@@ -10,6 +10,7 @@ import {
   type Notifier,
   type PluginsHost,
   ready,
+  type Sandbox,
   type SettingsHost,
   type SpendHost,
   type StorageHost,
@@ -60,6 +61,7 @@ export const automationPlugin = definePlugin({
     `UPDATE settings SET key = 'automation:heartbeat' WHERE key = 'heartbeat:state';
      UPDATE settings SET key = 'automation:report' WHERE key = 'report:last';`,
   ],
+  uses: ["sandbox"],
   start: (ctx) => {
     const d: Deps = {
       db: ctx.db,
@@ -74,7 +76,7 @@ export const automationPlugin = definePlugin({
       memory: ctx.service<MemoryHost>("memory"),
       storage: ctx.service<StorageHost>("storage"),
       plugins: ctx.service<PluginsHost>("plugins"),
-      desktop: ctx.files?.desktop,
+      desktop: ctx.optional<Sandbox>("sandbox") ?? undefined,
       store: ctx.store,
       publicUrl: ctx.publicUrl,
       clock: ctx.clock,

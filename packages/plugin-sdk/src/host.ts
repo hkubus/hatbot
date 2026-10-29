@@ -12,7 +12,6 @@ import type {
   Task,
   TaskStep,
 } from "@hatbot/shared";
-import type { BoxLook, BoxLookResult } from "@hatbot/shared/desktop";
 import type {
   CreateParams,
   ModelMessage,
@@ -33,7 +32,6 @@ export const HOST_SERVICES = [
   "memory",
   "storage",
   "plugins",
-  "desktop",
 ] as const;
 
 export type NtfyAction =
@@ -199,19 +197,12 @@ export interface PluginsHost {
   list(): PluginInfo[];
   /** Ready tools, of the plugins in `only` when it's given. */
   tools(only?: string[] | null): import("./index").PluginTool[];
-  /** What's wrong right now, the core's own (the desktop) and every plugin's. */
+  /** What's wrong right now, every plugin's. */
   signals(): Promise<import("./index").PluginSignal[]>;
   /** Whether a plugin is ready and `bot` may use it. */
   readyFor(id: string, bot: Bot): boolean;
   /** The plugin a tool is from, as Settings lists it. */
   ownerOf(tool: string): PluginInfo | null;
-}
-
-/** The core's desktop, for now. */
-export interface DesktopHost {
-  readonly configured: boolean;
-  /** A page drawn in the desktop's Chromium, with no network, and the errors it hit. */
-  lookAtBox(look: BoxLook): Promise<BoxLookResult>;
 }
 
 /** A line in Check everything. */

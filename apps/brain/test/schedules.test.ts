@@ -341,7 +341,7 @@ test("a task waits for the tasks it starts and reports for them; cancelling it c
 
   // Cancelled while it waits: for a desktop task queued behind the screen, or another bot's task.
   const lane = new AbortController();
-  await t.tasks.lane.acquire(-5, lane.signal);
+  await t.lane.acquire(-5, lane.signal);
   let release = () => {};
   t.bots.create({
     name: "Chef",
@@ -371,6 +371,6 @@ test("a task waits for the tasks it starts and reports for them; cancelling it c
     await t.tasks.idle();
     return t.tasks.get(waited.id)?.status;
   };
-  expect(await cancelled("Uses the desktop", () => t.tasks.lane.release(-5))).toBe("cancelled");
+  expect(await cancelled("Uses the desktop", () => t.lane.release(-5))).toBe("cancelled");
   expect(await cancelled("Asks Chef", release)).toBe("cancelled");
 });

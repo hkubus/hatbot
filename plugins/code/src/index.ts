@@ -6,6 +6,7 @@ import {
   needsSetup,
   PluginError,
   ready,
+  type Sandbox,
   SandboxError,
   tool,
 } from "@hatbot/plugin-sdk";
@@ -16,10 +17,12 @@ export const codePlugin = definePlugin({
   name: "Code",
   description: "Run commands and scripts in the desktop's sandbox",
   config: z.object({}),
-  start: ({ files }) => {
-    const d = files;
-    if (!d?.desktop.configured)
+  uses: ["sandbox"],
+  start: ({ files, optional }) => {
+    const sandbox = optional<Sandbox>("sandbox");
+    if (!files || !sandbox?.configured)
       return needsSetup("The desktop isn't set up yet; the sandbox runs on it.");
+    const { attachments } = files;
     const tools = [
       tool({
         name: "code_run",
@@ -51,12 +54,12 @@ export const codePlugin = definePlugin({
         },
         run: async ({ command, timeout_s, files }, call) => {
           // A cancelled task's (or stopped reply's) command and copies stop with it.
-          const desktop = d.desktop.withSignal?.(call.signal) ?? d.desktop;
+          const desktop = sandbox.withSignal?.(call.signal) ?? sandbox;
           try {
             const copied: string[] = [];
             for (const id of files) {
-              const a = d.attachments.get(id);
-              const bytes = a && (await d.attachments.bytes(id));
+              const a = attachments.get(id);
+              const bytes = a && (await attachments.bytes(id));
               if (!a || !bytes) throw new PluginError(`There's no attachment #${id}.`);
               const path = `in/${a.id}-${a.name.replace(/[^\w.-]+/g, "_")}`;
               await desktop.putFile(path, bytes);
@@ -78,7 +81,7 @@ export const codePlugin = definePlugin({
         "code_run runs commands in a sandbox on the desktop container: for computing, converting and analysing files and quick scripts. Its home persists. The owner's attachments go in with files: [ids]; send_file hands back what you made.",
       test: async () => {
         try {
-          const r = await d.desktop.exec("python3 --version; whoami", 20);
+          const r = await sandbox.exec("python3 --version; whoami", 20);
           return r.output.replace(/\n/g, ", ");
         } catch (err) {
           throw new PluginError((err as Error).message);

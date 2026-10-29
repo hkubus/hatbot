@@ -1,8 +1,8 @@
+import type { DesktopAgent } from "@hatbot/plugin-desktop";
 import type {
   BotsHost,
   ChatsHost,
   Db,
-  DesktopHost,
   EventsHost,
   ModelHost,
   Notifier,
@@ -30,6 +30,6 @@ export type Deps = {
   publicUrl: string;
   clock: () => number;
   /** Null while there's none. */
-  desktop: () => DesktopHost | null;
+  desktop: () => DesktopAgent | null;
   t3: () => T3Code | null;
 };

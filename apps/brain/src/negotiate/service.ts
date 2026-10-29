@@ -1,5 +1,6 @@
 // Scout's tools are called by name through the MCP plugin, as watchers call plugin tools.
 
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import { type CallContext, PluginError, type PluginTool } from "@hatbot/plugin-sdk";
 import {
   type Appraisal,
@@ -20,7 +21,6 @@ import type { ModelClient } from "../agent/model";
 import type { Approvals } from "../approvals";
 import { type Bots, botFolder } from "../bots";
 import type { Db } from "../db";
-import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import { runPluginTool, verdictFor } from "../plugins/registry";
@@ -52,7 +52,7 @@ export type NegotiationsDeps = {
   bots: Bots;
   chats: Chats;
   memory: MemoryStore;
-  desktop: Desktop;
+  desktop: () => DesktopService | null;
   model: ModelClient;
   spend: Spend;
   settings: SettingsStore;
@@ -637,7 +637,10 @@ export class Negotiations {
 
   /** An older desktop-agent can't run the exact-text check. */
   async desktopReady() {
-    const s = await this.d.desktop.agent.status().catch(() => null);
+    const s = await this.d
+      .desktop()
+      ?.agent.status()
+      .catch(() => null);
     if (!s) throw new PluginError("The desktop isn't answering, so nothing can be sent or read.");
     if (!s.features?.includes("fields"))
       throw new PluginError(

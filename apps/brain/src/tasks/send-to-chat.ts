@@ -1,7 +1,7 @@
+import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
 import { CHART_FILE_MAX_ROWS } from "@hatbot/shared";
 import { z } from "zod";
 import { sizeText } from "../attachments";
-import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { Tasks } from "./service";
 
 const MAX_CHAT_FILES = 5;

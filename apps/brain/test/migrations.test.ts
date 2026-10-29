@@ -79,3 +79,14 @@ test("an upgrade gives T3 Code's box tasks to the Boxes plugin, with what they w
     { runner: null, job: null },
   ]);
 });
+
+test("an upgrade keeps you in control of the desktop, now the Desktop plugin's", () => {
+  const db = at(59);
+  db.exec("INSERT INTO settings (key, value) VALUES ('desktop_control', 'owner')");
+
+  migrate(db);
+
+  expect(db.query("SELECT key, value FROM settings WHERE value = 'owner'").all()).toEqual([
+    { key: "desktop:control", value: "owner" },
+  ]);
+});

@@ -64,7 +64,12 @@ export type PluginsDeps = {
   clock?: () => number;
   /** What the core itself provides, until a plugin does. */
   services?: Record<string, () => unknown>;
+  /** The commit the brain runs. */
+  release?: () => string | null;
 };
+
+/** What it needs and uses: it starts after, and again with, whatever gives them. */
+const wants = (p: Plugin) => [...(p.needs ?? []), ...(p.uses ?? [])];
 
 export class Plugins {
   private slots = new Map<string, Slot>();
@@ -90,7 +95,11 @@ export class Plugins {
         if (other) throw new Error(`${other} and plugin ${plugin.id} both provide "${name}"`);
         this.providers.set(name, plugin.id);
       }
-      for (const path of [...(plugin.routes ?? []), ...(plugin.publicRoutes ?? [])]) {
+      for (const path of [
+        ...(plugin.routes ?? []),
+        ...(plugin.publicRoutes ?? []),
+        ...(plugin.sockets ?? []),
+      ]) {
         const other = paths.get(path);
         if (other) throw new Error(`plugins ${other} and ${plugin.id} both answer ${path}`);
         paths.set(path, plugin.id);
@@ -124,7 +133,7 @@ export class Plugins {
     const started = new Set<string>();
     while (todo.length) {
       const now = todo.filter((s) =>
-        (s.plugin.needs ?? []).every((n) => {
+        wants(s.plugin).every((n) => {
           const by = this.providers.get(n);
           return !by || started.has(by) || !todo.some((t) => t.plugin.id === by);
         }),
@@ -168,13 +177,16 @@ export class Plugins {
   }
 
   /** The plugins with routes, for the app to send requests on to. */
-  routed(): { id: string; routes: string[]; publicRoutes: string[] }[] {
+  routed(): { id: string; routes: string[]; publicRoutes: string[]; sockets: string[] }[] {
     return [...this.slots.values()]
-      .filter((s) => s.plugin.routes?.length || s.plugin.publicRoutes?.length)
+      .filter(
+        (s) => s.plugin.routes?.length || s.plugin.publicRoutes?.length || s.plugin.sockets?.length,
+      )
       .map((s) => ({
         id: s.plugin.id,
         routes: s.plugin.routes ?? [],
         publicRoutes: s.plugin.publicRoutes ?? [],
+        sockets: s.plugin.sockets ?? [],
       }));
   }
 
@@ -464,6 +476,7 @@ export class Plugins {
             publicUrl: this.d.publicUrl ?? "",
             fetch: this.d.fetch ?? fetch,
             clock: this.d.clock ?? Date.now,
+            release: () => this.d.release?.() ?? null,
           });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;
@@ -505,13 +518,13 @@ export class Plugins {
     return `It needs ${by.join(" and ")}, switched on and working.`;
   }
 
-  /** Starts again what needs `s`'s services, so each gets them as they are now. */
+  /** Starts again what needs or uses `s`'s services, so each gets them as they are now. */
   private async dependents(s: Slot) {
     if (this.stopping) return;
     const gives = s.plugin.provides ?? [];
     if (!gives.length) return;
     const users = [...this.slots.values()].filter(
-      (x) => x.enabled && x.plugin.needs?.some((n) => gives.includes(n)),
+      (x) => x.enabled && wants(x.plugin).some((n) => gives.includes(n)),
     );
     await Promise.all(users.map((x) => this.restart(x)));
   }

@@ -13,7 +13,7 @@ const KEEP_RUNS = 20;
  * Hatbot's own findings: the desktop, a broken plugin, spend, an expired approval. Triaged apart from
  * the ones whose text others can write, so that text can't talk the triage out of them.
  */
-const OWN = /^(desktop$|plugin:|spend:|approval:)/;
+const OWN = /^(desktop:desktop$|plugin:|spend:|approval:)/;
 
 const REPEATS = 3;
 

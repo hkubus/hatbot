@@ -96,8 +96,8 @@ export class HttpDesktopAgent implements DesktopAgent {
   readonly configured: boolean;
 
   constructor(
-    private baseUrl = process.env.DESKTOP_AGENT_URL ?? "",
-    private token = process.env.DESKTOP_AGENT_TOKEN ?? "",
+    private baseUrl: string,
+    private token: string,
     private signal?: AbortSignal,
   ) {
     this.configured = Boolean(baseUrl && token);

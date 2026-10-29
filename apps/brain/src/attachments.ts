@@ -1,10 +1,10 @@
 import { rename, rm } from "node:fs/promises";
 import type Anthropic from "@anthropic-ai/sdk";
+import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
 import { MAX_ATTACHMENT_BYTES, sizeText } from "@hatbot/plugin-sdk";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import type { Archive } from "./archive";
 import type { Db } from "./db";
-import { type DesktopAgent, DesktopError } from "./desktop/client";
 import type { EventBus } from "./events";
 
 export { MAX_ATTACHMENT_BYTES, sizeText };

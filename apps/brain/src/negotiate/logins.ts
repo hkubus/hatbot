@@ -1,12 +1,13 @@
 // The marketplace logins the owner shared in Scout go in the browser of each bot that has Scout
 // (Haggler), as its task gets the screen, so it needn't ask the owner to log in. Called without the
 // model: the cookies go from Scout to desktop-agent and nowhere else.
+
+import type { DesktopAgent } from "@hatbot/plugin-desktop";
 import type { SessionState } from "@hatbot/shared/desktop";
 import type { Bots } from "../bots";
 import type { Db } from "../db";
-import { readScout } from "../negotiate/appraise";
 import type { Plugins } from "../plugins/registry";
-import type { DesktopAgent } from "./client";
+import { readScout } from "./appraise";
 
 /** How often a bot's tasks ask Scout whether a login changed. */
 const CHECK_EVERY_MS = 5 * 60_000;

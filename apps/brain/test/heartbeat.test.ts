@@ -23,7 +23,6 @@ function signals(list: () => Signal[], id = "kuma") {
 }
 
 async function on(t: TestApp) {
-  await t.desktop.refresh();
   t.settings.update({
     heartbeat: { ...t.settings.get().heartbeat, enabled: true, everyMinutes: 30 },
   });
@@ -52,7 +51,6 @@ test("the heartbeat looks when it's due, and tells you once about something new,
   const down = ["Jellyfin"];
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [kuma(down)]);
   await t.plugins.update("kuma", { enabled: true });
-  await t.desktop.refresh();
   t.taskModel.onCreate = () => '{"action": "notify", "message": "Jellyfin is down."}';
   t.settings.update({ heartbeat: { ...t.settings.get().heartbeat, enabled: false } });
   expect(t.heartbeat.tick()).toBeUndefined();
@@ -178,6 +176,8 @@ test("text a stranger wrote can't talk the triage out of telling you", async () 
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [signals(() => found)]);
   await t.plugins.update("kuma", { enabled: true });
   // The desktop doesn't answer: Hatbot's own finding is triaged apart from the plugin's.
+  t.agent.status = () => Promise.reject(new Error("down"));
+  await t.desktop.refresh();
   t.settings.update({
     heartbeat: { ...t.settings.get().heartbeat, enabled: true, everyMinutes: 30 },
   });

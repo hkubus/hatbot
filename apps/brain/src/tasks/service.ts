@@ -1,3 +1,4 @@
+import type { DesktopService } from "@hatbot/plugin-desktop";
 import {
   ACTIVE_TASK_STATUSES as ACTIVE,
   type Bot,
@@ -17,12 +18,11 @@ import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
 import type { Config } from "../config";
 import type { Db } from "../db";
-import type { Logins } from "../desktop/logins";
-import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { Listings } from "../listings/service";
 import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
+import type { Logins } from "../negotiate/logins";
 import type { Negotiations } from "../negotiate/service";
 import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
@@ -35,7 +35,7 @@ import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
 import { runJob } from "./job-run";
-import { Pool, ScreenLane } from "./lane";
+import { Pool } from "./lane";
 
 export type TasksDeps = {
   db: Db;
@@ -43,7 +43,8 @@ export type TasksDeps = {
   spend: Spend;
   settings: SettingsStore;
   model: ModelClient;
-  desktop: Desktop;
+  /** Null while the Desktop plugin is off. */
+  desktop: () => DesktopService | null;
   approvals: Approvals;
   questions: Questions;
   notifier: Notifier;
@@ -179,7 +180,6 @@ function clipBytes(text: string, max: number): string {
 }
 
 export class Tasks {
-  readonly lane = new ScreenLane();
   readonly pool = new Pool(BACKGROUND_SLOTS);
   /** Set once it exists: negotiation's tools, and the send gate on its desktop tasks. */
   negotiations?: Negotiations;
@@ -709,7 +709,7 @@ export class Tasks {
 
   /** What a background task's tools need; their requests to the desktop end once `signal` aborts. */
   toolContext(task: Task, signal: AbortSignal): ToolContext {
-    const { agent } = this.d.desktop;
+    const agent = this.d.desktop()?.agent;
     return {
       db: this.d.db,
       clock: this.clock,
@@ -719,7 +719,7 @@ export class Tasks {
       bots: this.d.bots,
       tasks: this,
       attachments: this.d.attachments,
-      desktop: agent.withSignal?.(signal) ?? agent,
+      desktop: agent?.withSignal?.(signal) ?? agent,
       proposals: this.d.proposals,
       settings: this.d.settings,
       // The run marks `task` as it reads untrusted content.

@@ -29,7 +29,6 @@ import type { Attachments } from "../attachments";
 import { type Bots, botIndex, promptFor } from "../bots";
 import { brokenChartsOf, chartProblemOf } from "../chart-data";
 import type { Db } from "../db";
-import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
@@ -216,7 +215,6 @@ export type ThreadDeps = {
   negotiations?: Negotiations;
   proposals?: Proposals;
   attachments?: Attachments;
-  desktop?: DesktopAgent;
   db: Db;
   memory: MemoryStore;
   events: EventBus;

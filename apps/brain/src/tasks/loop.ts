@@ -1,9 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { SandboxError } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
 import { cutOff, modelErrorText, type StreamParams } from "../agent/model";
 import { tagText } from "../agent/untrusted";
 import type { NewApproval, Outcome } from "../approvals";
-import { DesktopError } from "../desktop/client";
 import { progressNotes } from "../models-known";
 import { BudgetError, estimateTokens, fixedTokens, requestCeiling, searchesIn } from "../spend";
 import type { Tasks } from "./service";
@@ -181,7 +181,7 @@ export function endOf(
     const paused = signal.reason instanceof Error && signal.reason.message === "paused";
     return { status: "cancelled", summary: paused ? "Stopped by Pause all." : "Cancelled." };
   }
-  if (err instanceof DesktopError)
+  if (err instanceof SandboxError)
     return {
       status: "failed",
       summary:

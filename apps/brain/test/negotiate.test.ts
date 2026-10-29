@@ -583,7 +583,7 @@ test("of two sends at once, the second is blocked", async () => {
   messageBox(t);
   const n = openNegotiation(t);
   // Another task has the screen, so neither send's task runs.
-  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.lane.acquire(-5, new AbortController().signal);
   const send = named(negotiateTools(t), "negotiate_send");
   const input = send.schema.parse({ negotiation: n.id, text: TEXT, offer: 1060 });
   const both = await Promise.all([
@@ -593,7 +593,7 @@ test("of two sends at once, the second is blocked", async () => {
   expect(both.map((r) => r.isError)).toEqual([false, true]);
   expect(t.negotiations.messages(n.id).map((m) => m.status)).toEqual(["sending"]);
   await t.negotiations.close(n, "abandoned", null, null);
-  t.tasks.lane.release(-5);
+  t.lane.release(-5);
   await t.tasks.idle();
 });
 
@@ -688,7 +688,7 @@ test("a negotiation that's closed, or whose mandate runs out, sends nothing more
   const t = await testApp();
   messageBox(t);
   // Another task has the screen, so the sends wait for it.
-  await t.tasks.lane.acquire(-5, new AbortController().signal);
+  await t.lane.acquire(-5, new AbortController().signal);
   const closed = openNegotiation(t);
   await sendOffer(t, closed);
   await t.negotiations.close(closed, "lost", null, null);
@@ -697,7 +697,7 @@ test("a negotiation that's closed, or whose mandate runs out, sends nothing more
   t.advance(Date.parse(MANDATE.expiresAt) - Date.parse("2026-10-09T12:00:00Z"));
   t.negotiations.due();
   expect(t.negotiations.get(lapsed.id)?.status).toBe("expired");
-  t.tasks.lane.release(-5);
+  t.lane.release(-5);
   await t.tasks.idle();
   expect(t.tasks.list().map((x) => x.status)).toEqual(["cancelled", "cancelled"]);
   expect(t.negotiations.messages(closed.id)[0]?.status).toBe("failed");
