@@ -11,7 +11,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { askedIfBot } from "../src/negotiate/bot-question";
 import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
-import { replyPause } from "../src/negotiate/service";
+import { replyPause, SAY_HUMAN } from "../src/negotiate/service";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { computer, FakeModel, text, toolUse } from "./fake-model";
@@ -997,6 +997,24 @@ test("a seller asking whether it's a bot holds the negotiation for you to answer
   const again = await waitFor(() => pending()[0]);
   t.approvals.decide(again.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("Say I'm human lets the bot tell the seller it's a person, and asking again holds nothing", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  await readSeller(t, n, "Czy rozmawiam z botem?");
+  const hold = await waitFor(() => t.approvals.list(true)[0]);
+  expect(hold.answers).toEqual([SAY_HUMAN]);
+  t.approvals.decide(hold.id, "approve", "web", SAY_HUMAN);
+  const got = await runPluginTool(
+    named(negotiateTools(t), "negotiate_get"),
+    { negotiation: n.id },
+    call(),
+  );
+  expect(got.text).toContain("you may tell the seller you're a person");
+  await readSeller(t, n, "Na pewno nie bot?");
+  expect(t.approvals.list(true)).toEqual([]);
 });
 
 test("what you write to the seller yourself is recorded as yours, once, and the bot reads it", async () => {

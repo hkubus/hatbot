@@ -292,11 +292,11 @@ export function PendingApproval({
   const why = more || warns;
   const folds = compact && ((a.reason && !warns) || shot || takesNote(a));
 
-  const decide = async (decision: "approve" | "deny", scope?: ApprovalScope) => {
+  const decide = async (decision: "approve" | "deny", scope?: ApprovalScope, answer?: string) => {
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision, note, scope);
+      await decideApproval(a.id, decision, answer ?? note, scope);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -358,6 +358,17 @@ export function PendingApproval({
             Always
           </button>
         )}
+        {a.answers.map((answer) => (
+          <button
+            key={answer}
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => decide("approve", undefined, answer)}
+          >
+            {answer}
+          </button>
+        ))}
         <button
           type="button"
           className="btn primary"

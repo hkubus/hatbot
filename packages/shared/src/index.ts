@@ -286,14 +286,7 @@ export type ApprovalKind =
   | "other";
 
 /** Where one channel of a flip Scout marked ready to list is. */
-export type ListingStatus =
-  | "asking"
-  | "queued"
-  | "posting"
-  | "listed"
-  | "failed"
-  | "declined"
-  | "cancelled";
+export type ListingStatus = "queued" | "posting" | "listed" | "failed" | "declined" | "cancelled";
 
 /** How far an approval goes besides this once: `always`, this exact call for this bot from now on. */
 export type ApprovalScope = "always";
@@ -353,6 +346,8 @@ export type Approval = {
   scopes: ApprovalScope[];
   /** How far you approved it, if further than this once. */
   scope: ApprovalScope | null;
+  /** Ready answers: each approves it, with itself as the note. */
+  answers: string[];
 };
 export const DecideApproval = z.object({
   decision: z.enum(["approve", "deny"]),

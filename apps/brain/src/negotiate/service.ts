@@ -132,7 +132,10 @@ const mandateOf = (json: string): Mandate => {
 
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
-type Hold = "scam" | "stalled" | "bot";
+/** `human`: the owner let the bot say it's a person, so a seller asking again holds nothing. */
+type Hold = "scam" | "stalled" | "bot" | "human";
+/** The bot hold's ready answer. */
+export const SAY_HUMAN = "Say I'm human";
 const HOLD_KINDS: Approval["kind"][] = ["injection_warning", "other"];
 /** After a deal nothing more goes to the seller, so what they write is the owner's. */
 const DEALT: NegotiationStatus[] = ["agreed", "paid", "received"];
@@ -713,7 +716,7 @@ export class Negotiations {
       .filter((m) => m.direction === "in");
     const head = `Desktop task #${ended.id} ended: ${ended.status}.`;
     const latest = this.get(n.id);
-    const held = latest ? this.held(latest) : null;
+    const held = latest ? (this.held(latest) ?? this.saysHuman(latest)) : null;
     const dealt =
       latest && DEALT.includes(latest.status)
         ? `Negotiation #${n.id} is ${latest.status}: don't answer the seller.${fresh.length ? " The owner has what they wrote." : ""}`
@@ -823,6 +826,13 @@ export class Negotiations {
     return `Negotiation #${n.id} is held: the seller's message looked like a scam, and the owner decides whether to carry on. Don't reply to the seller, open anything they sent, or close the negotiation; wait for the owner.`;
   }
 
+  /** What the owner let the bot say about itself, for what it reads of the negotiation. */
+  saysHuman(n: Negotiation): string | null {
+    return this.holdOf(n.id) === "human"
+      ? "The owner said you may tell the seller you're a person if they ask whether you're a bot."
+      : null;
+  }
+
   /** A scam warning waits for the owner, who ends it or carries on; closing would clear it. */
   scamHeld(n: Negotiation): string | null {
     return this.holdOf(n.id) === "scam" ? this.held(n) : null;
@@ -874,7 +884,8 @@ export class Negotiations {
       conversationId: n.conversationId ?? undefined,
       kind: "other",
       summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
-      reason: `The seller asked whether they're writing to a bot: “${clip(text, 500)}”\nThat's yours to answer: reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself, and ${bot} reads what you wrote. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on, or deny to end the negotiation.`,
+      reason: `The seller asked whether they're writing to a bot: “${clip(text, 500)}”\nThat's yours to answer: ${SAY_HUMAN} lets ${bot} tell them it's a person, or reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself and ${bot} reads what you wrote. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on without answering it, or deny to end the negotiation.`,
+      answers: [SAY_HUMAN],
     });
     const before = this.held(n) ? n.approvalId : null;
     this.update(n.id, { approval_id: approval.id, hold: "bot" });
@@ -890,6 +901,8 @@ export class Negotiations {
     if (!n || a.status === "pending") return;
     const stall = this.holdOf(n.id) === "stalled";
     // Unanswered, a stall carries on: walking away is the owner's to say.
+    if (a.status === "approved" && this.holdOf(n.id) === "bot" && a.note === SAY_HUMAN)
+      return this.update(n.id, { approval_id: null, hold: "human" });
     if (a.status === "approved" || (stall && a.status === "expired"))
       return this.update(n.id, { approval_id: null });
     const why = stall
@@ -1040,7 +1053,10 @@ export class Negotiations {
       const current = signals.length || asked ? this.get(n.id) : null;
       if (current?.status !== "open" || this.scamHeld(current)) return;
       if (signals.length) this.hold(current, text, signals);
-      else if (!(this.held(current) && this.holdOf(current.id) === "bot"))
+      else if (
+        this.holdOf(current.id) !== "human" &&
+        !(this.held(current) && this.holdOf(current.id) === "bot")
+      )
         this.holdAsked(current, text);
     });
     if (fresh.length && DEALT.includes(n.status)) this.afterDeal(n, fresh);

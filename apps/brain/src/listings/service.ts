@@ -1,13 +1,12 @@
-// Flips Scout marks ready to list: Hatbot asks once for all their marketplaces, then the bot that
-// holds the marketplace logins posts each in a desktop task of its own, and Scout hears how it went.
+// Flips Scout marks ready to list: marking one is the owner's go-ahead, so the bot that holds the
+// marketplace logins posts each in a desktop task of its own, and Scout hears how it went.
 // Scout's tools are called by name through its plugin (or the MCP plugin), without the model.
 
 import { randomUUID } from "node:crypto";
 import type { DesktopService } from "@hatbot/plugin-desktop";
 import { PluginError, type PluginTool } from "@hatbot/plugin-sdk";
-import type { Approval, Bot, ListingStatus, Task } from "@hatbot/shared";
+import type { Bot, ListingStatus, Task } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
-import type { Approvals } from "../approvals";
 import type { Bots } from "../bots";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
@@ -23,8 +22,7 @@ import {
   conditionWord,
   type Draft,
   listingGoal,
-  listingReason,
-  listingSummary,
+  listingRequest,
   skillFor,
 } from "./text";
 
@@ -32,7 +30,6 @@ export type ListingsDeps = {
   db: Db;
   events: EventBus;
   tasks: Tasks;
-  approvals: Approvals;
   bots: Bots;
   plugins: Plugins;
   chats: Chats;
@@ -59,7 +56,7 @@ type Row = {
 };
 
 /** Not posted yet: a change or a cancel in Scout still stops it. */
-const OPEN: ListingStatus[] = ["asking", "queued", "posting"];
+const OPEN: ListingStatus[] = ["queued", "posting"];
 /** Ends Scout hears of. A cancel came from Scout. */
 const TOLD: ListingStatus[] = ["listed", "failed", "declined"];
 const FINAL_TASK = ["done", "failed", "cancelled"];
@@ -125,8 +122,6 @@ export class Listings {
   constructor(readonly d: ListingsDeps) {
     this.clock = d.clock ?? Date.now;
     d.events.on((e) => {
-      if (e.type === "approval.resolved" && e.approval.kind === "listing")
-        void this.decided(e.approval).catch((err) => console.error("listing approval failed", err));
       if (e.type === "task.updated" && FINAL_TASK.includes(e.task.status))
         void this.taskEnded(e.task).catch((err) => console.error("listing task end failed", err));
     });
@@ -189,12 +184,12 @@ export class Listings {
     for (const r of this.rows()) {
       if (!OPEN.includes(r.status) || r.published_at) continue;
       const at = want.get(`${r.flip_id}:${r.channel}`);
-      // Cancelled in Scout, or changed since it was asked about: asked about again.
+      // Cancelled in Scout, or changed since it was queued: queued again as it is now.
       if (at === undefined) this.drop(r, "cancelled");
       else if (at !== r.flip_updated_at) this.drop(r, null);
     }
     const rows = new Map(this.rows().map((r) => [`${r.flip_id}:${r.channel}`, r]));
-    const ask = new Map<number, Channel[]>();
+    const queue = new Map<number, Channel[]>();
     for (const f of flips)
       for (const c of f.channels) {
         const r = rows.get(`${f.id}:${c}`);
@@ -205,24 +200,16 @@ export class Listings {
             (TOLD.includes(r.status) && r.reported_at !== null && r.reported_at < readAt));
         if (r && !again) continue;
         if (r) this.d.db.query("DELETE FROM flip_listings WHERE id = ?").run(r.id);
-        ask.set(f.id, [...(ask.get(f.id) ?? []), c]);
+        queue.set(f.id, [...(queue.get(f.id) ?? []), c]);
       }
-    for (const [flip, channels] of ask) await this.ask(l, flip, channels, signal);
+    for (const [flip, channels] of queue) await this.queue(l, flip, channels, signal);
     await this.next();
   }
 
-  /** `status` null: the row goes, to be asked about again. */
+  /** `status` null: the row goes, to be queued again. */
   private drop(r: Row, status: ListingStatus | null) {
-    // The other channels of the same approval are asked about again with it.
-    const asked = r.status === "asking" && r.approval_id !== null;
-    const ids = asked
-      ? this.rows("approval_id = ? AND status = 'asking'", r.approval_id as number).map((x) => x.id)
-      : [r.id];
-    for (const id of ids)
-      if (status && id === r.id) this.set(id, { status });
-      else this.d.db.query("DELETE FROM flip_listings WHERE id = ?").run(id);
-    if (asked && this.d.approvals.get(r.approval_id as number)?.status === "pending")
-      this.d.approvals.cancel(r.approval_id as number);
+    if (status) this.set(r.id, { status });
+    else this.d.db.query("DELETE FROM flip_listings WHERE id = ?").run(r.id);
     if (r.status === "posting" && r.task_id) this.d.tasks.cancel(r.task_id);
     if (r.stage)
       void this.d
@@ -231,7 +218,7 @@ export class Listings {
         .catch(() => {});
   }
 
-  private async ask(
+  private async queue(
     l: { bot: Bot; tools: PluginTool[] },
     flipId: number,
     channels: Channel[],
@@ -241,49 +228,17 @@ export class Listings {
     if (!t) throw new PluginError("Scout has scout_flips_to_list but no scout_flip.");
     const d = draftOf(await readScout(t, { id: flipId }, signal));
     if (!d) {
-      console.error(`Scout's flip #${flipId} has no title or description; not asked about.`);
+      console.error(`Scout's flip #${flipId} has no title or description; not listed.`);
       return;
     }
-    const priced = channels.filter((c) => d.prices[c]);
-    if (!priced.length) return;
-    const approval = this.d.approvals.create({
-      taskId: null,
-      botId: l.bot.id,
-      conversationId: this.d.chats.direct(l.bot.id).conversationId,
-      kind: "listing",
-      summary: listingSummary(d, priced),
-      reason: listingReason(d, l.bot.name),
-    });
     const now = this.now();
-    for (const c of priced)
+    for (const c of channels.filter((c) => d.prices[c]))
       this.d.db
         .query(
-          `INSERT INTO flip_listings (flip_id, channel, bot_id, flip_updated_at, status, draft, approval_id,
-             created_at, updated_at) VALUES (?, ?, ?, ?, 'asking', ?, ?, ?, ?)`,
+          `INSERT INTO flip_listings (flip_id, channel, bot_id, flip_updated_at, status, draft,
+             created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)`,
         )
-        .run(flipId, c, l.bot.id, d.updatedAt, JSON.stringify(d), approval.id, now, now);
-  }
-
-  private async decided(a: Approval) {
-    const rows = this.rows("approval_id = ? AND status = 'asking'", a.id);
-    if (!rows.length || a.status === "pending") return;
-    if (a.status === "approved") {
-      for (const r of rows)
-        this.set(r.id, {
-          status: "queued",
-          draft: JSON.stringify({ ...this.draft(r), note: a.note }),
-        });
-      return this.next();
-    }
-    if (a.status === "denied") {
-      for (const r of rows) {
-        this.set(r.id, { status: "declined" });
-        await this.report({ ...r, status: "declined" });
-      }
-      return;
-    }
-    // Nobody answered: asked again on a later tick, if it's still ready.
-    for (const r of rows) this.d.db.query("DELETE FROM flip_listings WHERE id = ?").run(r.id);
+        .run(flipId, c, l.bot.id, d.updatedAt, JSON.stringify(d), now, now);
   }
 
   private draft(r: Row): Draft {
@@ -344,7 +299,6 @@ export class Listings {
       photos: JSON.stringify(files.map((f) => f.name)),
       error: null,
     });
-    const price = d.prices[r.channel] ?? 0;
     this.d.tasks.createDesktopTask({
       title: `List on ${r.channel}: ${d.title}`.slice(0, 80),
       goal: listingGoal(d, r.channel, files.length),
@@ -354,7 +308,7 @@ export class Listings {
       skill: skillFor(r.channel),
       // Scout's draft may come from the seller's own listing the flip was bought through.
       taintedBy: `Scout's listing draft for flip #${r.flip_id}`,
-      request: `The owner approved posting ${listingSummary(d, [r.channel]).replace(/^List /, "")} (${price} ${d.currency})`,
+      request: listingRequest(d, r.channel),
       // Before it runs: its gate comes from this row.
       created: (id) => this.set(r.id, { task_id: id }),
     });

@@ -1005,4 +1005,13 @@ export const migrations: string[] = [
   ALTER TABLE approvals_new RENAME TO approvals;
   CREATE INDEX approvals_status ON approvals (status);
   `,
+  // 63: marking a flip ready to list is the approval.
+  `
+  UPDATE flip_listings SET status = 'queued', approval_id = NULL WHERE status = 'asking';
+  UPDATE approvals SET status = 'cancelled' WHERE kind = 'listing' AND status = 'pending';
+  `,
+  // 64: ready answers an approval offers, each approving it with itself as the note.
+  `
+  ALTER TABLE approvals ADD COLUMN answers TEXT NOT NULL DEFAULT '[]';
+  `,
 ];

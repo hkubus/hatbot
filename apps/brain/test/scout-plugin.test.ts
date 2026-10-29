@@ -154,7 +154,7 @@ test("connecting lets Hatbot in to Scout with PKCE; Haggler gets Scout, and the 
   expect(offered).not.toContain("scout_flip_photo");
   expect(offered).not.toContain("scout_flip_listed");
   await t.listings.tick();
-  expect(t.approvals.list(true).map((a) => [a.kind, a.botId])).toEqual([["listing", haggler.id]]);
+  expect(t.db.query("SELECT bot_id FROM flip_listings").all()).toEqual([{ bot_id: haggler.id }]);
 
   // Disconnected in Scout.
   scout.s.tokens.clear();
@@ -216,7 +216,7 @@ test("a Haggler made after Scout is connected lists flips", async () => {
   const { id: _, ...made } = template;
   const haggler = t.bots.create(made);
   await t.listings.tick();
-  expect(t.approvals.list(true).map((a) => [a.kind, a.botId])).toEqual([["listing", haggler.id]]);
+  expect(t.db.query("SELECT bot_id FROM flip_listings").all()).toEqual([{ bot_id: haggler.id }]);
 });
 
 test("Haggler's tasks sign its browser in with the logins shared in Scout, once each time one is imported", async () => {

@@ -1145,16 +1145,15 @@ struct ApprovalBody: View {
       case nil: nil
       }
     }
-    let scopes = a.scopes ?? []
-    if scopes.contains("session") || scopes.contains("always") {
+    let always = (a.scopes ?? []).contains("always")
+    let answers = a.answers ?? []
+    if always || !answers.isEmpty {
       HStack(spacing: 16) {
-        if scopes.contains("session") {
-          Button(a.taskId == nil ? "For this chat" : "For this task") {
-            decide(.approve, scope: "session")
-          }
-        }
-        if scopes.contains("always") {
+        if always {
           Button("Always") { decide(.approve, scope: "always") }
+        }
+        ForEach(answers, id: \.self) { answer in
+          Button(answer) { decide(.approve, answer: answer) }
         }
       }
       .font(.subheadline)
@@ -1177,12 +1176,12 @@ struct ApprovalBody: View {
     }
   }
 
-  private func decide(_ decision: Decision, scope: String? = nil) {
+  private func decide(_ decision: Decision, scope: String? = nil, answer: String? = nil) {
     busy = true
     error = nil
     Task {
       do {
-        try await store.decide(approval.id, decision, note: note, scope: scope)
+        try await store.decide(approval.id, decision, note: answer ?? note, scope: scope)
         decided = decision
       } catch {
         self.error = message(for: error)

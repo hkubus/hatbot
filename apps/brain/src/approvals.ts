@@ -49,6 +49,7 @@ type Row = {
   scopes: string;
   scope: ApprovalScope | null;
   episode_id: number | null;
+  answers: string;
 };
 
 const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = a.task_id) AS cost_usd
@@ -74,6 +75,7 @@ const toApproval = (r: Row): Approval => ({
   note: r.note,
   scopes: JSON.parse(r.scopes),
   scope: r.scope,
+  answers: JSON.parse(r.answers),
 });
 
 /** A call's input as one string, keys sorted, so the same call always reads the same. */
@@ -100,6 +102,7 @@ export type NewApproval = {
   /** The chat conversation asking, for a scope over the rest of it. */
   episodeId?: number | null;
   scopes?: ApprovalScope[];
+  answers?: string[];
 };
 
 export type Granted = {
@@ -170,10 +173,11 @@ export class Approvals {
           number | null,
           string,
           string,
+          string,
         ]
       >(
-        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at, answers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.botId ?? HATBOT_ID,
@@ -186,6 +190,7 @@ export class Approvals {
         input.screenshotStepId ?? null,
         this.now(),
         new Date(this.clock() + TTL_MS).toISOString(),
+        JSON.stringify(input.answers ?? []),
       );
     if (row && input.call)
       this.db

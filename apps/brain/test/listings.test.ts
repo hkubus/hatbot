@@ -1,11 +1,10 @@
-// Listing Scout's flips: asked once, posted on each marketplace in its own desktop task, Scout told
+// Listing Scout's flips: marked ready there, posted on each marketplace in its own desktop task, Scout told
 // where each went; against a stand-in Scout and a stand-in desktop.
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpPlugin } from "@hatbot/plugin-mcp";
-import type { Approval } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { browser, FakeModel, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
@@ -140,10 +139,14 @@ const posting = (add: string, price: number, url: string) => [
 ];
 
 const clicks = (t: TestApp) => t.agent.browserCalls.filter((c) => c.name === "left_click").length;
-const pendingListing = (t: TestApp) =>
-  t.approvals.list(true).filter((a) => a.kind === "listing") as Approval[];
+const listings = (t: TestApp) =>
+  t.db
+    .query<{ status: string; draft: string }, []>(
+      "SELECT status, draft FROM flip_listings ORDER BY id",
+    )
+    .all();
 
-test("a flip Scout marks ready is asked about once, posted on each marketplace in turn, and Scout hears where", async () => {
+test("a flip Scout marks ready is posted on each marketplace in turn without asking, and Scout hears where", async () => {
   const work = new FakeModel([
     ...posting(OLX_ADD, 1199, OLX_URL),
     ...posting("https://www.vinted.pl/items/new", 1249, VINTED_URL),
@@ -153,14 +156,6 @@ test("a flip Scout marks ready is asked about once, posted on each marketplace i
   addPage(t, { "olx.pl": OLX_URL, "vinted.pl": VINTED_URL });
 
   await t.listings.tick();
-  await t.listings.tick();
-  const [approval, ...more] = pendingListing(t);
-  expect(more).toEqual([]);
-  expect(approval?.summary).toContain("OLX for 1,199 zł and Vinted for 1,249 zł");
-  expect(approval?.conversationId).toBe(t.thread.conversationId);
-  expect(t.tasks.list()).toEqual([]);
-
-  t.approvals.decide(approval?.id as number, "approve", "web");
   await waitFor(() => scout.calls("scout_flip_listed").length === 2);
   await t.tasks.idle();
 
@@ -173,9 +168,9 @@ test("a flip Scout marks ready is asked about once, posted on each marketplace i
   // Scout's draft is data, and the task that read it is tainted by it.
   expect(olx?.goal).toContain('trusted="false"');
   expect(olx?.tainted).toBe(true);
-  // One publish each, and nothing else asked: the listing itself was approved.
+  // One publish each, and nothing asked: marking it ready was the go-ahead.
   expect(clicks(t)).toBe(2);
-  expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["listing"]);
+  expect(t.approvals.list(false)).toEqual([]);
   expect(t.agent.setFilesCalls.map((c) => c.names)).toEqual([
     ["1.jpg", "2.jpg"],
     ["1.jpg", "2.jpg"],
@@ -183,65 +178,60 @@ test("a flip Scout marks ready is asked about once, posted on each marketplace i
   // Each task's photos are gone once it ends.
   expect(t.agent.staged.size).toBe(0);
 
-  // Scout has it: nothing more is asked.
+  // Scout has it: nothing more is posted.
   await t.listings.tick();
-  expect(pendingListing(t)).toEqual([]);
+  expect(t.tasks.list()).toHaveLength(2);
 
-  // Marked ready on OLX again after Scout heard: asked again.
+  // Marked ready on OLX again after Scout heard: posted again.
+  work.script.push(...posting(OLX_ADD, 1199, OLX_URL));
   t.advance(60_000);
   scout.set(scout.flips().map((f) => ({ ...f, channels: { ...f.channels, OLX: "ready" } })));
   await t.listings.tick();
-  expect(pendingListing(t).map((a) => a.summary)).toEqual([
-    `List “${TITLE}” on OLX for 1,199 zł? 2 photos.`,
-  ]);
+  await waitFor(() => scout.calls("scout_flip_listed").length === 3);
+  await t.tasks.idle();
+  expect(t.tasks.list().map((x) => x.title)).toContain(`List on OLX: ${TITLE}`);
   await t.plugins.stopAll();
 });
 
-test("with the Desktop plugin off, flips aren't asked about", async () => {
+test("with the Desktop plugin off, flips aren't listed", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   const scout = await withScout(t, [flip()]);
   await t.plugins.update("desktop", { enabled: false });
   await t.listings.tick();
-  expect(pendingListing(t)).toEqual([]);
+  expect(listings(t)).toEqual([]);
   expect(scout.calls("scout_flips_to_list")).toEqual([]);
 });
 
-test("a flip changed in Scout is asked about again, one taken back posts nothing, and a no tells Scout", async () => {
+test("a flip changed in Scout before it's posted goes up as it is now, and one taken back posts nothing", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
-  const scout = await withScout(t, [flip()]);
+  const scout = await withScout(t, [flip({ channels: { OLX: "ready" } })]);
   addPage(t, {});
-  await t.listings.tick();
-  const first = pendingListing(t)[0] as Approval;
-
-  // The price changed while it waited: the old approval goes and the new one has the new price.
-  scout.set([flip({ updatedAt: "2026-10-09T11:00:00Z", prices: { OLX: 999, Vinted: 1249 } })]);
-  await t.listings.tick();
-  expect(t.approvals.get(first.id)?.status).toBe("cancelled");
-  const second = pendingListing(t)[0] as Approval;
-  expect(second.summary).toContain("OLX for 999 zł");
-
-  // Approved while the desktop is down, then taken back in Scout before its task started.
+  // The desktop is down, so it waits.
   const status = t.agent.status.bind(t.agent);
   t.agent.status = async () => {
     throw new Error("down");
   };
-  t.approvals.decide(second.id, "approve", "web");
-  const taken = flip({ updatedAt: "2026-10-09T11:00:00Z", channels: {} });
-  scout.set([taken]);
+  await t.listings.tick();
+  expect(listings(t).map((r) => r.status)).toEqual(["queued"]);
+
+  scout.set([
+    flip({
+      updatedAt: "2026-10-09T11:00:00Z",
+      prices: { OLX: 999, Vinted: 1249 },
+      channels: { OLX: "ready" },
+    }),
+  ]);
+  await t.listings.tick();
+  const [now] = listings(t);
+  expect(now?.status).toBe("queued");
+  expect(JSON.parse(now?.draft ?? "{}").prices.OLX).toBe(999);
+
+  scout.set([flip({ updatedAt: "2026-10-09T11:00:00Z", channels: {} })]);
   await t.listings.tick();
   t.agent.status = status;
   await t.listings.tick();
+  expect(listings(t).map((r) => r.status)).toEqual(["cancelled"]);
   expect(t.tasks.list()).toEqual([]);
-
-  // Denied: Scout hears it was declined.
-  scout.set([taken, flip({ id: 8, channels: { Vinted: "ready" } })]);
-  await t.listings.tick();
-  const third = pendingListing(t).find((a) => a.summary.includes("Vinted")) as Approval;
-  t.approvals.decide(third.id, "deny", "web");
-  await waitFor(() => scout.calls("scout_flip_listed").length === 1);
-  expect(scout.calls("scout_flip_listed")).toEqual([
-    { flipId: 8, channel: "Vinted", status: "declined" },
-  ]);
   await t.plugins.stopAll();
 });
 
@@ -279,7 +269,6 @@ test("a listing task types only the approved text, puts photos only on the add-l
   addPage(t, { "olx.pl": OLX_URL });
   t.agent.page = { url: "https://www.olx.pl/", title: "OLX", text: "" };
   await t.listings.tick();
-  t.approvals.decide((pendingListing(t)[0] as Approval).id, "approve", "web");
   await waitFor(() => scout.calls("scout_flip_listed").length === 1);
   await t.tasks.idle();
 
@@ -325,7 +314,6 @@ test("a listing task that published but recorded no address tells Scout it may h
   // Opus doesn't take over the failed task.
   t.settings.update({ desktopEscalate: false });
   await t.listings.tick();
-  t.approvals.decide((pendingListing(t)[0] as Approval).id, "approve", "web");
   await waitFor(() => scout.calls("scout_flip_listed").length === 1);
   expect(scout.calls("scout_flip_listed")[0]).toMatchObject({ status: "failed" });
   expect(String(scout.calls("scout_flip_listed")[0]?.error)).toContain("may have gone up");
@@ -334,9 +322,10 @@ test("a listing task that published but recorded no address tells Scout it may h
 
 test("Scout isn't told without asking when its write asks first; the chat says so once", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
-  const scout = await withScout(t, [flip({ channels: { OLX: "ready" } })], "ask");
+  // A flip with no photos fails to post, and Scout would hear so.
+  const scout = await withScout(t, [flip({ photos: [], channels: { OLX: "ready" } })], "ask");
+  addPage(t, {});
   await t.listings.tick();
-  t.approvals.decide((pendingListing(t)[0] as Approval).id, "deny", "web");
   await waitFor(() => t.thread.list().some((m) => m.text.includes("Settings → Plugins → MCP")));
   await t.listings.tick();
   expect(scout.calls("scout_flip_listed")).toEqual([]);

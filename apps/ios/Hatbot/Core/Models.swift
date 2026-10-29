@@ -340,6 +340,8 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   /// The chat waiting for it, and the conversation in it, when no task is.
   var conversationId: Int?
   var episodeId: Int?
+  /// Ready answers: each approves it, with itself as the note.
+  var answers: [String]?
 
   /// Whether the answer can carry a note: the task carries on afterwards.
   var takesNote: Bool { kind != "budget" && kind != "injection_warning" }
