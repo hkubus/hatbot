@@ -79,7 +79,7 @@ const EVERYDAY = new Set(
 const CAREFUL: Record<string, string> = {
   lock: "Unlocking or locking changes who can get in.",
   alarm_control_panel: "Arming or disarming the alarm changes who can get in unnoticed.",
-  cover: "Covers include doors, garage doors and gates: opening one can let someone in.",
+  cover: "Covers include windows: opening one can let someone in.",
   homeassistant: "It acts on Home Assistant itself: restart, stop, reload, or any device at once.",
   hassio: "It manages Home Assistant's add-ons, backups and host.",
   recorder: "It changes what Home Assistant records.",
@@ -91,8 +91,10 @@ const CAREFUL: Record<string, string> = {
 };
 
 /** These always ask, as "access", which a locked phone's notification can't approve. */
-const ACCESS = new Set(["lock", "alarm_control_panel", "cover"]);
-/** Covers that only shade a window: no way in (the owner's choice). Covers with no class still count. */
+const ACCESS = new Set(["lock", "alarm_control_panel"]);
+/** Covers that let someone in, and ask like locks; other covers go to the safety review. */
+const ACCESS_COVERS = new Set(["garage", "gate", "door"]);
+/** Covers that only shade a window: they run without asking. */
 const SHADES = new Set(["blind", "curtain", "shade", "shutter", "awning"]);
 /** Services that only keep people out: they run without asking, on their own domain's entities. */
 const SECURES: Record<string, RegExp> = {
@@ -101,8 +103,7 @@ const SECURES: Record<string, RegExp> = {
   cover: /^close_cover(_tilt)?$/,
 };
 const askAccess = (why: string) => askAlways(why, "access");
-const careful = (domain: string) =>
-  ACCESS.has(domain) ? askAccess(CAREFUL[domain] ?? "") : ask(CAREFUL[domain] ?? "");
+const careful = (domain: string) => ask(CAREFUL[domain] ?? "");
 
 /** Targets that stand for many entities: Home Assistant resolves them, so they can hide a lock. */
 const INDIRECT = ["area_id", "device_id", "label_id", "floor_id"];
@@ -121,7 +122,7 @@ const idsOf = (ids: unknown): string[] =>
     .filter(Boolean);
 
 const Config = z.object({
-  /** Entities that let someone in besides locks, alarms and covers, e.g. a gate on a switch. */
+  /** Entities that let someone in besides locks, alarms, doors and gates, e.g. a gate on a switch. */
   access: z.array(z.string().trim().toLowerCase().regex(ENTITY_ID, "domain.object_id")).default([]),
 });
 
@@ -160,11 +161,15 @@ export const homeassistantPlugin = definePlugin({
     const coverClass = new Map<string, string>();
     const shade = (id: string) =>
       domainOf(id) === "cover" && !marked.has(id) && SHADES.has(coverClass.get(id) ?? "");
-    const isAccess = (id: string) => (ACCESS.has(domainOf(id)) && !shade(id)) || marked.has(id);
+    const accessCover = (id: string) =>
+      domainOf(id) === "cover" && ACCESS_COVERS.has(coverClass.get(id) ?? "");
+    const isAccess = (id: string) => ACCESS.has(domainOf(id)) || accessCover(id) || marked.has(id);
     const accessWhy = (id: string) =>
       marked.has(id)
         ? `The owner asked to approve every change to ${id}.`
-        : (CAREFUL[domainOf(id)] ?? "");
+        : accessCover(id)
+          ? "It opens or closes a door, garage door or gate: that changes who can get in."
+          : (CAREFUL[domainOf(id)] ?? "");
     /** From the last look at every state: a policy can't wait to ask. A scene from an integration has no list. */
     const members = new Map<string, string[]>();
     const opaque = new Set<string>();
@@ -307,7 +312,7 @@ export const homeassistantPlugin = definePlugin({
       tool({
         name: "homeassistant_call_service",
         description:
-          'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Locking, arming the alarm and closing covers run. Anything else on locks, alarms, covers (doors, garage, gates, windows; not blinds, curtains, shades, shutters or awnings), the entities the owner marked, and scenes, groups, areas, devices, labels or floors that could include them always wait for the owner. Scenes from an integration, scripts, automations, notifications, Home Assistant itself and other services that aren\'t everyday device control need approval (the safety review or the owner).',
+          'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Locking, arming the alarm and closing covers run, and so do blinds, curtains, shades, shutters and awnings. Anything else on locks, alarms, doors, garage doors, gates, and the entities the owner marked, or on scenes and groups that hold them, waits for the owner. Other covers, whole areas, devices, labels or floors, scenes from an integration, scripts, automations, notifications, Home Assistant itself and other services that aren\'t everyday device control go to the safety review.',
         access: "write",
         label: "Controlling Home Assistant",
         schema: z.object({
@@ -324,7 +329,7 @@ export const homeassistantPlugin = definePlugin({
           const targets = targetsOf(entity_id, data);
           const odd = targets.find((t) => !ENTITY_ID.test(t) && t !== "all" && t !== "none");
           if (odd)
-            return askAccess(
+            return ask(
               `${JSON.stringify(odd)} isn't an entity id as Home Assistant writes them, so what it reaches isn't known.`,
             );
           if (
@@ -344,10 +349,11 @@ export const homeassistantPlugin = definePlugin({
           if (
             many &&
             (ACCESS.has(domain) ||
+              domain === "cover" ||
               ["homeassistant", "scene"].includes(domain) ||
               [...marked].some((id) => domainOf(id) === domain))
           )
-            return askAccess(
+            return ask(
               "It acts on a whole area, device, label or floor, which can include a lock, the alarm, a door or a gate.",
             );
           // A switch group can hold a gate on a switch: until the states are known, any entity in
@@ -360,7 +366,7 @@ export const homeassistantPlugin = definePlugin({
           if (unseen.length) {
             // So the next call knows it, if Home Assistant was down when this one started.
             relearn();
-            return askAccess(
+            return ask(
               `It isn't known yet what ${unseen.join(", ")} sets or holds, and a scene or group can open a door.`,
             );
           }
@@ -382,18 +388,17 @@ export const homeassistantPlugin = definePlugin({
           return allow();
         },
         run: async ({ domain, service, entity_id, data }) => {
-          // The policy went by the scenes and groups as last seen: one changed since could now open
-          // a door.
+          // The policy went by covers, scenes and groups as last seen: one changed since could now
+          // open a door.
           for (const id of targetsOf(entity_id, data)) {
-            if (shade(id)) {
-              const now = await api<State>("GET", `/states/${encodeURIComponent(id)}`);
-              const cls = now.attributes.device_class;
-              if (typeof cls !== "string" || !SHADES.has(cls)) {
-                coverClass.delete(id);
-                throw new PluginError(
-                  `${id} isn't a blind, curtain, shade, shutter or awning any more, so it waits for the owner: call it again.`,
-                );
-              }
+            if (domainOf(id) === "cover" && !isAccess(id)) {
+              const was = coverClass.get(id) ?? "";
+              const cls = (await api<State>("GET", `/states/${encodeURIComponent(id)}`)).attributes
+                .device_class;
+              const now = typeof cls === "string" ? cls : "";
+              coverClass.set(id, now);
+              if (ACCESS_COVERS.has(now) || (SHADES.has(was) && !SHADES.has(now)))
+                throw new PluginError(`${id} has changed since it was checked: call it again.`);
             }
             const before = members.has(id) ? expand([id]) : null;
             if (!before) continue;
@@ -419,7 +424,7 @@ export const homeassistantPlugin = definePlugin({
     ];
 
     return ready(tools, {
-      guidance: `Home Assistant at ${base}: the house's lights, switches, climate, media players, sensors and the rest. Find entities with homeassistant_states (filter by domain or search), read one with homeassistant_entity, see how it changed with homeassistant_history, and control devices with homeassistant_call_service. Locking, arming the alarm and closing covers run; anything else on locks, alarms, covers other than blinds, curtains, shades, shutters and awnings${marked.size ? `, ${[...marked].join(", ")}` : ""} and scenes or groups that hold them always wait for the owner; scenes from an integration, scripts, automations, notifications and Home Assistant itself need approval (the safety review or the owner).`,
+      guidance: `Home Assistant at ${base}: the house's lights, switches, climate, media players, sensors and the rest. Find entities with homeassistant_states (filter by domain or search), read one with homeassistant_entity, see how it changed with homeassistant_history, and control devices with homeassistant_call_service. Locking, arming the alarm and closing covers run; anything else on locks, alarms, doors, garage doors, gates${marked.size ? `, ${[...marked].join(", ")}` : ""} and scenes or groups that hold them waits for the owner; other covers, whole areas, scenes from an integration, scripts, automations, notifications and Home Assistant itself go to the safety review.`,
       test: async () => {
         await api("GET", "/");
         const config = await api<{ location_name?: string; version?: string }>(

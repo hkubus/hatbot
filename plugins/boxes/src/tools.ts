@@ -213,9 +213,8 @@ async function secretsAsked(
       input: c.input,
       what: `${c.added.length ? `Let box #${c.id} "${c.title}" reach ${c.added.join(", ")}` : `Change the backend code of box #${c.id} "${c.title}"`}. Its backend has the secrets ${set.join(", ")}${hosts.length ? `, and could send them to ${hosts.join(", ")}` : ""}.`,
       why: c.added.length
-        ? "This box has secrets you set, so a new host for its backend needs your approval."
-        : "This conversation has read untrusted content, and changed code could send this box's secrets to a host it already reaches, so it needs your approval.",
-      always: true,
+        ? "This box has secrets you set, so a new host for its backend is checked first."
+        : "This conversation has read untrusted content, and changed code could send this box's secrets to a host it already reaches, so it is checked first.",
     },
     signal,
   );
@@ -666,9 +665,8 @@ const TOOLS = [
                 : "The box can't reach any host, so what it reads stays in Hatbot."
             }`,
             why: chat
-              ? "This conversation has read untrusted content, so giving a box your data needs your approval."
-              : "This box's page was written after reading untrusted content, so giving it your data needs your approval.",
-            always: hosts.length > 0,
+              ? "This conversation has read untrusted content, so giving a box your data is checked first."
+              : "This box's page was written after reading untrusted content, so giving it your data is checked first.",
           },
           signal,
         );
