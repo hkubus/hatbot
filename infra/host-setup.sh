@@ -17,8 +17,6 @@ umask 022
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
-desktop_provision=$(guest_script desktop desktop-provision.sh)
-boxes_provision=$(guest_script boxes boxes-provision.sh)
 
 STATE=/etc/hatbot/host.env
 # shellcheck source=/dev/null
@@ -411,104 +409,21 @@ for ip in $HATBOT_PUBLIC_IPS; do
   PUBLIC_BLOCK+=", $ip"
 done
 
-# Filters frames at the desktop's port on the bridge, before they reach the LAN or the host.
-# Stateless on purpose: bridge conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall.
-# The interface name also matches when the NIC sits behind a Proxmox firewall bridge (fwbr), since that
-# bridge forwards from the same veth. Each guest's rules are a block of the table, after its closing
-# brace, so a guest that isn't there leaves no trace.
+# Only the brain reaches the guests' agents: desktop-agent and VNC on the desktop, 7071 on the boxes guest.
 DESKTOP_TABLE=''
-if [[ -n $DESKTOP ]]; then
-  DESKTOP_TABLE=$(cat <<EOF
-
-
-# $DESKTOP_NAME (CT $DESKTOP): the internet only, and replies to the brain.
-table bridge hatbot {
-  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
-  # machine's MAC is dropped here, or it would draw that machine's traffic to the desktop.
-  chain desktop_prerouting {
-    type filter hook prerouting priority filter - 5; policy accept;
-    iifname "$DESKTOP_VETH" ether saddr != $DESKTOP_MAC counter drop
-  }
-
-  chain forward {
-    iifname "$DESKTOP_VETH" jump from_desktop
-  }
-
-  # Frames for the host itself: only ARP, so the desktop can't open anything on the host.
-  chain input {
-    iifname "$DESKTOP_VETH" ether type arp jump desktop_arp
-    iifname "$DESKTOP_VETH" counter drop
-  }
-
-  chain from_desktop {
-    ether saddr != $DESKTOP_MAC counter drop
-    ether type arp jump desktop_arp
-    ether type != ip counter drop
-    ip saddr != $DESKTOP_IP counter drop
-    # Replies to the brain (VNC, desktop-agent). A bare SYN would be the desktop opening a connection.
-    ip daddr $BRAIN_IP tcp sport { 5901, 7070 } tcp flags & (syn | ack) != syn accept
-    ip daddr @blocked counter drop
-    accept
-  }
-
-  # No ARP spoofing: the desktop may only announce its own address.
-  chain desktop_arp {
-    arp saddr ether != $DESKTOP_MAC counter drop
-    arp saddr ip != $DESKTOP_IP counter drop
-    accept
-  }
-}
-EOF
-  )
-fi
-
-# The boxes guest runs code a bot wrote, so its port gets the same fence. Only the brain reaches its
-# agent (7071).
+[[ -z $DESKTOP ]] ||
+  DESKTOP_TABLE=$(fence_block desktop "$DESKTOP_NAME" "$DESKTOP" "$DESKTOP_VETH" "$DESKTOP_MAC" \
+    "$DESKTOP_IP" "$BRAIN_IP" "{ 5901, 7070 }")
 BOXES_TABLE=''
-if [[ -n $BOXES ]]; then
-  BOXES_TABLE=$(cat <<EOF
-
-
-# $BOXES_NAME (CT $BOXES): the same fence, with only the brain reaching its agent.
-table bridge hatbot {
-  chain boxes_prerouting {
-    type filter hook prerouting priority filter - 5; policy accept;
-    iifname "$BOXES_VETH" ether saddr != $BOXES_MAC counter drop
-  }
-
-  chain forward {
-    iifname "$BOXES_VETH" jump from_boxes
-  }
-
-  chain input {
-    iifname "$BOXES_VETH" ether type arp jump boxes_arp
-    iifname "$BOXES_VETH" counter drop
-  }
-
-  chain from_boxes {
-    ether saddr != $BOXES_MAC counter drop
-    ether type arp jump boxes_arp
-    ether type != ip counter drop
-    ip saddr != $BOXES_IP counter drop
-    # Replies to the brain (the boxes agent). A bare SYN would be the guest opening a connection.
-    ip daddr $BRAIN_IP tcp sport 7071 tcp flags & (syn | ack) != syn accept
-    ip daddr @blocked counter drop
-    accept
-  }
-
-  chain boxes_arp {
-    arp saddr ether != $BOXES_MAC counter drop
-    arp saddr ip != $BOXES_IP counter drop
-    accept
-  }
-}
-EOF
-  )
-fi
+[[ -z $BOXES ]] ||
+  BOXES_TABLE=$(fence_block boxes "$BOXES_NAME" "$BOXES" "$BOXES_VETH" "$BOXES_MAC" "$BOXES_IP" \
+    "$BRAIN_IP" 7071)
+GUEST_NAMES="${DESKTOP:+$DESKTOP_NAME}${DESKTOP:+${BOXES:+ and }}${BOXES:+$BOXES_NAME}"
+GUEST_NAMES=${GUEST_NAMES:-its guests}
 
 write_file /etc/hatbot/host.nft 600 <<EOF
 #!/usr/sbin/nft -f
-# Managed by hatbot infra/host-setup.sh. Keeps $DESKTOP_NAME and $BOXES_NAME on the internet only.
+# Managed by hatbot infra/host-setup.sh. Keeps $GUEST_NAMES on the internet only.
 table bridge hatbot
 delete table bridge hatbot
 
@@ -535,9 +450,9 @@ table bridge hatbot {
 EOF
 
 # No ExecStop: stopping the unit must not open the guests up. Remove with 'nft delete table bridge hatbot'.
-write_file /etc/systemd/system/hatbot-firewall.service 644 <<'EOF'
+write_file /etc/systemd/system/hatbot-firewall.service 644 <<EOF
 [Unit]
-Description=Hatbot firewall (keeps hatbot-desktop and hatbot-boxes off the LAN)
+Description=Hatbot firewall (keeps $GUEST_NAMES off the LAN)
 Documentation=file:///etc/hatbot/host.nft
 DefaultDependencies=no
 Before=network-pre.target pve-guests.service
@@ -679,10 +594,15 @@ provision() { # provision CTID PATH ENV...
 }
 provision "$BRAIN_ID" "$HERE/brain-provision.sh" "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
   "DESKTOP_MAC=$DESKTOP_MAC" "BOXES_MAC=$BOXES_MAC"
-[[ -z $DESKTOP ]] ||
-  provision "$DESKTOP" "$desktop_provision" "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
-[[ -z $BOXES ]] ||
-  provision "$BOXES" "$boxes_provision" "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+# A guest's scripts are its plugin's, looked for only when there is that guest.
+if [[ -n $DESKTOP ]]; then
+  script=$(guest_script desktop desktop-provision.sh)
+  provision "$DESKTOP" "$script" "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+fi
+if [[ -n $BOXES ]]; then
+  script=$(guest_script boxes boxes-provision.sh)
+  provision "$BOXES" "$script" "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+fi
 
 step "7/8 Nightly snapshots"
 if ((!SNAP_OK)); then

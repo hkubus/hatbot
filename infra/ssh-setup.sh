@@ -25,8 +25,6 @@ umask 077
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
-desktop_provision=$(guest_script desktop desktop-provision.sh)
-boxes_provision=$(guest_script boxes boxes-provision.sh)
 
 STATE=$(state_file)
 # shellcheck source=/dev/null
@@ -271,10 +269,15 @@ provision() { # provision GUEST PATH ENV...
 }
 provision "$BRAIN_SSH" "$HERE/brain-provision.sh" "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
   "DESKTOP_MAC=$DESKTOP_MAC" "DESKTOP_IP6=$DESKTOP_IP6" "BOXES_MAC=$BOXES_MAC" "BOXES_IP6=$BOXES_IP6"
-[[ -z $DESKTOP_SSH ]] ||
-  provision "$DESKTOP_SSH" "$desktop_provision" "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
-[[ -z $BOXES_SSH ]] ||
-  provision "$BOXES_SSH" "$boxes_provision" "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
+# A guest's scripts are its plugin's, looked for only when there is that guest.
+if [[ -n $DESKTOP_SSH ]]; then
+  script=$(guest_script desktop desktop-provision.sh)
+  provision "$DESKTOP_SSH" "$script" "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
+fi
+if [[ -n $BOXES_SSH ]]; then
+  script=$(guest_script boxes boxes-provision.sh)
+  provision "$BOXES_SSH" "$script" "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
+fi
 
 step "4/4 Done"
 backup="the brain's /var/lib/hatbot and /archive"

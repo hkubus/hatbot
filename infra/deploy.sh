@@ -223,6 +223,16 @@ else
 fi
 
 step "3/3 Release"
+# release_script PLUGIN SCRIPT: the deployed commit's own, or this checkout's for one from before the
+# guests' scripts were their plugins'.
+release_script() {
+  local path=plugins/$1/infra/$2
+  if tar -C "$tmp" -xf "$tmp/app.tar" "$path" 2>/dev/null; then
+    printf '%s\n' "$tmp/$path"
+  else
+    guest_script "$1" "$2"
+  fi
+}
 if [[ -z $DESKTOP ]]; then
   info "no desktop (ssh-setup.sh was given none); deploying only the brain"
 else
@@ -235,7 +245,7 @@ else
   [[ -z $src_sha ]] || echo "$src_sha" >"$tmp/agent/VERSION"
   tar -C "$tmp/agent" -cf "$tmp/agent.tar" .
   guest_push "$DESKTOP" "$tmp/agent.tar" /root/hatbot-desktop-agent.tar 600
-  script=$(guest_script desktop desktop-deploy.sh)
+  script=$(release_script desktop desktop-deploy.sh)
   guest_push "$DESKTOP" "$script" /root/desktop-deploy.sh 700
   if ! guest_exec "$DESKTOP" env DESKTOP_IP="$DESKTOP_IP" bash /root/desktop-deploy.sh /root/hatbot-desktop-agent.tar; then
     warn "desktop-agent failed to install; the brain is deployed anyway, but desktop tasks won't run"
@@ -258,7 +268,7 @@ else
   [[ -z $src_sha ]] || echo "$src_sha" >"$tmp/hatbox/VERSION"
   tar -C "$tmp/hatbox" -cf "$tmp/hatbox.tar" .
   guest_push "$BOXES" "$tmp/hatbox.tar" /root/hatbox-agent.tar 600
-  script=$(guest_script boxes boxes-deploy.sh)
+  script=$(release_script boxes boxes-deploy.sh)
   guest_push "$BOXES" "$script" /root/boxes-deploy.sh 700
   if ! guest_exec "$BOXES" env BOXES_IP="$BOXES_IP" bash /root/boxes-deploy.sh /root/hatbox-agent.tar; then
     warn "the boxes agent failed to install; the brain is deployed anyway, but boxes' backends won't run"

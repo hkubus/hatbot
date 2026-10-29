@@ -411,7 +411,7 @@ fi
 
 step "Snapshots and backups"
 if [[ ! -e /usr/local/sbin/hatbot-desktop-snapshot ]]; then
-  printf '   %sskip%s  nightly snapshots (storage %s cannot snapshot)\n' "$yel" "$rst" "$SSD_STORE"
+  skip "nightly snapshots (storage $SSD_STORE cannot snapshot)"
 else
   [[ -z $DESKTOP ]] ||
     expect "nightly desktop snapshot timer is enabled" systemctl is-enabled --quiet hatbot-desktop-snapshot.timer

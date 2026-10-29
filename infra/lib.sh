@@ -180,3 +180,54 @@ backup_jobs() {
     }
   ' "$@"
 }
+
+# fence_block KEY NAME CTID VETH MAC IP BRAIN_IP PORTS: a guest's block of host.nft, keeping it to the
+# internet and replies to the brain from PORTS (7071, or { 5901, 7070 }). It filters frames at the
+# guest's port on the bridge, before they reach the LAN or the host. Stateless on purpose: bridge
+# conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall. The interface name also
+# matches when the NIC sits behind a Proxmox firewall bridge (fwbr), which forwards from the same veth.
+# Each block comes after the table's closing brace, so a guest that isn't there leaves no trace.
+fence_block() {
+  local key=$1 name=$2 id=$3 veth=$4 mac=$5 ip=$6 brain=$7 ports=$8
+  cat <<EOF
+
+
+# $name (CT $id): the internet only, and replies to the brain.
+table bridge hatbot {
+  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
+  # machine's MAC is dropped here, or it would draw that machine's traffic to the guest.
+  chain ${key}_prerouting {
+    type filter hook prerouting priority filter - 5; policy accept;
+    iifname "$veth" ether saddr != $mac counter drop
+  }
+
+  chain forward {
+    iifname "$veth" jump from_$key
+  }
+
+  # Frames for the host itself: only ARP, so the guest can't open anything on the host.
+  chain input {
+    iifname "$veth" ether type arp jump ${key}_arp
+    iifname "$veth" counter drop
+  }
+
+  chain from_$key {
+    ether saddr != $mac counter drop
+    ether type arp jump ${key}_arp
+    ether type != ip counter drop
+    ip saddr != $ip counter drop
+    # Replies to the brain. A bare SYN would be the guest opening a connection.
+    ip daddr $brain tcp sport $ports tcp flags & (syn | ack) != syn accept
+    ip daddr @blocked counter drop
+    accept
+  }
+
+  # No ARP spoofing: the guest may only announce its own address.
+  chain ${key}_arp {
+    arp saddr ether != $mac counter drop
+    arp saddr ip != $ip counter drop
+    accept
+  }
+}
+EOF
+}
