@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["agent"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
+
+# Screenshots are resized and encoded in tests too: slow unoptimised.
+[profile.dev.package."*"]
+opt-level = 2
