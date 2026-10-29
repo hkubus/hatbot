@@ -25,6 +25,7 @@ import {
   needsYou,
   negotiationOf,
   onToast,
+  pluginOn,
   reconnectNow,
   setIncognito,
   setPaused,
@@ -64,6 +65,12 @@ const VIEWS = [
   { path: "/spend", title: "Spend" },
 ] as const;
 type View = (typeof VIEWS)[number];
+/** Views that are a plugin's, shown while it's on. */
+const PLUGIN_OF: Partial<Record<ViewPath, string>> = {
+  "/live": "desktop",
+  "/schedules": "automation",
+  "/boxes": "boxes",
+};
 type ViewPath = View["path"];
 
 /** The rail's and the tab bar's entries (Search is in the top bar). One with more than one view shows
@@ -217,7 +224,13 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const page = reading ? "" : view.path;
   const section = sectionOf(view);
   const tab = TAB_OF[section.title] ?? section.title;
-  const tabs = section.views.length > 1 && (section.views as readonly string[]).includes(path);
+  const plugins = useStore((s) => s.plugins);
+  const viewsOf = (s: Section): readonly string[] =>
+    s.views.filter((v) => {
+      const id = PLUGIN_OF[v];
+      return !id || pluginOn(plugins, id);
+    });
+  const tabs = viewsOf(section).length > 1 && viewsOf(section).includes(path);
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
   const negotiationId = /^\/negotiations\/(\d+)$/.exec(path)?.[1];
@@ -408,7 +421,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
             <ChatNav current={chatId || pageChat?.id || 0} path={path} about />
           </nav>
           <nav className="nav nav-views">
-            {SECTIONS.filter((s) => s.title !== "Chat" && s.title !== "Search").map((s) => (
+            {SECTIONS.filter(
+              (s) => s.title !== "Chat" && s.title !== "Search" && viewsOf(s).length,
+            ).map((s) => (
               <Link
                 key={s.title}
                 className={`nav-item ${s === section ? "active" : ""}`}
@@ -447,7 +462,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 )}
               </div>
             ) : tabs ? (
-              <SectionTabs label={section.title} views={section.views} path={path} />
+              <SectionTabs label={section.title} views={viewsOf(section)} path={path} />
             ) : (
               <h1>{pageTitle}</h1>
             )}

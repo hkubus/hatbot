@@ -16,7 +16,7 @@ import { LoadError, PageLoad, useLoad } from "../load";
 import { chatModelOptions, modelNameIn, modelOptions, useModels } from "../models";
 import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
-import { setPaused, useStore } from "../store";
+import { pluginOn, setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
@@ -96,6 +96,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const theme = useTheme();
   const models = useModels();
   const paused = useStore((s) => s.paused);
+  const boxes = useStore((s) => pluginOn(s.plugins, "boxes"));
   // Saved elsewhere (the app, another tab): shown here too.
   const settingsVersion = useStore((s) => s.settingsVersion);
   const {
@@ -158,9 +159,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   return (
     <section className="view">
       <div className="page">
-        <Group className="show-phone">
-          <LinkRow to="/boxes" label="Boxes" />
-        </Group>
+        {boxes && (
+          <Group className="show-phone">
+            <LinkRow to="/boxes" label="Boxes" />
+          </Group>
+        )}
 
         <Group title="Models">
           <Row label="Chat">

@@ -495,6 +495,10 @@ export const ensureSchedule = (id: number) =>
     }),
   );
 
+/** False only once it's known to be off, so nothing hides while the list loads. */
+export const pluginOn = (plugins: Record<string, PluginInfo>, id: string) =>
+  plugins[id]?.enabled !== false;
+
 export async function loadPlugins() {
   const list = await api<PluginInfo[]>("/plugins");
   set({ plugins: Object.fromEntries(list.map((p) => [p.id, p])) });
@@ -1034,6 +1038,8 @@ async function refreshEarlier(from: number, before: number, since: string) {
  * the stream's start. `reconnected`: pages showing settings, memory or the heartbeat load them again.
  */
 async function catchUp(reconnected: boolean) {
+  // Which views show: those of plugins that are off don't.
+  void loadPlugins().catch(() => {});
   // The chats come with loadLive's bots.
   if (reconnected || threadShown) void refreshThread().catch(() => {});
   void api<SpendSummary>("/spend/summary").then(
@@ -1061,7 +1067,6 @@ async function catchUp(reconnected: boolean) {
     });
     if (proposalsLoaded || Object.keys(state.proposals).length)
       void refreshProposals().catch(() => {});
-    if (Object.keys(state.plugins).length) void loadPlugins().catch(() => {});
     if (boxesLoaded) void loadBoxes().catch(() => {});
     // A negotiation's page shows its messages; negotiation.updated may have been missed.
     for (const id of Object.keys(state.negotiationMessages))

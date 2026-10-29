@@ -11,7 +11,7 @@ import { LoadError, useLoad } from "../load";
 import { type Doc, isDirty, loading, newDoc, readDoc, readFailed } from "../memory-doc";
 import { navigate } from "../router";
 import { useRoving } from "../roving";
-import { bumpMemory, loadProposals, putProposal, startTeach, useStore } from "../store";
+import { bumpMemory, loadProposals, pluginOn, putProposal, startTeach, useStore } from "../store";
 import type { Toast } from "../toast";
 import { Empty } from "../ui";
 
@@ -92,6 +92,7 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
   const [skills, setSkills] = useState<SkillStatus[]>([]);
   const { busy, run } = useAction();
   const teach = useStore((s) => s.teach);
+  const desktop = useStore((s) => pluginOn(s.plugins, "desktop"));
   const drafts = useMemo(
     () =>
       Object.values(teach)
@@ -551,9 +552,11 @@ export function Memory({ toast, open }: { toast: Toast; open?: string }) {
               >
                 Suggest a fix
               </button>
-              <button type="button" className="btn sm" onClick={() => recordAgain(skill.name)}>
-                Record again
-              </button>
+              {desktop && (
+                <button type="button" className="btn sm" onClick={() => recordAgain(skill.name)}>
+                  Record again
+                </button>
+              )}
             </div>
           )}
           {sel.kind === "proposal" ? (
