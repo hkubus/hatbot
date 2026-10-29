@@ -203,11 +203,15 @@ test("notification buttons carry signed, single-use tokens that do only their ow
   expect(t.agent.locked).toBe(true);
 });
 
-test("a budget raise can't be approved from a notification, only denied", async () => {
+test("a budget raise can't be approved by a notification's own button: its Approve opens the app", async () => {
   const t = await testApp();
   const a = t.approvals.create({ taskId: null, kind: "budget", summary: "Raise it" });
   const n = await waitFor(() => t.notifier.sent.find((x) => x.title === "Approve: Raise it"));
-  expect(n.actions?.map((b) => b.label)).toEqual(["Open in Hatbot", "Deny", "Pause all"]);
+  expect(n.actions?.map((b) => [b.label, b.action])).toEqual([
+    ["Approve", "view"],
+    ["Deny", "http"],
+    ["Pause all", "http"],
+  ]);
   // A signed Approve, as an older notification would carry, is refused, and so is decide().
   const exp = Math.floor(Date.parse(a.expiresAt) / 1000);
   const sig = t.approvals.sign(a.id, "approve", exp);
@@ -309,7 +313,7 @@ test("a lock-screen approval for a message doesn't buy, and asking again needs t
   expect(lastText(work.requests[2])).toContain("wasn't for buying or paying");
   expect(second.kind).toBe("purchase");
   expect(second.reason).toContain('Hatbot held: left_click on "Kup teraz"');
-  expect(t.notifier.sent.at(-1)?.actions?.[0]?.label).toBe("Open in Hatbot");
+  expect(t.notifier.sent.at(-1)?.actions?.[0]).toMatchObject({ action: "view", label: "Approve" });
   expect(t.approvals.decide(second.id, "approve", "ntfy")).toBeNull();
   t.approvals.decide(second.id, "approve", "web");
   await t.tasks.idle();

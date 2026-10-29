@@ -15,7 +15,10 @@ import type { EventBus } from "./events";
 const TTL_MS = 24 * 3600_000;
 /** How long a message to a person waits before it goes, for you to stop it. */
 export const SEND_WINDOW_MS = 30_000;
-/** Kinds a notification may approve from a locked phone; the rest are approved in the app. */
+/**
+ * Kinds a notification may approve from a locked phone; the rest are approved in the app, which the
+ * notification's Approve opens: the iOS app approves behind Face ID.
+ */
 const NOTIFY_APPROVES: ApprovalKind[] = [
   "send",
   "submit_personal_data",
@@ -543,7 +546,7 @@ export class Approvals {
       click: open,
       actions: approvableFromNotification(a.kind)
         ? [button("approve"), button("deny"), pause]
-        : [{ action: "view", label: "Open in Hatbot", url: open }, button("deny"), pause],
+        : [{ action: "view", label: "Approve", url: `${open}&approve=1` }, button("deny"), pause],
     });
   }
 }

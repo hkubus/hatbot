@@ -900,7 +900,8 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   const told = await waitFor(() =>
     t.notifier.sent.find((x) => x.click?.endsWith(`?approval=${hold.id}`)),
   );
-  expect(told.actions?.map((a) => a.label)).not.toContain("Approve");
+  // Its Approve only opens the app, which approves it.
+  expect(told.actions?.find((a) => a.label === "Approve")?.action).toBe("view");
   // Meanwhile the bot can neither send nor close it.
   const tools = negotiateTools(t);
   const send = named(tools, "negotiate_send");

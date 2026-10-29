@@ -3,6 +3,8 @@ import Foundation
 enum AppLink: Equatable, Sendable {
   case task(Int)
   case approval(Int)
+  /// A notification's Approve, for what only the app approves: it asks for Face ID first.
+  case approve(Int)
   case schedule(Int)
   case trigger(Int)
   case box(Int)
@@ -23,7 +25,10 @@ enum AppLink: Equatable, Sendable {
       guard let id = Int(parts[0]) else { return nil }
       switch host {
       case "tasks": self = .task(id)
-      case "approvals": self = .approval(id)
+      case "approvals":
+        let approve = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+          .contains { $0.name == "approve" && $0.value == "1" } ?? false
+        self = approve ? .approve(id) : .approval(id)
       case "schedules": self = .schedule(id)
       case "triggers": self = .trigger(id)
       case "boxes": self = .box(id)
@@ -43,6 +48,7 @@ enum AppLink: Equatable, Sendable {
       switch self {
       case let .task(id): "tasks/\(id)"
       case let .approval(id): "approvals/\(id)"
+      case let .approve(id): "approvals/\(id)?approve=1"
       case let .schedule(id): "schedules/\(id)"
       case let .trigger(id): "triggers/\(id)"
       case let .box(id): "boxes/\(id)"

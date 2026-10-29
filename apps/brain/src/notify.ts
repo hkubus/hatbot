@@ -91,7 +91,7 @@ export function appLink(url: string, publicUrl: string): string | null {
   const u = new URL(url);
   const approval = u.searchParams.get("approval");
   if (u.pathname === "/" && approval && /^\d+$/.test(approval))
-    return `hatbot://approvals/${approval}`;
+    return `hatbot://approvals/${approval}${u.searchParams.get("approve") === "1" ? "?approve=1" : ""}`;
   const m = /^\/(tasks|schedules|triggers|boxes)\/(\d+)$/.exec(u.pathname);
   return m ? `hatbot://${m[1]}/${m[2]}` : null;
 }
