@@ -75,13 +75,20 @@ test("each request goes to the provider that offers its model, priced from its c
   ]);
 });
 
-test("Settings and bots take only a model a provider offers, and the desktop only one that can use a computer", async () => {
+test("Settings and bots take only a model a provider that's on offers, and the desktop only one that can use a computer", async () => {
   const t = track(
-    await testApp(undefined, undefined, {}, [provider("beta", [info("beta-small", false)])]),
+    await testApp(undefined, undefined, {}, [
+      provider("beta", [info("beta-small", false)]),
+      provider("gamma", [info("gamma-1", true)]),
+    ]),
   );
   await t.plugins.startAll();
   const { cookie } = signIn(t);
   const put = (body: object) => t.call("PUT", "/settings", body, { cookie });
+
+  // A model whose provider was on once isn't on offer once it's off.
+  await t.plugins.update("gamma", { enabled: false });
+  expect((await put({ chatModel: "gamma-1" })).status).toBe(400);
 
   const unknown = await put({ chatModel: "nobody-1" });
   expect(unknown.status).toBe(400);

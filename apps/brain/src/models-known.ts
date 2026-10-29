@@ -22,14 +22,15 @@ export const progressNotes = (id: string) => Boolean(modelInfo(id)?.capabilities
 
 const ROLES = ["chatModel", "taskModel", "desktopModel", "smallModel", "expertModel"] as const;
 
-/** What's wrong with the models a change picks, as a 400's body; null when nothing. */
+/** What's wrong with the models a change picks, among those on offer, as a 400's body; null when nothing. */
 export function modelProblem(
   change: Partial<Record<(typeof ROLES)[number], string | null>>,
+  offered: ModelInfo[],
 ): { error: string; field: string } | null {
   for (const field of ROLES) {
     const id = change[field];
     if (!id) continue;
-    const info = modelInfo(id);
+    const info = offered.find((m) => m.id === id);
     if (!info) return { error: "No model provider offers that model.", field };
     if (field === "desktopModel" && !info.capabilities.computerUse)
       return { error: "That model can't use a computer.", field };

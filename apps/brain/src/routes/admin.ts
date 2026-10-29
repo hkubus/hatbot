@@ -41,7 +41,7 @@ export const adminRoutes = new Hono<AppEnv>()
   )
   .get("/settings", (c) => c.json(c.var.settings.get()))
   .put("/settings", json(SettingsPatch.omit({ paused: true })), (c) => {
-    const problem = modelProblem(c.req.valid("json"));
+    const problem = modelProblem(c.req.valid("json"), c.var.models.catalogue());
     if (problem) return c.json(problem, 400);
     const settings = c.var.settings.update(c.req.valid("json"));
     c.var.events.emit({ type: "settings.updated", settings });

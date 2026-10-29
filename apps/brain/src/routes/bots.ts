@@ -21,7 +21,7 @@ export const botRoutes = new Hono<AppEnv>()
   // Not under /bots/, where a bot called Templates would have it as its id.
   .get("/bot-templates", (c) => c.json(BOT_TEMPLATES))
   .post("/bots", json(CreateBot), (c) => {
-    const problem = modelProblem(c.req.valid("json"));
+    const problem = modelProblem(c.req.valid("json"), c.var.models.catalogue());
     if (problem) return c.json(problem, 400);
     const bot = c.var.bots.create(c.req.valid("json"));
     c.var.chats.changed(c.var.chats.direct(bot.id).conversationId);
@@ -29,7 +29,7 @@ export const botRoutes = new Hono<AppEnv>()
   })
   .get("/bots/:id", (c) => found(c, c.var.bots.active(c.req.param("id"))))
   .patch("/bots/:id", json(UpdateBot), (c) => {
-    const problem = modelProblem(c.req.valid("json"));
+    const problem = modelProblem(c.req.valid("json"), c.var.models.catalogue());
     if (problem) return c.json(problem, 400);
     return found(c, c.var.bots.update(c.req.param("id"), c.req.valid("json")));
   })
