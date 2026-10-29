@@ -18,6 +18,8 @@ export type PluginInfo = {
   config: unknown;
   tools: { name: string; access: "read" | "write" | "own"; description: string }[];
   testable: boolean;
+  /** Where it was installed from; null for one Hatbot comes with. */
+  source: { url: string; commit: string } | null;
 };
 
 export type PluginEnvInfo = {
@@ -52,3 +54,19 @@ export const UpdatePlugin = z.object({
   enabled: z.boolean().optional(),
   config: z.unknown().optional(),
 });
+
+export const InstallPlugin = z.object({
+  url: z.string().trim().min(1, "Give the repository's address.").max(500),
+  commit: z.string().trim().min(1, "Give the commit.").max(64),
+});
+export type InstallPlugin = z.infer<typeof InstallPlugin>;
+
+/** A plugin plugins.json offers. */
+export type PluginIndexEntry = {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  commit: string;
+  installed: boolean;
+};

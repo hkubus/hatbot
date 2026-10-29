@@ -514,6 +514,20 @@ export async function savePluginSecrets(id: string, values: Record<string, strin
   return p;
 }
 
+/** The brain starts again to load it; the list comes back when it reconnects. */
+export const installPlugin = (url: string, commit: string) =>
+  api<{ id: string; name: string }>("/plugins/install", { body: { url, commit } });
+
+export async function uninstallPlugin(id: string, data: boolean) {
+  await api(`/plugins/${id}${data ? "?data=1" : ""}`, { method: "DELETE" });
+  const { [id]: _, ...rest } = state.plugins;
+  set({ plugins: rest });
+}
+
+export async function forgetPluginData(id: string) {
+  put("plugins", id, await api<PluginInfo>(`/plugins/${id}/forget`, { body: {} }));
+}
+
 export const putProposal = (p: Proposal) => put("proposals", p.id, p);
 // A page has asked for them, even if none came: a reconnect looks again.
 let proposalsLoaded = false;

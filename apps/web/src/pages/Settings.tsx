@@ -21,7 +21,7 @@ import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
 import { BackHead, Disclosure, EFFORTS, Group, LinkRow, Row, Seg, Select } from "../ui";
-import { PluginPage, PluginsPage } from "./Plugins";
+import { AddPluginPage, PluginPage, PluginsPage } from "./Plugins";
 import { SafetyPage } from "./Safety";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
@@ -61,6 +61,8 @@ export function Settings({
     <PluginPage key={plugin} id={plugin} toast={toast} />
   ) : path === "/settings/plugins" ? (
     <PluginsPage />
+  ) : path === "/settings/add-plugin" ? (
+    <AddPluginPage toast={toast} />
   ) : path === "/settings/account" ? (
     <Account toast={toast} />
   ) : path === "/settings/devices" ? (

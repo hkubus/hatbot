@@ -16,6 +16,8 @@ import type { PluginCheck, SearchRoutine, TaskOrigin } from "./host";
 import type { ModelProvider } from "./models";
 import type { TaskJob, TaskRunner } from "./runner";
 
+/** The brain's own zod, for a plugin installed from git: it needs no copy of its own. */
+export { z } from "zod";
 export * from "./charts";
 export * from "./host";
 export * from "./messages";
@@ -485,6 +487,8 @@ export type Plugin<C = unknown> = {
   uses?: string[];
   /** Its own tables: each runs once, in order, on every install that has the plugin. */
   migrations?: string[];
+  /** Those tables, named "<id>_…": deleting its data drops them. */
+  tables?: string[];
   /** Paths under /api/v1 it answers, for signed-in callers: "/boxes" takes /boxes and below. */
   routes?: string[];
   /** Ones anybody may call, as Hono patterns ("/hooks/:name"); the route checks who it is. */

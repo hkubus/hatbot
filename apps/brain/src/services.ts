@@ -47,6 +47,7 @@ import { Logins } from "./negotiate/logins";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
+import { Installer } from "./plugins/installer";
 import { Plugins } from "./plugins/registry";
 import { Questions } from "./questions";
 import { Secrets } from "./secrets";
@@ -81,6 +82,10 @@ export type Outside = {
   secrets?: Secrets;
   /** For tests. */
   fetch?: ChecksDeps["fetch"];
+  /** Starts the brain again, to load plugins installed or removed; tests' records it. */
+  restart?: () => void;
+  /** Tests install from repositories on this machine. */
+  localInstalls?: boolean;
 };
 
 /** Plugins aren't started: the caller starts them. */
@@ -113,96 +118,105 @@ export async function createServices(o: Outside) {
     },
   };
   const desktop = () => plugins.service<DesktopService>("desktop");
-  const plugins = new Plugins(
-    [
-      ...o.plugins,
-      desktopPlugin(o.agent),
-      codePlugin,
-      t3Plugin,
-      scoutPlugin,
-      selfPlugin,
-      automationPlugin,
-      researchPlugin,
-      boxesPlugin(o.hatbox),
-      ...corePlugins(() => ({
-        db,
-        clock,
-        memory,
-        events,
-        bots,
-        tasks,
-        schedules: () => plugins.service<SchedulesService>("schedules"),
-        attachments,
-        desktop: desktop()?.agent,
-        proposals,
-        settings,
-      })),
-    ],
-    {
+  const builtIn: Plugin[] = [
+    ...o.plugins,
+    desktopPlugin(o.agent),
+    codePlugin,
+    t3Plugin,
+    scoutPlugin,
+    selfPlugin,
+    automationPlugin,
+    researchPlugin,
+    boxesPlugin(o.hatbox),
+    ...corePlugins(() => ({
       db,
-      events,
-      env: o.pluginEnv,
-      secrets,
-      files,
-      dataDir: config.dataDir,
-      reserved: CORE_TOOL_NAMES,
-      publicUrl,
-      fetch: o.fetch,
       clock,
-      release: () => updates.info().current?.sha ?? null,
-      services: {
-        tasks: () => tasks,
-        chats: () => chats,
-        bots: () => bots,
-        notifier: () => notifier,
-        events: () => events,
-        settings: () => settings,
-        model: (): ModelHost => ({
-          ask: (params, ledger, opts) => oneShot({ model: taskModel, spend }, params, ledger, opts),
-          stream: (params, handlers) => taskModel.stream(params, handlers),
-          name: modelName,
-        }),
-        spend: (): SpendHost => ({
-          summary: () => spend.summary(),
-          check: (usd, task) => spend.check(usd, task),
-          hold: (usd, task) => spend.hold(usd, task),
-          record: (entry) => spend.recordResponse(entry),
-          treeSpend: (taskId) => spend.treeSpend(taskId),
-          byPurpose: (days) => spend.byPurpose(days),
-          ceiling: requestCeiling,
-        }),
-        memory: (): MemoryHost => ({
-          readOrNull: (path) => memory.readOrNull(path),
-          log: (limit) => memory.log(limit),
-          exists: (path) => memory.exists(path),
-          create: async (path, content, botId, message) => {
-            try {
-              await memory.writeIf(path, content, "", bots.author(botId), message);
-              return true;
-            } catch (err) {
-              if (err instanceof MemoryConflict) return false;
-              throw err;
-            }
-          },
-        }),
-        storage: () => ({ line: async () => storageLine(await storage.measure()) }),
-        skills: (): SkillsHost => ({
-          exists: (name) => memory.exists(skillPath(name)),
-          save: (name, content) => skills.save(name, content, settings.get().owner),
-        }),
-        plugins: (): PluginsHost => ({
-          list: () => plugins.list(),
-          tools: (only) => plugins.tools(only ?? null),
-          signals: () => plugins.signals(),
-          readyFor: (id, bot) => plugins.readyFor(id, bot.plugins, bots.leftToOthers(bot)),
-          ownerOf: (tool) => {
-            const p = plugins.pluginOf(tool);
-            return (p && plugins.list().find((x) => x.id === p.id)) ?? null;
-          },
-        }),
-      } satisfies Record<(typeof HOST_SERVICES)[number], () => unknown>,
+      memory,
+      events,
+      bots,
+      tasks,
+      schedules: () => plugins.service<SchedulesService>("schedules"),
+      attachments,
+      desktop: desktop()?.agent,
+      proposals,
+      settings,
+    })),
+  ];
+  const installer = new Installer({
+    db,
+    dir: join(config.dataDir, "installed"),
+    builtIn: () => builtIn.map((p) => p.id),
+    clock,
+    local: o.localInstalls,
+  });
+  const plugins = new Plugins([...builtIn, ...(await installer.load())], {
+    db,
+    events,
+    env: o.pluginEnv,
+    secrets,
+    files,
+    dataDir: config.dataDir,
+    reserved: CORE_TOOL_NAMES,
+    sourceOf: (id) => {
+      const p = installer.get(id);
+      return p && { url: p.url, commit: p.commit };
     },
-  );
+    publicUrl,
+    fetch: o.fetch,
+    clock,
+    release: () => updates.info().current?.sha ?? null,
+    services: {
+      tasks: () => tasks,
+      chats: () => chats,
+      bots: () => bots,
+      notifier: () => notifier,
+      events: () => events,
+      settings: () => settings,
+      model: (): ModelHost => ({
+        ask: (params, ledger, opts) => oneShot({ model: taskModel, spend }, params, ledger, opts),
+        stream: (params, handlers) => taskModel.stream(params, handlers),
+        name: modelName,
+      }),
+      spend: (): SpendHost => ({
+        summary: () => spend.summary(),
+        check: (usd, task) => spend.check(usd, task),
+        hold: (usd, task) => spend.hold(usd, task),
+        record: (entry) => spend.recordResponse(entry),
+        treeSpend: (taskId) => spend.treeSpend(taskId),
+        byPurpose: (days) => spend.byPurpose(days),
+        ceiling: requestCeiling,
+      }),
+      memory: (): MemoryHost => ({
+        readOrNull: (path) => memory.readOrNull(path),
+        log: (limit) => memory.log(limit),
+        exists: (path) => memory.exists(path),
+        create: async (path, content, botId, message) => {
+          try {
+            await memory.writeIf(path, content, "", bots.author(botId), message);
+            return true;
+          } catch (err) {
+            if (err instanceof MemoryConflict) return false;
+            throw err;
+          }
+        },
+      }),
+      storage: () => ({ line: async () => storageLine(await storage.measure()) }),
+      skills: (): SkillsHost => ({
+        exists: (name) => memory.exists(skillPath(name)),
+        save: (name, content) => skills.save(name, content, settings.get().owner),
+      }),
+      plugins: (): PluginsHost => ({
+        list: () => plugins.list(),
+        tools: (only) => plugins.tools(only ?? null),
+        signals: () => plugins.signals(),
+        readyFor: (id, bot) => plugins.readyFor(id, bot.plugins, bots.leftToOthers(bot)),
+        ownerOf: (tool) => {
+          const p = plugins.pluginOf(tool);
+          return (p && plugins.list().find((x) => x.id === p.id)) ?? null;
+        },
+      }),
+    } satisfies Record<(typeof HOST_SERVICES)[number], () => unknown>,
+  });
   const models = new Models(plugins);
   const model = o.model ?? models;
   const taskModel = o.taskModel ?? o.model ?? models;
@@ -309,6 +323,8 @@ export async function createServices(o: Outside) {
     auth,
     loginLimits,
     tasks,
+    installer,
+    restart: o.restart ?? (() => {}),
     todoReminders,
     proposals,
     negotiations,

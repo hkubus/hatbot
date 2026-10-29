@@ -961,4 +961,13 @@ export const migrations: string[] = [
   `
   UPDATE settings SET key = 'desktop:control' WHERE key = 'desktop_control';
   `,
+  // 61: plugins installed from git, each at the commit you chose.
+  `
+  CREATE TABLE installed_plugins (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    commit_sha TEXT NOT NULL,
+    installed_at TEXT NOT NULL
+  );
+  `,
 ];

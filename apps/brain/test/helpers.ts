@@ -20,7 +20,7 @@ import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
 import type { Notification, Notifier } from "../src/notify";
 import { Secrets } from "../src/secrets";
-import { createServices } from "../src/services";
+import { createServices, type Outside } from "../src/services";
 import { FakeDesktop } from "./fake-desktop";
 import { FakeHatbox } from "./fake-hatbox";
 import { FakeModel } from "./fake-model";
@@ -73,6 +73,7 @@ export async function testApp(
   proxmoxEnv: Record<string, string> = {},
   pluginList: Plugin[] = [],
   pluginEnv: Record<string, string> = {},
+  more: Partial<Outside> = {},
 ) {
   let nowMs = Date.parse("2026-10-09T12:00:00Z");
   /** What the brain's own requests elsewhere get, such as T3 Code's sign-in. */
@@ -100,6 +101,7 @@ export async function testApp(
   const sent = new FakeNotifier();
   const proxmox = new Proxmox(proxmoxEnv);
   proxmox.pollMs = 5;
+  let restarts = 0;
   const s = await createServices({
     config,
     db,
@@ -118,6 +120,10 @@ export async function testApp(
     passwordCost: { memoryCost: 8, timeCost: 1 },
     fetch: async (url, init) =>
       url === `${ORIGIN}/api/v1/health` ? Response.json({ ok: true }) : outside.fetch(url, init),
+    restart: () => {
+      restarts++;
+    },
+    ...more,
   });
   const service = <T>(name: string) => {
     const found = s.plugins.service<T>(name);
@@ -157,6 +163,10 @@ export async function testApp(
       nowMs += ms;
     },
     code: (secret: string) => totpAt(secret, stepOf(nowMs)),
+    /** How often the brain asked to start again. */
+    get restarts() {
+      return restarts;
+    },
     get schedules() {
       return service<Schedules>("schedules");
     },

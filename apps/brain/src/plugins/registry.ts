@@ -1,3 +1,4 @@
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   allow,
@@ -66,6 +67,8 @@ export type PluginsDeps = {
   services?: Record<string, () => unknown>;
   /** The commit the brain runs. */
   release?: () => string | null;
+  /** Where an installed plugin came from. */
+  sourceOf?: (id: string) => { url: string; commit: string } | null;
 };
 
 /** What it needs and uses: it starts after, and again with, whatever gives them. */
@@ -260,6 +263,49 @@ export class Plugins {
     setSetting(this.d.db, `plugin:${id}`, JSON.stringify({ enabled: s.enabled, config: s.config }));
     if (s.enabled) await this.restart(s);
     else await this.stop(s);
+    return this.info(s);
+  }
+
+  /** Deletes what a plugin that's off kept: its settings, values, secrets, files and own tables. */
+  forget(id: string): PluginInfo {
+    const s = this.slots.get(id);
+    if (!s || s.plugin.internal) throw new PluginError(`No plugin "${id}".`);
+    if (s.enabled) throw new PluginError("Switch it off first.");
+    const { db, secrets } = this.d;
+    const own = new RegExp(`^${id}_[a-z0-9_]+$`);
+    const tables = (s.plugin.tables ?? []).filter((t) => own.test(t));
+    try {
+      db.transaction(() => {
+        db.query("DELETE FROM settings WHERE key = ? OR substr(key, 1, ?) = ?").run(
+          `plugin:${id}`,
+          id.length + 1,
+          `${id}:`,
+        );
+        if (!tables.length) return;
+        for (const t of tables) db.exec(`DROP TABLE IF EXISTS "${t}"`);
+        db.query("DELETE FROM plugin_migrations WHERE plugin = ?").run(id);
+        // Made again, empty, for when it's switched back on.
+        migrate(db, s.plugin);
+      })();
+    } catch (err) {
+      throw new PluginError(
+        `Its data couldn't be deleted: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    // Values in Settings that no other plugin reads.
+    const others = new Set(
+      [...this.slots.values()]
+        .filter((o) => o !== s)
+        .flatMap((o) => (o.plugin.env ?? []).map((v) => v.name)),
+    );
+    secrets.forgetPlugin(
+      id,
+      (s.plugin.env ?? []).map((v) => v.name).filter((n) => !others.has(n)),
+    );
+    rmSync(join(this.d.dataDir, "plugins", id), { recursive: true, force: true });
+    s.config = s.plugin.config.parse({});
+    s.message = null;
+    this.emit(s);
     return this.info(s);
   }
 
@@ -648,6 +694,7 @@ export class Plugins {
         description: t.description,
       })),
       testable: Boolean(s.instance?.test),
+      source: this.d.sourceOf?.(s.plugin.id) ?? null,
     };
   }
 

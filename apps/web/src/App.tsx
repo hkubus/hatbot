@@ -106,6 +106,7 @@ const TAB_OF: Partial<Record<Section["title"], Section["title"]>> = { Boxes: "Se
 /** Sub-pages that have a name of their own; anything else is named by its view. */
 const SUB_TITLE: Record<string, string> = {
   "/settings/plugins": "Plugins",
+  "/settings/add-plugin": "Add a plugin",
   "/settings/notifications": "ntfy server",
   "/settings/allowed": "Always allowed",
   "/settings/safety": "Approvals and guardrails",

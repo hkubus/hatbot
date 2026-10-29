@@ -20,6 +20,11 @@ const brain = await createServices({
   plugins: PLUGINS,
   pingUrl: process.env.HATBOT_PING_URL,
   secrets,
+  // systemd starts it again (Restart=on-failure), with the plugins as they are now.
+  restart: () => {
+    console.log("restarting to load plugins");
+    setTimeout(() => process.exit(75), 500);
+  },
 });
 const { app, auth, approvals, chats, negotiations, plugins, tasks } = brain;
 const { proposals, storage, ping } = brain;

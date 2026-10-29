@@ -1,13 +1,23 @@
 // Secrets are only ever sent, never shown.
-import type { AppSettings, PluginEnvInfo, PluginInfo } from "@hatbot/shared";
+import type { AppSettings, PluginEnvInfo, PluginIndexEntry, PluginInfo } from "@hatbot/shared";
 import { type FormEvent, useCallback, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
+import { Link } from "../link";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { PLUGIN_WEB } from "../plugins";
-import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
+import { navigate } from "../router";
+import {
+  forgetPluginData,
+  installPlugin,
+  loadPlugins,
+  savePlugin,
+  savePluginSecrets,
+  uninstallPlugin,
+  useStore,
+} from "../store";
 import { Switch } from "../switch";
 import { BackHead, Disclosure, Group, LinkRow, Select } from "../ui";
 import { saveSafety, TOOL_LEVELS } from "./Safety";
@@ -26,7 +36,12 @@ export function PluginsPage() {
   return (
     <section className="view">
       <div className="page narrow">
-        <BackHead to="/settings" label="Settings" />
+        <BackHead to="/settings" label="Settings">
+          <Link className="btn" to="/settings/add-plugin">
+            <Icon name="plus" />
+            Add
+          </Link>
+        </BackHead>
         {error && <LoadError error={error} retry={retry} />}
         {!!ids?.length && (
           <Group>
@@ -128,6 +143,165 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         )}
 
         {p.tools.length > 0 && <ToolList tools={p.tools} />}
+
+        <PluginData p={p} toast={toast} />
+      </div>
+    </section>
+  );
+}
+
+/** Where it came from, and removing it or what it kept. */
+function PluginData({ p, toast }: { p: PluginInfo; toast: (t: string) => void }) {
+  const { busy, error, run } = useAction();
+  const uninstall = async (data: boolean) => {
+    const text = data
+      ? `Uninstall ${p.name} and delete its settings, secrets and data?`
+      : `Uninstall ${p.name}? Its settings and data stay, for if you install it again.`;
+    if (!(await ask({ text, ok: "Uninstall" }))) return;
+    run(async () => {
+      await uninstallPlugin(p.id, data);
+      toast("Uninstalled. Hatbot is restarting.");
+      navigate("/settings/plugins");
+    });
+  };
+  const forget = async () => {
+    if (await ask({ text: `Delete ${p.name}'s settings, secrets and data?`, ok: "Delete" }))
+      run(async () => {
+        await forgetPluginData(p.id);
+        toast("Deleted");
+      });
+  };
+  if (!p.source && p.enabled) return null;
+  return (
+    <div className="panel form">
+      {p.source && (
+        <>
+          <span className="label">Installed from</span>
+          <div className="mono">{p.source.url}</div>
+          <div className="mono">{p.source.commit}</div>
+        </>
+      )}
+      {error && <div className="form-error">{error}</div>}
+      <div className="form-actions">
+        {p.source ? (
+          <>
+            <button
+              type="button"
+              className="btn danger-text"
+              disabled={busy}
+              onClick={() => uninstall(true)}
+            >
+              Uninstall and delete its data
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => uninstall(false)}>
+              Uninstall
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn danger-text" disabled={busy} onClick={forget}>
+            Delete its data
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** From plugins.json, or any git repository at a commit. */
+export function AddPluginPage({ toast }: { toast: (t: string) => void }) {
+  const {
+    data: index,
+    error: loadError,
+    retry,
+  } = useLoad(() => api<PluginIndexEntry[]>("/plugins/index"), []);
+  const [url, setUrl] = useState("");
+  const [commit, setCommit] = useState("");
+  const { busy, error, run } = useAction();
+  useLeaveGuard(!busy && (!!url.trim() || !!commit.trim()));
+
+  const install = async (name: string, url: string, commit: string) => {
+    if (
+      !(await ask({
+        text: `Install ${name}? It runs inside Hatbot and can reach everything Hatbot can: your chats, memory, secrets and accounts.`,
+        ok: "Install",
+      }))
+    )
+      return;
+    run(async () => {
+      await installPlugin(url.trim(), commit.trim());
+      toast("Installed. Hatbot is restarting to load it.");
+      navigate("/settings/plugins");
+    });
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void install("this plugin", url, commit);
+  };
+  const offered = index?.filter((p) => !p.installed) ?? [];
+
+  return (
+    <section className="view">
+      <div className="page narrow">
+        <BackHead to="/settings/plugins" label="Plugins" />
+        {loadError && <LoadError error={loadError} retry={retry} />}
+        {offered.length > 0 && (
+          <Group>
+            {offered.map((p) => (
+              <div className="row" key={p.id}>
+                <div className="txt" title={p.description}>
+                  <b>{p.name}</b>
+                </div>
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={busy}
+                  onClick={() => install(p.name, p.url, p.commit)}
+                >
+                  Install
+                </button>
+              </div>
+            ))}
+          </Group>
+        )}
+        <form className="panel form" onSubmit={submit}>
+          <h3 className="section-title">From a git repository</h3>
+          <div>
+            A plugin runs inside Hatbot with everything Hatbot has. Install only ones whose code you
+            trust.
+          </div>
+          <label>
+            <span className="label">Repository</span>
+            <input
+              className="field mono"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://github.com/someone/hatbot-plugin.git"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </label>
+          <label>
+            <span className="label">Commit</span>
+            <input
+              className="field mono"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="The whole 40-character hash"
+              value={commit}
+              onChange={(e) => setCommit(e.target.value)}
+            />
+          </label>
+          {error && <div className="form-error">{error}</div>}
+          <div className="form-actions">
+            <button
+              type="submit"
+              className="btn accent"
+              disabled={busy || !url.trim() || !commit.trim()}
+            >
+              {busy ? "Installing…" : "Install"}
+            </button>
+          </div>
+        </form>
       </div>
     </section>
   );

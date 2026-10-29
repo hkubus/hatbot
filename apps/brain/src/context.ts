@@ -15,6 +15,7 @@ import type { ListingPhotos } from "./listing-photos";
 import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
 import type { Negotiations } from "./negotiate/service";
+import type { Installer } from "./plugins/installer";
 import type { Plugins } from "./plugins/registry";
 import type { Questions } from "./questions";
 import type { Secrets } from "./secrets";
@@ -48,6 +49,9 @@ export type Deps = {
   updates: Updates;
   proposals: Proposals;
   plugins: Plugins;
+  installer: Installer;
+  /** Starts the brain again, to load plugins installed or removed. */
+  restart: () => void;
   checks: Checks;
   negotiations: Negotiations;
   secrets: Secrets;

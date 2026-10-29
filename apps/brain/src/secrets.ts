@@ -115,6 +115,15 @@ export class Secrets {
     });
   }
 
+  /** Everything kept for `plugin`, and these values set in Settings. */
+  forgetPlugin(plugin: string, env: string[]) {
+    const { [plugin]: _named, ...named } = this.stored.named ?? {};
+    const { [plugin]: _kept, ...kept } = this.stored.kept ?? {};
+    const left = { ...this.stored.env };
+    for (const name of env) delete left[name];
+    this.save({ ...this.stored, named, kept, env: left });
+  }
+
   /** Never the token. */
   view(): Connections {
     const ntfy = this.ntfy();
