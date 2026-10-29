@@ -10,7 +10,7 @@ import {
 } from "@hatbot/shared";
 import { BotError } from "../bots";
 import { UserError } from "../errors";
-import { resultText, Thread, type ThreadDeps } from "./thread";
+import { resultText, Thread, type ThreadDeps, titleOf } from "./thread";
 
 type Parts = Pick<ThreadDeps, "tasks" | "approvals" | "attachments" | "negotiations" | "proposals">;
 
@@ -32,7 +32,10 @@ type Row = {
   parent_id: number | null;
   resolved_at: string | null;
   outcome: string | null;
+  latest: string | null;
 };
+
+const LATEST_CHARS = 200;
 
 export class Chats {
   private running = new Map<number, Thread>();
@@ -115,9 +118,13 @@ export class Chats {
     return this.d.db
       .query<Row, number[]>(
         `SELECT c.id, c.kind, c.title, c.parent_id, c.resolved_at, c.outcome,
+           CASE WHEN c.kind = 'thread' THEN substr((SELECT text FROM messages WHERE id = (SELECT max(id) FROM messages m
+             WHERE m.conversation_id = c.id AND m.status != 'streaming')), 1, ${LATEST_CHARS}) END AS latest,
            (SELECT json_group_array(bot_id) FROM
              (SELECT bot_id FROM conversation_bots WHERE conversation_id = c.id ORDER BY position, bot_id)) AS bot_ids,
-           coalesce(u.n, 0) AS unread,
+           -- A bot's chat counts its threads' too.
+           coalesce(u.n, 0) + (SELECT count(*) FROM messages WHERE conversation_id IN
+             (SELECT id FROM conversations WHERE parent_id = c.id AND deleted_at IS NULL) AND ${UNREAD}) AS unread,
            -- Ids go up with time: the newest one's time, from the index rather than every row.
            (SELECT created_at FROM messages WHERE id = (SELECT max(id) FROM messages m
              WHERE m.conversation_id = c.id AND m.incognito = 0)) AS last_message_at
@@ -159,6 +166,7 @@ export class Chats {
       parentId: r.parent_id,
       resolvedAt: r.resolved_at,
       outcome: r.outcome,
+      latest: r.latest,
     };
   }
 
@@ -201,6 +209,21 @@ export class Chats {
     });
     this.changed(id);
     return { conversation: this.get(id) as Conversation, message };
+  }
+
+  /** You open one on a bot's message in its own chat: the thread starts with that message. */
+  replyInThread(conversationId: number, messageId: number) {
+    const chat = this.get(conversationId);
+    const m = chat?.kind === "direct" ? this.thread(chat.id)?.message(messageId) : null;
+    if (!chat || !m || m.role !== "assistant" || m.incognito || m.status === "streaming")
+      throw new UserError("Only a bot's finished message in its own chat can start a thread.");
+    const thread = this.thread(chat.id) as Thread;
+    return this.openThread({
+      botId: chat.botIds[0] ?? HATBOT_ID,
+      title: titleOf(m.text.replace(/[#*_`>]/g, "")) || "Thread",
+      message: m.text,
+      taintedBy: thread.untrustedSource(m.id),
+    });
   }
 
   /** `outcome` null: you resolved it. */

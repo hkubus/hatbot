@@ -2,6 +2,7 @@ import { BudgetError, found, idParam, MAX_ATTACHMENT_BYTES } from "@hatbot/plugi
 import {
   CreateGroup,
   PostMessage,
+  ReplyInThread,
   SeenMessages,
   type ThreadMessage,
   UpdateGroup,
@@ -146,7 +147,12 @@ export const threadRoutes = new Hono<AppEnv>()
       ? c.json({ ok: true })
       : c.json({ error: "That's gone." }, 404),
   )
+  .get("/conversations/:id", (c) => found(c, c.var.chats.get(idParam(c))))
   .get("/conversations/:id/threads", (c) => c.json(c.var.chats.threads(idParam(c))))
+  .post("/conversations/:id/threads", json(ReplyInThread), (c) => {
+    const { conversation } = c.var.chats.replyInThread(idParam(c), c.req.valid("json").messageId);
+    return c.json(conversation, 201);
+  })
   .post("/conversations/:id/resolve", (c) => {
     const thread = c.var.chats.get(idParam(c));
     if (thread?.kind !== "thread") return c.json({ error: "That's gone." }, 404);

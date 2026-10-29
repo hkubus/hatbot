@@ -1,6 +1,7 @@
 import {
   type Approval,
   type Attachment,
+  type Conversation,
   type MessageLink,
   matchingCommands,
   type Source,
@@ -8,9 +9,11 @@ import {
   threadGroups,
 } from "@hatbot/shared";
 import {
+  createContext,
   Fragment,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -54,11 +57,17 @@ import {
   getState,
   loadEarlier,
   loadThread,
+  loadThreads,
   markSeen,
   negotiationOf,
   openConversation,
+  openSide,
+  pathOf,
+  replyInThread,
+  resolveThread,
   retryReply,
   sendMessage,
+  threadPath,
   trustSchedule,
   useStore,
 } from "../store";
@@ -112,20 +121,26 @@ export function dayLabel(iso: string, now: Date): string {
   return label;
 }
 
+/** The pane a message is in: the thread beside the chat, or the chat. */
+const InThread = createContext(false);
+
 function Meta({
   m,
   copy,
   open,
   retry,
+  thread,
 }: {
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
   retry?: () => Promise<unknown>;
+  thread?: () => Promise<unknown>;
 }) {
   const [copied, doCopy] = useCopy();
   const [retrying, setRetrying] = useState(false);
   const [retryFailed, setRetryFailed] = useState(false);
+  const [threadFailed, setThreadFailed] = useState(false);
   return (
     <div className="meta">
       <span className="time">{time(m.createdAt)}</span>
@@ -161,6 +176,19 @@ function Meta({
             }}
           >
             <Icon name="retry" />
+          </button>
+        )}
+        {thread && (
+          <button
+            type="button"
+            className="msg-act"
+            title={threadFailed ? "Couldn't start a thread" : "Reply in thread"}
+            onClick={() => {
+              setThreadFailed(false);
+              thread().catch(() => setThreadFailed(true));
+            }}
+          >
+            <Icon name="forum" />
           </button>
         )}
         {open && (
@@ -353,6 +381,12 @@ function ReplyMessage({
 }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
+  // Only a bot's own chat has threads, and they don't nest.
+  const inThread = useContext(InThread);
+  const direct = useStore(
+    (s) => s.conversations.find((c) => c.id === m.conversationId)?.kind === "direct",
+  );
+  const threadable = !inThread && direct;
   // A hand-off: its chat shows the task's status too, and how the other bot answered.
   const handedOff = useLinkOpen(m.link);
   const streaming = m.status === "streaming";
@@ -404,6 +438,11 @@ function ReplyMessage({
                     : undefined
           }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
+          thread={
+            threadable && !m.incognito && m.status === "done" && m.kind === "text"
+              ? async () => navigate(threadPath(await replyInThread(m)))
+              : undefined
+          }
         />
       )}
     </>
@@ -655,6 +694,8 @@ export const Message = memo(function Message({
     inner = <BoxNote m={m} />;
   } else if (m.kind === "handoff") {
     inner = <HandoffMessage m={m} />;
+  } else if (m.kind === "thread" && m.link) {
+    inner = <ThreadCard m={m} id={m.link.conversationId} />;
   } else {
     inner = (
       <ReplyMessage m={m} progress={progress} retryable={retryable} answerable={answerable} />
@@ -672,6 +713,109 @@ export const Message = memo(function Message({
     </div>
   );
 });
+
+/** A thread's card in its chat: its title, and its latest message or what it came to. */
+function ThreadCard({ m, id }: { m: ThreadMessage; id: number }) {
+  const t = useStore((s) => s.threads[id]);
+  return (
+    <>
+      <Link className="thread-card" to={threadPath({ id, parentId: m.conversationId })}>
+        <ThreadLine t={t} title={m.text} />
+      </Link>
+      <Meta m={m} />
+    </>
+  );
+}
+
+function ThreadLine({ t, title }: { t: Conversation | undefined; title: string }) {
+  const line = t?.resolvedAt ? `Resolved: ${t.outcome ?? "by you"}` : plainText(t?.latest ?? "");
+  return (
+    <>
+      <Icon name="forum" filled={!!t?.unread} />
+      <span className="thread-card-text">
+        <b>{t?.title ?? title}</b>
+        {line && <span>{line}</span>}
+      </span>
+      {t?.unread ? <span className="count unread">{t.unread}</span> : null}
+    </>
+  );
+}
+
+/** Beside the chat: one thread, or (`threadId` 0) the list of them. */
+function ThreadPanel({ parent, threadId }: { parent: number; threadId: number }) {
+  const thread = useStore((s) => (threadId ? s.threads[threadId] : undefined));
+  const all = useStore((s) => s.threads);
+  const list = useMemo(
+    () =>
+      Object.values(all)
+        .filter((t) => t.parentId === parent)
+        .sort(
+          (a, b) =>
+            Number(!!a.resolvedAt) - Number(!!b.resolvedAt) ||
+            (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? ""),
+        ),
+    [all, parent],
+  );
+  const [error, setError] = useState("");
+  const close = chatPath(parent);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if ((e.target as Element | null)?.closest("textarea, input, [role=dialog]")) return;
+      navigate(close);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [close]);
+  return (
+    <aside className="thread-panel" aria-label={threadId ? "Thread" : "Threads"}>
+      <header className="thread-head">
+        {threadId > 0 && (
+          <Link className="tb-btn" to={`${close}?threads`} title="All threads">
+            <Icon name="back" />
+          </Link>
+        )}
+        <h2>{threadId ? chatName(getState(), thread) : "Threads"}</h2>
+        <span className="spacer" />
+        {thread && !thread.resolvedAt && (
+          <button
+            type="button"
+            className="btn sm"
+            onClick={() => {
+              setError("");
+              resolveThread(thread.id).catch((err) => setError(errorText(err)));
+            }}
+          >
+            Resolve
+          </button>
+        )}
+        <Link className="tb-btn" to={close} title="Close">
+          <Icon name="x" />
+        </Link>
+      </header>
+      {error && <div className="form-error">{error}</div>}
+      {threadId ? (
+        <InThread.Provider value={true}>
+          <ChatPane key={threadId} id={threadId} side />
+        </InThread.Provider>
+      ) : (
+        <section className="view thread-list">
+          {list.length ? (
+            list.map((t) => (
+              <Link key={t.id} className="thread-card row-link" to={pathOf(t)}>
+                <ThreadLine t={t} title="" />
+              </Link>
+            ))
+          ) : (
+            <Empty>
+              No threads yet. A bot opens one when something needs a conversation of its own.
+            </Empty>
+          )}
+        </section>
+      )}
+    </aside>
+  );
+}
 
 function Fold({
   messages,
@@ -708,6 +852,8 @@ function Fold({
 export function fileDrops(
   attach: (files: FileList) => void,
   setDropping: (on: boolean) => void,
+  /** Leaves a drop on the thread beside the chat to the thread. */
+  notOnThread = false,
 ): [string, (e: Event) => void][] {
   const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
   // Each element the drag enters, it leaves again: once it has left as many as it entered, it's out
@@ -745,6 +891,7 @@ export function fileDrops(
         e.preventDefault();
         depth = 0;
         setDropping(false);
+        if (notOnThread && (e.target as Element | null)?.closest?.(".thread-panel")) return;
         if (list?.length) attach(list);
       },
     ],
@@ -777,14 +924,40 @@ export function sendError(err: unknown, connected: boolean): string {
     : "Can't reach Hatbot. It may not have been sent.";
 }
 
-/** `id`: the chat to show. It's opened here, before loading, so a message asked for is looked for in it. */
+/** `id`: the chat to show, with a thread or the list of them beside it (?thread=<id>, ?threads). */
 export function Chat({ id }: { id: number }) {
-  const messages = useStore((s) => s.messages);
+  const { params } = useRoute();
+  const threadId = Number(params.get("thread")) || 0;
+  const panel = threadId > 0 || params.has("threads");
+  useEffect(() => {
+    if (!panel) openSide(null);
+  }, [panel]);
+  return (
+    <div className={`chat-split ${panel ? "with-panel" : ""}`}>
+      <div className="chat-pane">
+        <ChatPane id={id} />
+      </div>
+      {panel && <ThreadPanel parent={id} threadId={threadId} />}
+    </div>
+  );
+}
+
+/**
+ * `id`: the chat to show, or with `side` the thread beside it. It's opened here, before loading, so
+ * a message asked for is looked for in it.
+ */
+function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
+  const messages = useStore((s) => (side ? (s.side?.messages ?? NONE) : s.messages));
   const episodes = useStore((s) => s.episodes);
   const approvals = useStore((s) => s.approvals);
   const questions = useStore((s) => s.questions);
-  const chat = useStore(currentChat);
-  const chats = useStore((s) => s.conversations);
+  const chat = useStore((s) => (side ? s.threads[id] : currentChat(s)));
+  const conversations = useStore((s) => s.conversations);
+  const threads = useStore((s) => s.threads);
+  const chats = useMemo(
+    () => [...conversations, ...Object.values(threads)],
+    [conversations, threads],
+  );
   // This chat's approvals and tasks' questions, and a line for the rest: each chat's bots ask in their own.
   const waiting = useMemo(
     () =>
@@ -801,10 +974,12 @@ export function Chat({ id }: { id: number }) {
   const [unfolded, setUnfolded] = useState<Set<number>>(() => new Set());
   const progress = useStore((s) => s.progress);
   const unread = useStore((s) => s.unread);
-  const hasEarlier = useStore((s) => s.hasEarlier);
-  const incognito = useStore((s) => s.incognito);
-  const name = useStore((s) => chatName(s, currentChat(s)));
-  const members = useStore(groupMembers);
+  const hasEarlier = useStore((s) => (side ? !!s.side?.hasEarlier : s.hasEarlier));
+  const incognito = useStore((s) => !side && s.incognito);
+  const name = useStore((s) =>
+    side ? botName(s, s.threads[id]?.botIds[0]) : chatName(s, currentChat(s)),
+  );
+  const members = useStore((s) => (side ? null : groupMembers(s)));
   const bots = useStore((s) => s.bots);
   const [error, setError] = useState("");
   // Until the thread has loaded there's nothing to say about it, not even hello.
@@ -821,30 +996,37 @@ export function Chat({ id }: { id: number }) {
   const loaded = useRef<Promise<void>>(Promise.resolve());
   // A message to show, from search: ?message=<id>.
   const { path, params } = useRoute();
-  const target = Number(params.get("message")) || 0;
+  // ?message= is the thread's when one is open beside the chat.
+  const target = side === params.has("thread") ? Number(params.get("message")) || 0 : 0;
+  const here = side ? `${path}?thread=${id}` : path;
   const onSend = useCallback(() => {
     stick.current = true;
   }, []);
   const chatKey = `${id}${incognito ? ":incognito" : ""}`;
   const [dropping, setDropping] = useState(false);
+  // The thread beside the chat takes what's dropped on it; the chat takes the rest.
   useEffect(() => {
-    const on = fileDrops((list) => attachFiles(chatKey, list), setDropping);
-    for (const [type, f] of on) window.addEventListener(type, f);
+    const at = side ? scroller.current?.closest(".thread-panel") : window;
+    if (!at) return;
+    const on = fileDrops((list) => attachFiles(chatKey, list), setDropping, !side);
+    for (const [type, f] of on) at.addEventListener(type, f);
     return () => {
-      for (const [type, f] of on) window.removeEventListener(type, f);
+      for (const [type, f] of on) at.removeEventListener(type, f);
     };
-  }, [chatKey]);
+  }, [chatKey, side]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the animation on each switch
   useEffect(() => {
     animateFrom.current = Number.POSITIVE_INFINITY;
     stick.current = true;
-    void openConversation(id);
+    if (side) openSide(id);
+    else void openConversation(id);
     setReady(false);
     setLoadError("");
-    loaded.current = loadThread().then(
+    void loadThreads(side ? (getState().threads[id]?.parentId ?? id) : id).catch(() => {});
+    loaded.current = loadThread(side).then(
       () => {
-        animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
+        animateFrom.current = (listed(side).at(-1)?.id ?? 0) + 1;
         setReady(true);
       },
       (err) => setLoadError(errorText(err)),
@@ -860,13 +1042,14 @@ export function Chat({ id }: { id: number }) {
       await loaded.current.catch(() => {});
       for (let i = 0; i < 40 && !gone; i++) {
         const s = getState();
-        if (s.messages.some((m) => m.id === target) || !s.hasEarlier) break;
+        const more = side ? s.side?.hasEarlier : s.hasEarlier;
+        if (listed(side).some((m) => m.id === target) || !more) break;
         stick.current = false;
-        await loadEarlier();
+        await loadEarlier(side);
       }
       if (gone) return;
-      const m = getState().messages.find((x) => x.id === target);
-      navigate(path, true);
+      const m = listed(side).find((x) => x.id === target);
+      navigate(here, true);
       if (!m) return setError("That message isn't in this chat any more.");
       stick.current = false;
       if (m.episodeId) setUnfolded((s) => new Set(s).add(m.episodeId as number));
@@ -944,7 +1127,7 @@ export function Chat({ id }: { id: number }) {
     const el = scroller.current;
     const before = el ? el.scrollHeight - el.scrollTop : 0;
     stick.current = false;
-    await loadEarlier();
+    await loadEarlier(side);
     requestAnimationFrame(() => {
       if (el) el.scrollTop = el.scrollHeight - before;
     });
@@ -1065,7 +1248,7 @@ export function Chat({ id }: { id: number }) {
                       )
                         return;
                       setError("");
-                      deleteEpisode(id).catch((err) => setError(errorText(err)));
+                      deleteEpisode(id, chat?.id).catch((err) => setError(errorText(err)));
                     }}
                   />
                   {open ? g.messages.map(row) : waiting.map(row)}
@@ -1101,7 +1284,7 @@ export function Chat({ id }: { id: number }) {
             {waiting.rest > 0 && (
               <Link
                 className="text-link tray-more"
-                to={waiting.elsewhere ? chatPath(waiting.elsewhere.id) : "/tasks"}
+                to={waiting.elsewhere ? pathOf(waiting.elsewhere) : "/tasks"}
               >
                 {waiting.here.length ? `${waiting.rest} more` : waiting.rest} waiting in{" "}
                 {waiting.elsewhere ? chatName(getState(), waiting.elsewhere) : "other chats"}
@@ -1110,7 +1293,7 @@ export function Chat({ id }: { id: number }) {
           </div>
         )}
         {error && <div className="form-error composer-error">{error}</div>}
-        <Composer key={chatKey} chat={chatKey} onSend={onSend} />
+        <Composer key={chatKey} chat={chatKey} onSend={onSend} side={side} />
       </div>
       <div className="sr-only" aria-live="polite">
         {said}
@@ -1125,6 +1308,10 @@ export function spoken(m: ThreadMessage, name: string): string {
   return `${name}: ${text.length > 400 ? `${text.slice(0, 399)}…` : text}`;
 }
 
+const NONE: ThreadMessage[] = [];
+const listed = (side: boolean) =>
+  side ? (getState().side?.messages ?? NONE) : getState().messages;
+
 const groupMembers = (s: ReturnType<typeof getState>) => {
   const c = currentChat(s);
   return c?.kind === "group" ? c.botIds : null;
@@ -1137,10 +1324,22 @@ const randomId = () =>
   ).join("");
 
 /** Apart from the thread, so typing redraws only this. */
-export function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
-  const incognito = useStore((s) => s.incognito);
-  const name = useStore((s) => chatName(s, currentChat(s)));
-  const members = useStore(groupMembers);
+export function Composer({
+  chat,
+  onSend,
+  side = false,
+}: {
+  chat: string;
+  onSend: () => void;
+  side?: boolean;
+}) {
+  const incognito = useStore((s) => !side && s.incognito);
+  const name = useStore((s) =>
+    side
+      ? botName(s, s.threads[s.side?.conversationId ?? 0]?.botIds[0])
+      : chatName(s, currentChat(s)),
+  );
+  const members = useStore((s) => (side ? null : groupMembers(s)));
   const bots = useStore((s) => s.bots);
   const [draft, setDraftState] = useState(() => draftText(chat));
   const setDraft = (fn: string | ((d: string) => string)) =>
@@ -1162,7 +1361,9 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
   const [error, setError] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
   // While a reply streams, an empty composer's button stops it.
-  const replying = useStore((s) => s.messages.some((m) => m.status === "streaming"));
+  const replying = useStore((s) =>
+    (side ? (s.side?.messages ?? NONE) : s.messages).some((m) => m.status === "streaming"),
+  );
   const canStop = replying && !draft.trim() && !files.length;
 
   const resize = () => {
@@ -1243,7 +1444,7 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
     const what = JSON.stringify([text, ids]);
     const clientId = unsure.current?.what === what ? unsure.current.clientId : randomId();
     try {
-      await sendMessage(text, ids, clientId);
+      await sendMessage(text, ids, clientId, side);
       unsure.current = null;
       for (const d of sent) if (d.preview) URL.revokeObjectURL(d.preview);
     } catch (err) {
@@ -1370,7 +1571,7 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
             }
             // Up in an empty composer brings back what you last sent, to send again or fix.
             if (e.key === "ArrowUp" && !draft && !e.nativeEvent.isComposing) {
-              const last = getState().messages.findLast((m) => m.role === "user" && m.text);
+              const last = listed(side).findLast((m) => m.role === "user" && m.text);
               if (last) {
                 e.preventDefault();
                 setDraft(last.text);
