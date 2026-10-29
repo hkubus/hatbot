@@ -1,25 +1,13 @@
 // Boxes: small web apps a bot makes, kept and opened from the chat. The brain serves their pages
 // sandboxed; their backends build and run on the boxes guest.
 import type { DesktopService } from "@hatbot/plugin-desktop";
-import {
-  type BotsHost,
-  type ChatsHost,
-  definePlugin,
-  type EventsHost,
-  type ModelHost,
-  type Notifier,
-  type PluginsHost,
-  ready,
-  type SettingsHost,
-  type SpendHost,
-  type TasksHost,
-} from "@hatbot/plugin-sdk";
+import { definePlugin, hosts, ready } from "@hatbot/plugin-sdk";
 import type { T3Code } from "@hatbot/plugin-t3/client";
 import { z } from "zod";
 import { Backends } from "./backends";
 import { Boxes } from "./boxes";
 import { type HatboxAgent, HttpHatboxAgent } from "./client";
-import type { Deps } from "./deps";
+import { type Deps, NEEDS } from "./deps";
 import { BoxFeeds } from "./feeds";
 import { routes } from "./routes";
 import { boxJob } from "./t3-job";
@@ -47,33 +35,15 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
       { name: "HATBOX_AGENT_URL", optional: true, hint: "http://192.168.55.111:8090" },
       { name: "HATBOX_AGENT_TOKEN", secret: true, optional: true },
     ],
-    needs: [
-      "tasks",
-      "chats",
-      "bots",
-      "notifier",
-      "events",
-      "settings",
-      "model",
-      "spend",
-      "plugins",
-    ],
+    needs: NEEDS,
     uses: ["desktop", "t3"],
     provides: ["boxes"],
     routes: ["/boxes"],
     publicRoutes: ["/boxes/:id/frame"],
     start: (ctx) => {
       const d: Deps = {
+        ...hosts(ctx, NEEDS),
         db: ctx.db,
-        events: ctx.service<EventsHost>("events"),
-        settings: ctx.service<SettingsHost>("settings"),
-        spend: ctx.service<SpendHost>("spend"),
-        model: ctx.service<ModelHost>("model"),
-        chats: ctx.service<ChatsHost>("chats"),
-        bots: ctx.service<BotsHost>("bots"),
-        tasks: ctx.service<TasksHost>("tasks"),
-        notifier: ctx.service<Notifier>("notifier"),
-        plugins: ctx.service<PluginsHost>("plugins"),
         vault: ctx.vault,
         publicUrl: ctx.publicUrl,
         clock: ctx.clock,

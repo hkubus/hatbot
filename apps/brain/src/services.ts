@@ -10,14 +10,10 @@ import { researchPlugin } from "@hatbot/plugin-research";
 import { scoutPlugin } from "@hatbot/plugin-scout";
 import {
   HOST_SERVICES,
-  type MemoryHost,
-  type ModelHost,
+  type Hosts,
   type Notifier,
   type Plugin,
-  type PluginsHost,
   type SchedulesService,
-  type SkillsHost,
-  type SpendHost,
 } from "@hatbot/plugin-sdk";
 import { selfPlugin } from "@hatbot/plugin-self";
 import { t3Plugin } from "@hatbot/plugin-t3";
@@ -174,12 +170,12 @@ export async function createServices(o: Outside) {
       notifier: () => notifier,
       events: () => events,
       settings: () => settings,
-      model: (): ModelHost => ({
+      model: () => ({
         ask: (params, ledger, opts) => oneShot({ model: taskModel, spend }, params, ledger, opts),
         stream: (params, handlers) => taskModel.stream(params, handlers),
         name: modelName,
       }),
-      spend: (): SpendHost => ({
+      spend: () => ({
         summary: () => spend.summary(),
         check: (usd, task) => spend.check(usd, task),
         hold: (usd, task) => spend.hold(usd, task),
@@ -188,7 +184,7 @@ export async function createServices(o: Outside) {
         byPurpose: (days) => spend.byPurpose(days),
         ceiling: requestCeiling,
       }),
-      memory: (): MemoryHost => ({
+      memory: () => ({
         readOrNull: (path) => memory.readOrNull(path),
         log: (limit) => memory.log(limit),
         exists: (path) => memory.exists(path),
@@ -203,11 +199,11 @@ export async function createServices(o: Outside) {
         },
       }),
       storage: () => ({ line: async () => storageLine(await storage.measure()) }),
-      skills: (): SkillsHost => ({
+      skills: () => ({
         exists: (name) => memory.exists(skillPath(name)),
         save: (name, content) => skills.save(name, content, settings.get().owner),
       }),
-      plugins: (): PluginsHost => ({
+      plugins: () => ({
         list: () => plugins.list(),
         tools: (only) => plugins.tools(only ?? null),
         signals: () => plugins.signals(),
@@ -217,7 +213,7 @@ export async function createServices(o: Outside) {
           return (p && plugins.list().find((x) => x.id === p.id)) ?? null;
         },
       }),
-    } satisfies Record<(typeof HOST_SERVICES)[number], () => unknown>,
+    } satisfies { [K in keyof Hosts]: () => Hosts[K] },
   });
   const models = new Models(plugins);
   const model = o.model ?? models;

@@ -1,31 +1,23 @@
 import type { DesktopAgent } from "@hatbot/plugin-desktop";
-import type {
-  BotsHost,
-  ChatsHost,
-  Db,
-  EventsHost,
-  ModelHost,
-  Notifier,
-  PluginsHost,
-  PluginVault,
-  SettingsHost,
-  SpendHost,
-  TasksHost,
-} from "@hatbot/plugin-sdk";
+import type { Db, Hosts, PluginVault } from "@hatbot/plugin-sdk";
 import type { T3Code } from "@hatbot/plugin-t3/client";
 
 /** What boxes reach in the core and other plugins. */
-export type Deps = {
+export const NEEDS = [
+  "tasks",
+  "chats",
+  "bots",
+  "notifier",
+  "events",
+  "settings",
+  "model",
+  "spend",
+  "plugins",
+] satisfies (keyof Hosts)[];
+
+/** What boxes reach in the core and other plugins. */
+export type Deps = Pick<Hosts, (typeof NEEDS)[number]> & {
   db: Db;
-  events: EventsHost;
-  settings: SettingsHost;
-  spend: SpendHost;
-  model: ModelHost;
-  chats: ChatsHost;
-  bots: BotsHost;
-  tasks: TasksHost;
-  notifier: Notifier;
-  plugins: PluginsHost;
   vault: PluginVault;
   publicUrl: string;
   clock: () => number;

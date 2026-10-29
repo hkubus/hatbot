@@ -2,14 +2,10 @@
 // checks the numbers it cites against what the pages said, and ends in a saved, cited report.
 import {
   definePlugin,
+  hosts,
   invalidInput,
-  type MemoryHost,
-  type ModelHost,
   ready,
-  type SettingsHost,
-  type SpendHost,
   type TaskRunner,
-  type TasksHost,
   tool,
 } from "@hatbot/plugin-sdk";
 import { z } from "zod";
@@ -24,6 +20,7 @@ import {
   keepUnfinished,
   LEAD_WEB_TOOLS,
   MAX_RESEARCH_STEPS,
+  NEEDS,
   RESEARCH_BETA,
   RESEARCH_LOOP_TOOLS,
   RESEARCH_TOKENS,
@@ -63,15 +60,11 @@ export const researchPlugin = definePlugin({
   config: z.object({}),
   defaultOn: true,
   allBots: true,
-  needs: ["tasks", "spend", "model", "memory", "settings"],
+  needs: NEEDS,
   start: (ctx) => {
     const d: Deps = {
+      ...hosts(ctx, NEEDS),
       db: ctx.db,
-      tasks: ctx.service<TasksHost>("tasks"),
-      spend: ctx.service<SpendHost>("spend"),
-      model: ctx.service<ModelHost>("model"),
-      memory: ctx.service<MemoryHost>("memory"),
-      settings: ctx.service<SettingsHost>("settings"),
       attachments: ctx.files?.attachments,
       clock: ctx.clock,
     };

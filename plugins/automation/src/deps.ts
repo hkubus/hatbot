@@ -1,34 +1,22 @@
-import type {
-  BotsHost,
-  ChatsHost,
-  Db,
-  EventsHost,
-  MemoryHost,
-  ModelHost,
-  Notifier,
-  PluginStore,
-  PluginsHost,
-  Sandbox,
-  SettingsHost,
-  SpendHost,
-  StorageHost,
-  TasksHost,
-} from "@hatbot/plugin-sdk";
+import type { Db, Hosts, PluginStore, Sandbox } from "@hatbot/plugin-sdk";
 import { HATBOT_ID } from "@hatbot/shared";
 
-export type Deps = {
+export const NEEDS = [
+  "tasks",
+  "chats",
+  "bots",
+  "notifier",
+  "events",
+  "settings",
+  "model",
+  "spend",
+  "memory",
+  "storage",
+  "plugins",
+] satisfies (keyof Hosts)[];
+
+export type Deps = Pick<Hosts, (typeof NEEDS)[number]> & {
   db: Db;
-  events: EventsHost;
-  settings: SettingsHost;
-  tasks: TasksHost;
-  chats: ChatsHost;
-  notifier: Notifier;
-  bots: BotsHost;
-  plugins: PluginsHost;
-  model: ModelHost;
-  spend: SpendHost;
-  memory: MemoryHost;
-  storage: StorageHost;
   desktop?: Sandbox;
   store: PluginStore;
   publicUrl: string;

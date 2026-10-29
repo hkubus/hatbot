@@ -33,7 +33,23 @@ export const HOST_SERVICES = [
   "storage",
   "skills",
   "plugins",
-] as const;
+] as const satisfies readonly (keyof Hosts)[];
+
+/** The core's services, by the name a plugin `needs` them by. */
+export type Hosts = {
+  tasks: TasksHost;
+  chats: ChatsHost;
+  bots: BotsHost;
+  notifier: Notifier;
+  events: EventsHost;
+  settings: SettingsHost;
+  model: ModelHost;
+  spend: SpendHost;
+  memory: MemoryHost;
+  storage: StorageHost;
+  skills: SkillsHost;
+  plugins: PluginsHost;
+};
 
 export type NtfyAction =
   | { action: "view"; label: string; url: string; clear?: boolean }

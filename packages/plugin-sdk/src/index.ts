@@ -12,7 +12,7 @@ import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desk
 import { type Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { z } from "zod";
-import type { PluginCheck, SearchRoutine, TaskOrigin } from "./host";
+import type { Hosts, PluginCheck, SearchRoutine, TaskOrigin } from "./host";
 import type { ModelProvider } from "./models";
 import type { TaskJob, TaskRunner } from "./runner";
 
@@ -452,6 +452,12 @@ export type PluginFiles = {
   attachments: PluginAttachments;
   screens: PluginScreens;
 };
+
+/** The core's services a plugin `needs`, each under its name. */
+export const hosts = <K extends keyof Hosts>(
+  ctx: { service: <T>(name: string) => T },
+  names: K[],
+) => Object.fromEntries(names.map((n) => [n, ctx.service(n)])) as Pick<Hosts, K>;
 
 export type PluginContext<C> = {
   config: C;

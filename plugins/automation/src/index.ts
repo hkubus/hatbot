@@ -1,24 +1,9 @@
 // Schedules, triggers and watchers, which start background tasks on their own, and the heartbeat and
 // weekly report, which look over everything else.
-import {
-  type BotsHost,
-  type ChatsHost,
-  definePlugin,
-  type EventsHost,
-  type MemoryHost,
-  type ModelHost,
-  type Notifier,
-  type PluginsHost,
-  ready,
-  type Sandbox,
-  type SettingsHost,
-  type SpendHost,
-  type StorageHost,
-  type TasksHost,
-} from "@hatbot/plugin-sdk";
+import { definePlugin, hosts, ready, type Sandbox } from "@hatbot/plugin-sdk";
 import { HATBOT_ID } from "@hatbot/shared";
 import { z } from "zod";
-import { type Deps, like, moveFrom } from "./deps";
+import { type Deps, like, moveFrom, NEEDS } from "./deps";
 import { HEARTBEAT_ORIGIN, Heartbeat } from "./heartbeat";
 import { WeeklyReport } from "./report";
 import { routes } from "./routes";
@@ -29,20 +14,6 @@ import { Watchers } from "./watch/service";
 
 export { counts, numberIn } from "./watch/extract";
 export { Heartbeat, Schedules, Triggers, Watchers, WeeklyReport };
-
-const NEEDS = [
-  "tasks",
-  "chats",
-  "bots",
-  "notifier",
-  "events",
-  "settings",
-  "model",
-  "spend",
-  "memory",
-  "storage",
-  "plugins",
-];
 
 export const automationPlugin = definePlugin({
   id: "automation",
@@ -64,18 +35,8 @@ export const automationPlugin = definePlugin({
   uses: ["sandbox"],
   start: (ctx) => {
     const d: Deps = {
+      ...hosts(ctx, NEEDS),
       db: ctx.db,
-      tasks: ctx.service<TasksHost>("tasks"),
-      chats: ctx.service<ChatsHost>("chats"),
-      bots: ctx.service<BotsHost>("bots"),
-      notifier: ctx.service<Notifier>("notifier"),
-      events: ctx.service<EventsHost>("events"),
-      settings: ctx.service<SettingsHost>("settings"),
-      model: ctx.service<ModelHost>("model"),
-      spend: ctx.service<SpendHost>("spend"),
-      memory: ctx.service<MemoryHost>("memory"),
-      storage: ctx.service<StorageHost>("storage"),
-      plugins: ctx.service<PluginsHost>("plugins"),
       desktop: ctx.optional<Sandbox>("sandbox") ?? undefined,
       store: ctx.store,
       publicUrl: ctx.publicUrl,

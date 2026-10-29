@@ -10,19 +10,15 @@ import {
   type Db,
   escapeRe,
   estimateTokens,
+  type Hosts,
   invalidInput,
   localStamp,
-  type MemoryHost,
-  type ModelHost,
   modelErrorText,
   type PluginAttachments,
   pathOf,
   type Readable,
-  type SettingsHost,
-  type SpendHost,
   serverToolWaiting,
   slugWords,
-  type TasksHost,
   TRACKING,
   tagJson,
   toolParam,
@@ -306,13 +302,10 @@ export class ResearchState {
 }
 
 /** What research reaches in the core. */
-export type Deps = {
+export const NEEDS = ["tasks", "spend", "model", "memory", "settings"] satisfies (keyof Hosts)[];
+
+export type Deps = Pick<Hosts, (typeof NEEDS)[number]> & {
   db: Db;
-  tasks: TasksHost;
-  spend: SpendHost;
-  model: ModelHost;
-  memory: MemoryHost;
-  settings: SettingsHost;
   attachments?: PluginAttachments;
   clock: () => number;
 };
