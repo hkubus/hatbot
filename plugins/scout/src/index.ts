@@ -22,8 +22,6 @@ import {
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-type Http = (url: string, init?: RequestInit) => Promise<Response>;
-
 const CALL_TIMEOUT_MS = 120_000;
 const refusedBy = (err: unknown) =>
   err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
@@ -190,202 +188,192 @@ const FlipListed = z.object({
   error: z.string().max(2000).optional(),
 });
 
-export const scoutPlugin = (d: {
-  publicUrl: string;
-  saveToken: (token: string) => Promise<void>;
-  /** Once connected: Haggler, which haggles and lists, gets Scout. */
-  connected?: () => void;
-  fetch?: Http;
-}) => {
-  const signIn = oauthClient("Scout", `${d.publicUrl}/settings/plugins/scout`);
-  return definePlugin({
-    id: "scout",
-    name: "Scout",
-    description: "Scout's deal watches, listings and flips, for haggling and listing",
-    env: [{ name: "SCOUT_TOKEN", secret: true, hint: "Set when you connect below" }],
-    config: z.object({ url: z.string().max(300).default("") }),
-    start: ({ config, env }) => {
-      const http = d.fetch ?? fetch;
-      const url = config.url.trim().replace(/\/+$/, "");
-      const actions = {
-        connect: async () => {
-          if (!url) throw new PluginError("Set Scout's address first.");
-          return signIn.connect(await discover("Scout", url, http), http);
-        },
-        finish: async (args: unknown) => {
-          const t = await signIn.finish(args, http);
-          await d.saveToken(t.token);
-          d.connected?.();
-          return {};
-        },
-      };
-      const setup = (message: string) => ({ ...needsSetup(message), actions });
-      if (!url) return setup("Set your Scout's address, then connect it.");
-      if (!env.SCOUT_TOKEN) return setup("Connect it to your Scout below.");
-      const token = env.SCOUT_TOKEN;
+/** Emits "connected" once signed in. */
+export const scoutPlugin = definePlugin({
+  id: "scout",
+  name: "Scout",
+  description: "Scout's deal watches, listings and flips, for haggling and listing",
+  env: [{ name: "SCOUT_TOKEN", secret: true, hint: "Set when you connect below" }],
+  config: z.object({ url: z.string().max(300).default("") }),
+  start: ({ config, env, publicUrl, fetch: http, saveSecrets, emit }) => {
+    const signIn = oauthClient("Scout", `${publicUrl}/settings/plugins/scout`);
+    const url = config.url.trim().replace(/\/+$/, "");
+    const actions = {
+      connect: async () => {
+        if (!url) throw new PluginError("Set Scout's address first.");
+        return signIn.connect(await discover("Scout", url, http), http);
+      },
+      finish: async (args: unknown) => {
+        const t = await signIn.finish(args, http);
+        await saveSecrets({ SCOUT_TOKEN: t.token });
+        emit("connected");
+        return {};
+      },
+    };
+    const setup = (message: string) => ({ ...needsSetup(message), actions });
+    if (!url) return setup("Set your Scout's address, then connect it.");
+    if (!env.SCOUT_TOKEN) return setup("Connect it to your Scout below.");
+    const token = env.SCOUT_TOKEN;
 
-      const refused = () =>
-        new PluginError(
-          "Scout doesn't let Hatbot in any more: connect it again in Settings → Plugins → Scout.",
+    const refused = () =>
+      new PluginError(
+        "Scout doesn't let Hatbot in any more: connect it again in Settings → Plugins → Scout.",
+      );
+    const unreachable = (err: unknown) =>
+      new PluginError(
+        `Can't reach Scout at ${url}: ${err instanceof Error ? err.message.slice(0, 200) : "error"}`,
+      );
+    const open = async () => {
+      const client = new Client({ name: "hatbot", version: "1.0.0" });
+      try {
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
+            requestInit: { headers: { authorization: `Bearer ${token}` } },
+            fetch: (u, init) => http(String(u), init),
+          }),
+          { timeout: 30_000 },
         );
-      const unreachable = (err: unknown) =>
-        new PluginError(
-          `Can't reach Scout at ${url}: ${err instanceof Error ? err.message.slice(0, 200) : "error"}`,
-        );
-      const open = async () => {
-        const client = new Client({ name: "hatbot", version: "1.0.0" });
+        return client;
+      } catch (err) {
+        await client.close().catch(() => {});
+        throw refusedBy(err) ? refused() : unreachable(err);
+      }
+    };
+    // One client for every call: Scout rate-limits /mcp per request, and a new client costs two
+    // more requests, so a flip's photos would run into the limit.
+    let client: Promise<Client> | null = null;
+    let stopped = false;
+    const drop = (c: Promise<Client>) => {
+      if (client === c) client = null;
+      c.then((x) => x.close()).catch(() => {});
+    };
+    const session = async <T>(fn: (c: Client) => Promise<T>): Promise<T> => {
+      for (let attempt = 0; ; attempt++) {
+        if (stopped) throw new PluginError("Scout restarted; try again.");
+        client ??= open();
+        const c = client;
+        let connected: Client;
         try {
-          await client.connect(
-            new StreamableHTTPClientTransport(new URL(`${url}/mcp`), {
-              requestInit: { headers: { authorization: `Bearer ${token}` } },
-              fetch: (u, init) => http(String(u), init),
-            }),
-            { timeout: 30_000 },
-          );
-          return client;
+          connected = await c;
         } catch (err) {
-          await client.close().catch(() => {});
-          throw refusedBy(err) ? refused() : unreachable(err);
+          drop(c);
+          throw err;
         }
-      };
-      // One client for every call: Scout rate-limits /mcp per request, and a new client costs two
-      // more requests, so a flip's photos would run into the limit.
-      let client: Promise<Client> | null = null;
-      let stopped = false;
-      const drop = (c: Promise<Client>) => {
-        if (client === c) client = null;
-        c.then((x) => x.close()).catch(() => {});
-      };
-      const session = async <T>(fn: (c: Client) => Promise<T>): Promise<T> => {
-        for (let attempt = 0; ; attempt++) {
-          if (stopped) throw new PluginError("Scout restarted; try again.");
-          client ??= open();
-          const c = client;
-          let connected: Client;
-          try {
-            connected = await c;
-          } catch (err) {
+        try {
+          return await fn(connected);
+        } catch (err) {
+          if (refusedBy(err)) {
             drop(c);
-            throw err;
+            throw refused();
           }
-          try {
-            return await fn(connected);
-          } catch (err) {
-            if (refusedBy(err)) {
-              drop(c);
-              throw refused();
-            }
-            if (!unsent(err)) throw err;
-            drop(c);
-            // It can't have reached Scout, so it's sent again once, on a new client.
-            if (attempt > 0) throw unreachable(err);
-          }
+          if (!unsent(err)) throw err;
+          drop(c);
+          // It can't have reached Scout, so it's sent again once, on a new client.
+          if (attempt > 0) throw unreachable(err);
         }
-      };
-      const call = (name: string, input: unknown, signal: AbortSignal) =>
-        session(async (c) => {
-          const r = await c
-            .request(
-              {
-                method: "tools/call",
-                params: { name, arguments: input as Record<string, unknown> },
-              },
-              CallToolResultSchema,
-              { signal, timeout: CALL_TIMEOUT_MS },
-            )
-            .catch((err) => {
-              throw signal.aborted || unsent(err) || refusedBy(err)
-                ? err
-                : callFailure("Scout", err);
-            });
-          const text = resultText(r as { content?: unknown; structuredContent?: unknown });
-          if (r.isError) throw new PluginError(`Scout says: ${text.slice(0, 2000)}`);
-          return text;
-        });
-
-      const tools: PluginTool[] = [
-        ...READS.map((r) =>
-          tool({
-            name: r.name,
-            description: r.description,
-            schema: r.schema,
-            access: "read",
-            untrusted: true,
-            ...(r.brainOnly ? { brainOnly: true } : {}),
-            run: (input, c) => call(r.name, input, c.signal),
-          }),
-        ),
-        tool({
-          name: "scout_watch_create",
-          description:
-            "Make a Scout deal watch: Scout searches for it every few minutes from then on, learns its typical price, and alerts the owner on strong deals and on any listing at or under targetPrice. Look at scout_watches first, so you don't make the same one twice.",
-          access: "write",
-          schema: z.object({
-            name: z.string().trim().min(1).max(120),
-            query: z
-              .string()
-              .trim()
-              .min(1)
-              .max(240)
-              .describe("What to search for, as you'd type it on the marketplace"),
-            sources: z.array(Marketplace).min(1).max(3),
-            terms: z
-              .string()
-              .max(240)
-              .optional()
-              .describe("Comma-separated words every title must have"),
-            excluded: z
-              .string()
-              .max(240)
-              .optional()
-              .describe("Comma-separated words that rule a listing out"),
-            minPrice: z.number().nonnegative().optional(),
-            maxPrice: z.number().positive().optional(),
-            targetPrice: z
-              .number()
-              .positive()
-              .optional()
-              .describe("In PLN: alert on any listing at or under it"),
-            shippingOnly: z.boolean().optional(),
-            olxCategory: z
-              .object({ id: z.number().int().positive(), label: z.string(), path: z.string() })
-              .optional()
-              .describe("OLX only: one category, as scout_olx_categories gives it"),
-            verificationChecks: Checks.optional().describe(
-              "What Scout's AI checks in each listing's description and photos: the must-haves as require, the deal-breakers as exclude",
-            ),
-          }),
-          run: (input, c) => call("scout_watch_create", input, c.signal),
-        }),
-        tool({
-          name: "scout_flip_listed",
-          description: "Tell Scout how posting a flip on one marketplace went.",
-          access: "write",
-          brainOnly: true,
-          schema: FlipListed,
-          // The brain reports each listing's end itself, out of any task.
-          policy: (_, c) =>
-            c.task ? block("Hatbot tells Scout itself once a listing's task ends.") : allow(),
-          run: (input, c) => call("scout_flip_listed", input, c.signal),
-        }),
-      ];
-      return ready(tools, {
-        actions,
-        guidance: GUIDANCE,
-        test: async () => {
-          const names = await session(async (c) => (await c.listTools()).tools.map((t) => t.name));
-          const missing = tools.map((t) => t.name).filter((n) => !names.includes(n));
-          if (missing.length === tools.length)
-            throw new PluginError("Scout answered, but has none of the tools Hatbot uses.");
-          return missing.length
-            ? `Scout works, but is older than Hatbot: it hasn't ${missing.join(", ")}.`
-            : "Scout works.";
-        },
-        stop: async () => {
-          stopped = true;
-          if (client) drop(client);
-        },
+      }
+    };
+    const call = (name: string, input: unknown, signal: AbortSignal) =>
+      session(async (c) => {
+        const r = await c
+          .request(
+            {
+              method: "tools/call",
+              params: { name, arguments: input as Record<string, unknown> },
+            },
+            CallToolResultSchema,
+            { signal, timeout: CALL_TIMEOUT_MS },
+          )
+          .catch((err) => {
+            throw signal.aborted || unsent(err) || refusedBy(err) ? err : callFailure("Scout", err);
+          });
+        const text = resultText(r as { content?: unknown; structuredContent?: unknown });
+        if (r.isError) throw new PluginError(`Scout says: ${text.slice(0, 2000)}`);
+        return text;
       });
-    },
-  });
-};
+
+    const tools: PluginTool[] = [
+      ...READS.map((r) =>
+        tool({
+          name: r.name,
+          description: r.description,
+          schema: r.schema,
+          access: "read",
+          untrusted: true,
+          ...(r.brainOnly ? { brainOnly: true } : {}),
+          run: (input, c) => call(r.name, input, c.signal),
+        }),
+      ),
+      tool({
+        name: "scout_watch_create",
+        description:
+          "Make a Scout deal watch: Scout searches for it every few minutes from then on, learns its typical price, and alerts the owner on strong deals and on any listing at or under targetPrice. Look at scout_watches first, so you don't make the same one twice.",
+        access: "write",
+        schema: z.object({
+          name: z.string().trim().min(1).max(120),
+          query: z
+            .string()
+            .trim()
+            .min(1)
+            .max(240)
+            .describe("What to search for, as you'd type it on the marketplace"),
+          sources: z.array(Marketplace).min(1).max(3),
+          terms: z
+            .string()
+            .max(240)
+            .optional()
+            .describe("Comma-separated words every title must have"),
+          excluded: z
+            .string()
+            .max(240)
+            .optional()
+            .describe("Comma-separated words that rule a listing out"),
+          minPrice: z.number().nonnegative().optional(),
+          maxPrice: z.number().positive().optional(),
+          targetPrice: z
+            .number()
+            .positive()
+            .optional()
+            .describe("In PLN: alert on any listing at or under it"),
+          shippingOnly: z.boolean().optional(),
+          olxCategory: z
+            .object({ id: z.number().int().positive(), label: z.string(), path: z.string() })
+            .optional()
+            .describe("OLX only: one category, as scout_olx_categories gives it"),
+          verificationChecks: Checks.optional().describe(
+            "What Scout's AI checks in each listing's description and photos: the must-haves as require, the deal-breakers as exclude",
+          ),
+        }),
+        run: (input, c) => call("scout_watch_create", input, c.signal),
+      }),
+      tool({
+        name: "scout_flip_listed",
+        description: "Tell Scout how posting a flip on one marketplace went.",
+        access: "write",
+        brainOnly: true,
+        schema: FlipListed,
+        // The brain reports each listing's end itself, out of any task.
+        policy: (_, c) =>
+          c.task ? block("Hatbot tells Scout itself once a listing's task ends.") : allow(),
+        run: (input, c) => call("scout_flip_listed", input, c.signal),
+      }),
+    ];
+    return ready(tools, {
+      actions,
+      guidance: GUIDANCE,
+      test: async () => {
+        const names = await session(async (c) => (await c.listTools()).tools.map((t) => t.name));
+        const missing = tools.map((t) => t.name).filter((n) => !names.includes(n));
+        if (missing.length === tools.length)
+          throw new PluginError("Scout answered, but has none of the tools Hatbot uses.");
+        return missing.length
+          ? `Scout works, but is older than Hatbot: it hasn't ${missing.join(", ")}.`
+          : "Scout works.";
+      },
+      stop: async () => {
+        stopped = true;
+        if (client) drop(client);
+      },
+    });
+  },
+});

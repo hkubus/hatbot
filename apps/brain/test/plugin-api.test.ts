@@ -176,3 +176,39 @@ test("a plugin's tick runs only while it's on", async () => {
   await t.plugins.update("ticker", { enabled: false });
   await expect(t.plugins.tick("ticker", "count")).rejects.toThrow();
 });
+
+test("a service the core provides counts for a plugin's needs, and no plugin may provide it too", async () => {
+  const t = await app([plain({ id: "planner", needs: ["schedules"], defaultOn: true })]);
+  expect(t.plugins.get("planner")?.state).toBe("ready");
+  const { Plugins } = await import("../src/plugins/registry");
+  expect(
+    () =>
+      new Plugins([plain({ id: "rival", provides: ["schedules"] })], {
+        db: t.db,
+        events: { emit: () => {} } as never,
+        secrets: t.secrets,
+        dataDir: t.config.dataDir,
+        reserved: [],
+        services: { schedules: () => ({}) },
+      }),
+  ).toThrow("both provide");
+});
+
+test("what a plugin emits reaches whoever listens, under its id", async () => {
+  let emit: (event: string) => void = () => {};
+  const t = await app([
+    plain({
+      id: "pinger",
+      defaultOn: true,
+      start: (ctx) => {
+        emit = ctx.emit;
+        return ready([]);
+      },
+    }),
+  ]);
+  const heard: string[] = [];
+  t.plugins.on("pinger:connected", () => heard.push("pinger"));
+  t.plugins.on("other:connected", () => heard.push("other"));
+  emit("connected");
+  expect(heard).toEqual(["pinger"]);
+});

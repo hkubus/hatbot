@@ -187,6 +187,22 @@ export class PluginError extends Error {
 }
 
 /** `api` gives JSON, or text when another type is asked for; `send` the Response itself. */
+type ScheduleFields = {
+  name?: string;
+  prompt?: string;
+  enabled?: boolean;
+  cron?: string;
+  at?: string;
+};
+
+/** The `schedules` service: the owner's schedules, changed as the owner would. */
+export type SchedulesService = {
+  get(id: number): Schedule | null;
+  create(input: ScheduleFields & { name: string; prompt: string }, via: "owner"): Schedule;
+  update(id: number, patch: ScheduleFields): Schedule | null;
+  delete(id: number): boolean;
+};
+
 /** The most a file handed to or from Hatbot may be. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
@@ -321,6 +337,8 @@ export type PluginContext<C> = {
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   /** Another plugin's settings as saved, read when called, even while it's off. */
   configOf: (id: string) => unknown;
+  /** Tells the host something happened, as "<id>:<event>". */
+  emit: (event: string) => void;
 };
 
 export type PluginStore = {

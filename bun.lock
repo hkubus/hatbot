@@ -21,7 +21,9 @@
         "@hatbot/plugin-mcp": "workspace:*",
         "@hatbot/plugin-pbs": "workspace:*",
         "@hatbot/plugin-proxmox": "workspace:*",
+        "@hatbot/plugin-scout": "workspace:*",
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/plugin-self": "workspace:*",
         "@hatbot/plugin-ssh": "workspace:*",
         "@hatbot/plugin-t3": "workspace:*",
         "@hatbot/plugin-uptimekuma": "workspace:*",
@@ -139,6 +141,24 @@
         "zod": "^4.6.5",
       },
     },
+    "plugins/scout": {
+      "name": "@hatbot/plugin-scout",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-mcp": "workspace:*",
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.32.1",
+        "zod": "^4.6.5",
+      },
+    },
+    "plugins/self": {
+      "name": "@hatbot/plugin-self",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-sdk": "workspace:*",
+        "zod": "^4.6.5",
+      },
+    },
     "plugins/ssh": {
       "name": "@hatbot/plugin-ssh",
       "version": "1.0.0",
@@ -209,7 +229,11 @@
 
     "@hatbot/plugin-proxmox": ["@hatbot/plugin-proxmox@workspace:plugins/proxmox"],
 
+    "@hatbot/plugin-scout": ["@hatbot/plugin-scout@workspace:plugins/scout"],
+
     "@hatbot/plugin-sdk": ["@hatbot/plugin-sdk@workspace:packages/plugin-sdk"],
+
+    "@hatbot/plugin-self": ["@hatbot/plugin-self@workspace:plugins/self"],
 
     "@hatbot/plugin-ssh": ["@hatbot/plugin-ssh@workspace:plugins/ssh"],
 

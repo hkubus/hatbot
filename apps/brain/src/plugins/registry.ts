@@ -54,6 +54,8 @@ export type PluginsDeps = {
   reserved: string[];
   publicUrl?: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+  /** What the core itself provides, until a plugin does. */
+  services?: Record<string, () => unknown>;
 };
 
 export class Plugins {
@@ -61,6 +63,7 @@ export class Plugins {
   private hostEnv: Record<string, string | undefined>;
   /** Which plugin provides each service. */
   private providers = new Map<string, string>();
+  private listeners = new Map<string, (() => void)[]>();
   private timing = false;
   private stopping = false;
   retryMs = RETRY_MS;
@@ -75,8 +78,8 @@ export class Plugins {
       if (!/^[a-z][a-z0-9]{1,20}$/.test(plugin.id)) throw new Error(`bad plugin id "${plugin.id}"`);
       if (this.slots.has(plugin.id)) throw new Error(`two plugins named "${plugin.id}"`);
       for (const name of plugin.provides ?? []) {
-        const other = this.providers.get(name);
-        if (other) throw new Error(`plugins ${other} and ${plugin.id} both provide "${name}"`);
+        const other = this.providers.get(name) ?? (d.services?.[name] && "the core");
+        if (other) throw new Error(`${other} and plugin ${plugin.id} both provide "${name}"`);
         this.providers.set(name, plugin.id);
       }
       for (const path of [...(plugin.routes ?? []), ...(plugin.publicRoutes ?? [])]) {
@@ -99,6 +102,11 @@ export class Plugins {
         timers: [],
       });
     }
+  }
+
+  /** `event` is "<plugin>:<what it emits>". */
+  on(event: string, fn: () => void) {
+    this.listeners.set(event, [...(this.listeners.get(event) ?? []), fn]);
   }
 
   /** Providers first, so what needs them finds them started. */
@@ -144,6 +152,8 @@ export class Plugins {
 
   /** What a ready plugin gives others; null while none does. */
   service<T>(name: string): T | null {
+    const host = this.d.services?.[name];
+    if (host) return host() as T;
     const by = this.providers.get(name);
     const s = by ? this.slots.get(by) : undefined;
     return s?.state === "ready" ? ((s.instance?.services?.[name] as T | undefined) ?? null) : null;
@@ -388,6 +398,9 @@ export class Plugins {
               await this.setSecrets(s.plugin.id, values);
             },
             configOf: (id) => saved(this.d.db, id).config,
+            emit: (event) => {
+              for (const fn of this.listeners.get(`${s.plugin.id}:${event}`) ?? []) fn();
+            },
             publicUrl: this.d.publicUrl ?? "",
             fetch: this.d.fetch ?? fetch,
           });

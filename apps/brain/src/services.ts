@@ -3,7 +3,9 @@
 import { join } from "node:path";
 import { codePlugin } from "@hatbot/plugin-code";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
+import { scoutPlugin } from "@hatbot/plugin-scout";
 import type { Plugin } from "@hatbot/plugin-sdk";
+import { selfPlugin } from "@hatbot/plugin-self";
 import { t3Plugin } from "@hatbot/plugin-t3";
 import type { T3Code } from "@hatbot/plugin-t3/client";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
@@ -37,8 +39,6 @@ import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
 import { Plugins } from "./plugins/registry";
-import { scoutPlugin } from "./plugins/scout";
-import { selfPlugin } from "./plugins/self";
 import { Questions } from "./questions";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
@@ -96,29 +96,13 @@ export async function createServices(o: Outside) {
   const storage = new Storage({ db, archive, clock });
   const desktop = new Desktop(agent, events, db);
   const files = { desktop: agent, attachments };
-  const own = selfPlugin({
-    desktop: agent,
-    dir: join(config.dataDir, "self"),
-    schedules: () => schedules,
-  });
   const plugins = new Plugins(
     [
       ...o.plugins,
       codePlugin,
       t3Plugin,
-      scoutPlugin({
-        publicUrl,
-        saveToken: async (token) => {
-          await plugins.setSecrets("scout", { SCOUT_TOKEN: token });
-        },
-        connected: () => {
-          const haggler = bots.list().find((b) => b.name.toLowerCase() === "haggler");
-          if (haggler?.plugins && !haggler.plugins.includes("scout"))
-            bots.update(haggler.id, { plugins: [...haggler.plugins, "scout"] });
-        },
-        fetch: o.fetch,
-      }),
-      own,
+      scoutPlugin,
+      selfPlugin,
       ...corePlugins(() => ({
         db,
         clock,
@@ -147,8 +131,15 @@ export async function createServices(o: Outside) {
       reserved: CORE_TOOL_NAMES,
       publicUrl,
       fetch: o.fetch,
+      services: { schedules: () => schedules },
     },
   );
+  // Haggler, which haggles and lists, gets Scout once it's connected.
+  plugins.on("scout:connected", () => {
+    const haggler = bots.list().find((b) => b.name.toLowerCase() === "haggler");
+    if (haggler?.plugins && !haggler.plugins.includes("scout"))
+      bots.update(haggler.id, { plugins: [...haggler.plugins, "scout"] });
+  });
   const bots = new Bots(db, events, clock);
   const boxes = new Boxes(db, events, clock, secrets);
   boxes.backends = new Backends(boxes, o.hatbox ?? new HttpHatboxAgent("", ""), settings, clock);
