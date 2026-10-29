@@ -29,18 +29,12 @@ impl Scaling {
 
     /// A screenshot point to the screen's logical pixels.
     pub fn logical(&self, x: f64, y: f64) -> (f64, f64) {
-        (
-            x * self.logical_width as f64 / self.width as f64,
-            y * self.logical_height as f64 / self.height as f64,
-        )
+        (x * self.logical_width as f64 / self.width as f64, y * self.logical_height as f64 / self.height as f64)
     }
 
     /// A point on the screen to the screenshot's pixels.
     pub fn shot(&self, x: f64, y: f64) -> (f64, f64) {
-        (
-            x * self.width as f64 / self.logical_width as f64,
-            y * self.height as f64 / self.logical_height as f64,
-        )
+        (x * self.width as f64 / self.logical_width as f64, y * self.height as f64 / self.logical_height as f64)
     }
 
     /// A screenshot point, checked to be on it.
@@ -50,10 +44,7 @@ impl Scaling {
         }
         let (rx, ry) = (x.round(), y.round());
         if rx < 0.0 || ry < 0.0 || rx >= self.width as f64 || ry >= self.height as f64 {
-            return Err(format!(
-                "({rx}, {ry}) is outside the {}x{} screen.",
-                self.width, self.height
-            ));
+            return Err(format!("({rx}, {ry}) is outside the {}x{} screen.", self.width, self.height));
         }
         Ok((rx, ry))
     }

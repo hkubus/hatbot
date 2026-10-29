@@ -60,8 +60,7 @@ impl KeyTable {
     pub fn default_keymap() -> Option<Self> {
         use xkbcommon::xkb;
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let keymap =
-            xkb::Keymap::new_from_names(&ctx, "", "", "", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)?;
+        let keymap = xkb::Keymap::new_from_names(&ctx, "", "", "", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)?;
         Some(Self::from_xkb(&keymap))
     }
 
@@ -79,8 +78,7 @@ impl KeyTable {
                 for level in 0..keymap.num_levels_for_key(key, layout) {
                     let syms = keymap.key_get_syms_by_level(key, layout, level);
                     let [sym] = syms else { continue };
-                    let Some(c) = char::from_u32(xkb::keysym_to_utf32(*sym)).filter(|c| *c != '\0')
-                    else {
+                    let Some(c) = char::from_u32(xkb::keysym_to_utf32(*sym)).filter(|c| *c != '\0') else {
                         continue;
                     };
                     let mut masks = [0u32; 8];
@@ -94,11 +92,8 @@ impl KeyTable {
                     else {
                         continue;
                     };
-                    let stroke = Stroke {
-                        code: KeyCode::new(evdev as u16),
-                        shift: mask & shift != 0,
-                        altgr: mask & altgr != 0,
-                    };
+                    let stroke =
+                        Stroke { code: KeyCode::new(evdev as u16), shift: mask & shift != 0, altgr: mask & altgr != 0 };
                     // Prefer the main keyboard's keys and the fewest modifiers over the keypad's.
                     table
                         .entry(c)

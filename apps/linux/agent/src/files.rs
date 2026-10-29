@@ -16,9 +16,7 @@ fn home() -> PathBuf {
 /// "~/x" and "x" are the owner's home's.
 pub fn expand(path: &str, home: &Path) -> PathBuf {
     match path.strip_prefix("~") {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
-            home.join(rest.trim_start_matches('/'))
-        }
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => home.join(rest.trim_start_matches('/')),
         _ if Path::new(path).is_absolute() => PathBuf::from(path),
         _ => home.join(path),
     }
@@ -43,22 +41,14 @@ fn free(dir: &Path, name: &str) -> PathBuf {
         Some(i) if i > 0 => (&name[..i], &name[i..]),
         _ => (name, ""),
     };
-    (1..)
-        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
-        .find(|p| !p.exists())
-        .expect("a free name")
+    (1..).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).expect("a free name")
 }
 
 pub async fn put(name: &str, data: &str, path: Option<&str>) -> Result<String, String> {
     put_in(&home(), name, data, path).await
 }
 
-pub async fn put_in(
-    home: &Path,
-    name: &str,
-    data: &str,
-    path: Option<&str>,
-) -> Result<String, String> {
+pub async fn put_in(home: &Path, name: &str, data: &str, path: Option<&str>) -> Result<String, String> {
     let bytes = STANDARD.decode(data).map_err(|_| "The file's data isn't base64.".to_string())?;
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err("That file is over 25 MB.".into());
@@ -67,9 +57,7 @@ pub async fn put_in(
     let target = match path {
         None => {
             let dir = home.join("Downloads/Hatbot");
-            tokio::fs::create_dir_all(&dir)
-                .await
-                .map_err(|e| format!("Can't make {}: {e}.", dir.display()))?;
+            tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Can't make {}: {e}.", dir.display()))?;
             free(&dir, &name)
         }
         Some(p) => {
@@ -86,26 +74,21 @@ pub async fn put_in(
             }
         }
     };
-    tokio::fs::write(&target, bytes)
-        .await
-        .map_err(|e| format!("Can't write {}: {e}.", target.display()))?;
+    tokio::fs::write(&target, bytes).await.map_err(|e| format!("Can't write {}: {e}.", target.display()))?;
     Ok(target.display().to_string())
 }
 
 /// A file's name and contents, base64.
 pub async fn get(path: &str) -> Result<(String, String), String> {
     let p = expand(path, &home());
-    let meta = tokio::fs::metadata(&p)
-        .await
-        .map_err(|_| format!("There's no file at {}.", p.display()))?;
+    let meta = tokio::fs::metadata(&p).await.map_err(|_| format!("There's no file at {}.", p.display()))?;
     if !meta.is_file() {
         return Err(format!("{} isn't a file.", p.display()));
     }
     if meta.len() > MAX_FILE_BYTES {
         return Err(format!("{} is over 25 MB.", p.display()));
     }
-    let bytes =
-        tokio::fs::read(&p).await.map_err(|e| format!("Can't read {}: {e}.", p.display()))?;
+    let bytes = tokio::fs::read(&p).await.map_err(|e| format!("Can't read {}: {e}.", p.display()))?;
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Ok((name, STANDARD.encode(bytes)))
 }

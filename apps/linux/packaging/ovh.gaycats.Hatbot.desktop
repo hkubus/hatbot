@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=Hatbot
+Comment=Chat with your bots and see what they're doing
+Exec=hatbot %u
+Icon=ovh.gaycats.Hatbot
+Terminal=false
+Categories=Network;Chat;
+StartupWMClass=ovh.gaycats.Hatbot
+MimeType=x-scheme-handler/hatbot;
+Actions=tasks;search;settings;
+
+[Desktop Action tasks]
+Name=Tasks
+Exec=hatbot --open tasks
+
+[Desktop Action search]
+Name=Search
+Exec=hatbot --open search
+
+[Desktop Action settings]
+Name=Settings
+Exec=hatbot --open settings

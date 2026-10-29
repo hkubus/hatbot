@@ -149,6 +149,11 @@ impl AgentHandle {
         self.core.set_paused(false);
     }
 
+    /// Takes the screen back from the task using it.
+    pub fn stop_task(&self) {
+        self.core.drop_claim();
+    }
+
     /// Stops it and waits for its thread.
     pub fn shutdown(mut self) {
         self.stop_now();

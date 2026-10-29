@@ -17,8 +17,8 @@ use crate::computer::{Button, Clip, Computer, Frame, InspectAt, Output, SessionE
 use crate::human::{between, key_gap, path};
 use crate::keys::{self, Combo, Key, Modifier};
 use crate::protocol::{
-    ActionName, ActionResult, ComputerResult, ComputerScreen, ComputerStatus, ComputerWindow,
-    ErrorCode, LiveInput, Request,
+    ActionName, ActionResult, ComputerResult, ComputerScreen, ComputerStatus, ComputerWindow, ErrorCode, LiveInput,
+    Request,
 };
 use crate::scale::Scaling;
 use crate::typing::{self, KeyTable, Stroke, TypePlan};
@@ -148,6 +148,13 @@ impl Core {
         self.publish();
     }
 
+    /// The owner pressed Stop on the banner: the task loses the screen.
+    pub fn drop_claim(&self) {
+        self.state().claim = None;
+        self.live.send_replace(false);
+        self.publish();
+    }
+
     /// The brain went away: no task has the screen any more, and nobody watches.
     pub fn disconnected(&self) {
         self.state().claim = None;
@@ -174,11 +181,7 @@ impl Core {
     pub fn gate(&self, req: &Request) -> Res<()> {
         if matches!(
             req,
-            Request::Status
-                | Request::Release { .. }
-                | Request::Pause { .. }
-                | Request::Disable
-                | Request::Unknown
+            Request::Status | Request::Release { .. } | Request::Pause { .. } | Request::Disable | Request::Unknown
         ) {
             return Ok(());
         }
@@ -234,8 +237,7 @@ impl Core {
             Request::Screenshot => {
                 let (out, sc) = self.screen().await?;
                 let frame = self.computer.capture(out.name).await?;
-                let (data, width, height) =
-                    encode(&resize(&frame, sc.width, sc.height), SCREENSHOT_QUALITY);
+                let (data, width, height) = encode(&resize(&frame, sc.width, sc.height), SCREENSHOT_QUALITY);
                 Ok(ComputerResult::Screenshot { data, width, height })
             }
             Request::Zoom { x, y, width, height } => self.zoom(x, y, width, height).await,
@@ -307,9 +309,7 @@ impl Core {
                 Ok(ComputerResult::Disable)
             }
             Request::Unknown => {
-                Err("This computer's Hatbot doesn't know that request. It may need an update."
-                    .to_string()
-                    .into())
+                Err("This computer's Hatbot doesn't know that request. It may need an update.".to_string().into())
             }
         }
     }
@@ -382,9 +382,10 @@ impl Core {
     }
 
     async fn windows(&self, out: &Output) -> Res<Vec<Window>> {
-        self.computer.windows(out.name.clone()).await?.ok_or_else(|| {
-            "This computer's compositor doesn't list its windows.".to_string().into()
-        })
+        self.computer
+            .windows(out.name.clone())
+            .await?
+            .ok_or_else(|| "This computer's compositor doesn't list its windows.".to_string().into())
     }
 
     async fn inspect(&self, x: Option<f64>, y: Option<f64>) -> Res<ComputerResult> {
@@ -398,19 +399,16 @@ impl Core {
                 let Some(windows) = windows else {
                     return Ok(ComputerResult::Inspect { element: None });
                 };
-                let mut under =
-                    windows.iter().filter(|w| w.rect.is_some_and(|r| r.contains(lx, ly)));
+                let mut under = windows.iter().filter(|w| w.rect.is_some_and(|r| r.contains(lx, ly)));
                 let hit = under.clone().find(|w| w.focused).or_else(|| under.next());
                 match hit.and_then(|w| Some((w, w.pid?, w.rect?))) {
-                    Some((w, pid, r)) => {
-                        InspectAt::Point { pid, title: w.title.clone(), x: lx - r.x, y: ly - r.y }
-                    }
+                    Some((w, pid, r)) => InspectAt::Point { pid, title: w.title.clone(), x: lx - r.x, y: ly - r.y },
                     None => return Ok(ComputerResult::Inspect { element: None }),
                 }
             }
-            _ => InspectAt::Focus {
-                pid: windows.and_then(|ws| ws.into_iter().find(|w| w.focused)).and_then(|w| w.pid),
-            },
+            _ => {
+                InspectAt::Focus { pid: windows.and_then(|ws| ws.into_iter().find(|w| w.focused)).and_then(|w| w.pid) }
+            }
         };
         let element = self.computer.inspect(at).await?;
         Ok(ComputerResult::Inspect { element })
@@ -423,9 +421,7 @@ impl Core {
             None | Some(Value::Null) => None,
             Some(v) => Some(point(&sc, v)?),
         };
-        let mods = keys::read_modifiers(input.get("text").and_then(Value::as_str))
-            .ok()
-            .unwrap_or_default();
+        let mods = keys::read_modifiers(input.get("text").and_then(Value::as_str)).ok().unwrap_or_default();
         let held = |name: ActionName| {
             matches!(
                 name,
@@ -468,15 +464,10 @@ impl Core {
                     Some((o, x, y)) if *o == out.name => sc.shot(*x, *y),
                     _ => (sc.width as f64 / 2.0, sc.height as f64 / 2.0),
                 };
-                return Ok(ActionResult {
-                    x: Some(x.round() as i32),
-                    y: Some(y.round() as i32),
-                    text: None,
-                });
+                return Ok(ActionResult { x: Some(x.round() as i32), y: Some(y.round() as i32), text: None });
             }
             ActionName::MouseMove => {
-                let to =
-                    target.ok_or_else(|| Refusal::from("coordinate is required.".to_string()))?;
+                let to = target.ok_or_else(|| Refusal::from("coordinate is required.".to_string()))?;
                 self.glide(&mut pointer, &out, &sc, to).await?;
             }
             ActionName::LeftMouseDown | ActionName::LeftMouseUp => {
@@ -518,21 +509,14 @@ impl Core {
             }
             ActionName::LeftClickDrag => {
                 let from = point(&sc, input.get("start_coordinate").unwrap_or(&Value::Null))?;
-                let to =
-                    target.ok_or_else(|| Refusal::from("coordinate is required.".to_string()))?;
+                let to = target.ok_or_else(|| Refusal::from("coordinate is required.".to_string()))?;
                 self.move_to(&mut pointer, &out, &sc, from).await?;
                 self.hold(&mods, true).await?;
                 let dragged = async {
                     self.step()?;
                     self.computer.button(Button::Left, true).await?;
                     sleep(Duration::from_millis(100)).await;
-                    self.move_to(
-                        &mut pointer,
-                        &out,
-                        &sc,
-                        ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0),
-                    )
-                    .await?;
+                    self.move_to(&mut pointer, &out, &sc, ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0)).await?;
                     sleep(Duration::from_millis(50)).await;
                     self.move_to(&mut pointer, &out, &sc, to).await?;
                     sleep(Duration::from_millis(100)).await;
@@ -554,9 +538,7 @@ impl Core {
                     "left" => (-1, 0),
                     "right" => (1, 0),
                     _ => {
-                        return Err("scroll_direction must be up, down, left or right."
-                            .to_string()
-                            .into());
+                        return Err("scroll_direction must be up, down, left or right.".to_string().into());
                     }
                 };
                 let amount = num(input, "scroll_amount", f64::NAN, 1.0, 30.0)?.round() as u32;
@@ -618,9 +600,9 @@ impl Core {
         match &c.key {
             Some(Key::Named(code)) => down.push(*code),
             Some(Key::Char(ch)) => {
-                let s = table.shortcut(*ch).ok_or_else(|| {
-                    Refusal::from(format!("\"{ch}\" isn't on this computer's keyboard layout."))
-                })?;
+                let s = table
+                    .shortcut(*ch)
+                    .ok_or_else(|| Refusal::from(format!("\"{ch}\" isn't on this computer's keyboard layout.")))?;
                 if s.shift && !c.mods.contains(&Modifier::Shift) {
                     down.push(KeyCode::KEY_LEFTSHIFT);
                 }
@@ -726,17 +708,10 @@ impl Core {
         pasted
     }
 
-    async fn move_to(
-        &self,
-        pointer: &mut Pointer,
-        out: &Output,
-        sc: &Scaling,
-        to: (f64, f64),
-    ) -> Res<()> {
+    async fn move_to(&self, pointer: &mut Pointer, out: &Output, sc: &Scaling, to: (f64, f64)) -> Res<()> {
         let (lx, ly) = sc.logical(to.0, to.1);
         // A curve can bow past the edge.
-        let (lx, ly) =
-            (lx.clamp(0.0, out.width as f64 - 1.0), ly.clamp(0.0, out.height as f64 - 1.0));
+        let (lx, ly) = (lx.clamp(0.0, out.width as f64 - 1.0), ly.clamp(0.0, out.height as f64 - 1.0));
         self.step()?;
         self.computer.pointer_to(out.clone(), lx, ly).await?;
         pointer.at = Some((out.name.clone(), lx, ly));
@@ -744,13 +719,7 @@ impl Core {
     }
 
     /// Moves the pointer along a person's curve, in the screenshot's pixels.
-    async fn glide(
-        &self,
-        pointer: &mut Pointer,
-        out: &Output,
-        sc: &Scaling,
-        to: (f64, f64),
-    ) -> Res<()> {
+    async fn glide(&self, pointer: &mut Pointer, out: &Output, sc: &Scaling, to: (f64, f64)) -> Res<()> {
         let from = match &pointer.at {
             Some((o, x, y)) if *o == out.name => Some(sc.shot(*x, *y)),
             _ => None,
@@ -762,8 +731,7 @@ impl Core {
         let last = steps.len().saturating_sub(1);
         for (i, p) in steps.into_iter().enumerate() {
             self.move_to(pointer, out, sc, p).await?;
-            sleep(Duration::from_millis(if i == last { between(40, 120) } else { between(6, 16) }))
-                .await;
+            sleep(Duration::from_millis(if i == last { between(40, 120) } else { between(6, 16) })).await;
         }
         Ok(())
     }
@@ -773,8 +741,7 @@ impl Core {
         self.state().live_control_until = Some(Instant::now() + LIVE_CONTROL_HOLD);
         let (out, sc) = self.screen().await?;
         let at = |x: f64, y: f64| {
-            let (x, y) = sc
-                .logical(x.clamp(0.0, sc.width as f64 - 1.0), y.clamp(0.0, sc.height as f64 - 1.0));
+            let (x, y) = sc.logical(x.clamp(0.0, sc.width as f64 - 1.0), y.clamp(0.0, sc.height as f64 - 1.0));
             (out.clone(), x, y)
         };
         self.own_input();
@@ -873,8 +840,7 @@ fn num(input: &Map<String, Value>, name: &str, default: f64, min: f64, max: f64)
 }
 
 fn point(sc: &Scaling, v: &Value) -> Res<(f64, f64)> {
-    let xy =
-        v.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a[0].as_f64()?, a[1].as_f64()?)));
+    let xy = v.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a[0].as_f64()?, a[1].as_f64()?)));
     let (x, y) = xy.ok_or_else(|| Refusal::from("coordinate must be [x, y].".to_string()))?;
     Ok(sc.point(x, y)?)
 }
@@ -989,9 +955,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn maps_the_screenshots_pixels_to_the_monitors() {
         let (fake, core) = core(true);
-        let Ok(ComputerResult::Screenshot { width, height, .. }) =
-            core.handle(Request::Screenshot).await
-        else {
+        let Ok(ComputerResult::Screenshot { width, height, .. }) = core.handle(Request::Screenshot).await else {
             panic!("no screenshot");
         };
         assert_eq!((width, height), (1280, 800));
@@ -1002,12 +966,9 @@ mod tests {
             _ => None,
         });
         assert_eq!(last_move, Some((800.0, 500.0)));
-        assert!(
-            calls.ends_with(&[Call::Button(Button::Left, true), Call::Button(Button::Left, false)])
-        );
+        assert!(calls.ends_with(&[Call::Button(Button::Left, true), Call::Button(Button::Left, false)]));
         assert_eq!(code(&core, click(1280, 10)).await, Some(ErrorCode::Failed));
-        let Ok(ComputerResult::Action { result }) =
-            core.handle(action(ActionName::CursorPosition, json!({}))).await
+        let Ok(ComputerResult::Action { result }) = core.handle(action(ActionName::CursorPosition, json!({}))).await
         else {
             panic!("no position");
         };
@@ -1018,10 +979,7 @@ mod tests {
     async fn only_one_task_has_the_screen() {
         let (_, core) = core(true);
         core.handle(Request::Claim { task_id: "a".into() }).await.unwrap();
-        assert_eq!(
-            code(&core, Request::Claim { task_id: "b".into() }).await,
-            Some(ErrorCode::Busy)
-        );
+        assert_eq!(code(&core, Request::Claim { task_id: "b".into() }).await, Some(ErrorCode::Busy));
         core.handle(Request::Release { task_id: "b".into() }).await.unwrap();
         assert!(core.status().screen.is_some());
         core.handle(Request::Release { task_id: "a".into() }).await.unwrap();
@@ -1052,9 +1010,7 @@ mod tests {
         let typed = action(ActionName::Type, json!({"text": "secret"}));
         assert_eq!(code(&core, typed.clone()).await, Some(ErrorCode::Hidden));
         assert!(fake.calls().is_empty());
-        let Ok(ComputerResult::Windows { windows }) = core.handle(Request::Windows).await else {
-            panic!()
-        };
+        let Ok(ComputerResult::Windows { windows }) = core.handle(Request::Windows).await else { panic!() };
         assert_eq!(windows[0].hidden, Some(true));
         // Shown again, it's typed into.
         fake.frame.lock().unwrap().rgb.fill(200);
@@ -1081,24 +1037,18 @@ mod tests {
     async fn lets_go_of_modifiers_and_refuses_keys_off_the_lists() {
         let (fake, core) = core(true);
         core.handle(action(ActionName::Key, json!({"text": "ctrl+shift+Escape"}))).await.unwrap();
-        let downs: Vec<_> =
-            fake.calls().into_iter().filter(|c| matches!(c, Call::Key(_, true))).collect();
-        let ups: Vec<_> =
-            fake.calls().into_iter().filter(|c| matches!(c, Call::Key(_, false))).collect();
+        let downs: Vec<_> = fake.calls().into_iter().filter(|c| matches!(c, Call::Key(_, true))).collect();
+        let ups: Vec<_> = fake.calls().into_iter().filter(|c| matches!(c, Call::Key(_, false))).collect();
         assert_eq!(downs.len(), 3);
         assert_eq!(ups.len(), 3);
         assert_eq!(ups.last(), Some(&Call::Key(KeyCode::KEY_LEFTCTRL, false)));
-        assert_eq!(
-            code(&core, action(ActionName::Key, json!({"text": "0xff0d"}))).await,
-            Some(ErrorCode::Failed)
-        );
+        assert_eq!(code(&core, action(ActionName::Key, json!({"text": "0xff0d"}))).await, Some(ErrorCode::Failed));
     }
 
     #[tokio::test(start_paused = true)]
     async fn refuses_commands_that_run_as_root() {
         let (_, core) = core(true);
-        let r =
-            core.handle(Request::Exec { command: "sudo rm -rf /".into(), timeout_ms: 1000 }).await;
+        let r = core.handle(Request::Exec { command: "sudo rm -rf /".into(), timeout_ms: 1000 }).await;
         assert_eq!(r.err().map(|r| r.code), Some(ErrorCode::Failed));
     }
 }

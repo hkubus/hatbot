@@ -26,9 +26,8 @@ pub fn path(from: (f64, f64), to: (f64, f64)) -> Vec<(f64, f64)> {
     for i in 1..steps {
         let t = ease_in_out(i as f64 / steps as f64);
         let u = 1.0 - t;
-        let bez = |a: f64, b: f64, c: f64, d: f64| {
-            u.powi(3) * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t.powi(3) * d
-        };
+        let bez =
+            |a: f64, b: f64, c: f64, d: f64| u.powi(3) * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t.powi(3) * d;
         let p = (bez(from.0, c1.0, c2.0, to.0).round(), bez(from.1, c1.1, c2.1, to.1).round());
         if out.last() != Some(&p) {
             out.push(p);

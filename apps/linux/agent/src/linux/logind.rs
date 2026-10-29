@@ -16,10 +16,7 @@ trait Manager {
     fn list_sessions(&self) -> zbus::Result<Vec<(String, u32, String, String, OwnedObjectPath)>>;
 }
 
-#[zbus::proxy(
-    interface = "org.freedesktop.login1.Session",
-    default_service = "org.freedesktop.login1"
-)]
+#[zbus::proxy(interface = "org.freedesktop.login1.Session", default_service = "org.freedesktop.login1")]
 trait Session {
     #[zbus(property)]
     fn locked_hint(&self) -> zbus::Result<bool>;

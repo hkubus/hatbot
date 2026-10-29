@@ -60,8 +60,7 @@ pub async fn run(command: &str, timeout_ms: u64) -> Result<ShellResult, String> 
     let limit = Duration::from_millis(timeout_ms.max(1000)).min(MAX_TIMEOUT);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let waited = tokio::time::timeout(limit, async {
-        let (_, _, status) =
-            tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err), child.wait());
+        let (_, _, status) = tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err), child.wait());
         status
     })
     .await;

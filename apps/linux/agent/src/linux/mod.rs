@@ -15,9 +15,7 @@ use std::sync::{Arc, Mutex};
 use evdev::KeyCode;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::computer::{
-    BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, SessionEvent, Window,
-};
+use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, SessionEvent, Window};
 use crate::protocol::AgentElement;
 use crate::typing::KeyTable;
 
@@ -58,10 +56,7 @@ impl LinuxComputer {
     /// Connects to the session. Inside a Tokio runtime: the lock and accessibility watchers run on it.
     pub fn start() -> (Self, mpsc::UnboundedReceiver<SessionEvent>) {
         let (events, rx) = mpsc::unbounded_channel();
-        let wayland = Wayland::connect(None, events.clone())
-            .inspect_err(|e| tracing::warn!("{e}"))
-            .ok()
-            .map(Arc::new);
+        let wayland = Wayland::connect(None, events.clone()).inspect_err(|e| tracing::warn!("{e}")).ok().map(Arc::new);
         // Made now so the compositor has picked the device up before the first key.
         let keyboard = Keyboard::open().inspect_err(|e| tracing::warn!("{e}")).ok();
         tokio::spawn(logind::watch(events.clone()));
@@ -136,12 +131,7 @@ impl Computer for LinuxComputer {
                 && let Some(o) = niri.focused_output().await?
                 && let Some(l) = o.logical
             {
-                return Ok(Output {
-                    name: o.name,
-                    width: l.width,
-                    height: l.height,
-                    scale: l.scale,
-                });
+                return Ok(Output { name: o.name, width: l.width, height: l.height, scale: l.scale });
             }
             // Elsewhere the first monitor stands in: wlroots doesn't say which has focus.
             let outputs = self.wayland()?.outputs().await?;
@@ -187,12 +177,8 @@ impl Computer for LinuxComputer {
             let table = match cache.as_ref() {
                 Some((t, table)) if *t == text => table.clone(),
                 _ => {
-                    let table = if text.is_empty() {
-                        KeyTable::default_keymap()
-                    } else {
-                        KeyTable::from_keymap(&text)
-                    }
-                    .ok_or("Can't read this computer's keyboard layout.")?;
+                    let table = if text.is_empty() { KeyTable::default_keymap() } else { KeyTable::from_keymap(&text) }
+                        .ok_or("Can't read this computer's keyboard layout.")?;
                     *cache = Some((text, table.clone()));
                     table
                 }

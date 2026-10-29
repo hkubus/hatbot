@@ -14,13 +14,10 @@ use calloop_wayland_source::WaylandSource;
 use tokio::sync::{mpsc, oneshot};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{
-    wl_buffer::WlBuffer, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_output::WlOutput,
-    wl_pointer, wl_registry, wl_registry::WlRegistry, wl_seat, wl_seat::WlSeat, wl_shm,
-    wl_shm::WlShm, wl_shm_pool::WlShmPool,
+    wl_buffer::WlBuffer, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_output::WlOutput, wl_pointer, wl_registry,
+    wl_registry::WlRegistry, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm, wl_shm_pool::WlShmPool,
 };
-use wayland_client::{
-    Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop, event_created_child,
-};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop, event_created_child};
 use wayland_protocols::ext::idle_notify::v1::client::{
     ext_idle_notification_v1::{self, ExtIdleNotificationV1},
     ext_idle_notifier_v1::ExtIdleNotifierV1,
@@ -40,8 +37,7 @@ use wayland_protocols_wlr::screencopy::v1::client::{
     zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
 };
 use wayland_protocols_wlr::virtual_pointer::v1::client::{
-    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
-    zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1, zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
 };
 
 use crate::activity::{NOTICE_MS, QUIET_MS};
@@ -88,33 +84,27 @@ const GONE: &str = "The Wayland session has gone.";
 
 impl Wayland {
     /// Connects to the session's compositor ($WAYLAND_DISPLAY), or the one at a socket's path.
-    pub fn connect(
-        socket: Option<&std::path::Path>,
-        events: mpsc::UnboundedSender<SessionEvent>,
-    ) -> Result<Self> {
+    pub fn connect(socket: Option<&std::path::Path>, events: mpsc::UnboundedSender<SessionEvent>) -> Result<Self> {
         let conn = match socket {
             Some(path) => {
                 let stream = std::os::unix::net::UnixStream::connect(path)
                     .map_err(|e| format!("Can't reach the Wayland compositor: {e}."))?;
-                Connection::from_socket(stream)
-                    .map_err(|e| format!("Can't reach the Wayland compositor: {e}."))?
+                Connection::from_socket(stream).map_err(|e| format!("Can't reach the Wayland compositor: {e}."))?
             }
-            None => Connection::connect_to_env()
-                .map_err(|e| format!("Can't reach the Wayland compositor: {e}."))?,
+            None => Connection::connect_to_env().map_err(|e| format!("Can't reach the Wayland compositor: {e}."))?,
         };
-        let (globals, queue) = registry_queue_init::<State>(&conn)
-            .map_err(|e| format!("The Wayland compositor didn't answer: {e}."))?;
+        let (globals, queue) =
+            registry_queue_init::<State>(&conn).map_err(|e| format!("The Wayland compositor didn't answer: {e}."))?;
         let qh = queue.handle();
         let bind = |name: &str, max: u32| {
-            globals.contents().with_list(|l| {
-                l.iter().find(|g| g.interface == name).map(|g| (g.name, g.version.min(max)))
-            })
+            globals
+                .contents()
+                .with_list(|l| l.iter().find(|g| g.interface == name).map(|g| (g.name, g.version.min(max))))
         };
         let registry = globals.registry();
         macro_rules! global {
             ($t:ty, $max:expr) => {
-                bind(<$t>::interface().name, $max)
-                    .map(|(n, v)| registry.bind::<$t, _, State>(n, v, &qh, ()))
+                bind(<$t>::interface().name, $max).map(|(n, v)| registry.bind::<$t, _, State>(n, v, &qh, ()))
             };
         }
         let mut state = State {
@@ -140,19 +130,14 @@ impl Wayland {
             captures: HashMap::new(),
         };
         let outputs: Vec<_> = globals.contents().with_list(|l| {
-            l.iter()
-                .filter(|g| g.interface == WlOutput::interface().name)
-                .map(|g| (g.name, g.version))
-                .collect()
+            l.iter().filter(|g| g.interface == WlOutput::interface().name).map(|g| (g.name, g.version)).collect()
         });
         for (name, version) in outputs {
             state.add_output(registry, name, version);
         }
         let mut queue = queue;
         // One round trip fills in the monitors' names and sizes, and the keymap.
-        queue
-            .roundtrip(&mut state)
-            .map_err(|e| format!("The Wayland compositor didn't answer: {e}."))?;
+        queue.roundtrip(&mut state).map_err(|e| format!("The Wayland compositor didn't answer: {e}."))?;
         let has = Has {
             screencopy: state.screencopy.is_some() && state.shm.is_some(),
             pointer: state.pointer_manager.is_some() && state.seat.is_some(),
@@ -386,11 +371,7 @@ impl State {
                         Button::Right => 0x111,
                         Button::Middle => 0x112,
                     };
-                    let state = if down {
-                        wl_pointer::ButtonState::Pressed
-                    } else {
-                        wl_pointer::ButtonState::Released
-                    };
+                    let state = if down { wl_pointer::ButtonState::Pressed } else { wl_pointer::ButtonState::Released };
                     p.button(self.time(), code, state);
                     p.frame();
                 });
@@ -400,10 +381,8 @@ impl State {
                 let t = self.time();
                 let r = self.pointer(None).map(|p| {
                     p.axis_source(wl_pointer::AxisSource::Wheel);
-                    for (axis, n) in [
-                        (wl_pointer::Axis::VerticalScroll, dy),
-                        (wl_pointer::Axis::HorizontalScroll, dx),
-                    ] {
+                    for (axis, n) in [(wl_pointer::Axis::VerticalScroll, dy), (wl_pointer::Axis::HorizontalScroll, dx)]
+                    {
                         if n != 0 {
                             p.axis_discrete(t, axis, 15.0 * n as f64, n);
                         }
@@ -480,17 +459,12 @@ impl State {
     }
 
     fn capture(&mut self, output: String, reply: Reply<Frame>) {
-        let (Some(sc), Some(o)) =
-            (&self.screencopy, self.outputs.iter().find(|o| o.name == output))
-        else {
+        let (Some(sc), Some(o)) = (&self.screencopy, self.outputs.iter().find(|o| o.name == output)) else {
             let _ = reply.send(Err("Can't capture that monitor.".into()));
             return;
         };
         let frame = sc.capture_output(1, &o.output, &self.qh, ());
-        self.captures.insert(
-            frame.id(),
-            Capture { reply: Some(reply), format: None, buffer: None, y_invert: false },
-        );
+        self.captures.insert(frame.id(), Capture { reply: Some(reply), format: None, buffer: None, y_invert: false });
         let _ = self.flush();
     }
 
@@ -585,9 +559,7 @@ impl Dispatch<WlRegistry, GlobalListContents> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version }
-                if interface == WlOutput::interface().name =>
-            {
+            wl_registry::Event::Global { name, interface, version } if interface == WlOutput::interface().name => {
                 state.add_output(registry, name, version);
             }
             wl_registry::Event::GlobalRemove { name } => {
@@ -637,9 +609,7 @@ impl Dispatch<ZxdgOutputV1, WlOutput> for State {
         let (x, y, w, h) = o.logical.unwrap_or_default();
         match event {
             zxdg_output_v1::Event::LogicalPosition { x, y } => o.logical = Some((x, y, w, h)),
-            zxdg_output_v1::Event::LogicalSize { width, height } => {
-                o.logical = Some((x, y, width, height))
-            }
+            zxdg_output_v1::Event::LogicalSize { width, height } => o.logical = Some((x, y, width, height)),
             // Old wl_outputs have no name of their own.
             zxdg_output_v1::Event::Name { name } if o.name.is_empty() => o.name = name,
             _ => {}
@@ -648,14 +618,7 @@ impl Dispatch<ZxdgOutputV1, WlOutput> for State {
 }
 
 impl Dispatch<WlSeat, ()> for State {
-    fn event(
-        state: &mut Self,
-        seat: &WlSeat,
-        event: wl_seat::Event,
-        _: &(),
-        _: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
+    fn event(state: &mut Self, seat: &WlSeat, event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(c) } = event
             && c.contains(wl_seat::Capability::Keyboard)
             && state.keyboard.is_none()
@@ -674,12 +637,7 @@ impl Dispatch<WlKeyboard, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Keymap {
-            format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
-            fd,
-            size,
-        } = event
-        {
+        if let wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } = event {
             let map = unsafe {
                 rustix::mm::mmap(
                     std::ptr::null_mut(),

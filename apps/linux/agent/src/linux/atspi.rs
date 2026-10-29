@@ -24,11 +24,10 @@ type Proxy = AccessibleProxy<'static>;
 
 impl Atspi {
     pub async fn connect() -> Result<Self> {
-        let a11y =
-            tokio::time::timeout(Duration::from_secs(3), atspi::AccessibilityConnection::new())
-                .await
-                .map_err(|_| "The accessibility bus didn't answer.".to_string())?
-                .map_err(|e| format!("No accessibility bus: {e}."))?;
+        let a11y = tokio::time::timeout(Duration::from_secs(3), atspi::AccessibilityConnection::new())
+            .await
+            .map_err(|_| "The accessibility bus didn't answer.".to_string())?
+            .map_err(|e| format!("No accessibility bus: {e}."))?;
         Ok(Self { conn: a11y.connection().clone() })
     }
 
@@ -91,8 +90,7 @@ impl Atspi {
                 if title.is_some() && w.name().await.ok().as_deref() == title {
                     return Ok(Some(w));
                 }
-                if active.is_none() && w.get_state().await.is_ok_and(|s| s.contains(State::Active))
-                {
+                if active.is_none() && w.get_state().await.is_ok_and(|s| s.contains(State::Active)) {
                     active = Some(w);
                 }
             }
@@ -109,9 +107,7 @@ impl Atspi {
                 // Each step gives the child at the point; the deepest is the element.
                 for _ in 0..40 {
                     let c = self.component(&cur).await?;
-                    let Ok(child) =
-                        c.get_accessible_at_point(x as i32, y as i32, CoordType::Window).await
-                    else {
+                    let Ok(child) = c.get_accessible_at_point(x as i32, y as i32, CoordType::Window).await else {
                         break;
                     };
                     if child.is_null() {
@@ -170,9 +166,8 @@ impl Atspi {
             label = p.description().await.unwrap_or_default().trim().to_owned();
         }
         let label: String = label.chars().take(200).collect();
-        let text_box =
-            matches!(role, Role::Entry | Role::PasswordText | Role::Text | Role::Terminal)
-                || matches!(role, Role::ComboBox if state.contains(State::Editable));
+        let text_box = matches!(role, Role::Entry | Role::PasswordText | Role::Text | Role::Terminal)
+            || matches!(role, Role::ComboBox if state.contains(State::Editable));
         let editable = state.contains(State::Editable) && text_box;
         let mut el = AgentElement {
             tag: p.get_role_name().await.unwrap_or_default(),
@@ -182,10 +177,8 @@ impl Atspi {
             in_form: false,
             editable: Some(editable),
             secret: (role == Role::PasswordText).then_some(true),
-            toggle: (matches!(
-                role,
-                Role::ToggleButton | Role::CheckBox | Role::PageTab | Role::Menu
-            ) || state.contains(State::Expandable))
+            toggle: (matches!(role, Role::ToggleButton | Role::CheckBox | Role::PageTab | Role::Menu)
+                || state.contains(State::Expandable))
             .then_some(true),
             ..Default::default()
         };

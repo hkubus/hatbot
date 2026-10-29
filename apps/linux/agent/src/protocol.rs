@@ -340,16 +340,10 @@ mod tests {
         assert_eq!(m, Ok(Message::Req { id: 3, req: Request::Claim { task_id: "t1".into() } }));
         let m = req(json!({"t": "req", "id": 4, "req": {"op": "action", "name": "left_click",
             "input": {"coordinate": [1, 2]}}}));
-        assert!(matches!(
-            m,
-            Ok(Message::Req { req: Request::Action { name: ActionName::LeftClick, .. }, .. })
-        ));
+        assert!(matches!(m, Ok(Message::Req { req: Request::Action { name: ActionName::LeftClick, .. }, .. })));
         let m = req(json!({"t": "req", "id": 5, "req": {"op": "live_input",
             "input": {"t": "button", "button": 1, "down": true, "x": 3, "y": 4}}}));
-        assert!(matches!(
-            m,
-            Ok(Message::Req { req: Request::LiveInput { input: LiveInput::Button { .. } }, .. })
-        ));
+        assert!(matches!(m, Ok(Message::Req { req: Request::LiveInput { input: LiveInput::Button { .. } }, .. })));
     }
 
     #[test]
@@ -359,40 +353,24 @@ mod tests {
             req(json!({"t": "req", "id": 6, "req": {"op": "teleport", "where": "moon"}})),
             Ok(Message::Req { id: 6, req: Request::Unknown })
         );
-        let m = req(
-            json!({"t": "req", "id": 7, "req": {"op": "action", "name": "juggle", "input": {}}}),
-        );
-        assert!(matches!(
-            m,
-            Ok(Message::Req { req: Request::Action { name: ActionName::Unknown, .. }, .. })
-        ));
-        let m =
-            req(json!({"t": "req", "id": 8, "req": {"op": "live_input", "input": {"t": "pinch"}}}));
-        assert!(matches!(
-            m,
-            Ok(Message::Req { req: Request::LiveInput { input: LiveInput::Unknown }, .. })
-        ));
+        let m = req(json!({"t": "req", "id": 7, "req": {"op": "action", "name": "juggle", "input": {}}}));
+        assert!(matches!(m, Ok(Message::Req { req: Request::Action { name: ActionName::Unknown, .. }, .. })));
+        let m = req(json!({"t": "req", "id": 8, "req": {"op": "live_input", "input": {"t": "pinch"}}}));
+        assert!(matches!(m, Ok(Message::Req { req: Request::LiveInput { input: LiveInput::Unknown }, .. })));
         // A known op it can't read still gets an answer, by its id.
-        assert_eq!(
-            req(json!({"t": "req", "id": 9, "req": {"op": "zoom", "x": "a"}})),
-            Err(Some(9))
-        );
+        assert_eq!(req(json!({"t": "req", "id": 9, "req": {"op": "zoom", "x": "a"}})), Err(Some(9)));
         let e: ErrorCode = serde_json::from_value(json!("sleepy")).unwrap();
         assert_eq!(e, ErrorCode::Unknown);
     }
 
     #[test]
     fn answers_in_the_brains_shape() {
-        let ok = Message::Res(Response::ok(
-            1,
-            ComputerResult::Screenshot { data: "x".into(), width: 2, height: 3 },
-        ));
+        let ok = Message::Res(Response::ok(1, ComputerResult::Screenshot { data: "x".into(), width: 2, height: 3 }));
         assert_eq!(
             serde_json::to_value(&ok).unwrap(),
             json!({"t": "res", "id": 1, "ok": true, "res": {"op": "screenshot", "data": "x", "width": 2, "height": 3}})
         );
-        let err =
-            Message::Res(Response::err(2, ErrorCode::Owner, "The owner is using the computer."));
+        let err = Message::Res(Response::err(2, ErrorCode::Owner, "The owner is using the computer."));
         assert_eq!(
             serde_json::to_value(&err).unwrap(),
             json!({"t": "res", "id": 2, "ok": false, "code": "owner", "error": "The owner is using the computer."})
@@ -410,8 +388,7 @@ mod tests {
         assert_eq!(v["t"], "hello");
         assert_eq!(v["machineId"], "m");
         assert_eq!(serde_json::from_value::<Message>(v).unwrap(), hello);
-        let status =
-            Message::Status { status: ComputerStatus { owner_active: true, ..Default::default() } };
+        let status = Message::Status { status: ComputerStatus { owner_active: true, ..Default::default() } };
         assert_eq!(serde_json::to_value(&status).unwrap()["status"]["ownerActive"], true);
     }
 }

@@ -48,10 +48,8 @@ fn sway(name: &str) -> Option<(Sway, PathBuf)> {
     let deadline = Instant::now() + Duration::from_secs(10);
     let socket = loop {
         let found = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).find(|p| {
-            p.file_name().is_some_and(|n| {
-                n.to_string_lossy().starts_with("wayland-")
-                    && !n.to_string_lossy().ends_with(".lock")
-            })
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("wayland-") && !n.to_string_lossy().ends_with(".lock"))
         });
         if let Some(s) = found {
             break s;

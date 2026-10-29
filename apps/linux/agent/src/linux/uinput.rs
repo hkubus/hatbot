@@ -18,9 +18,7 @@ impl Keyboard {
             .and_then(|b| b.name("Hatbot keyboard").with_keys(&keys))
             .and_then(|b| b.build())
             .map_err(|e| {
-                format!(
-                    "Can't type: /dev/uinput can't be opened ({e}). Install Hatbot's udev rule and log in again."
-                )
+                format!("Can't type: /dev/uinput can't be opened ({e}). Install Hatbot's udev rule and log in again.")
             })?;
         Ok(Self(dev))
     }

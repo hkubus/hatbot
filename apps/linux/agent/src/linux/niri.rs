@@ -73,8 +73,7 @@ impl Niri {
         s.write_all(format!("{req}\n").as_bytes()).await.map_err(fail)?;
         let mut line = String::new();
         BufReader::new(s).read_line(&mut line).await.map_err(fail)?;
-        let mut reply: Value = serde_json::from_str(&line)
-            .map_err(|_| "niri's reply couldn't be read.".to_string())?;
+        let mut reply: Value = serde_json::from_str(&line).map_err(|_| "niri's reply couldn't be read.".to_string())?;
         if let Some(e) = reply.get("Err").and_then(Value::as_str) {
             return Err(format!("niri: {e}"));
         }
@@ -108,9 +107,9 @@ impl Niri {
 }
 
 fn place(w: NiriWindow, workspaces: &[Workspace], output: &str) -> Window {
-    let showing = workspaces.iter().any(|ws| {
-        Some(ws.id) == w.workspace_id && ws.is_active && ws.output.as_deref() == Some(output)
-    });
+    let showing = workspaces
+        .iter()
+        .any(|ws| Some(ws.id) == w.workspace_id && ws.is_active && ws.output.as_deref() == Some(output));
     let rect = w.layout.as_ref().filter(|_| showing).and_then(|l| {
         let (tx, ty) = l.tile_pos_in_workspace_view?;
         let (ox, oy) = l.window_offset_in_tile.unwrap_or_default();

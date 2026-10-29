@@ -44,8 +44,9 @@ fn modifier(lower: &str) -> Option<Modifier> {
         "ctrl" | "control" | "control_l" | "control_r" => Modifier::Ctrl,
         "shift" | "shift_l" | "shift_r" => Modifier::Shift,
         "alt" | "option" | "alt_l" | "alt_r" => Modifier::Alt,
-        "super" | "meta" | "cmd" | "command" | "win" | "windows" | "super_l" | "super_r"
-        | "meta_l" | "meta_r" => Modifier::Super,
+        "super" | "meta" | "cmd" | "command" | "win" | "windows" | "super_l" | "super_r" | "meta_l" | "meta_r" => {
+            Modifier::Super
+        }
         _ => return None,
     })
 }
@@ -139,9 +140,7 @@ pub fn read_combo(text: &str) -> Result<Combo, KeyError> {
             )));
         };
         if key.is_some() {
-            return Err(KeyError(format!(
-                "\"{text}\": put the modifiers first and one key last, like ctrl+shift+t."
-            )));
+            return Err(KeyError(format!("\"{text}\": put the modifiers first and one key last, like ctrl+shift+t.")));
         }
         match k {
             Key::Mod(m) => mods.push(m),
@@ -167,9 +166,8 @@ pub fn read_modifiers(text: Option<&str>) -> Result<Vec<Modifier>, KeyError> {
     };
     text.split('+')
         .map(|p| {
-            modifier(&p.trim().to_lowercase()).ok_or_else(|| {
-                KeyError(format!("\"{p}\" is not a modifier key (ctrl, shift, alt, super)."))
-            })
+            modifier(&p.trim().to_lowercase())
+                .ok_or_else(|| KeyError(format!("\"{p}\" is not a modifier key (ctrl, shift, alt, super).")))
         })
         .collect()
 }

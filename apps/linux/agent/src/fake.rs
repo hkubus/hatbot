@@ -5,9 +5,7 @@ use std::sync::Mutex;
 use evdev::KeyCode;
 use tokio::sync::oneshot;
 
-use crate::computer::{
-    BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, Window,
-};
+use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, Window};
 use crate::protocol::AgentElement;
 use crate::typing::KeyTable;
 
@@ -64,9 +62,7 @@ impl Computer for Fake {
     }
 
     fn focused_output(&self) -> BoxFuture<'_, Result<Output>> {
-        Box::pin(async {
-            Ok(Output { name: "DP-1".into(), width: OUTPUT.0, height: OUTPUT.1, scale: 1.0 })
-        })
+        Box::pin(async { Ok(Output { name: "DP-1".into(), width: OUTPUT.0, height: OUTPUT.1, scale: 1.0 }) })
     }
 
     fn capture(&self, _: String) -> BoxFuture<'_, Result<Frame>> {
