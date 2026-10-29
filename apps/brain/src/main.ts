@@ -23,7 +23,10 @@ const brain = await createServices({
   // systemd starts it again (Restart=on-failure), with the plugins as they are now.
   restart: () => {
     console.log("restarting to load plugins");
-    setTimeout(() => process.exit(75), 500);
+    // After the answer has gone, and with the plugins stopped, but not waiting long on one.
+    setTimeout(() => {
+      void Promise.race([plugins.stopAll(), Bun.sleep(10_000)]).finally(() => process.exit(75));
+    }, 500);
   },
 });
 const { app, auth, approvals, chats, negotiations, plugins, tasks } = brain;

@@ -13,6 +13,8 @@ stopPluginsAfterEach();
 const PLUGIN = (
   id = "hello",
   sdk = 1,
+  more = "",
+  migration = `CREATE TABLE ${id}_notes (text TEXT NOT NULL)`,
 ) => `import { definePlugin, ready, tool, z } from "@hatbot/plugin-sdk";
 
 export default definePlugin({
@@ -22,7 +24,7 @@ export default definePlugin({
   sdk: ${sdk},
   env: [{ name: "HELLO_TOKEN", secret: true, optional: true }],
   config: z.object({ greeting: z.string().default("hi") }),
-  migrations: ["CREATE TABLE ${id}_notes (text TEXT NOT NULL)"],
+  migrations: [${JSON.stringify(migration)}],${more}
   tables: ["${id}_notes"],
   start: ({ config }) =>
     ready([
@@ -60,14 +62,14 @@ function repo(files: Record<string, string>) {
   return { url: dir, commit: git(dir, "rev-parse", "HEAD") };
 }
 
-const helloRepo = (id = "hello", sdk = 1) =>
+const helloRepo = (id = "hello", sdk = 1, more = "") =>
   repo({
     "package.json": JSON.stringify({
       name: `hatbot-plugin-${id}`,
       exports: { ".": "./src/index.ts" },
       dependencies: { "@hatbot/plugin-sdk": "workspace:*" },
     }),
-    "src/index.ts": PLUGIN(id, sdk),
+    "src/index.ts": PLUGIN(id, sdk, more),
   });
 
 const app = (more = {}, work = new FakeModel()) =>
@@ -119,6 +121,13 @@ test("installing refuses what isn't a plugin for this Hatbot", async () => {
   );
   expect(await refused(helloRepo("boxes"))).toBe(`There's a plugin called "boxes" already.`);
   expect(await refused(helloRepo("hello", 2))).toContain("version 2");
+  expect(await refused(helloRepo("checks"))).toBe(`Its id, "checks", can't be used.`);
+  expect(await refused(helloRepo("hello", 1, `routes: ["/schedules"],`))).toBe(
+    "Automation answers /schedules already.",
+  );
+  expect(await refused(helloRepo("hello", 1, `provides: ["tasks"],`))).toBe(
+    `Hatbot provides "tasks" itself.`,
+  );
   expect(await refused(repo({ "package.json": "{}", "src/index.ts": "export const x = 1;" }))).toBe(
     "It doesn't export a plugin.",
   );
@@ -161,6 +170,27 @@ test("one that can't be loaded says why, and can still be uninstalled", async ()
   expect(again.installer.list()).toEqual([]);
 });
 
+test("one that can't run beside the rest doesn't stop the brain starting", async () => {
+  // Changed under it after it was installed: a migration that fails, a path a built-in plugin answers.
+  for (const [id, more, migration, why] of [
+    ["hello", "", "NOT SQL", "It couldn't be loaded: near"],
+    ["howdy", `routes: ["/schedules"],`, undefined, "It couldn't be loaded: Automation answers"],
+  ] as const) {
+    const t = track(await app());
+    await install(t, helloRepo(id));
+    const src = join(t.config.dataDir, "installed", id, "src", "index.ts");
+    writeFileSync(src, PLUGIN(id, 1, more, migration));
+    const again = await restarted(t);
+    await again.plugins.update(id, { enabled: true });
+    const hello = await info(again, id);
+    expect(hello.state).toBe("error");
+    expect(hello.message).toStartWith(why);
+    expect((await again.call("DELETE", `/plugins/${id}`, undefined, signIn(again))).status).toBe(
+      200,
+    );
+  }
+});
+
 test("uninstalling keeps what it kept; deleting its data clears it", async () => {
   const t = track(await app());
   await install(t, helloRepo());
@@ -188,7 +218,9 @@ test("uninstalling keeps what it kept; deleting its data clears it", async () =>
   expect(res.status).toBe(200);
   expect(third.db.query("SELECT text FROM hello_notes").all()).toEqual([]);
   expect(third.secrets.pluginEnv().HELLO_TOKEN).toBeUndefined();
-  expect(third.db.query("SELECT key FROM settings WHERE key = 'plugin:hello'").all()).toEqual([]);
+  expect(third.db.query("SELECT value FROM settings WHERE key = 'plugin:hello'").all()).toEqual([
+    { value: '{"enabled":false}' },
+  ]);
   expect(existsSync(kept)).toBe(false);
 });
 
@@ -200,6 +232,8 @@ test("a plugin's data is deleted only while it's off", async () => {
   await t.plugins.update("boxes", { enabled: false });
   const off = await t.call("POST", "/plugins/boxes/forget", undefined, signIn(t));
   expect(off.status).toBe(200);
+  // On by default, it stays off after its data goes.
+  expect((await info(await restarted(t), "boxes")).enabled).toBe(false);
 });
 
 test("plugins.json entries that aren't right are left out", () => {

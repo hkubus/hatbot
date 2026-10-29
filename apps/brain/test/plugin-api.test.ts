@@ -196,21 +196,44 @@ test("a plugin's tick runs only while it's on", async () => {
   await expect(t.plugins.tick("ticker", "count")).rejects.toThrow();
 });
 
-test("a service the core provides counts for a plugin's needs, and no plugin may provide it too", async () => {
+test("a service the core provides counts for a plugin's needs, and no plugin may provide it too, nor answer another's path", async () => {
   const t = await app([plain({ id: "planner", needs: ["schedules"], defaultOn: true })]);
   expect(t.plugins.get("planner")?.state).toBe("ready");
   const { Plugins } = await import("../src/plugins/registry");
-  expect(
-    () =>
-      new Plugins([plain({ id: "rival", provides: ["schedules"] })], {
-        db: t.db,
-        events: { emit: () => {} } as never,
-        secrets: t.secrets,
-        dataDir: t.config.dataDir,
-        reserved: [],
-        services: { schedules: () => ({}) },
-      }),
-  ).toThrow("both provide");
+  const registry = (plugins: Plugin[]) =>
+    new Plugins(plugins, {
+      db: t.db,
+      events: { emit: () => {} } as never,
+      secrets: t.secrets,
+      dataDir: t.config.dataDir,
+      reserved: [],
+      services: { schedules: () => ({}) },
+    });
+  expect(() => registry([plain({ id: "rival", provides: ["schedules"] })])).toThrow(
+    `Hatbot provides "schedules" itself`,
+  );
+  expect(() =>
+    registry([plain({ id: "one", routes: ["/x"] }), plain({ id: "two", publicRoutes: ["/x"] })]),
+  ).toThrow("one answers /x already");
+});
+
+test("two plugins that use each other's services start each other again once, not forever", async () => {
+  let starts = 0;
+  const pair = (id: string, gives: string, uses: string) =>
+    plain({
+      id,
+      provides: [gives],
+      uses: [uses],
+      defaultOn: true,
+      start: () => {
+        starts++;
+        return ready([], { services: { [gives]: {} } });
+      },
+    });
+  const t = await app([pair("alpha", "a", "b"), pair("beta", "b", "a")]);
+  starts = 0;
+  await t.plugins.update("alpha", { config: {} });
+  expect(starts).toBe(2);
 });
 
 test("what a plugin emits reaches whoever listens, under its id", async () => {

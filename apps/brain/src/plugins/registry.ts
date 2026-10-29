@@ -89,25 +89,23 @@ export class Plugins {
     private d: PluginsDeps,
   ) {
     this.hostEnv = d.env ?? process.env;
-    const paths = new Map<string, string>();
-    for (const plugin of plugins) {
-      if (!/^[a-z][a-z0-9]{1,20}$/.test(plugin.id)) throw new Error(`bad plugin id "${plugin.id}"`);
-      if (this.slots.has(plugin.id)) throw new Error(`two plugins named "${plugin.id}"`);
-      for (const name of plugin.provides ?? []) {
-        const other = this.providers.get(name) ?? (d.services?.[name] && "the core");
-        if (other) throw new Error(`${other} and plugin ${plugin.id} both provide "${name}"`);
-        this.providers.set(name, plugin.id);
+    const core = Object.keys(d.services ?? {});
+    const added: Plugin[] = [];
+    for (let plugin of plugins) {
+      try {
+        const why = problemWith(plugin, added, core);
+        if (why) throw new Error(why);
+        // One for another version of the API stays off, and says so when switched on.
+        if ((plugin.sdk ?? SDK_VERSION) === SDK_VERSION) migrate(d.db, plugin);
+      } catch (err) {
+        const source = d.sourceOf?.(plugin.id);
+        // One installed from elsewhere mustn't keep the brain from starting.
+        if (!source) throw new Error(`plugin ${plugin.id}: ${errorText(err)}`);
+        console.error(`installed plugin ${plugin.id} not loaded`, err);
+        plugin = broken(plugin.id, source.url, `${errorText(err)}.`);
       }
-      for (const path of [
-        ...(plugin.routes ?? []),
-        ...(plugin.publicRoutes ?? []),
-        ...(plugin.sockets ?? []),
-      ]) {
-        const other = paths.get(path);
-        if (other) throw new Error(`plugins ${other} and ${plugin.id} both answer ${path}`);
-        paths.set(path, plugin.id);
-      }
-      migrate(d.db, plugin);
+      added.push(plugin);
+      for (const name of plugin.provides ?? []) this.providers.set(name, plugin.id);
       const stored = this.load(plugin);
       this.slots.set(plugin.id, {
         plugin,
@@ -143,7 +141,7 @@ export class Plugins {
       );
       // A loop of needs: start them anyway, and each says what it's missing.
       const batch = now.length ? now : todo.slice();
-      await Promise.all(batch.map((s) => this.restart(s, false)));
+      await Promise.all(batch.map((s) => this.restart(s, null)));
       for (const s of batch) {
         started.add(s.plugin.id);
         todo.splice(todo.indexOf(s), 1);
@@ -281,6 +279,8 @@ export class Plugins {
           id.length + 1,
           `${id}:`,
         );
+        // Kept off: one on by default would otherwise be on again at the next start.
+        setSetting(db, `plugin:${id}`, JSON.stringify({ enabled: false }));
         if (!tables.length) return;
         for (const t of tables) db.exec(`DROP TABLE IF EXISTS "${t}"`);
         db.query("DELETE FROM plugin_migrations WHERE plugin = ?").run(id);
@@ -446,12 +446,11 @@ export class Plugins {
   }
 
   pluginOf(toolName: string): Plugin | null {
-    const has = (s: Slot) => s.instance?.tools.some((t) => t.name === toolName);
+    // Only the core's plugins name tools after something else, and theirs come first.
+    for (const s of this.slots.values())
+      if (s.plugin.internal && s.instance?.tools.some((t) => t.name === toolName)) return s.plugin;
     const named = this.slots.get(toolName.split("_")[0] ?? "");
-    if (named && (!named.plugin.internal || has(named))) return named.plugin;
-    // Only the core's plugins name tools after something else.
-    for (const s of this.slots.values()) if (s.plugin.internal && has(s)) return s.plugin;
-    return null;
+    return named && !named.plugin.internal ? named.plugin : null;
   }
 
   private load(plugin: Plugin): { enabled: boolean; config: unknown } {
@@ -466,8 +465,8 @@ export class Plugins {
     };
   }
 
-  /** `cascade`: what needs its services starts again too. */
-  private async restart(s: Slot, cascade = true) {
+  /** `cascade`: what needs its services starts again too, but not what has already. */
+  private async restart(s: Slot, cascade: Set<string> | null = new Set()) {
     await this.stop(s, false);
     const generation = ++s.generation;
     s.state = "starting";
@@ -545,7 +544,7 @@ export class Plugins {
     this.emit(s);
     this.later(s);
     this.time(s);
-    if (cascade) await this.dependents(s);
+    if (cascade) await this.dependents(s, cascade);
   }
 
   /** What it needs that no ready plugin provides, in words; null when nothing. */
@@ -565,14 +564,15 @@ export class Plugins {
   }
 
   /** Starts again what needs or uses `s`'s services, so each gets them as they are now. */
-  private async dependents(s: Slot) {
+  private async dependents(s: Slot, done: Set<string>) {
     if (this.stopping) return;
+    done.add(s.plugin.id);
     const gives = s.plugin.provides ?? [];
-    if (!gives.length) return;
     const users = [...this.slots.values()].filter(
-      (x) => x.enabled && wants(x.plugin).some((n) => gives.includes(n)),
+      (x) => x.enabled && !done.has(x.plugin.id) && wants(x.plugin).some((n) => gives.includes(n)),
     );
-    await Promise.all(users.map((x) => this.restart(x)));
+    for (const x of users) done.add(x.plugin.id);
+    await Promise.all(users.map((x) => this.restart(x, done)));
   }
 
   private time(s: Slot) {
@@ -660,7 +660,7 @@ export class Plugins {
     } catch (err) {
       console.error(`plugin ${s.plugin.id} failed to stop`, err);
     }
-    if (cascade && was !== "off") await this.dependents(s);
+    if (cascade && was !== "off") await this.dependents(s, new Set());
   }
 
   private checkTools(plugin: Plugin, tools: PluginTool[]) {
@@ -837,6 +837,45 @@ export function verdictFor(
 const everyBot = (p: Plugin) => Boolean(p.internal || p.allBots);
 
 /** A plugin's own tables, apart from the core's: its migrations run once each, in order. */
+const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+/** Taken by the core: its settings and the plugins API's own paths. */
+const TAKEN_IDS = ["app", "checks", "index", "install", "plugin"];
+
+const pathsOf = (p: Plugin) => [
+  ...(p.routes ?? []),
+  ...(p.publicRoutes ?? []),
+  ...(p.sockets ?? []),
+];
+
+/** Why `plugin` can't run beside `others` and the core's services, or null. */
+export function problemWith(plugin: Plugin, others: Plugin[], core: string[]): string | null {
+  if (!/^[a-z][a-z0-9]{1,20}$/.test(plugin.id) || TAKEN_IDS.includes(plugin.id))
+    return `its id, "${plugin.id}", can't be used`;
+  for (const o of others) {
+    if (o.id === plugin.id) return `there's a plugin called "${plugin.id}" already`;
+    const service = plugin.provides?.find((n) => o.provides?.includes(n));
+    if (service) return `${o.name} provides "${service}" already`;
+    const path = pathsOf(plugin).find((x) => pathsOf(o).includes(x));
+    if (path) return `${o.name} answers ${path} already`;
+  }
+  const service = plugin.provides?.find((n) => core.includes(n));
+  if (service) return `Hatbot provides "${service}" itself`;
+  if (!plugin.config.safeParse({}).success) return "its settings have no defaults";
+  return null;
+}
+
+/** Stands in for an installed plugin that can't run, so Settings says why and it can be removed. */
+export const broken = (id: string, url: string, why: string): Plugin => ({
+  id,
+  name: id,
+  description: `Installed from ${url}.`,
+  config: z.object({}),
+  start: () => {
+    throw new PluginError(`It couldn't be loaded: ${why}`);
+  },
+});
+
 function migrate(db: Db, plugin: Plugin) {
   const list = plugin.migrations ?? [];
   if (!list.length) return;

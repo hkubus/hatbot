@@ -21,7 +21,7 @@ export const pluginRoutes = new Hono<AppEnv>()
     const busy = restartBlocked(c.var);
     if (busy) return c.json({ error: busy }, 409);
     const { url, commit } = c.req.valid("json");
-    const done = await c.var.installer.install(url.trim(), commit.trim().toLowerCase());
+    const done = await c.var.installer.install(url, commit.toLowerCase());
     c.var.restart();
     return c.json(done, 201);
   })

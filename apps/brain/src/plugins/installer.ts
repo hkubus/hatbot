@@ -11,44 +11,41 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import { definePlugin, type Plugin, PluginError, SDK_VERSION } from "@hatbot/plugin-sdk";
+import { type Plugin, PluginError, SDK_VERSION } from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import type { Db } from "../db";
+import { broken, problemWith } from "./registry";
 
-export const COMMIT = /^[0-9a-f]{40}$/;
+const COMMIT = /^[0-9a-f]{40}$/;
 const ID = /^[a-z][a-z0-9]{1,20}$/;
 const RUN_MS = 5 * 60_000;
 
 /** A plugin in plugins.json, which Settings offers to install. */
-export const IndexEntry = z.object({
+const IndexEntry = z.object({
   id: z.string().regex(ID),
   name: z.string().min(1),
   description: z.string(),
   url: z.string().url(),
   commit: z.string().regex(COMMIT),
 });
-export type IndexEntry = z.infer<typeof IndexEntry>;
+type IndexEntry = z.infer<typeof IndexEntry>;
 
-export type Installed = { id: string; url: string; commit: string; installedAt: string };
-
-type Run = (cmd: string[], cwd: string) => Promise<{ ok: boolean; output: string }>;
+type Installed = { id: string; url: string; commit: string; installedAt: string };
 
 export type InstallerDeps = {
   db: Db;
   /** data/installed */
   dir: string;
-  /** The brain's own packages, which an installed plugin is built on; this checkout's when left out. */
-  sdkDir?: string;
-  sharedDir?: string;
-  /** The plugins Hatbot comes with: their ids are taken. */
-  builtIn: () => string[];
+  /** The plugins Hatbot comes with, which one installed must fit beside. */
+  builtIn: () => Plugin[];
+  /** The services the core provides itself. */
+  coreServices: string[];
   clock?: () => number;
   /** Repositories on this machine too, by path: for tests. */
   local?: boolean;
-  run?: Run;
 };
 
-const run: Run = async (cmd, cwd) => {
+async function run(cmd: string[], cwd: string): Promise<{ ok: boolean; output: string }> {
   const p = Bun.spawn(cmd, {
     cwd,
     stdout: "pipe",
@@ -68,7 +65,7 @@ const run: Run = async (cmd, cwd) => {
   ]);
   clearTimeout(timer);
   return { ok: (await p.exited) === 0, output: `${out}${err}`.trim() };
-};
+}
 
 const PACKAGES = resolve(import.meta.dir, "../../../../packages");
 
@@ -112,24 +109,10 @@ function entryOf(dir: string): string {
   return path;
 }
 
-/** Stands in for one that couldn't be loaded, so Settings says why and it can be removed. */
-const broken = (row: Installed, why: string): Plugin =>
-  definePlugin({
-    id: row.id,
-    name: row.id,
-    description: `Installed from ${row.url}.`,
-    config: z.object({}),
-    start: () => {
-      throw new PluginError(`It couldn't be loaded: ${why}`);
-    },
-  });
-
 export class Installer {
-  private run: Run;
   private clock: () => number;
 
   constructor(private d: InstallerDeps) {
-    this.run = d.run ?? run;
     this.clock = d.clock ?? Date.now;
   }
 
@@ -158,7 +141,7 @@ export class Installer {
       await this.fetch(local ? `file://${url}` : url, commit, tmp);
       await this.prepare(tmp);
       const plugin = await this.check(tmp);
-      if (this.d.builtIn().includes(plugin.id) || this.get(plugin.id))
+      if (this.get(plugin.id))
         throw new PluginError(`There's a plugin called "${plugin.id}" already.`);
       renameSync(tmp, join(this.d.dir, plugin.id));
       this.d.db
@@ -183,7 +166,7 @@ export class Installer {
   async load(): Promise<Plugin[]> {
     const out: Plugin[] = [];
     for (const row of this.list()) {
-      if (this.d.builtIn().includes(row.id)) {
+      if (this.d.builtIn().some((p) => p.id === row.id)) {
         console.error(`installed plugin ${row.id} has a built-in one's name; not loaded`);
         continue;
       }
@@ -199,14 +182,14 @@ export class Installer {
       } catch (err) {
         const why = err instanceof Error ? err.message : String(err);
         console.error(`installed plugin ${row.id} not loaded`, err);
-        out.push(broken(row, why));
+        out.push(broken(row.id, row.url, why));
       }
     }
     return out;
   }
 
   private async fetch(url: string, commit: string, dir: string) {
-    const git = (...args: string[]) => this.run(["git", ...args], dir);
+    const git = (...args: string[]) => run(["git", ...args], dir);
     await git("init", "-q");
     // By hash, which the forges allow; failing that, all of its branches.
     let got = await git("fetch", "-q", "--depth", "1", "--no-tags", url, commit);
@@ -236,8 +219,10 @@ export class Installer {
       path,
       JSON.stringify({ ...pkg, dependencies: deps, devDependencies: {}, peerDependencies: {} }),
     );
+    // Only what's installed here: a repository may carry its own.
+    rmSync(join(dir, "node_modules"), { recursive: true, force: true });
     if (Object.keys(deps).length) {
-      const out = await this.run(
+      const out = await run(
         [
           process.execPath,
           "install",
@@ -258,8 +243,8 @@ export class Installer {
     const scope = join(dir, "node_modules", "@hatbot");
     mkdirSync(scope, { recursive: true });
     for (const [name, target] of [
-      ["plugin-sdk", this.d.sdkDir ?? join(PACKAGES, "plugin-sdk")],
-      ["shared", this.d.sharedDir ?? join(PACKAGES, "shared")],
+      ["plugin-sdk", join(PACKAGES, "plugin-sdk")],
+      ["shared", join(PACKAGES, "shared")],
     ] as const) {
       const at = join(scope, name);
       rmSync(at, { recursive: true, force: true });
@@ -280,12 +265,12 @@ export class Installer {
     }
     const plugin = pluginIn(mod);
     if (!plugin) throw new PluginError("It doesn't export a plugin.");
-    if (!ID.test(plugin.id))
-      throw new PluginError(`Its id, "${plugin.id}", isn't a few lowercase letters and digits.`);
     if ((plugin.sdk ?? SDK_VERSION) !== SDK_VERSION)
       throw new PluginError(
         `It's made for version ${plugin.sdk} of Hatbot's plugin API; this Hatbot has ${SDK_VERSION}.`,
       );
+    const why = problemWith(plugin, this.d.builtIn(), this.d.coreServices);
+    if (why) throw new PluginError(`${why[0]?.toUpperCase()}${why.slice(1)}.`);
     return plugin;
   }
 }

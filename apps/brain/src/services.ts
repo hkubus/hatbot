@@ -8,15 +8,15 @@ import { type DesktopAgent, type DesktopService, desktopPlugin } from "@hatbot/p
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import { researchPlugin } from "@hatbot/plugin-research";
 import { scoutPlugin } from "@hatbot/plugin-scout";
-import type {
+import {
   HOST_SERVICES,
-  MemoryHost,
-  ModelHost,
-  Plugin,
-  PluginsHost,
-  SchedulesService,
-  SkillsHost,
-  SpendHost,
+  type MemoryHost,
+  type ModelHost,
+  type Plugin,
+  type PluginsHost,
+  type SchedulesService,
+  type SkillsHost,
+  type SpendHost,
 } from "@hatbot/plugin-sdk";
 import { selfPlugin } from "@hatbot/plugin-self";
 import { t3Plugin } from "@hatbot/plugin-t3";
@@ -145,7 +145,8 @@ export async function createServices(o: Outside) {
   const installer = new Installer({
     db,
     dir: join(config.dataDir, "installed"),
-    builtIn: () => builtIn.map((p) => p.id),
+    builtIn: () => builtIn,
+    coreServices: [...HOST_SERVICES],
     clock,
     local: o.localInstalls,
   });
