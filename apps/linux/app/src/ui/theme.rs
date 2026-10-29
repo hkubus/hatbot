@@ -1,7 +1,7 @@
 // The web app's Material 3 Expressive look: its CSS variables, light and dark, and the widget styles
 // built from them.
 use iced::border::{self, Border, Radius};
-use iced::widget::{button, container, pick_list, scrollable, text_editor, text_input, toggler};
+use iced::widget::{button, checkbox, container, pick_list, scrollable, text_editor, text_input, toggler};
 use iced::{Background, Color, Font, Shadow, Theme, Vector, font};
 
 pub const TEXT: Font = Font::with_name("Google Sans Flex");
@@ -560,6 +560,27 @@ pub fn switch(theme: &Theme, status: toggler::Status) -> toggler::Style {
         text_color: Some(c.text),
         border_radius: None,
         padding_ratio: if on { 0.12 } else { 0.22 },
+    }
+}
+
+pub fn check(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
+    let c = colors(theme);
+    let (on, hovered) = match status {
+        checkbox::Status::Active { is_checked } | checkbox::Status::Disabled { is_checked } => (is_checked, false),
+        checkbox::Status::Hovered { is_checked } => (is_checked, true),
+    };
+    let box_bg = if on {
+        c.hue
+    } else if hovered {
+        alpha(c.text, 0.08)
+    } else {
+        Color::TRANSPARENT
+    };
+    checkbox::Style {
+        background: box_bg.into(),
+        icon_color: c.on_hue,
+        border: Border { color: if on { c.hue } else { c.outline }, width: 2.0, radius: Radius::from(R_XS) },
+        text_color: Some(c.text),
     }
 }
 

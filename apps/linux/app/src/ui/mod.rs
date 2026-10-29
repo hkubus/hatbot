@@ -1,6 +1,7 @@
 // The window, in iced: the web app's look, drawn natively.
 pub mod app;
 pub mod chat;
+pub mod confirm;
 pub mod icon_paths;
 pub mod icons;
 pub mod login;

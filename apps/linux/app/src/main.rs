@@ -1,5 +1,5 @@
 // `hatbot` opens the window, in the running daemon if there is one; `hatbot --daemon` runs windowless
-// at login; `hatbot --open tasks` opens it on a page (see `Route::parse`); `hatbot --banner` is the on-screen banner the daemon shows while it uses this computer.
+// at login; `hatbot --open tasks` opens it on a page (see `pages::link`); `hatbot --banner` is the on-screen banner the daemon shows while it uses this computer.
 use hatbot::desk::{banner, instance};
 use hatbot::ui::{app, theme};
 

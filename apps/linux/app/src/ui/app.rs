@@ -11,7 +11,7 @@ use iced::{Element, Length, Size, Subscription, Task, Theme, window};
 
 use super::chat::{self, Chat};
 use super::pages::{self, Pages};
-use super::{login, shell, theme};
+use super::{confirm, login, shell, theme};
 use crate::core::api::{Api, ApiError};
 use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
@@ -45,26 +45,6 @@ pub enum Route {
     Computer,
 }
 
-impl Route {
-    pub fn parse(page: &str) -> Option<Route> {
-        Some(match page {
-            "chat" => Route::Chat,
-            "threads" => Route::Threads,
-            "tasks" => Route::Tasks,
-            "live" => Route::Live,
-            "automations" => Route::Schedules,
-            "memory" => Route::Memory,
-            "todo" => Route::Todo,
-            "boxes" => Route::Boxes,
-            "search" => Route::Search,
-            "settings" => Route::Settings,
-            "spend" => Route::Spend,
-            "computer" => Route::Computer,
-            p => Route::Task(p.strip_prefix("task/")?.parse().ok()?),
-        })
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Streamed {
     Open { reconnected: bool },
@@ -87,6 +67,8 @@ pub enum Message {
     Stream(Streamed),
     Go(Route),
     Shortcut(String),
+    Ask(Box<confirm::Dialog>),
+    Answer(bool),
     Chat(chat::Msg),
     Page(pages::Msg),
     Loaded(Loaded),
@@ -134,7 +116,8 @@ pub struct App {
     agent: Option<hatbot_agent::Handle>,
     pub agent_state: hatbot_agent::AgentState,
     /// A page asked for before signing in finished.
-    start: Option<Route>,
+    start: Option<String>,
+    dialog: Option<Box<confirm::Dialog>>,
 }
 
 pub struct Session {
@@ -221,7 +204,8 @@ pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
         banner: None,
         agent: None,
         agent_state: Default::default(),
-        start: page.as_deref().and_then(Route::parse),
+        start: page,
+        dialog: None,
     };
     let restore = Task::perform(
         async move {
@@ -352,9 +336,7 @@ impl App {
         let start = self.start.take();
         let s = self.session().unwrap();
         let mut t = vec![load_chats(s), load_plugins(s), load_settings(s), chat::load_page(s)];
-        if let Some(r) = start {
-            t.push(Task::done(Message::Go(r)));
-        }
+        t.extend(start.iter().flat_map(|p| pages::link(p)).flatten().map(Task::done));
         Task::batch(t)
     }
 
@@ -445,6 +427,14 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Kept(Err(e)) => app.toast(format!("{e} You'll sign in again next time.")),
         Message::Kept(Ok(())) => Task::none(),
         Message::Stream(s) => streamed(app, s),
+        Message::Ask(d) => {
+            app.dialog = Some(d);
+            Task::none()
+        }
+        Message::Answer(yes) => match app.dialog.take() {
+            Some(d) if yes => update(app, d.on),
+            _ => Task::none(),
+        },
         Message::Shortcut(key) => match app.session().and_then(|s| shell::shortcut(s, &key)) {
             Some(r) => update(app, Message::Go(r)),
             None => Task::none(),
@@ -501,12 +491,12 @@ fn outside(app: &mut App, o: Outside) -> Task<Message> {
     match o {
         Outside::Open => app.open_window(),
         Outside::Show(page) => {
-            let Some(r) = Route::parse(&page) else { return app.open_window() };
             if app.session().is_none() {
-                app.start = Some(r);
+                app.start = Some(page);
                 return app.open_window();
             }
-            Task::batch([app.open_window(), update(app, Message::Go(r))])
+            let go = pages::link(&page).unwrap_or_default().into_iter().map(Task::done);
+            Task::batch(std::iter::once(app.open_window()).chain(go))
         }
         Outside::Quit => {
             if let Some(a) = app.agent.take() {
@@ -872,6 +862,10 @@ pub fn view(app: &App, _: window::Id) -> Element<'_, Message> {
         ]
         .into(),
         None => body,
+    };
+    let with_toast = match &app.dialog {
+        Some(d) => iced::widget::stack![with_toast, confirm::view(d)].into(),
+        None => with_toast,
     };
     container(with_toast).width(Length::Fill).height(Length::Fill).style(theme::bar).into()
 }

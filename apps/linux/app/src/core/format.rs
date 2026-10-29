@@ -158,6 +158,22 @@ pub fn iso_to_local(iso: &str) -> String {
     date(iso).map(|d| fmt(&d, "%Y-%m-%d %H:%M")).unwrap_or_default()
 }
 
+/// A to-do's due date as it shows: "Today", "25 Oct", with its time if it has one. True when it's past.
+pub fn due(ymd: &str, at: Option<&str>) -> (String, bool) {
+    let Ok(d) = ymd.parse::<jiff::civil::Date>() else { return (ymd.to_string(), false) };
+    let today = now().date();
+    if d < today {
+        return (format!("Overdue, {}", d.strftime("%-d %b")), true);
+    }
+    let day = if d == today { "Today".to_string() } else { d.strftime("%-d %b").to_string() };
+    (at.map(|t| format!("{day} {t}")).unwrap_or(day), false)
+}
+
+/// "2026-11-02" as typed, when it's a real date.
+pub fn ymd(text: &str) -> Option<String> {
+    text.trim().parse::<jiff::civil::Date>().ok().map(|d| d.to_string())
+}
+
 pub const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 fn num(s: &str) -> Option<u32> {
