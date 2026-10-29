@@ -1,16 +1,16 @@
 # infra
 
-Scripts that set up Hatbot on a Proxmox host, or on any two or three Debian 13 machines over SSH.
+Scripts that set up Hatbot on a Proxmox host, or on one to three Debian 13 machines over SSH. The desktop's and the boxes guest's own scripts are their plugins': `plugins/desktop/infra` and `plugins/boxes/infra`, which these scripts find next to this folder.
 
 | Script | Runs | Does |
 |---|---|---|
 | `host-setup.sh` | on the Proxmox host, as root | the containers on the LAN, the guests' firewall, Proxmox user/roles/token, snapshots, backups; then runs the provision scripts |
 | `ssh-setup.sh` | anywhere with ssh | without Proxmox: checks two or three Debian 13 machines (or just a brain), writes the guests' secrets, runs the provision scripts over SSH |
 | `brain-provision.sh` | inside `hatbot-brain` | Bun, memory repo, SSH key, firewall |
-| `deploy.sh` | where the setup ran | installs the app: `desktop-deploy.sh` puts desktop-agent on the desktop, `boxes-deploy.sh` the boxes agent and the boxes' units on the boxes guest, `brain-deploy.sh` a new release on the brain |
+| `deploy.sh` | where the setup ran | installs the app: the Desktop plugin's `desktop-deploy.sh` puts desktop-agent on the desktop, the Boxes plugin's `boxes-deploy.sh` the boxes agent and the boxes' units on the boxes guest, `brain-deploy.sh` a new release on the brain |
 | `hatbot-update.sh` | inside `hatbot-brain`, as root | the Update button in Settings: pulls from git, runs `brain-deploy.sh`, then updates desktop-agent and the boxes agent |
-| `desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall (in, and out for its programs) |
-| `boxes-provision.sh` | inside `hatbot-boxes` | `hatbox` user, Bun, polkit, firewall (in, and out for the agent only) |
+| `plugins/desktop/infra/desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall (in, and out for its programs) |
+| `plugins/boxes/infra/boxes-provision.sh` | inside `hatbot-boxes` | `hatbox` user, Bun, polkit, firewall (in, and out for the agent only) |
 | `verify.sh` | where the setup ran | checks isolation, including that box units have no network, and on Proxmox token permissions, snapshots and backups; changes nothing |
 | `smoke.sh` | anywhere, with an API token | Settings → Check everything from a shell: the API, desktop, plugins, notifications; changes nothing |
 | `pct-exec-setup.sh` | on the Proxmox host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
@@ -21,11 +21,13 @@ Scripts that set up Hatbot on a Proxmox host, or on any two or three Debian 13 m
 
 On Proxmox (without it, see "Without Proxmox" below):
 
-1. Copy this folder to the host. From the host's shell:
+1. Copy this folder and the guests' plugin scripts to the host. From the host's shell:
 
    ```sh
-   pct exec 124 -- tar -C /root/hatbot -cf - infra | tar -C /root -xf -
-   cd /root/infra
+   mkdir -p /root/hatbot-setup
+   pct exec 124 -- tar -C /root/hatbot -cf - infra plugins/desktop/infra plugins/boxes/infra |
+     tar -C /root/hatbot-setup -xf -
+   cd /root/hatbot-setup/infra
    ```
 
 2. See what it would do. Nothing is changed:
@@ -48,7 +50,12 @@ On Proxmox (without it, see "Without Proxmox" below):
 
 Re-running `host-setup.sh` is safe. It finds the containers by name and skips what already exists.
 
-The third container, `hatbot-boxes`, is optional. It runs the server side of boxes, the small web apps the chat makes: each box's backend in a unit of its own, with no network. Without it, boxes are only pages. `host-setup.sh` asks for its VMID; answer `none` (or run with `BOXES_ID=none`) to leave it out. To add it later, remove `BOXES_ID=none` from `/etc/hatbot/host.env`, then run `host-setup.sh` and `deploy.sh` again.
+The desktop and the boxes guest are each optional, as their plugins are; `host-setup.sh` asks for their VMIDs, and `none` leaves one out (or run with `DESKTOP_ID=none`, `BOXES_ID=none`).
+
+- `hatbot-desktop` is the computer tasks browse and work on. Without it there are no desktop tasks, page watchers, live view or sandbox; switch the Desktop plugin off in Settings.
+- `hatbot-boxes` runs the server side of boxes, the small web apps the chat makes: each box's backend in a unit of its own, with no network. Without it, boxes are only pages.
+
+To add one later, remove its `…_ID=none` from `/etc/hatbot/host.env`, then run `host-setup.sh` and `deploy.sh` again.
 
 If your router forwards ports to the LAN (the web app's reverse proxy, say), the desktop or the boxes guest could come back in through your public address. Block it with `HATBOT_PUBLIC_IPS="203.0.113.7"` (space-separated, IPv4) in `/etc/hatbot/host.env` and re-run `host-setup.sh`. `verify.sh` fails if either can reach the web app's public URL.
 
@@ -102,7 +109,7 @@ After that, **Settings → System → Software update → Update** pulls the bra
 - The brain only writes `/var/lib/hatbot/update-request`. `hatbot-update.path` runs `hatbot-update` as root, which reads the git token from `/etc/hatbot/update.env` (root only), so the brain service never holds it.
 - desktop-agent receives its new code over its own API; a root service on the desktop (`hatbot-desktop-agent-update.path`) installs it. The first `deploy.sh` run after this feature sets that up. The boxes agent does the same (`hatbox-agent-update.path`); the boxes' units and firewall come only with `deploy.sh`.
 - It refuses while a task is running, because the brain restarts.
-- It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` for those.
+- It doesn't touch the host. If a commit changes host-side scripts (`host-setup.sh`, `deploy.sh`, the plugins' `desktop-deploy.sh` and so on), Settings says so; run `deploy.sh` for those.
 - Logs: `/var/lib/hatbot-update/last.log` on the brain, `journalctl -u hatbot-desktop-agent-update` on the desktop, and `journalctl -u hatbox-agent-update` on the boxes guest.
 
 ### Signed commits only
@@ -168,7 +175,7 @@ Set any of these as environment variables, or answer the prompts. Defaults are i
 
 | Variable | Default | |
 |---|---|---|
-| `BRAIN_ID`, `DESKTOP_ID`, `BOXES_ID` | next free | VMIDs; `BOXES_ID=none` leaves out the boxes guest |
+| `BRAIN_ID`, `DESKTOP_ID`, `BOXES_ID` | next free | VMIDs; `DESKTOP_ID=none` or `BOXES_ID=none` leaves that guest out |
 | `BRAIN_IP`, `DESKTOP_IP`, `BOXES_IP` | `192.168.55.<VMID+100>` | static LAN addresses; the script checks they're free |
 | `LAN_BRIDGE` | the uplink bridge | bridge the guests join |
 | `SSD_STORE`, `HDD_STORE` | asked | root disks; `/archive` |

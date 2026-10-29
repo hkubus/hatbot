@@ -183,7 +183,7 @@ EOF
 # The agent's user may start, stop and clean (delete the data of) boxes' backends, and start and stop
 # their builds. Nothing else of systemd's: no other units, no unit files, no reloads.
 cat >"$tmp/50-hatbox.rules" <<'EOF'
-// Managed by hatbot infra/boxes-deploy.sh.
+// Managed by hatbot plugins/boxes/infra/boxes-deploy.sh.
 polkit.addRule(function (action, subject) {
   if (subject.user !== "hatbox" || action.id.indexOf("org.freedesktop.systemd1.") !== 0) {
     return polkit.Result.NOT_HANDLED;

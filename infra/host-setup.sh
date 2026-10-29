@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Hatbot: one-time Proxmox host setup.
 #
-# Run as root on the Proxmox host, from a copy of the repo's infra/ folder:
+# Run as root on the Proxmox host, from a copy of the repo's infra/ folder, with plugins/desktop/infra and
+# plugins/boxes/infra next to it (README.md):
 #   ./host-setup.sh --dry-run   show every change, change nothing
 #   ./host-setup.sh             ask before each change
 #   ./host-setup.sh --yes       accept all defaults without asking
@@ -16,6 +17,8 @@ umask 022
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
+desktop_provision=$(guest_script desktop desktop-provision.sh)
+boxes_provision=$(guest_script boxes boxes-provision.sh)
 
 STATE=/etc/hatbot/host.env
 # shellcheck source=/dev/null
@@ -24,7 +27,7 @@ STATE=/etc/hatbot/host.env
 HATBOT_TRANSPORT=pct
 
 BRAIN_ID=${BRAIN_ID:-}
-DESKTOP_ID=${DESKTOP_ID:-}
+DESKTOP_ID=${DESKTOP_ID:-}                  # none: no desktop, so no desktop tasks, page watchers or live view
 BOXES_ID=${BOXES_ID:-}                      # none: no boxes guest, so boxes are only pages
 BRAIN_IP=${BRAIN_IP:-}                      # default: <LAN prefix>.<VMID + 100>
 DESKTOP_IP=${DESKTOP_IP:-}                  # same rule
@@ -181,17 +184,23 @@ BOXES_ID=${ex_boxes_id:-$BOXES_ID}
 if [[ -z $BRAIN_ID ]]; then
   ask BRAIN_ID "VMID for $BRAIN_NAME" "$(pvesh get /cluster/nextid | tr -d '"')"
 fi
+# The desktop and the boxes guest are each optional, as their plugins are. DESKTOP and BOXES are their
+# VMIDs, empty without one.
 if [[ -z $DESKTOP_ID ]]; then
   n=$((BRAIN_ID + 1))
   while vmid_used "$n"; do n=$((n + 1)); done
-  ask DESKTOP_ID "VMID for $DESKTOP_NAME" "$n"
+  ask DESKTOP_ID "VMID for $DESKTOP_NAME, which tasks browse and work on (none: no desktop tasks, page watchers or live view)" "$n"
 fi
+[[ $DESKTOP_ID == none || $DESKTOP_ID =~ ^[1-9][0-9]*$ ]] || die "DESKTOP_ID is $DESKTOP_ID; give a VMID, or none for no desktop"
+DESKTOP=''
+[[ $DESKTOP_ID == none ]] || DESKTOP=$DESKTOP_ID
 [[ -z ${ex_brain_id:-} ]] && vmid_used "$BRAIN_ID" && die "VMID $BRAIN_ID is already used by another guest"
-[[ -z ${ex_desk_id:-} ]] && vmid_used "$DESKTOP_ID" && die "VMID $DESKTOP_ID is already used by another guest"
-[[ $BRAIN_ID != "$DESKTOP_ID" ]] || die "brain and desktop need different VMIDs"
-# The boxes guest is optional: without it boxes are only pages. BOXES is its VMID, empty without one.
+if [[ -n $DESKTOP ]]; then
+  [[ -z ${ex_desk_id:-} ]] && vmid_used "$DESKTOP" && die "VMID $DESKTOP is already used by another guest"
+  [[ $BRAIN_ID != "$DESKTOP" ]] || die "brain and desktop need different VMIDs"
+fi
 if [[ -z $BOXES_ID ]]; then
-  n=$((DESKTOP_ID + 1))
+  n=$((${DESKTOP:-$BRAIN_ID} + 1))
   while vmid_used "$n" || [[ $n == "$BRAIN_ID" ]]; do n=$((n + 1)); done
   ask BOXES_ID "VMID for $BOXES_NAME, which runs boxes' backends (none: boxes are only pages)" "$n"
 fi
@@ -200,7 +209,7 @@ BOXES=''
 [[ $BOXES_ID == none ]] || BOXES=$BOXES_ID
 if [[ -n $BOXES ]]; then
   [[ -z ${ex_boxes_id:-} ]] && vmid_used "$BOXES" && die "VMID $BOXES is already used by another guest"
-  [[ $BOXES != "$BRAIN_ID" && $BOXES != "$DESKTOP_ID" ]] || die "the boxes guest needs a VMID of its own"
+  [[ $BOXES != "$BRAIN_ID" && $BOXES != "$DESKTOP" ]] || die "the boxes guest needs a VMID of its own"
 fi
 
 # LAN addresses: kept from existing guests, otherwise <LAN prefix>.<VMID + 100>.
@@ -222,10 +231,16 @@ pick_ip() { # pick_ip VAR VMID EXISTING
   printf -v "$__var" '%s' "$ip"
 }
 pick_ip BRAIN_IP "$BRAIN_ID" "${ex_brain_id:-}"
-pick_ip DESKTOP_IP "$DESKTOP_ID" "${ex_desk_id:-}"
-[[ $BRAIN_IP != "$DESKTOP_IP" ]] || die "brain and desktop need different IPs"
-[[ $BRAIN_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$LAN_GW" && $BRAIN_IP != "$LAN_GW" ]] ||
-  die "a guest IP clashes with the host or the gateway; set BRAIN_IP / DESKTOP_IP"
+[[ $BRAIN_IP != "$HOST_LAN_IP" && $BRAIN_IP != "$LAN_GW" ]] ||
+  die "the brain's IP clashes with the host or the gateway; set BRAIN_IP"
+if [[ -n $DESKTOP ]]; then
+  pick_ip DESKTOP_IP "$DESKTOP" "${ex_desk_id:-}"
+  [[ $BRAIN_IP != "$DESKTOP_IP" ]] || die "brain and desktop need different IPs"
+  [[ $DESKTOP_IP != "$HOST_LAN_IP" && $DESKTOP_IP != "$LAN_GW" ]] ||
+    die "the desktop's IP clashes with the host or the gateway; set DESKTOP_IP"
+else
+  DESKTOP_IP=''
+fi
 if [[ -n $BOXES ]]; then
   pick_ip BOXES_IP "$BOXES" "${ex_boxes_id:-}"
   [[ $BOXES_IP != "$BRAIN_IP" && $BOXES_IP != "$DESKTOP_IP" ]] || die "the boxes guest needs an IP of its own; set BOXES_IP"
@@ -234,15 +249,15 @@ if [[ -n $BOXES ]]; then
 else
   BOXES_IP=''
 fi
-ok "brain $BRAIN_IP, desktop $DESKTOP_IP${BOXES:+, boxes $BOXES_IP} (/$LAN_LEN, gateway $LAN_GW)"
+ok "brain $BRAIN_IP${DESKTOP:+, desktop $DESKTOP_IP}${BOXES:+, boxes $BOXES_IP} (/$LAN_LEN, gateway $LAN_GW)"
 
 # The host firewall matches the desktop and the boxes guest by bridge port and MAC, so the MACs are fixed
 # up front.
-DESKTOP_VETH=veth${DESKTOP_ID}i0
+DESKTOP_VETH=veth${DESKTOP}i0 DESKTOP_MAC=''
 if [[ -n ${ex_desk_id:-} ]]; then
-  DESKTOP_MAC=$(ct_mac "$DESKTOP_ID")
-  [[ -n $DESKTOP_MAC ]] || die "can't read the MAC of CT $DESKTOP_ID"
-else
+  DESKTOP_MAC=$(ct_mac "$DESKTOP")
+  [[ -n $DESKTOP_MAC ]] || die "can't read the MAC of CT $DESKTOP"
+elif [[ -n $DESKTOP ]]; then
   DESKTOP_MAC=bc:24:11:$(openssl rand -hex 3 | sed 's/../&:/g; s/:$//')
 fi
 BOXES_VETH=veth${BOXES}i0 BOXES_MAC=''
@@ -271,7 +286,7 @@ case $SSD_TYPE in
   zfspool | lvmthin | rbd | btrfs) SNAP_OK=1 ;;
   *)
     SNAP_OK=0
-    warn "$SSD_STORE is $SSD_TYPE, which can't snapshot containers; nightly desktop${BOXES:+ and boxes} snapshots will be skipped"
+    warn "$SSD_STORE is $SSD_TYPE, which can't snapshot containers; nightly snapshots will be skipped"
     ;;
 esac
 TMPL_STORE=$(pvesm status --content vztmpl 2>/dev/null | awk 'NR > 1 && $3 == "active" { print $1; exit }')
@@ -280,7 +295,7 @@ ok "root disks on $SSD_STORE ($SSD_TYPE), /archive on $HDD_STORE (${ARCHIVE_SIZE
 
 need=0
 [[ -z ${ex_brain_id:-} ]] && need=$((need + BRAIN_MEM))
-[[ -z ${ex_desk_id:-} ]] && need=$((need + DESKTOP_MEM))
+[[ -n $DESKTOP && -z ${ex_desk_id:-} ]] && need=$((need + DESKTOP_MEM))
 [[ -n $BOXES && -z ${ex_boxes_id:-} ]] && need=$((need + BOXES_MEM))
 if ((need > 0)); then
   avail=$(awk '/^MemAvailable:/ { print int($2 / 1024) }' /proc/meminfo)
@@ -295,20 +310,26 @@ if ((need > 0)); then
   fi
 fi
 
+desktop_plan="     desktop  none (DESKTOP_ID=none): no desktop tasks, page watchers or live view"
+if [[ -n $DESKTOP ]]; then
+  desktop_plan="     desktop  CT $DESKTOP  $DESKTOP_NAME  2 vCPU, $DESKTOP_MEM MiB + $DESKTOP_SWAP MiB swap, 16 GiB on $SSD_STORE
+              $DESKTOP_IP/$LAN_LEN on $LAN_BRIDGE (MAC $DESKTOP_MAC), DNS $DNS"
+fi
 boxes_plan="     boxes    none (BOXES_ID=none): boxes are only pages"
 if [[ -n $BOXES ]]; then
   boxes_plan="     boxes    CT $BOXES  $BOXES_NAME    2 vCPU, $BOXES_MEM MiB + $BOXES_SWAP MiB swap, 8 GiB on $SSD_STORE
               $BOXES_IP/$LAN_LEN on $LAN_BRIDGE (MAC $BOXES_MAC), DNS $DNS"
 fi
-fenced="the desktop's bridge port"
-[[ -z $BOXES ]] || fenced="the desktop's and the boxes guest's bridge ports"
+fenced="the desktop's and the boxes guest's bridge ports"
+[[ -n $BOXES ]] || fenced="the desktop's bridge port"
+[[ -n $DESKTOP ]] || fenced="the boxes guest's bridge port"
+[[ -n $DESKTOP || -n $BOXES ]] || fenced="no guest's port (there's no desktop or boxes guest)"
 cat <<EOF
 
    Plan:
      brain    CT $BRAIN_ID  $BRAIN_NAME    2 vCPU, $BRAIN_MEM MiB, 16 GiB on $SSD_STORE, /archive ${ARCHIVE_SIZE} GiB on $HDD_STORE
               $BRAIN_IP/$LAN_LEN on $LAN_BRIDGE
-     desktop  CT $DESKTOP_ID  $DESKTOP_NAME  2 vCPU, $DESKTOP_MEM MiB + $DESKTOP_SWAP MiB swap, 16 GiB on $SSD_STORE
-              $DESKTOP_IP/$LAN_LEN on $LAN_BRIDGE (MAC $DESKTOP_MAC), DNS $DNS
+$desktop_plan
 $boxes_plan
      firewall the host filters $fenced: internet only, no LAN, no host, no IPv6
      access   user $PVE_USER, roles HatbotOps + HatbotSnapshots, token $TOKEN_ID
@@ -323,7 +344,7 @@ else
   run pveum pool add "$POOL" --comment "Hatbot's own guests (it may snapshot these)"
 fi
 
-if [[ -z ${ex_brain_id:-} || -z ${ex_desk_id:-} || ( -n $BOXES && -z ${ex_boxes_id:-} ) ]]; then
+if [[ -z ${ex_brain_id:-} || ( -n $DESKTOP && -z ${ex_desk_id:-} ) || ( -n $BOXES && -z ${ex_boxes_id:-} ) ]]; then
   TMPL=$(pveam list "$TMPL_STORE" 2>/dev/null | grep -o 'debian-13-standard_[^ ]*' | sort -V | tail -1 || true)
   if [[ -z $TMPL ]]; then
     ((DRY_RUN)) || pveam update >/dev/null
@@ -346,10 +367,12 @@ else
     --onboot 1 --startup order=10 --timezone host --pool "$POOL" --tags hatbot
 fi
 
-if [[ -n ${ex_desk_id:-} ]]; then
-  ok "$DESKTOP_NAME exists (CT $DESKTOP_ID)"
+if [[ -z $DESKTOP ]]; then
+  info "no $DESKTOP_NAME (DESKTOP_ID=none)"
+elif [[ -n ${ex_desk_id:-} ]]; then
+  ok "$DESKTOP_NAME exists (CT $DESKTOP)"
 else
-  run pct create "$DESKTOP_ID" "$TMPL_VOL" --hostname "$DESKTOP_NAME" \
+  run pct create "$DESKTOP" "$TMPL_VOL" --hostname "$DESKTOP_NAME" \
     --description "Hatbot desktop. Browses untrusted sites: internet only, no LAN, no secrets. Its MAC is pinned in the host firewall (/etc/hatbot/host.nft); don't change it. Created by infra/host-setup.sh." \
     --unprivileged 1 --features nesting=1 --cores 2 --memory "$DESKTOP_MEM" --swap "$DESKTOP_SWAP" \
     --rootfs "$SSD_STORE:16" \
@@ -388,15 +411,65 @@ for ip in $HATBOT_PUBLIC_IPS; do
   PUBLIC_BLOCK+=", $ip"
 done
 
-# The boxes guest runs code a bot wrote, so its port gets the same fence, in a second block of the same
-# table. Only the brain reaches its agent (7071). It goes right after the table's closing brace, blank
-# lines included, so without a boxes guest host.nft stays as it was.
+# Filters frames at the desktop's port on the bridge, before they reach the LAN or the host.
+# Stateless on purpose: bridge conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall.
+# The interface name also matches when the NIC sits behind a Proxmox firewall bridge (fwbr), since that
+# bridge forwards from the same veth. Each guest's rules are a block of the table, after its closing
+# brace, so a guest that isn't there leaves no trace.
+DESKTOP_TABLE=''
+if [[ -n $DESKTOP ]]; then
+  DESKTOP_TABLE=$(cat <<EOF
+
+
+# $DESKTOP_NAME (CT $DESKTOP): the internet only, and replies to the brain.
+table bridge hatbot {
+  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
+  # machine's MAC is dropped here, or it would draw that machine's traffic to the desktop.
+  chain desktop_prerouting {
+    type filter hook prerouting priority filter - 5; policy accept;
+    iifname "$DESKTOP_VETH" ether saddr != $DESKTOP_MAC counter drop
+  }
+
+  chain forward {
+    iifname "$DESKTOP_VETH" jump from_desktop
+  }
+
+  # Frames for the host itself: only ARP, so the desktop can't open anything on the host.
+  chain input {
+    iifname "$DESKTOP_VETH" ether type arp jump desktop_arp
+    iifname "$DESKTOP_VETH" counter drop
+  }
+
+  chain from_desktop {
+    ether saddr != $DESKTOP_MAC counter drop
+    ether type arp jump desktop_arp
+    ether type != ip counter drop
+    ip saddr != $DESKTOP_IP counter drop
+    # Replies to the brain (VNC, desktop-agent). A bare SYN would be the desktop opening a connection.
+    ip daddr $BRAIN_IP tcp sport { 5901, 7070 } tcp flags & (syn | ack) != syn accept
+    ip daddr @blocked counter drop
+    accept
+  }
+
+  # No ARP spoofing: the desktop may only announce its own address.
+  chain desktop_arp {
+    arp saddr ether != $DESKTOP_MAC counter drop
+    arp saddr ip != $DESKTOP_IP counter drop
+    accept
+  }
+}
+EOF
+  )
+fi
+
+# The boxes guest runs code a bot wrote, so its port gets the same fence. Only the brain reaches its
+# agent (7071).
 BOXES_TABLE=''
 if [[ -n $BOXES ]]; then
   BOXES_TABLE=$(cat <<EOF
 
 
-# $BOXES_NAME (CT $BOXES_ID): the same fence, with only the brain reaching its agent.
+# $BOXES_NAME (CT $BOXES): the same fence, with only the brain reaching its agent.
 table bridge hatbot {
   chain boxes_prerouting {
     type filter hook prerouting priority filter - 5; policy accept;
@@ -433,18 +506,14 @@ EOF
   )
 fi
 
-# Filters frames at the desktop's port on the bridge, before they reach the LAN or the host.
-# Stateless on purpose: bridge conntrack (nf_conntrack_bridge) could interfere with the Proxmox firewall.
-# The interface name also matches when the NIC sits behind a Proxmox firewall bridge (fwbr), since that
-# bridge forwards from the same veth.
 write_file /etc/hatbot/host.nft 600 <<EOF
 #!/usr/sbin/nft -f
-# Managed by hatbot infra/host-setup.sh. Keeps $DESKTOP_NAME (CT $DESKTOP_ID) on the internet only.
+# Managed by hatbot infra/host-setup.sh. Keeps $DESKTOP_NAME and $BOXES_NAME on the internet only.
 table bridge hatbot
 delete table bridge hatbot
 
 table bridge hatbot {
-  # Everything the desktop must never reach: private and special ranges (benchmarking, the TEST-NETs),
+  # Everything the guests must never reach: private and special ranges (benchmarking, the TEST-NETs),
   # multicast, broadcast, this LAN, and your own public addresses if set (HATBOT_PUBLIC_IPS).
   set blocked {
     type ipv4_addr
@@ -455,46 +524,17 @@ table bridge hatbot {
                  203.0.113.0/24, 224.0.0.0/3, $LAN_NET$PUBLIC_BLOCK }
   }
 
-  # The bridge learns a frame's source MAC before forward or input see it, so a frame claiming another
-  # machine's MAC is dropped here, or it would draw that machine's traffic to the desktop.
-  chain desktop_prerouting {
-    type filter hook prerouting priority filter - 5; policy accept;
-    iifname "$DESKTOP_VETH" ether saddr != $DESKTOP_MAC counter drop
-  }
-
   chain forward {
     type filter hook forward priority filter - 5; policy accept;
-    iifname "$DESKTOP_VETH" jump from_desktop
   }
 
-  # Frames for the host itself: only ARP, so the desktop can't open anything on the host.
   chain input {
     type filter hook input priority filter - 5; policy accept;
-    iifname "$DESKTOP_VETH" ether type arp jump desktop_arp
-    iifname "$DESKTOP_VETH" counter drop
   }
-
-  chain from_desktop {
-    ether saddr != $DESKTOP_MAC counter drop
-    ether type arp jump desktop_arp
-    ether type != ip counter drop
-    ip saddr != $DESKTOP_IP counter drop
-    # Replies to the brain (VNC, desktop-agent). A bare SYN would be the desktop opening a connection.
-    ip daddr $BRAIN_IP tcp sport { 5901, 7070 } tcp flags & (syn | ack) != syn accept
-    ip daddr @blocked counter drop
-    accept
-  }
-
-  # No ARP spoofing: the desktop may only announce its own address.
-  chain desktop_arp {
-    arp saddr ether != $DESKTOP_MAC counter drop
-    arp saddr ip != $DESKTOP_IP counter drop
-    accept
-  }
-}$BOXES_TABLE
+}$DESKTOP_TABLE$BOXES_TABLE
 EOF
 
-# No ExecStop: stopping the unit must not open the desktop up. Remove with 'nft delete table bridge hatbot'.
+# No ExecStop: stopping the unit must not open the guests up. Remove with 'nft delete table bridge hatbot'.
 write_file /etc/systemd/system/hatbot-firewall.service 644 <<'EOF'
 [Unit]
 Description=Hatbot firewall (keeps hatbot-desktop and hatbot-boxes off the LAN)
@@ -516,16 +556,16 @@ run systemctl daemon-reload
 run systemctl enable hatbot-firewall.service
 run systemctl restart hatbot-firewall.service
 if ((!DRY_RUN)); then
-  nft list table bridge hatbot >/dev/null 2>&1 || die "the firewall didn't load; the desktop stays off"
-  [[ $(ct_mac "$DESKTOP_ID") == "$DESKTOP_MAC" ]] || die "CT $DESKTOP_ID's MAC isn't $DESKTOP_MAC; the firewall wouldn't match it"
+  nft list table bridge hatbot >/dev/null 2>&1 || die "the firewall didn't load; the guests stay off"
+  [[ -z $DESKTOP || $(ct_mac "$DESKTOP") == "$DESKTOP_MAC" ]] || die "CT $DESKTOP's MAC isn't $DESKTOP_MAC; the firewall wouldn't match it"
   [[ -z $BOXES || $(ct_mac "$BOXES") == "$BOXES_MAC" ]] || die "CT $BOXES's MAC isn't $BOXES_MAC; the firewall wouldn't match it"
 fi
 
-for id in "$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"}; do
+for id in "$BRAIN_ID" ${DESKTOP:+"$DESKTOP"} ${BOXES:+"$BOXES"}; do
   if ((!DRY_RUN)) && guest_up "$id"; then ok "CT $id running"; else run pct start "$id"; fi
 done
 if ((!DRY_RUN)); then
-  for id in "$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"}; do wait_ct "$id"; done
+  for id in "$BRAIN_ID" ${DESKTOP:+"$DESKTOP"} ${BOXES:+"$BOXES"}; do wait_ct "$id"; done
   ok "the containers have network and DNS"
 fi
 
@@ -577,7 +617,7 @@ PROXMOX_TOKEN_SECRET=$secret
 PROXMOX_TLS_FINGERPRINT=$fingerprint
 HATBOT_POOL=$POOL
 HATBOT_BRAIN_ID=$BRAIN_ID
-HATBOT_DESKTOP_ID=$DESKTOP_ID
+HATBOT_DESKTOP_ID=$DESKTOP
 EOF
     unset secret
   fi
@@ -587,8 +627,10 @@ run pveum acl modify / --tokens "$TOKEN_ID" --roles HatbotOps
 run pveum acl modify "/pool/$POOL" --tokens "$TOKEN_ID" --roles HatbotSnapshots
 
 step "5/8 Brain ↔ guest secrets"
-if guest_has_file "$BRAIN_ID" /etc/hatbot/desktop.env && guest_has_file "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env; then
-  ok "both sides have them"
+if [[ -z $DESKTOP ]]; then
+  info "no desktop"
+elif guest_has_file "$BRAIN_ID" /etc/hatbot/desktop.env && guest_has_file "$DESKTOP" /etc/hatbot-desktop/secrets.env; then
+  ok "the brain and the desktop have theirs"
 else
   agent_token=$(openssl rand -hex 32)
   vnc_password=$(openssl rand -hex 4) # VNC auth uses at most 8 characters; only the brain can reach the port
@@ -598,7 +640,7 @@ DESKTOP_AGENT_TOKEN=$agent_token
 DESKTOP_VNC=$DESKTOP_IP:5901
 DESKTOP_VNC_PASSWORD=$vnc_password
 EOF
-  push_secret "$DESKTOP_ID" /etc/hatbot-desktop/secrets.env <<EOF
+  push_secret "$DESKTOP" /etc/hatbot-desktop/secrets.env <<EOF
 DESKTOP_AGENT_TOKEN=$agent_token
 VNC_PASSWORD=$vnc_password
 BRAIN_IP=$BRAIN_IP
@@ -624,21 +666,23 @@ EOF
 fi
 
 step "6/8 Provision the containers"
-provision() { # provision CTID SCRIPT ENV...
-  local id=$1 script=$2
+provision() { # provision CTID PATH ENV...
+  local id=$1 path=$2 script
+  script=$(basename "$path")
   shift 2
   if confirm "Run $script inside CT $id now? (installs packages, takes a few minutes)"; then
-    run pct push "$id" "$HERE/$script" "/root/$script" --perms 700
+    run pct push "$id" "$path" "/root/$script" --perms 700
     run pct exec "$id" -- env "$@" bash "/root/$script"
   else
-    info "skipped; later: pct push $id $HERE/$script /root/$script && pct exec $id -- env $* bash /root/$script"
+    info "skipped; later: pct push $id $path /root/$script && pct exec $id -- env $* bash /root/$script"
   fi
 }
-provision "$BRAIN_ID" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
+provision "$BRAIN_ID" "$HERE/brain-provision.sh" "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
   "DESKTOP_MAC=$DESKTOP_MAC" "BOXES_MAC=$BOXES_MAC"
-provision "$DESKTOP_ID" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+[[ -z $DESKTOP ]] ||
+  provision "$DESKTOP" "$desktop_provision" "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
 [[ -z $BOXES ]] ||
-  provision "$BOXES" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
+  provision "$BOXES" "$boxes_provision" "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS"
 
 step "7/8 Nightly snapshots"
 if ((!SNAP_OK)); then
@@ -658,15 +702,16 @@ fi
 pct listsnapshot "$id" | grep -o 'nightly_[0-9]\{8\}' | sort -u | head -n -"$keep" |
   while read -r old; do pct delsnapshot "$id" "$old"; done
 EOF
-  write_file /etc/systemd/system/hatbot-desktop-snapshot.service 644 <<EOF
+  if [[ -n $DESKTOP ]]; then
+    write_file /etc/systemd/system/hatbot-desktop-snapshot.service 644 <<EOF
 [Unit]
-Description=Hatbot: nightly snapshot of $DESKTOP_NAME (CT $DESKTOP_ID)
+Description=Hatbot: nightly snapshot of $DESKTOP_NAME (CT $DESKTOP)
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/hatbot-desktop-snapshot $DESKTOP_ID
+ExecStart=/usr/local/sbin/hatbot-desktop-snapshot $DESKTOP
 EOF
-  write_file /etc/systemd/system/hatbot-desktop-snapshot.timer 644 <<'EOF'
+    write_file /etc/systemd/system/hatbot-desktop-snapshot.timer 644 <<'EOF'
 [Unit]
 Description=Hatbot: nightly desktop snapshot
 
@@ -678,6 +723,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+  fi
   # The boxes guest holds the boxes' data, so it gets the same, half an hour later.
   if [[ -n $BOXES ]]; then
     write_file /etc/systemd/system/hatbot-boxes-snapshot.service 644 <<EOF
@@ -702,14 +748,14 @@ WantedBy=timers.target
 EOF
   fi
   run systemctl daemon-reload
-  run systemctl enable --now hatbot-desktop-snapshot.timer
+  [[ -z $DESKTOP ]] || run systemctl enable --now hatbot-desktop-snapshot.timer
   [[ -z $BOXES ]] || run systemctl enable --now hatbot-boxes-snapshot.timer
 fi
 
 step "8/8 Backups (PBS)"
-guests=("$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"})
-what="both containers"
-((${#guests[@]} == 2)) || what="all three containers"
+guests=("$BRAIN_ID" ${DESKTOP:+"$DESKTOP"} ${BOXES:+"$BOXES"})
+counts=("the brain" "both containers" "all three containers")
+what=${counts[${#guests[@]} - 1]}
 mapfile -t jobs < <(backup_jobs "${guests[@]}")
 covered=0
 for j in "${jobs[@]}"; do
@@ -737,11 +783,12 @@ else
 fi
 
 step "Done"
-boxes_done=none
+desktop_done=none boxes_done=none
+[[ -z $DESKTOP ]] || desktop_done="CT $DESKTOP   $DESKTOP_IP (internet only)"
 [[ -z $BOXES ]] || boxes_done="CT $BOXES   $BOXES_IP (internet only, for its agent)"
 cat <<EOF
    Brain     CT $BRAIN_ID   $BRAIN_IP
-   Desktop   CT $DESKTOP_ID   $DESKTOP_IP (internet only)
+   Desktop   $desktop_done
    Boxes     $boxes_done
 
    Next:

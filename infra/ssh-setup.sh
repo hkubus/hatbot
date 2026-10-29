@@ -25,6 +25,8 @@ umask 077
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib.sh
 source "$HERE/lib.sh"
+desktop_provision=$(guest_script desktop desktop-provision.sh)
+boxes_provision=$(guest_script boxes boxes-provision.sh)
 
 STATE=$(state_file)
 # shellcheck source=/dev/null
@@ -256,22 +258,23 @@ EOF
 fi
 
 step "3/4 Provision the machines"
-provision() { # provision GUEST SCRIPT ENV...
-  local g=$1 script=$2
+provision() { # provision GUEST PATH ENV...
+  local g=$1 path=$2 script
+  script=$(basename "$path")
   shift 2
   if confirm "Run $script on $g now? (installs packages, takes a few minutes)"; then
-    guest_push "$g" "$HERE/$script" "/root/$script" 700
+    guest_push "$g" "$path" "/root/$script" 700
     guest_exec "$g" env "$@" bash "/root/$script" </dev/null
   else
     info "skipped; run ssh-setup.sh again to do it"
   fi
 }
-provision "$BRAIN_SSH" brain-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
+provision "$BRAIN_SSH" "$HERE/brain-provision.sh" "DESKTOP_IP=$DESKTOP_IP" "BOXES_IP=$BOXES_IP" \
   "DESKTOP_MAC=$DESKTOP_MAC" "DESKTOP_IP6=$DESKTOP_IP6" "BOXES_MAC=$BOXES_MAC" "BOXES_IP6=$BOXES_IP6"
 [[ -z $DESKTOP_SSH ]] ||
-  provision "$DESKTOP_SSH" desktop-provision.sh "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
+  provision "$DESKTOP_SSH" "$desktop_provision" "DESKTOP_IP=$DESKTOP_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
 [[ -z $BOXES_SSH ]] ||
-  provision "$BOXES_SSH" boxes-provision.sh "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
+  provision "$BOXES_SSH" "$boxes_provision" "BOXES_IP=$BOXES_IP" "BRAIN_IP=$BRAIN_IP" "HATBOT_PUBLIC_IPS=$HATBOT_PUBLIC_IPS" SSH_IN=1
 
 step "4/4 Done"
 backup="the brain's /var/lib/hatbot and /archive"

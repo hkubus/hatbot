@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests the guests' firewalls in throwaway network namespaces: a bridge with the desktop, the boxes guest,
 # the brain and a gateway that also stands in for the internet (9.9.9.9). First the host's, from
-# host-setup.sh, then the desktop's and the boxes guest's own, from desktop-provision.sh and
+# host-setup.sh, then the desktop's and the boxes guest's own, from their plugins' desktop-provision.sh and
 # boxes-provision.sh, which is all there is without Proxmox (ssh-setup.sh).
 # The boxes' and builds' own sandbox (PrivateNetwork, RestrictAddressFamilies) is systemd's, which a
 # namespace can't stand in for; verify.sh checks it on the guest.
@@ -12,6 +12,7 @@
 
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PLUGINS=$HERE/../plugins
 NS="hh desk box brain gw"
 PIDS=''
 cleanup() {
@@ -22,19 +23,23 @@ cleanup() {
 cleanup
 trap cleanup EXIT
 
-# Render the ruleset exactly as host-setup.sh writes it: the boxes guest's block, then the table with it,
-# and without it (no boxes guest).
-boxes_table=$(awk '/BOXES_TABLE=\$\(cat <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/host-setup.sh" |
-  BOXES_NAME=hatbot-boxes BOXES_ID=126 BOXES_VETH=veth126i0 BOXES_MAC=bc:24:11:ab:cd:01 \
-    BOXES_IP=192.168.55.226 BRAIN_IP=192.168.55.224 envsubst)
-host_nft() {
-  awk '/^write_file \/etc\/hatbot\/host.nft/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/host-setup.sh" |
-    DESKTOP_NAME=hatbot-desktop DESKTOP_ID=125 DESKTOP_VETH=veth125i0 DESKTOP_MAC=bc:24:11:ab:cd:ef \
-      DESKTOP_IP=192.168.55.225 BRAIN_IP=192.168.55.224 LAN_NET=192.168.55.0/24 PUBLIC_BLOCK=', 5.6.7.8' \
-      BOXES_TABLE="$1" envsubst
+# Render the ruleset exactly as host-setup.sh writes it: each guest's block, then the table with both,
+# and with either alone.
+block() { # block DESKTOP|BOXES
+  awk "/$1_TABLE=\\\$\\(cat <<EOF\$/ { f = 1; next } f && /^EOF\$/ { exit } f" "$HERE/host-setup.sh" |
+    DESKTOP_NAME=hatbot-desktop DESKTOP=125 DESKTOP_VETH=veth125i0 DESKTOP_MAC=bc:24:11:ab:cd:ef \
+      DESKTOP_IP=192.168.55.225 BOXES_NAME=hatbot-boxes BOXES=126 BOXES_VETH=veth126i0 \
+      BOXES_MAC=bc:24:11:ab:cd:01 BOXES_IP=192.168.55.226 BRAIN_IP=192.168.55.224 envsubst
 }
-[[ -n $boxes_table ]] || exit 1
-rules=$(host_nft "$boxes_table")
+desktop_table=$(block DESKTOP)
+boxes_table=$(block BOXES)
+host_nft() { # host_nft DESKTOP-BLOCK BOXES-BLOCK
+  awk '/^write_file \/etc\/hatbot\/host.nft/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/host-setup.sh" |
+    DESKTOP_NAME=hatbot-desktop BOXES_NAME=hatbot-boxes LAN_NET=192.168.55.0/24 PUBLIC_BLOCK=', 5.6.7.8' \
+      DESKTOP_TABLE="$1" BOXES_TABLE="$2" envsubst
+}
+[[ -n $desktop_table && -n $boxes_table ]] || exit 1
+rules=$(host_nft "$desktop_table" "$boxes_table")
 
 for n in $NS; do
   ip netns add "$n"
@@ -63,7 +68,8 @@ for a in 10.0.0.1 172.16.0.1 100.64.0.1 169.254.169.254; do ip -n gw addr add "$
 ip -n desk route add default via 192.168.55.1
 ip -n box route add default via 192.168.55.1
 ip -n brain route add default via 192.168.55.1
-ip netns exec hh nft -f - <<<"$(host_nft '')" || exit 1
+ip netns exec hh nft -f - <<<"$(host_nft '' "$boxes_table")" || exit 1
+ip netns exec hh nft -f - <<<"$(host_nft "$desktop_table" '')" || exit 1
 ip netns exec hh nft -f - <<<"$rules" || exit 1
 
 listen() { # listen NS IP PORT
@@ -219,7 +225,7 @@ fi
 # only the internet, and the LAN's resolver on port 53; root's services aren't filtered.
 echo
 ip netns exec hh nft delete table bridge hatbot
-guest=$(awk '/^cat >\/etc\/nftables.conf <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/desktop-provision.sh" |
+guest=$(awk '/^cat >\/etc\/nftables.conf <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$PLUGINS/desktop/infra/desktop-provision.sh" |
   BRAIN_IP=192.168.55.224 desk_uid=1000 blocked='192.168.55.0/24, 192.168.55.224, 5.6.7.8' \
     dns_rule='ip daddr { 192.168.55.1 } meta l4proto { tcp, udp } th dport 53 accept' \
     ssh_rule='ip saddr != 192.168.55.224 tcp dport { 22 } accept' envsubst)
@@ -266,7 +272,7 @@ expect_open hh 192.168.55.225 22
 # the internet and the LAN's resolver on port 53. The boxes' and builds' DynamicUsers get nothing, not even
 # the internet (they have no network of their own; this is the second layer). Root's services pass.
 echo
-boxes=$(awk '/^cat >\/etc\/nftables.conf <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$HERE/boxes-provision.sh" |
+boxes=$(awk '/^cat >\/etc\/nftables.conf <<EOF$/ { f = 1; next } f && /^EOF$/ { exit } f' "$PLUGINS/boxes/infra/boxes-provision.sh" |
   BRAIN_IP=192.168.55.224 hatbox_uid=999 blocked='192.168.55.0/24, 192.168.55.224, 5.6.7.8' \
     dns_rule='ip daddr { 192.168.55.1 } meta l4proto { tcp, udp } th dport 53 accept' \
     ssh_rule='ip saddr != 192.168.55.224 tcp dport { 22 } accept' envsubst)

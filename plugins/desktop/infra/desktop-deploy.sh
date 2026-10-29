@@ -88,7 +88,7 @@ EOF
 install -d -m 750 /etc/hatbot-desktop
 cat >/etc/hatbot-desktop/shell.nft <<'EOF'
 #!/usr/sbin/nft -f
-# Managed by hatbot infra/desktop-deploy.sh.
+# Managed by hatbot plugins/desktop/infra/desktop-deploy.sh.
 table inet hatbot_shell
 delete table inet hatbot_shell
 

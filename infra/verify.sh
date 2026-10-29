@@ -16,11 +16,14 @@ on_boxes() { guest_exec "$BOXES" "$@"; }
 skip() { printf '   %sskip%s  %s\n' "$yel" "$rst" "$*"; }
 
 if ((PVE)); then
-  : "${BRAIN_IP:?}" "${DESKTOP_IP:?}" "${SSD_STORE:?}"
+  : "${BRAIN_IP:?}" "${SSD_STORE:?}"
   UPLINK=$(ip -4 route show default | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
   LAN_GW=$(ip -4 route show default | awk '{ print $3; exit }')
   HOST_LAN_IP=$(ip -4 -o addr show dev "$UPLINK" | awk '{ print $4; exit }' | cut -d/ -f1)
-  DESKTOP_MAC=$(pct config "$DESKTOP_ID" | sed -n 's#^net0:.*hwaddr=\([0-9A-Fa-f:]*\).*#\1#p' | tr 'A-F' 'a-f')
+  if [[ -n $DESKTOP ]]; then
+    : "${DESKTOP_IP:?}"
+    DESKTOP_MAC=$(pct config "$DESKTOP" | sed -n 's#^net0:.*hwaddr=\([0-9A-Fa-f:]*\).*#\1#p' | tr 'A-F' 'a-f')
+  fi
 elif [[ -n $DESKTOP ]]; then
   : "${BRAIN_IP:?}" "${DESKTOP_IP:?}"
   LAN_GW=$(on_desktop ip -4 route show default </dev/null | awk '{ print $3; exit }')
@@ -81,11 +84,14 @@ blocked() {
 
 if ((PVE)); then
   step "Containers"
-  expect "brain (CT $BRAIN_ID) is running" sh -c "pct status $BRAIN_ID | grep -q running"
-  expect "desktop (CT $DESKTOP_ID) is running" sh -c "pct status $DESKTOP_ID | grep -q running"
-  expect "both are in pool hatbot" sh -c "pveum pool list --output-format json | grep -q '\"poolid\":\"hatbot\"' &&
-    pvesh get /pools/hatbot --output-format json | grep -q '\"vmid\":$BRAIN_ID' &&
-    pvesh get /pools/hatbot --output-format json | grep -q '\"vmid\":$DESKTOP_ID'"
+  expect "brain (CT $BRAIN_ID) is running, in pool hatbot" sh -c "pct status $BRAIN_ID | grep -q running &&
+    pvesh get /pools/hatbot --output-format json | grep -q '\"vmid\":$BRAIN_ID'"
+  if [[ -n $DESKTOP ]]; then
+    expect "desktop (CT $DESKTOP) is running, in pool hatbot" sh -c "pct status $DESKTOP | grep -q running &&
+      pvesh get /pools/hatbot --output-format json | grep -q '\"vmid\":$DESKTOP'"
+  else
+    skip "desktop (DESKTOP_ID=none)"
+  fi
   if [[ -n $BOXES ]]; then
     expect "boxes guest (CT $BOXES) is running, in pool hatbot" sh -c "pct status $BOXES | grep -q running &&
       pvesh get /pools/hatbot --output-format json | grep -q '\"vmid\":$BOXES'"
@@ -106,8 +112,8 @@ if [[ -n $DESKTOP ]]; then
   if ((PVE)); then
     expect "firewall table bridge hatbot is loaded" nft list table bridge hatbot
     expect "hatbot-firewall.service is enabled" systemctl is-enabled --quiet hatbot-firewall.service
-    expect "the firewall matches the desktop's port (veth${DESKTOP_ID}i0) and MAC ($DESKTOP_MAC)" sh -c \
-      "nft list table bridge hatbot | grep -q '\"veth${DESKTOP_ID}i0\"' && nft list table bridge hatbot | grep -qi 'ether saddr != $DESKTOP_MAC'"
+    expect "the firewall matches the desktop's port (veth${DESKTOP}i0) and MAC ($DESKTOP_MAC)" sh -c \
+      "nft list table bridge hatbot | grep -q '\"veth${DESKTOP}i0\"' && nft list table bridge hatbot | grep -qi 'ether saddr != $DESKTOP_MAC'"
   else
     egress_loaded() { on_desktop nft list chain inet filter output </dev/null | grep -q skuid; }
     expect "the desktop's own firewall is loaded" egress_loaded
@@ -137,7 +143,7 @@ if [[ -n $DESKTOP ]]; then
     printf '   %sskip%s  desktop and the web app (no public URL yet; deploy.sh asks for it)\n' "$yel" "$rst"
   fi
   if ((PVE)); then
-    expect "desktop has no IPv6 route out" sh -c "! pct exec $DESKTOP_ID -- ip -6 route show default | grep -q ."
+    expect "desktop has no IPv6 route out" sh -c "! pct exec $DESKTOP -- ip -6 route show default | grep -q ."
   else
     no_ipv6() { ! on_desktop runuser -u desk -- curl -6 -sS -m 6 -o /dev/null https://deb.debian.org/ </dev/null; }
     expect "the desktop's programs can't use IPv6" no_ipv6
@@ -351,7 +357,7 @@ if ((PVE)); then
   expect "the brain holds the Proxmox token" on_brain test -s /etc/hatbot/proxmox.env
   # "Roll back desktop" lists snapshots with this token (the brain pins the certificate itself).
   # shellcheck disable=SC2016 # expands inside the brain
-  expect "the brain's token can list the desktop's snapshots" on_brain sh -c \
+  [[ -z $DESKTOP ]] || expect "the brain's token can list the desktop's snapshots" on_brain sh -c \
     '. /etc/hatbot/proxmox.env && printf "Authorization: PVEAPIToken=%s=%s\n" "$PROXMOX_TOKEN_ID" "$PROXMOX_TOKEN_SECRET" | curl -fsSk -m 5 -o /dev/null -H @- "$PROXMOX_URL/api2/json/nodes/$PROXMOX_NODE/lxc/$HATBOT_DESKTOP_ID/snapshot"'
 fi
 
@@ -404,17 +410,17 @@ else
 fi
 
 step "Snapshots and backups"
-if [[ -e /etc/systemd/system/hatbot-desktop-snapshot.timer ]]; then
-  expect "nightly desktop snapshot timer is enabled" systemctl is-enabled --quiet hatbot-desktop-snapshot.timer
-else
+if [[ ! -e /usr/local/sbin/hatbot-desktop-snapshot ]]; then
   printf '   %sskip%s  nightly snapshots (storage %s cannot snapshot)\n' "$yel" "$rst" "$SSD_STORE"
+else
+  [[ -z $DESKTOP ]] ||
+    expect "nightly desktop snapshot timer is enabled" systemctl is-enabled --quiet hatbot-desktop-snapshot.timer
+  [[ -z $BOXES ]] ||
+    expect "nightly boxes guest snapshot timer is enabled" systemctl is-enabled --quiet hatbot-boxes-snapshot.timer
 fi
-if [[ -n $BOXES && -e /etc/systemd/system/hatbot-desktop-snapshot.timer ]]; then
-  expect "nightly boxes guest snapshot timer is enabled" systemctl is-enabled --quiet hatbot-boxes-snapshot.timer
-fi
-guests=("$BRAIN_ID" "$DESKTOP_ID" ${BOXES:+"$BOXES"})
-what="both containers"
-((${#guests[@]} == 2)) || what="all three containers"
+guests=("$BRAIN_ID" ${DESKTOP:+"$DESKTOP"} ${BOXES:+"$BOXES"})
+counts=("the brain" "both containers" "all three containers")
+what=${counts[${#guests[@]} - 1]}
 covered=0
 while IFS=$'\t' read -r jid enabled storage _ _ covers; do
   [[ $enabled != 0 && -n $covers && $covers != *0* ]] || continue

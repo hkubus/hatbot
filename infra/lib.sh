@@ -22,6 +22,14 @@ die() {
 # with pct and named by VMID, or Debian machines (ssh-setup.sh), reached over SSH and named by user@host.
 # HATBOT_TRANSPORT in host.env says which; installs from before it are Proxmox ones.
 
+# guest_script PLUGIN SCRIPT: a guest's own scripts are its plugin's, in plugins/<id>/infra next to infra/.
+guest_script() {
+  local f
+  f="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugins/$1/infra/$2"
+  [[ -r $f ]] || die "$f is missing; copy plugins/$1/infra along with infra (see README.md)"
+  printf '%s\n' "$f"
+}
+
 # The settings host-setup.sh or ssh-setup.sh saved: /etc/hatbot/host.env for root, otherwise in your
 # own config directory, so ssh-setup.sh and deploy.sh can run from a laptop without root.
 state_file() {
@@ -34,9 +42,9 @@ state_file() {
   fi
 }
 
-# load_state: sources host.env and sets BRAIN, DESKTOP and BOXES to what guest_exec takes. DESKTOP may be
-# empty over SSH (a brain without a desktop), and BOXES on either (no boxes guest: installs from before
-# it, or BOXES_ID=none / BOXES_SSH=none).
+# load_state: sources host.env and sets BRAIN, DESKTOP and BOXES to what guest_exec takes. DESKTOP and
+# BOXES may be empty: no desktop (DESKTOP_ID=none / DESKTOP_SSH=none) or no boxes guest (installs from
+# before it, or BOXES_ID=none / BOXES_SSH=none).
 load_state() {
   local f
   f=$(state_file)
@@ -47,6 +55,7 @@ load_state() {
     pct)
       [[ $EUID -eq 0 ]] || die "run as root on the Proxmox host"
       BRAIN=${BRAIN_ID:?} DESKTOP=${DESKTOP_ID:?} BOXES=${BOXES_ID:-}
+      [[ $DESKTOP != none ]] || DESKTOP=''
       [[ $BOXES != none ]] || BOXES=''
       ;;
     ssh) BRAIN=${BRAIN_SSH:?} DESKTOP=${DESKTOP_SSH:-} BOXES=${BOXES_SSH:-} ;;

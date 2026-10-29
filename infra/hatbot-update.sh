@@ -81,7 +81,7 @@ fi
 
 # Host-side scripts only change through deploy.sh, host-setup.sh or ssh-setup.sh.
 if [[ -n $from ]] && git -C "$REPO" cat-file -e "$from^{commit}" 2>/dev/null; then
-  changed=$(git -C "$REPO" diff --name-only "$from" "$to" -- infra \
+  changed=$(git -C "$REPO" diff --name-only "$from" "$to" -- infra 'plugins/*/infra/*' \
     ':!infra/brain-deploy.sh' ':!infra/hatbot-update.sh' ':!infra/README.md' | xargs -r -n1 basename | paste -sd, -)
   [[ -z $changed ]] || note "Host scripts changed ($changed); run deploy.sh again to apply them."
 fi

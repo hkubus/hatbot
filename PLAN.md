@@ -92,7 +92,7 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - Attachments are sent inline with every request, up to 20 MB, and a desktop task sends its screenshots again each step, not through the Files API, which keeps files at Anthropic until deleted.
 - No cache mark on the app's system-note turns: the docs don't say system messages take `cache_control`.
 - The try-again and chart-fix notes are user turns opening "(No message from the owner: …)": the API takes a system message only after a user turn.
-- No Chromium policy (`URLBlocklist` for `javascript:`) in `desktop-deploy.sh`; the brain refuses typed script addresses instead.
+- No Chromium policy (`URLBlocklist` for `javascript:`) in `plugins/desktop/infra/desktop-deploy.sh`; the brain refuses typed script addresses instead.
 - Outside negotiations, Enter in a custom element with a closed shadow root isn't held; only Teach treats it as secret.
 - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
 - The mandate check works from word lists. It holds an IBAN written like a phone number as a phone number, and can't catch an acceptance in words it doesn't know while naming our price inside the mandate, new plain words for paying off the platform, or trades ("300 zł i moją starą kartę").

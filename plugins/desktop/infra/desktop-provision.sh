@@ -129,7 +129,7 @@ if [[ ${SSH_IN:-} == 1 ]]; then
 fi
 cat >/etc/nftables.conf <<EOF
 #!/usr/sbin/nft -f
-# Managed by hatbot infra/desktop-provision.sh.
+# Managed by hatbot plugins/desktop/infra/desktop-provision.sh.
 flush ruleset
 
 table inet filter {

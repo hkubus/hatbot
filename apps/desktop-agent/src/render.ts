@@ -4,7 +4,7 @@
 // POST /render to its Unix socket. Chromium follows redirects and loads subresources itself, so only the
 // address asked for is checked here, as /fetch checks it. What keeps a page off the LAN is the host
 // firewall, and off Chromium's DevTools and desktop-agent the loopback rule for the DynamicUser range
-// (desktop-deploy.sh).
+// (plugins/desktop/infra/desktop-deploy.sh).
 //
 // It also draws boxes' pages for box_look (POST /box), from the page the brain sends and
 // with no network at all: CSP doesn't stop a page leaving itself (location.href = "https://…/?" + data),
