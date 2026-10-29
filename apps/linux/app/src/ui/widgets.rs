@@ -1,5 +1,5 @@
 // The small pieces every page is built from, in the web's sizes.
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, toggler, tooltip};
+use iced::widget::{Space, button, column, container, pick_list, row, scrollable, text, text_input, toggler, tooltip};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 
 use super::icons::{self, Icon};
@@ -116,7 +116,7 @@ pub fn field<'a, M: 'a>(name: &'a str, input: impl Into<Element<'a, M>>) -> Elem
 
 /// A setting's row: its name, what it does, and a switch.
 pub fn switch_row<'a, M: Clone + 'a>(
-    name: &'a str,
+    name: impl text::IntoFragment<'a>,
     about: Option<&'a str>,
     on: bool,
     change: Option<impl Fn(bool) -> M + 'a>,
@@ -221,4 +221,33 @@ pub fn area<'a, M: Clone + 'a>(
         .min_height(96)
         .max_height(320)
         .style(theme::editor)
+}
+
+/// A choice in a picker, shown by its name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choice {
+    pub id: String,
+    pub name: String,
+}
+
+impl std::fmt::Display for Choice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+/// A setting picked from a list, its name beside it.
+pub fn picker<'a, T: ToString + PartialEq + Clone + 'a, M: Clone + 'a>(
+    name: &'a str,
+    options: Vec<T>,
+    selected: Option<T>,
+    on: impl Fn(T) -> M + 'a,
+) -> Element<'a, M> {
+    row![
+        text(name).size(theme::FS_TEXT).width(Length::Fill),
+        pick_list(options, selected, on).style(theme::select).padding([8, 14])
+    ]
+    .align_y(Alignment::Center)
+    .spacing(SP_LG)
+    .into()
 }

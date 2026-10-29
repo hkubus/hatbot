@@ -53,6 +53,18 @@ pub fn money(usd: f64) -> String {
     format!("${usd:.2}")
 }
 
+/// Dollars as typed, "$12.50" or "12,5"; None when it isn't a number.
+pub fn amount(text: &str) -> Option<f64> {
+    let t = text.trim().trim_start_matches('$').trim().replace(',', ".");
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
+/// An amount to edit: "12.5", "20".
+pub fn amount_text(usd: f64) -> String {
+    let s = format!("{usd:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 /// "Opus 5.5" for claude-opus-5-5, worked out from the id so a new model has a name too; an id of
 /// another shape stays as it is.
 pub fn model_name(id: &str) -> String {
@@ -172,6 +184,27 @@ pub fn due(ymd: &str, at: Option<&str>) -> (String, bool) {
 /// "2026-11-02" as typed, when it's a real date.
 pub fn ymd(text: &str) -> Option<String> {
     text.trim().parse::<jiff::civil::Date>().ok().map(|d| d.to_string())
+}
+
+/// A search snippet split at its matches, which the brain puts between \u{2} and \u{3}: (text, matched).
+pub fn snippet(text: &str) -> Vec<(&str, bool)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('\u{2}') {
+        if start > 0 {
+            out.push((&rest[..start], false));
+        }
+        let after = &rest[start + 1..];
+        let end = after.find('\u{3}').unwrap_or(after.len());
+        if end > 0 {
+            out.push((&after[..end], true));
+        }
+        rest = after.get(end + 1..).unwrap_or("");
+    }
+    if !rest.is_empty() {
+        out.push((rest, false));
+    }
+    out
 }
 
 pub const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

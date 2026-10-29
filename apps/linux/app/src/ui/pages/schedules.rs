@@ -1,5 +1,5 @@
 // Automations: schedules, watchers and triggers, and the jobs built in.
-use iced::widget::{column, pick_list, row, text, text_editor};
+use iced::widget::{column, row, text, text_editor};
 use iced::{Alignment, Element, Length, Task};
 use serde_json::{Value, json};
 
@@ -10,20 +10,9 @@ use crate::core::models::*;
 use crate::ui::app::{Message, Route, Session, failed};
 use crate::ui::theme::{self, FS_LG, FS_SM, SP, SP_LG, SP_MD, SP_XL};
 use crate::ui::widgets::{
-    area, btn, btn_sm, card, error, field, fill, input, list_row, page, section, segmented, small, switch_row, tone,
+    Choice, area, btn, btn_sm, card, error, field, fill, input, list_row, page, picker, section, segmented, small,
+    switch_row, tone,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Choice {
-    pub id: String,
-    pub name: String,
-}
-
-impl std::fmt::Display for Choice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.name)
-    }
-}
 
 pub fn bot_choices(s: &Session) -> Vec<Choice> {
     s.store
@@ -338,21 +327,6 @@ impl std::fmt::Display for Day {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(format::DAYS[self.0.clamp(0, 6) as usize])
     }
-}
-
-fn picker<'a, T: ToString + PartialEq + Clone + 'a>(
-    name: &'a str,
-    options: Vec<T>,
-    selected: Option<T>,
-    on: impl Fn(T) -> Message + 'a,
-) -> Element<'a, Message> {
-    row![
-        text(name).size(theme::FS_TEXT).width(Length::Fill),
-        pick_list(options, selected, on).style(theme::select).padding([8, 14])
-    ]
-    .align_y(Alignment::Center)
-    .spacing(SP_LG)
-    .into()
 }
 
 pub fn view(s: &Session) -> Element<'_, Message> {

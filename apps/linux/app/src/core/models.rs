@@ -793,6 +793,18 @@ pub struct Limits {
     pub boxes_usd: Option<f64>,
 }
 
+impl Limits {
+    /// Nothing kept for alerts is allowed, and boxes costing nothing; a limit of nothing isn't.
+    pub fn valid(&self) -> bool {
+        self.task_usd > 0.0
+            && self.research_usd > 0.0
+            && self.daily_usd > 0.0
+            && self.monthly_usd > 0.0
+            && self.alert_reserve_usd.unwrap_or(0.0) >= 0.0
+            && self.boxes_usd.unwrap_or(0.0) >= 0.0
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HeartbeatSettings {
@@ -951,6 +963,17 @@ pub const BOT_ICONS: [&str; 17] = [
 ];
 
 pub const BOT_COLORS: [&str; 9] = ["amber", "red", "pink", "purple", "indigo", "blue", "teal", "green", "gray"];
+
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiToken {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+}
 
 pub const CHAT_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 

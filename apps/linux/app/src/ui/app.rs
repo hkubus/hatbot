@@ -67,6 +67,7 @@ pub enum Message {
     Stream(Streamed),
     Go(Route),
     Shortcut(String),
+    Batch(Vec<Message>),
     Ask(Box<confirm::Dialog>),
     Answer(bool),
     Chat(chat::Msg),
@@ -427,6 +428,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Kept(Err(e)) => app.toast(format!("{e} You'll sign in again next time.")),
         Message::Kept(Ok(())) => Task::none(),
         Message::Stream(s) => streamed(app, s),
+        Message::Batch(list) => Task::batch(list.into_iter().map(Task::done)),
         Message::Ask(d) => {
             app.dialog = Some(d);
             Task::none()

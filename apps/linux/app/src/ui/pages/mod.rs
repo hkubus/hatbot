@@ -7,9 +7,12 @@ use super::widgets;
 use crate::core::models::Event;
 
 pub mod boxes;
+pub mod computer;
 pub mod live;
 pub mod memory;
 pub mod schedules;
+pub mod search;
+pub mod settings;
 pub mod tasks;
 pub mod todo;
 
@@ -21,6 +24,9 @@ pub enum Msg {
     Memory(memory::Msg),
     Todo(todo::Msg),
     Boxes(boxes::Msg),
+    Search(search::Msg),
+    Settings(settings::Msg),
+    Computer(computer::Msg),
     OpenBox(i64),
 }
 
@@ -33,6 +39,8 @@ pub struct Pages {
     pub memory: memory::State,
     pub todo: todo::State,
     pub boxes: boxes::State,
+    pub search: search::State,
+    pub settings: settings::State,
 }
 
 pub fn title(s: &Session) -> String {
@@ -62,6 +70,9 @@ pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
         Route::Memory => memory::view(s, &s.pages.md, app.dark),
         Route::Todo => todo::view(s),
         Route::Boxes => boxes::view(s),
+        Route::Search => search::view(s, app.dark),
+        Route::Settings => settings::view(s),
+        Route::Computer => computer::view(app),
         _ => widgets::page(widgets::empty(title(s))),
     }
 }
@@ -97,6 +108,10 @@ pub fn link(page: &str) -> Option<Vec<Message>> {
 }
 
 pub fn update(app: &mut App, m: Msg) -> Task<Message> {
+    let m = match m {
+        Msg::Computer(m) => return computer::update(app, m),
+        m => m,
+    };
     let Some(s) = app.session_mut() else { return Task::none() };
     let t = match m {
         Msg::Tasks(m) => tasks::update(s, m),
@@ -105,6 +120,9 @@ pub fn update(app: &mut App, m: Msg) -> Task<Message> {
         Msg::Memory(m) => memory::update(s, m),
         Msg::Todo(m) => todo::update(s, m),
         Msg::Boxes(m) => boxes::update(s, m),
+        Msg::Search(m) => search::update(s, m),
+        Msg::Settings(m) => settings::update(s, m),
+        Msg::Computer(_) => Task::none(),
         Msg::OpenBox(id) => {
             super::app::open_link(&format!("{}/boxes/{id}", s.api.server));
             Task::none()
@@ -137,6 +155,8 @@ pub fn opened(s: &mut Session, r: &Route) -> Task<Message> {
         Route::Memory => memory::opened(s),
         Route::Todo => todo::opened(s),
         Route::Boxes => boxes::opened(s),
+        Route::Search => search::opened(s),
+        Route::Settings => settings::opened(s),
         _ => Task::none(),
     };
     keep_markdown(s);
