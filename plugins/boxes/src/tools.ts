@@ -7,6 +7,7 @@ import {
   clip,
   PluginError,
   type PluginTool,
+  type ToolOutput,
   untrustedBlock,
 } from "@hatbot/plugin-sdk";
 import {
@@ -18,7 +19,6 @@ import {
   MAX_BOX_HTML,
   MAX_WATCH_MINUTES,
   MIN_WATCH_MINUTES,
-  type Task,
 } from "@hatbot/shared";
 import { type BoxLookError, MAX_LOOK_HEIGHT } from "@hatbot/shared/desktop";
 import {
@@ -37,21 +37,12 @@ import type { Deps } from "./deps";
 import type { BoxFeed } from "./feeds";
 
 /** What a box tool sees: the plugin's services, and the call's own part. */
-export type ToolContext = {
+export type ToolContext = Partial<CallContext> & {
   boxes: Boxes;
   bots: Deps["bots"];
   tasks: Deps["tasks"];
   settings: Deps["settings"];
   desktop: ReturnType<Deps["desktop"]>;
-  bot?: Bot;
-  conversationId?: number;
-  messageId?: number;
-  tainted?: () => string | null;
-  taint?: (by: string, text?: string) => void;
-  suspected?: () => Promise<boolean>;
-  ownerSaid?: () => string;
-  answering?: Task;
-  approve?: CallContext["approve"];
 };
 
 const isCodeBot = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots.codeBot()?.id === ctx.bot.id);
@@ -307,22 +298,23 @@ export const BOX_PAGE_RULES =
 export const BOX_FILES_RULES =
   'For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}.';
 
-type ToolDef<S extends z.ZodType> = {
+type BoxTool<S extends z.ZodType> = {
   name: string;
   description: string;
+  label: string;
+  /** Makes or changes a box: left to the code bot when there is one. */
+  change?: boolean;
   schema: S;
-  run: (
-    input: z.infer<S>,
-    ctx: ToolContext,
-    signal: AbortSignal,
-  ) => Promise<string | { text: string; image: { data: string; mediaType: "image/png" } }>;
+  run: (input: z.infer<S>, ctx: ToolContext, signal: AbortSignal) => Promise<ToolOutput>;
 };
 
-const def = <S extends z.ZodType>(t: ToolDef<S>) => t;
+const def = <S extends z.ZodType>(t: BoxTool<S>) => t;
 
 const TOOLS = [
   def({
     name: "boxes_create",
+    label: "Making a box",
+    change: true,
     description: `Make a box: a small web app the owner keeps and opens from the chat, such as a tracker, a calculator, a planner or a dashboard. Not for a one-off answer: reply instead, with a chart block if it helps. ${BOX_PAGE_RULES} ${BOX_FILES_RULES} Then look at it with boxes_look and fix what's wrong before you say it's done.`,
     schema: z.object({
       title: BOX_TITLE,
@@ -364,6 +356,8 @@ const TOOLS = [
   }),
   def({
     name: "boxes_edit",
+    label: "Changing a box",
+    change: true,
     description:
       "Change one of your boxes, as a new version; the earlier ones are kept. Give edits for a few changes, or the whole new page as html. A box with files takes edits to any of them, whole files to add or replace, and files to remove. Then look at it again with boxes_look.",
     schema: z.object({
@@ -428,6 +422,8 @@ const TOOLS = [
   }),
   def({
     name: "boxes_t3",
+    label: "Handing the box to T3 Code",
+    change: true,
     description:
       "Have T3 Code make a new box, or change one of yours, as a background task: for a box with more than a little code, or a big change to one. An agent in the owner's T3 Code works on the box's files on its own for a few minutes, and they're saved as the box's next version, shown under your reply. It can't see this conversation, so put everything the box needs in request. You hear when it's done: look at the box with boxes_look then, before you tell the owner. For a small change, use boxes_edit.",
     schema: z.object({
@@ -468,6 +464,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_list",
+    label: "Looking at boxes",
     description: "Your boxes, the latest changed first.",
     schema: z.object({}),
     run: async (_, ctx) => {
@@ -484,6 +481,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_read",
+    label: "Reading a box",
     description:
       "Read one of your boxes' page (a box with files: its files): the one that opens, or an earlier version.",
     schema: z.object({
@@ -513,6 +511,8 @@ const TOOLS = [
   }),
   def({
     name: "boxes_revert",
+    label: "Changing a box",
+    change: true,
     description: "Bring back an earlier version of one of your boxes, as a new version.",
     schema: z.object({ box: z.number().int(), version: z.number().int().positive() }),
     run: async ({ box: id, version }, ctx, signal) => {
@@ -549,6 +549,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_data",
+    label: "Reading what a box saved",
     description:
       "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, and which of its secrets the owner has set.",
     schema: z.object({ box: z.number().int() }),
@@ -574,6 +575,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_look",
+    label: "Looking at a box",
     description:
       "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send, .feed and .fetch fail there. with_data starts it with what the page saved, and what comes back is then untrusted.",
     schema: z.object({
@@ -616,12 +618,14 @@ const TOOLS = [
       const out = boxOutput(ctx, "boxes_look", text, by || null, screened);
       return {
         text: by ? `${out}\nThe picture is untrusted too.` : out,
-        image: { data: look.png, mediaType: "image/png" },
+        images: [{ data: look.png, mediaType: "image/png" }],
       };
     },
   }),
   def({
     name: "boxes_feed",
+    label: "Giving a box a feed",
+    change: true,
     description:
       "Give one of your boxes a feed: one of your plugins' read tools, which the brain runs on a timer without a model, so the box's page shows the latest. The page reads it with await hatbox.feed(name), which gives {value, at, error} (value: the tool's output, parsed when it's JSON; at: when it came; error: why the last run failed, if it did) or undefined before there's one. It runs once now; one that fails isn't added. The same name changes it; leave out tool to remove it. At most 10 a box.",
     schema: z.object({
@@ -694,6 +698,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_logs",
+    label: "Reading a box's logs",
     description:
       "The end of what one of your boxes' backend printed (console.log, errors, scheduled() runs), with notes on fetches it wasn't let make.",
     schema: z.object({ box: z.number().int() }),
@@ -707,6 +712,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_call",
+    label: "Trying a box's backend",
     description:
       "Send one of your boxes' backend a request, as its page's hatbox.fetch does, to try it.",
     schema: z.object({
@@ -745,69 +751,29 @@ const TOOLS = [
   }),
 ];
 
-type Meta = {
-  label: string;
-  change?: boolean;
-  when?: (o: Parameters<NonNullable<PluginTool["when"]>>[0]) => boolean;
-};
-
-const META: Record<string, Meta> = {
-  boxes_create: { label: "Making a box", change: true },
-  boxes_edit: { label: "Changing a box", change: true },
-  boxes_t3: { label: "Handing the box to T3 Code", change: true },
-  boxes_list: { label: "Looking at boxes" },
-  boxes_read: { label: "Reading a box" },
-  boxes_revert: { label: "Changing a box", change: true },
-  boxes_data: { label: "Reading what a box saved" },
-  boxes_look: { label: "Looking at a box" },
-  boxes_feed: { label: "Giving a box a feed", change: true },
-  boxes_logs: { label: "Reading a box's logs" },
-  boxes_call: { label: "Trying a box's backend" },
-};
-
 export function boxTools(d: Deps, boxes: Boxes): PluginTool[] {
   /** Boxes are code: with a code bot, it makes and changes them all. */
   const noCoder = (bot: Bot) => !d.bots.coderFor(bot);
-  return TOOLS.map((def) => {
-    const meta = META[def.name] as Meta;
-    return {
-      name: def.name,
-      description: def.description,
+  return TOOLS.map(
+    ({ change, run, ...def }): PluginTool => ({
+      ...def,
       schema: def.schema as z.ZodType,
       access: "own",
       places: ["chat"],
       deferred: true,
       whole: true,
-      label: meta.label,
-      ...(meta.change
+      ...(change
         ? {
             when: (o) =>
               noCoder(o.bot) && (def.name !== "boxes_t3" || d.plugins.readyFor("t3", o.bot)),
           }
         : {}),
-      run: async (input, call) => {
-        const ctx: ToolContext = {
-          boxes,
-          bots: d.bots,
-          tasks: d.tasks,
-          settings: d.settings,
-          desktop: d.desktop(),
-          bot: call.bot,
-          conversationId: call.conversationId,
-          messageId: call.messageId,
-          tainted: call.tainted,
-          taint: call.taint,
-          suspected: call.suspected,
-          ownerSaid: call.ownerSaid,
-          answering: call.answering,
-          approve: call.approve,
-        };
+      run: (input, call) => {
+        const { bots, tasks, settings } = d;
+        const ctx = { ...call, boxes, bots, tasks, settings, desktop: d.desktop() };
         // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
-        const out = await def.run(input as any, ctx, call.signal);
-        return typeof out === "string"
-          ? out
-          : { text: out.text, images: [out.image as { data: string; mediaType: "image/png" }] };
+        return run(input as any, ctx, call.signal);
       },
-    } satisfies PluginTool;
-  });
+    }),
+  );
 }
