@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import { uptimeKumaPlugin } from "@hatbot/plugin-uptimekuma";
 import { runPluginTool } from "../src/plugins/registry";
-import { uptimeKumaPlugin } from "../src/plugins/uptimekuma";
 import { call, fakeApi, pluginApp, stopPluginsAfterEach } from "./plugin-helpers";
 
 stopPluginsAfterEach();

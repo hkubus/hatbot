@@ -1,5 +1,7 @@
 // Settings → Check everything: a quick, real try of each part Hatbot depends on, so a deploy step
 // that was missed shows up here instead of in the middle of a task.
+
+import type { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Approval, CheckReport, CheckResult, ChecksInfo, StorageInfo } from "@hatbot/shared";
 import { type ModelClient, modelErrorText, oneShot } from "./agent/model";
 import type { Approvals } from "./approvals";
@@ -15,7 +17,6 @@ import type { MemoryStore } from "./memory/store";
 import { guessableTopic, type NtfyNotifier } from "./notify";
 import { type DeadManPing, errorText } from "./ping";
 import type { Plugins } from "./plugins/registry";
-import type { Proxmox } from "./proxmox";
 import { getSetting, type SettingsStore, setSetting } from "./settings";
 import type { Spend } from "./spend";
 import { bytes, type Storage, storageLine } from "./storage";

@@ -1,6 +1,8 @@
 // Built the same way for the brain (main.ts) and for tests (test/helpers.ts): only the outside world
 // is passed in.
 import { join } from "node:path";
+import { codePlugin } from "@hatbot/plugin-code";
+import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Plugin } from "@hatbot/plugin-sdk";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
@@ -32,12 +34,10 @@ import { MemoryStore } from "./memory/store";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
-import { codePlugin } from "./plugins/code";
 import { Plugins } from "./plugins/registry";
 import { scoutPlugin } from "./plugins/scout";
 import { selfPlugin } from "./plugins/self";
 import { t3Plugin } from "./plugins/t3";
-import { Proxmox } from "./proxmox";
 import { Questions } from "./questions";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
@@ -105,7 +105,7 @@ export async function createServices(o: Outside) {
   const plugins = new Plugins(
     [
       ...o.plugins,
-      codePlugin(files),
+      codePlugin,
       t3Plugin({
         t3,
         db,

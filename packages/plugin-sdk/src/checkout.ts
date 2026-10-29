@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
-import { PluginError, type Sandbox, SandboxError } from "@hatbot/plugin-sdk";
+import { PluginError, type Sandbox, SandboxError } from "./index";
 
 export const MAX_PATCH_BYTES = 5_000_000;
 /** The desktop takes files of up to 25 MB, so the files go in parts and are joined in the sandbox. */

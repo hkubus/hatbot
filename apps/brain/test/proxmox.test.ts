@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { Proxmox, pinnedRequest } from "../src/proxmox";
+import { Proxmox, pinnedRequest } from "@hatbot/plugin-proxmox/client";
 import { signIn, testApp } from "./helpers";
 import { fakeApi, fixtures, PVE_FINGERPRINT } from "./plugin-helpers";
 

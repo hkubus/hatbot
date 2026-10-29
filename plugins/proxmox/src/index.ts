@@ -12,7 +12,7 @@ import {
   tool,
 } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { Proxmox } from "../../proxmox";
+import { Proxmox } from "./client";
 
 const POWER_TIMEOUT_MS = 3 * 60_000;
 

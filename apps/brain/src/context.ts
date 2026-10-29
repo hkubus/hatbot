@@ -1,3 +1,4 @@
+import type { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Chats } from "./agent/chats";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
@@ -16,7 +17,6 @@ import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
 import type { Negotiations } from "./negotiate/service";
 import type { Plugins } from "./plugins/registry";
-import type { Proxmox } from "./proxmox";
 import type { Questions } from "./questions";
 import type { WeeklyReport } from "./report";
 import type { Schedules } from "./schedules";

@@ -1,11 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { CallContext } from "@hatbot/plugin-sdk";
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { levelOf } from "../src/agent/review";
-import { approvableFromNotification } from "../src/approvals";
 import {
   callFailure,
   definitionHash,
@@ -14,7 +9,12 @@ import {
   problemOf,
   toolName,
   unsent,
-} from "../src/plugins/mcp";
+} from "@hatbot/plugin-mcp";
+import type { CallContext } from "@hatbot/plugin-sdk";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { levelOf } from "../src/agent/review";
+import { approvableFromNotification } from "../src/approvals";
 import { runPluginTool, untrustedDefinitions, verdictFor } from "../src/plugins/registry";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { FakeModel, toolUse } from "./fake-model";

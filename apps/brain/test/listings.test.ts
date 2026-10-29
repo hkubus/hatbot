@@ -4,9 +4,9 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mcpPlugin } from "@hatbot/plugin-mcp";
 import type { Approval } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { mcpPlugin } from "../src/plugins/mcp";
 import { browser, FakeModel, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 

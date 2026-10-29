@@ -11,8 +11,7 @@ import {
   ready,
   tool,
 } from "@hatbot/plugin-sdk";
-import { z } from "zod";
-import { basicAuth } from "../checkout";
+import { basicAuth } from "@hatbot/plugin-sdk/checkout";
 import {
   Branch,
   checkoutTools,
@@ -25,7 +24,8 @@ import {
   repoPath,
   runsInCi,
   sameBranch,
-} from "../forge";
+} from "@hatbot/plugin-sdk/forge";
+import { z } from "zod";
 
 const Repo = RepoOf("owner/repo");
 

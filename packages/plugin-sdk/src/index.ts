@@ -187,6 +187,14 @@ export class PluginError extends Error {
 }
 
 /** `api` gives JSON, or text when another type is asked for; `send` the Response itself. */
+/** The most a file handed to or from Hatbot may be. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+export const sizeText = (n: number) =>
+  n >= 1024 * 1024
+    ? `${(n / 1024 / 1024).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(n / 1024))} KB`;
+
 export function httpApi(name: string, base: string, headers: Record<string, string>) {
   const send = async (
     method: string,
@@ -307,6 +315,8 @@ export type PluginContext<C> = {
   store: PluginStore;
   /** Saves values for its `env` variables, as Settings does; plugins reading them restart. */
   saveSecrets: (values: Record<string, string | null>) => Promise<void>;
+  /** Another plugin's settings as saved, read when called, even while it's off. */
+  configOf: (id: string) => unknown;
 };
 
 export type PluginStore = {

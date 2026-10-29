@@ -12,11 +12,11 @@ import {
   ready,
   tool,
 } from "@hatbot/plugin-sdk";
+import { oauthClient } from "@hatbot/plugin-sdk/oauth";
 import { z } from "zod";
 import type { Db } from "../../db";
 import { getSetting, setSetting } from "../../settings";
 import { runStats, type T3Code, type T3Project } from "../../t3";
-import { oauthClient } from "../oauth";
 
 export const T3_MODELS = { opus: "claude-opus-5-5", haiku: "claude-haiku-5-5" } as const;
 const UNTIL = "t3:signed-in-until";

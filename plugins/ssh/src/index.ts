@@ -7,18 +7,24 @@ import {
   askCareful,
   block,
   definePlugin,
+  MAX_ATTACHMENT_BYTES,
   PluginError,
   ready,
   type Sandbox,
   SandboxError,
+  sizeText,
   tool,
   type Verdict,
 } from "@hatbot/plugin-sdk";
+import {
+  commandCount,
+  destructive,
+  inContainer,
+  readOnly,
+  statusOnly,
+} from "@hatbot/plugin-sdk/shell";
 import { type ApprovalKind, MAX_BOX_VALUE } from "@hatbot/shared";
 import { z } from "zod";
-import { MAX_ATTACHMENT_BYTES, sizeText } from "../../attachments";
-import { saved } from "../registry";
-import { commandCount, destructive, inContainer, readOnly, statusOnly } from "./policy";
 
 const OUTPUT_CHARS = 15_000;
 const READ_LINES = 500;
@@ -186,7 +192,7 @@ export const sshPlugin = definePlugin({
   description: "Run commands on your hosts",
   env: [{ name: "HATBOT_BRAIN_ID", optional: true, hint: "101" }],
   config: Config,
-  start: ({ env, config, db, files }) => {
+  start: ({ env, config, files, configOf }) => {
     const home = env.HOME ?? homedir();
     const key = env.HATBOT_SSH_KEY ?? join(home, ".ssh/id_ed25519");
     const knownHosts = env.HATBOT_SSH_KNOWN_HOSTS ?? join(home, ".ssh/known_hosts");
@@ -284,7 +290,7 @@ export const sshPlugin = definePlugin({
     const carefulGuests = (): number[] => {
       const parsed = z
         .object({ careful: z.array(z.number()).default([]) })
-        .safeParse(saved(db, "proxmox").config ?? {});
+        .safeParse(configOf("proxmox") ?? {});
       return parsed.success ? parsed.data.careful : [];
     };
 

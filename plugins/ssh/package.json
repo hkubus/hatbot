@@ -1,0 +1,15 @@
+{
+  "name": "@hatbot/plugin-ssh",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hatbot/plugin-sdk": "workspace:*",
+    "@hatbot/shared": "workspace:*",
+    "zod": "^4.6.5"
+  }
+}

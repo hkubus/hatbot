@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { pbsPlugin } from "../src/plugins/pbs";
+import { pbsPlugin } from "@hatbot/plugin-pbs";
 import { FakeModel, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
 import {

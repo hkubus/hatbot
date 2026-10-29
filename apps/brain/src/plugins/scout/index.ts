@@ -2,6 +2,7 @@
 // tools' descriptions itself and calls Scout's by name, so a Scout update can't change what the model
 // reads about them; what they return is still untrusted, since listings are strangers' text.
 
+import { callFailure, resultText, unsent } from "@hatbot/plugin-mcp";
 import {
   allow,
   block,
@@ -12,6 +13,7 @@ import {
   ready,
   tool,
 } from "@hatbot/plugin-sdk";
+import { discover, oauthClient } from "@hatbot/plugin-sdk/oauth";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   StreamableHTTPClientTransport,
@@ -19,8 +21,6 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { callFailure, resultText, unsent } from "../mcp";
-import { discover, oauthClient } from "../oauth";
 
 type Http = (url: string, init?: RequestInit) => Promise<Response>;
 

@@ -8,6 +8,9 @@
       "path": "packages/plugin-sdk"
     },
     {
+      "path": "plugins"
+    },
+    {
       "path": "apps/brain"
     },
     {

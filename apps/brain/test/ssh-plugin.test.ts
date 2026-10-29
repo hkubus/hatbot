@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { textOf } from "@hatbot/plugin-sdk";
+import { commandCount, destructive, statusOnly } from "@hatbot/plugin-sdk/shell";
+import { spawnRun, sshPlugin } from "@hatbot/plugin-ssh";
 import type { Task } from "@hatbot/shared";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
-import { spawnRun, sshPlugin } from "../src/plugins/ssh";
-import { commandCount, destructive, statusOnly } from "../src/plugins/ssh/policy";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
 import {

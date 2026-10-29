@@ -7,6 +7,7 @@ import {
   type BetaBrowserState,
 } from "@anthropic-ai/sdk/helpers/beta/toolsets";
 import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
+import { destructive } from "@hatbot/plugin-sdk/shell";
 import type { ApprovalKind } from "@hatbot/shared";
 import {
   type AgentElement,
@@ -37,7 +38,6 @@ import {
   typesText,
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
-import { destructive } from "../plugins/ssh/policy";
 import { usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";

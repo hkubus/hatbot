@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { proxmoxPlugin } from "../src/plugins/proxmox";
+import { proxmoxPlugin } from "@hatbot/plugin-proxmox";
 import { verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import { waitFor } from "./helpers";

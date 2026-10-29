@@ -1,8 +1,8 @@
 // The GitHub and Forgejo plugins: what they share, as one table, and each one's own way of working.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { forgejoPlugin } from "../src/plugins/forgejo";
-import { githubPlugin } from "../src/plugins/github";
+import { forgejoPlugin } from "@hatbot/plugin-forgejo";
+import { githubPlugin } from "@hatbot/plugin-github";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";

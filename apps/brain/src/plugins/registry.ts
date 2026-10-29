@@ -385,6 +385,7 @@ export class Plugins {
             saveSecrets: async (values) => {
               await this.setSecrets(s.plugin.id, values);
             },
+            configOf: (id) => saved(this.d.db, id).config,
           });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;

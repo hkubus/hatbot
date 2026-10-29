@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { homeassistantPlugin } from "../src/plugins/homeassistant";
+import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import {

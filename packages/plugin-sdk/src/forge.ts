@@ -1,7 +1,6 @@
 // A "." or ".." part in a name would step out of the repository's endpoints once the URL is resolved,
 // and a branch git wouldn't take could land somewhere else ("main/" on main).
 import { join, posix } from "node:path";
-import { allow, ask, PluginError, type PluginTool, type Sandbox, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import {
   archive,
@@ -16,6 +15,7 @@ import {
   remoteHead,
   serially,
 } from "./checkout";
+import { allow, ask, PluginError, type PluginTool, type Sandbox, tool } from "./index";
 
 const dotParts = (s: string) => s.split("/").some((p) => p === "." || p === "..");
 

@@ -11,9 +11,6 @@ import {
   SandboxError,
   tool,
 } from "@hatbot/plugin-sdk";
-import { z } from "zod";
-import type { Schedules } from "../../schedules";
-import { getSetting, setSetting } from "../../settings";
 import {
   archive,
   basicAuth,
@@ -25,8 +22,11 @@ import {
   putCheckout,
   remoteEnv,
   serially,
-} from "../checkout";
-import { Branch, Num, Repo, repoPath, validRef } from "../forge";
+} from "@hatbot/plugin-sdk/checkout";
+import { Branch, Num, Repo, repoPath, validRef } from "@hatbot/plugin-sdk/forge";
+import { z } from "zod";
+import type { Schedules } from "../../schedules";
+import { getSetting, setSetting } from "../../settings";
 
 const WORK = "hatbot-self/work";
 const MAX_CONVERSATION = 30_000;

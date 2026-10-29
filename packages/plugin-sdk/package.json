@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./checkout": "./src/checkout.ts",
+    "./forge": "./src/forge.ts",
+    "./oauth": "./src/oauth.ts",
+    "./shell": "./src/shell.ts"
   },
   "dependencies": {
     "@hatbot/shared": "workspace:*",

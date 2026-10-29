@@ -1,9 +1,9 @@
 // The certificate is self-signed, so the connection is pinned like Proxmox VE's (src/proxmox.ts).
 
+import { stamp } from "@hatbot/plugin-proxmox";
+import { pinnedRequest } from "@hatbot/plugin-proxmox/client";
 import { ask, definePlugin, needsSetup, type PluginInstance, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { pinnedRequest } from "../../proxmox";
-import { stamp } from "../proxmox";
 
 type Usage = {
   store: string;

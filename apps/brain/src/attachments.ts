@@ -1,10 +1,13 @@
 import { rename, rm } from "node:fs/promises";
 import type Anthropic from "@anthropic-ai/sdk";
+import { MAX_ATTACHMENT_BYTES, sizeText } from "@hatbot/plugin-sdk";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import type { Archive } from "./archive";
 import type { Db } from "./db";
 import { type DesktopAgent, DesktopError } from "./desktop/client";
 import type { EventBus } from "./events";
+
+export { MAX_ATTACHMENT_BYTES, sizeText };
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 /** Never sent to the API as is: `expand` replaces it. */
@@ -12,7 +15,6 @@ const ATTACHMENT_REF = "hatbot_attachment";
 const isRef = (b: unknown): b is { type: typeof ATTACHMENT_REF; id: number } =>
   (b as { type?: string }).type === ATTACHMENT_REF;
 
-export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** The API's limit for an image, and a PDF's share of a request. */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
@@ -73,11 +75,6 @@ const inlineBytes = (blocks: BlockParam[]) =>
     const source = (b as { source?: { type?: string; data?: unknown } }).source;
     return n + (typeof source?.data === "string" ? source.data.length : 0);
   }, 0);
-
-export const sizeText = (n: number) =>
-  n >= 1024 * 1024
-    ? `${(n / 1024 / 1024).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(n / 1024))} KB`;
 
 /** A request's `w` rounds up to one, so few are kept. Bubbles are 240 points on 2x and 3x screens. */
 export const THUMB_SIZES = [480, 720, 1080];
