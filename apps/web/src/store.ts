@@ -653,7 +653,10 @@ async function loadLive(snapshot: Snapshot | null) {
   for (const a of Object.values(approvals))
     if (a.status === "pending") requested.delete(`a${a.id}`);
   for (const a of Object.values(approvals))
-    if ((a.status === "pending" || a.status === "blocked") && !pending.some((p) => p.id === a.id))
+    if (
+      (a.status === "pending" || a.status === "blocked" || a.status === "sending") &&
+      !pending.some((p) => p.id === a.id)
+    )
       delete approvals[a.id];
   for (const a of pending) approvals[a.id] = a;
   // Questions answered or dropped while we were away aren't listed.

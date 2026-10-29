@@ -5,7 +5,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
+import { bot, letSend, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
   content: [toolUse("finish_task", { outcome: "done", summary })],
@@ -466,6 +466,7 @@ test("each line break in typed text is checked on its own: one send the review a
       ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
       : undefined;
   const task = startTask(t, "Write to Ann");
+  await letSend(t);
   await t.tasks.idle();
   // The approved Enter, then the text after it; the next Enter waits for another approval.
   expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
@@ -473,7 +474,41 @@ test("each line break in typed text is checked on its own: one send the review a
   expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku 5.5 found it safe")).toBe(
     true,
   );
-  expect(t.approvals.list(false)).toHaveLength(0);
+  expect(t.approvals.list(false)).toMatchObject([
+    { status: "approved", summary: "Send Ann a hello" },
+  ]);
+});
+
+test("a message the review lets through waits for you to stop it, and stopped, it doesn't go", async () => {
+  const work = new FakeModel([
+    { content: [computer("type", { text: "Hi Ann" })] },
+    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send Ann a hello" })] },
+    { content: [computer("key", { text: "Return" })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const url = "https://chat.example/c/1";
+  t.agent.page = { url, title: "Ann", text: "" };
+  t.agent.element = {
+    tag: "textarea",
+    role: null,
+    type: null,
+    label: "Message",
+    inForm: false,
+    url,
+    editable: true,
+    buttonsAfter: ["Send"],
+  };
+  t.taskModel.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
+      : undefined;
+  startTask(t, "Write to Ann");
+  const sending = await waitFor(() => t.approvals.list(true).find((a) => a.status === "sending"));
+  t.approvals.decide(sending.id, "deny", "web");
+  await t.tasks.idle();
+  expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann"]);
+  expect(lastText(work.requests[3])).toContain("The owner stopped this message.");
 });
 
 test("a background task waits without a slot, wakes on an event, and can notify before it ends", async () => {

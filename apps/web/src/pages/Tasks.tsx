@@ -309,7 +309,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   // A chat's card until the whole task comes: its details and goal only then.
   const full = isFullTask(task) ? task : null;
   const pending = Object.values(approvals).filter(
-    (a) => a.taskId === id && (a.status === "pending" || a.status === "blocked"),
+    (a) =>
+      a.taskId === id &&
+      (a.status === "pending" || a.status === "blocked" || a.status === "sending"),
   );
   const asked = Object.values(questions).filter((q) => q.taskId === id && q.status === "pending");
   const screen = task.lane === "screen";

@@ -13,6 +13,8 @@ import type { Db } from "./db";
 import type { EventBus } from "./events";
 
 const TTL_MS = 24 * 3600_000;
+/** How long a message to a person waits before it goes, for you to stop it. */
+export const SEND_WINDOW_MS = 30_000;
 /** Kinds a notification may approve from a locked phone; the rest are approved in the app. */
 const NOTIFY_APPROVES: ApprovalKind[] = [
   "send",
@@ -130,7 +132,7 @@ export class Approvals {
     // Nothing waits on approvals from before a restart: their tasks were stopped. A negotiation's
     // mandate or hold, or a listing, waits for no task: it takes the answer whenever it comes.
     db.query(
-      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind NOT IN ('mandate', 'listing')
+      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status IN ('pending', 'sending') AND kind NOT IN ('mandate', 'listing')
        AND id NOT IN (SELECT approval_id FROM negotiations WHERE approval_id IS NOT NULL)`,
     ).run(this.now());
   }
@@ -147,7 +149,7 @@ export class Approvals {
   /** Newest first, 100 at a time; `before`: the next page, older than that id. `pendingOnly` keeps what's blocked too. */
   list(pendingOnly: boolean, before?: number): Approval[] {
     const where = [
-      ...(pendingOnly ? ["a.status IN ('pending', 'blocked')"] : []),
+      ...(pendingOnly ? ["a.status IN ('pending', 'blocked', 'sending')"] : []),
       ...(before !== undefined ? ["a.id < ?"] : []),
     ];
     return this.db
@@ -214,7 +216,7 @@ export class Approvals {
 
   wait(id: number, signal: AbortSignal): Promise<Outcome> {
     const current = this.get(id);
-    if (current && current.status !== "pending")
+    if (current && current.status !== "pending" && current.status !== "sending")
       return Promise.resolve(current.status === "blocked" ? "denied" : current.status);
     return new Promise((resolve, reject) => {
       const abort = () => {
@@ -238,7 +240,7 @@ export class Approvals {
   ): Approval | null {
     const changed = this.db
       .query(
-        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ?, note = ? WHERE id = ? AND status = 'pending'",
+        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ?, note = ? WHERE id = ? AND status IN ('pending', 'sending')",
       )
       .run(status, via, this.now(), note, id);
     if (!changed.changes) return null;
@@ -294,6 +296,27 @@ export class Approvals {
       )
       .get(this.now(), q.botId, q.tool, input);
     return anyway ? "You chose to run it anyway." : null;
+  }
+
+  /** A message to a person that goes once SEND_WINDOW_MS passes, unless you deny (stop) it first. */
+  sending(input: NewApproval): Approval {
+    const row = this.db
+      .query<{ id: number }, [string, number | null, string, string, string, string]>(
+        `INSERT INTO approvals (bot_id, task_id, kind, summary, reason, sources, status, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, '', '[]', 'sending', ?5, ?6) RETURNING id`,
+      )
+      .get(
+        input.botId ?? HATBOT_ID,
+        input.taskId,
+        input.kind,
+        input.summary,
+        this.now(),
+        new Date(this.clock() + SEND_WINDOW_MS).toISOString(),
+      );
+    const approval = this.get(row?.id ?? -1);
+    if (!approval) throw new Error("approval insert failed");
+    this.events.emit({ type: "approval.created", approval });
+    return approval;
   }
 
   /** What the safety review blocked: nothing waits on it, and you may run it anyway for a day. */
@@ -398,7 +421,7 @@ export class Approvals {
   cancelForTask(taskId: number) {
     const ids = this.db
       .query<{ id: number }, [number]>(
-        "SELECT id FROM approvals WHERE task_id = ? AND status = 'pending'",
+        "SELECT id FROM approvals WHERE task_id = ? AND status IN ('pending', 'sending')",
       )
       .all(taskId);
     for (const { id } of ids) this.resolve(id, "cancelled");
@@ -411,6 +434,12 @@ export class Approvals {
       )
       .all(this.now());
     for (const { id } of due) this.resolve(id, "expired");
+    const sent = this.db
+      .query<{ id: number }, [string]>(
+        "SELECT id FROM approvals WHERE status = 'sending' AND expires_at <= ?",
+      )
+      .all(this.now());
+    for (const { id } of sent) this.resolve(id, "approved");
     const blocked = this.db
       .query<{ id: number }, [string]>(
         "UPDATE approvals SET status = 'expired' WHERE status = 'blocked' AND expires_at <= ? RETURNING id",

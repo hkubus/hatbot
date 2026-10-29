@@ -13,6 +13,7 @@ import type { Boxes } from "@hatbot/plugin-boxes";
 import type { DesktopService, Teach } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Notification, Notifier, Plugin } from "@hatbot/plugin-sdk";
+import { SEND_WINDOW_MS } from "../src/approvals";
 import { stepOf, totpAt } from "../src/auth/totp";
 import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
@@ -216,6 +217,14 @@ export async function setUpOwner(t: TestApp, password = "correct horse battery")
 export const signIn = (t: TestApp) => ({ cookie: `hatbot_session=${t.auth.createSession(null)}` });
 
 /** Polls until `fn` returns something truthy (async task runs). */
+/** Waits for a message to a person to start its window, then lets the window pass. */
+export async function letSend(t: TestApp) {
+  const a = await waitFor(() => t.approvals.list(true).find((a) => a.status === "sending"));
+  t.advance(SEND_WINDOW_MS);
+  t.approvals.expireDue();
+  return a;
+}
+
 export async function waitFor<T>(fn: () => T | undefined | null | false, ms = 2000): Promise<T> {
   const end = Date.now() + ms;
   for (;;) {

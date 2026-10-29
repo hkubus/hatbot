@@ -1191,6 +1191,46 @@ struct ApprovalBody: View {
   }
 }
 
+/// A message to a person that goes once its time is up, unless it's stopped.
+struct SendingBody: View {
+  let approval: Approval
+  @Environment(AppStore.self) private var store
+  @State private var busy = false
+  @State private var error: String?
+
+  var body: some View {
+    let due = Format.date(approval.expiresAt) ?? .now
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let left = max(0, Int(due.timeIntervalSince(context.date).rounded(.up)))
+      VStack(alignment: .leading, spacing: 10) {
+        Text(approval.summary).textSelection(.enabled)
+        Text(left > 0 ? "Sending in \(left) s" : "Sending").foregroundStyle(.secondary)
+        if let error {
+          Text(error).font(.footnote).foregroundStyle(.red)
+        }
+        Button(role: .destructive) { stop() } label: { Text("Stop").frame(maxWidth: .infinity) }
+          .glassButton()
+          .controlSize(.large)
+          .disabled(busy || left == 0)
+      }
+      .padding(.vertical, 4)
+    }
+  }
+
+  private func stop() {
+    busy = true
+    error = nil
+    Task {
+      do {
+        try await store.decide(approval.id, .deny)
+      } catch {
+        self.error = message(for: error)
+        busy = false
+      }
+    }
+  }
+}
+
 struct QuestionBody: View {
   let question: Question
   var linksTask = true

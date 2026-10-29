@@ -303,6 +303,7 @@ struct TestApprovalRow: View {
       switch a.status {
       case .pending: "Waiting for your answer"
       case .blocked: "Blocked"
+      case .sending: "Sending"
       case .approved: "Approved"
       case .denied: "Denied"
       case .expired: "Expired"

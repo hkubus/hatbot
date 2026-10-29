@@ -333,8 +333,11 @@ export type Approval = {
   sources: string[];
   /** The step whose screenshot shows what's being approved. */
   screenshotStepId: number | null;
-  /** `blocked`: the safety review stopped it, and you may still run it anyway. */
-  status: "pending" | "blocked" | "approved" | "denied" | "expired" | "cancelled";
+  /**
+   * `blocked`: the safety review stopped it, and you may still run it anyway. `sending`: a message to
+   * a person that goes at `expiresAt` unless you deny it.
+   */
+  status: "pending" | "blocked" | "sending" | "approved" | "denied" | "expired" | "cancelled";
   decidedVia: "web" | "ntfy" | null;
   costUsd: number;
   createdAt: string;

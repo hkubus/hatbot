@@ -49,7 +49,8 @@ const safely = (name: string, fn: () => unknown) => {
     console.error(`${name} failed`, err);
   }
 };
-setInterval(() => safely("approvals", () => approvals.expireDue()), 60_000);
+// Often, so a message waiting to send goes close to when it says.
+setInterval(() => safely("approvals", () => approvals.expireDue()), 5_000);
 setInterval(() => safely("questions", () => brain.questions.expireDue()), 60_000);
 setInterval(() => safely("sign-in prune", () => auth.prune()), 3600_000);
 setInterval(() => safely("negotiations", () => negotiations.due()), 60_000);

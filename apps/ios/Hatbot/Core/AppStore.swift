@@ -174,6 +174,10 @@ final class AppStore {
     approvals.values.filter { $0.status == .pending }.sorted { $0.id < $1.id }
   }
 
+  var sendingApprovals: [Approval] {
+    approvals.values.filter { $0.status == .sending }.sorted { $0.id < $1.id }
+  }
+
   // MARK: Event stream
 
   func connect() {
@@ -1048,7 +1052,7 @@ final class AppStore {
   private func take(
     approvals pending: [Approval], questions asked: [Question]?, desktop state: DesktopState?, unread list: [Int]?
   ) {
-    for a in approvals.values where a.status == .pending {
+    for a in approvals.values where a.status == .pending || a.status == .sending {
       requested.remove("a\(a.id)")
       if !pending.contains(where: { $0.id == a.id }) { approvals[a.id] = nil }
     }

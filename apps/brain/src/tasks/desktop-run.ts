@@ -7,7 +7,7 @@ import {
 } from "@anthropic-ai/sdk/helpers/beta/toolsets";
 import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import { type DesktopAgent, DesktopBusy, DesktopError } from "@hatbot/plugin-desktop";
-import { cutOff, localStamp, type StreamParams, untrustedBlock } from "@hatbot/plugin-sdk";
+import { clip, cutOff, localStamp, type StreamParams, untrustedBlock } from "@hatbot/plugin-sdk";
 import { destructive } from "@hatbot/plugin-sdk/shell";
 import type { ApprovalKind } from "@hatbot/shared";
 import {
@@ -629,6 +629,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
     let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
+    /** A message to a person, which waits for the owner to stop it first. */
+    let toSend: string | null = null;
     let publishing = false;
     if (check) {
       const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
@@ -688,6 +690,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         // The send itself, or a click into a text box: neither needs confirm_intent.
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
+        if (sending) toSend = `Send "${clip(collapse(gate.text ?? ""), 300)}"`;
       }
       if (listing) {
         const l = listingCheck(listing, kind, el, hold);
@@ -703,6 +706,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const was = armed;
       const uncovered = hold && was ? notCovered(was, hold, here) : null;
       if (hold && was && (!uncovered || !was.hold)) armed = null;
+      if (hold && was && !uncovered && was.kind === "send" && !was.byOwner) toSend = was.summary;
       if (hold && (!was || uncovered)) {
         const what = `${call.name} ${heldWhat(hold)}`;
         const needs = `${what} needs approval`;
@@ -713,6 +717,13 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           needs,
           `${heldBack(check.press, hold, el)}${uncovered ? ` ${uncovered}` : ""}`,
         );
+      }
+    }
+    if (toSend !== null) {
+      const stopped = await sendWindow(toSend);
+      if (stopped) {
+        if (gate) gateState.stopped = stopped;
+        return notRun(call, stopped);
       }
     }
     // The model went on to something else: an approval it asks for next isn't for the held step.
@@ -779,6 +790,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       };
     }
     return r;
+  };
+
+  /** Null once the window passes; why not, if the owner stopped it. */
+  const sendWindow = async (summary: string): Promise<string | null> => {
+    const a = d.approvals.sending({ taskId: id, botId: task.botId, kind: "send", summary });
+    tasks.addStep(id, { kind: "note", name: "Sending in 30 s", detail: summary, url: lastUrl });
+    const outcome = await d.approvals.wait(a.id, signal);
+    return outcome === "approved"
+      ? null
+      : "The owner stopped this message. Don't send it; finish and say so.";
   };
 
   /** The address is the send's tab's, not whichever is on screen. */
@@ -957,8 +978,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const reason = held
       ? `${input.reason ? `${input.reason} ` : ""}(Hatbot held: ${held.what}.)`
       : [input.reason, pressed].filter(Boolean).join(" ") || undefined;
-    const arm = (hold: Hold | null) => {
-      armed = { page, kind, summary: input.summary, control: input.control, hold };
+    const arm = (hold: Hold | null, byOwner = false) => {
+      armed = { page, kind, summary: input.summary, control: input.control, hold, byOwner };
     };
     const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
     // Run anyway lets the task's next step on this page go.
@@ -1001,7 +1022,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const now = (await agent.context(false).catch(() => null))?.url ?? null;
     const away = page !== null && !samePage(now, page);
     if (away && !held) armed = null;
-    else arm(held?.hold ?? null);
+    else arm(held?.hold ?? null, true);
     const moved = away
       ? ` While you waited, another task used the browser: the page you asked about (${page}) isn't on screen now${now ? ` (${now})` : ""}. ${held ? "Go back to it first; the approval holds only there." : "Go back to it, then call confirm_intent again."}`
       : "";

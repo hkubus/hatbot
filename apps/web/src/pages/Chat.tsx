@@ -69,6 +69,7 @@ import {
   PendingApproval,
   PendingQuestion,
   progressLines,
+  SendingApproval,
   taskLine,
   taskLines,
   whenText,
@@ -414,6 +415,7 @@ function ReplyMessage({
 function TrayApproval({ a }: { a: Approval }) {
   if (a.status === "blocked")
     return <BlockedApproval a={a} onRan={() => sendMessage("Run it anyway.", [], randomId())} />;
+  if (a.status === "sending") return <SendingApproval a={a} />;
   return <TrayPending a={a} />;
 }
 
@@ -801,6 +803,7 @@ export function Chat({ id }: { id: number }) {
           ...Object.values(approvals).filter(
             (a) =>
               a.status === "pending" ||
+              a.status === "sending" ||
               (a.status === "blocked" && !a.taskId && a.conversationId === chat?.id),
           ),
           ...Object.values(questions).filter((q) => q.status === "pending"),

@@ -15,7 +15,7 @@ import { replyPause, SAY_HUMAN } from "../src/negotiate/service";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, tempDirs, testApp, toolNames, waitFor } from "./helpers";
+import { letSend, type TestApp, tempDirs, testApp, toolNames, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 replyPause.minMs = 0;
@@ -262,13 +262,18 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
 
   t.approvals.decide(approval.id, "approve", "web");
   await waitFor(() => t.negotiations.get(1)?.status === "open");
+  // The message waits for you to stop it, and then goes.
+  await letSend(t);
   await t.tasks.idle();
   await t.thread.idle();
 
   // The opening task sent through its desktop task, and nothing else asked.
   expect(t.tasks.get(1)?.status).toBe("done");
   expect(t.tasks.get(2)?.parentId).toBe(1);
-  expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["mandate"]);
+  expect(t.approvals.list(false).map((a) => [a.kind, a.status])).toEqual([
+    ["send", "approved"],
+    ["mandate", "approved"],
+  ]);
   expect(clicks(t)).toBe(1);
   // The seller wrote the listing's title: it isn't in the desktop task's brief.
   expect(t.tasks.get(2)?.goal).toContain(`<message>${TEXT}</message>`);
@@ -760,6 +765,7 @@ test("the send gate: exactly the approved text, once, after the conversation is 
     { text: ` ${TEXT}\n`, offer: 1060, agree: false, stated: null },
     call(),
   );
+  await letSend(t);
   await t.tasks.idle();
 
   // The click before record_conversation, the one with other text, and Return once it went never
@@ -773,8 +779,8 @@ test("the send gate: exactly the approved text, once, after the conversation is 
     "left_click",
     TEXT,
   ]);
-  // Nothing asked the owner: the message itself was approved.
-  expect(t.approvals.list(false)).toEqual([]);
+  // Nothing asked the owner: the message itself was approved. It only waited for them to stop it.
+  expect(t.approvals.list(false).map((a) => a.status)).toEqual(["approved"]);
   expect(t.negotiations.messages(n.id)[0]).toMatchObject({ status: "sent", text: TEXT });
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 });
@@ -787,7 +793,7 @@ test("a conversation opened from the listing page is the negotiation's, and one 
     { content: [computer("key", { text: "Return" })] },
     finish(),
   ];
-  const opened = async (from: string) => {
+  const opened = async (from: string, sends: boolean) => {
     const t = await testApp(new FakeModel(), new FakeModel(structuredClone(steps)));
     messageBox(t, from);
     // What's clicked first is the listing's link to write to the seller.
@@ -815,15 +821,16 @@ test("a conversation opened from the listing page is the negotiation's, and one 
     };
     const n = openNegotiation(t);
     await sendOffer(t, n);
+    if (sends) await letSend(t);
     await t.tasks.idle();
     return { t, n };
   };
 
-  const { t, n } = await opened(LISTING_URL);
+  const { t, n } = await opened(LISTING_URL, true);
   expect(t.negotiations.messages(n.id)[0]?.status).toBe("sent");
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 
-  const other = await opened("https://www.olx.pl/myaccount/answers/777");
+  const other = await opened("https://www.olx.pl/myaccount/answers/777", false);
   expect(other.t.negotiations.messages(other.n.id)[0]?.status).not.toBe("sent");
   expect(other.t.negotiations.get(other.n.id)?.conversationUrl).toBeNull();
 });

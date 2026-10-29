@@ -313,8 +313,9 @@ struct Question: Codable, Identifiable, Equatable, Sendable {
 
 struct Approval: Codable, Identifiable, Equatable, Sendable {
   enum Status: String, LenientEnum {
-    /// Blocked: the safety review stopped it; the web app can run it anyway.
-    case pending, blocked, approved, denied, expired, cancelled
+    /// Blocked: the safety review stopped it; the web app can run it anyway. Sending: a message to a
+    /// person that goes at expiresAt unless it's denied.
+    case pending, blocked, sending, approved, denied, expired, cancelled
     static let fallback = Status.cancelled
   }
 

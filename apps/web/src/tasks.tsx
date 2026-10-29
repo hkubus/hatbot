@@ -166,7 +166,10 @@ export const MANDATE_NOTE = "Change the numbers, or tell it how to go about it";
 /** Approvals whose answer can carry a note to the task: the task carries on afterwards. */
 export const takesNote = (a: Approval) => a.kind !== "budget" && a.kind !== "injection_warning";
 
-const RESOLVED: Record<Exclude<Approval["status"], "pending" | "blocked">, [string, string]> = {
+const RESOLVED: Record<
+  Exclude<Approval["status"], "pending" | "blocked" | "sending">,
+  [string, string]
+> = {
   approved: ["ok", "Approved"],
   denied: ["bad", "Denied"],
   expired: ["", "Expired"],
@@ -188,6 +191,12 @@ export function ApprovalCard({
     return (
       <div className="card">
         <BlockedApproval a={a} />
+      </div>
+    );
+  if (a.status === "sending")
+    return (
+      <div className="card">
+        <SendingApproval a={a} />
       </div>
     );
 
@@ -459,6 +468,45 @@ export function BlockedApproval({
             Run anyway
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** A message to a person that goes once its time is up, unless you stop it. */
+export function SendingApproval({ a, links }: { a: Approval; links?: React.ReactNode }) {
+  const [now, setNow] = useState(Date.now);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const left = Math.max(0, Math.ceil((Date.parse(a.expiresAt) - now) / 1000));
+  const stop = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await decideApproval(a.id, "deny");
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="approval">
+      <div className="approval-text">
+        <p className="approval-what">{a.summary}</p>
+        <p>{left ? `Sending in ${left} s` : "Sending"}</p>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="approval-actions">
+        {links}
+        <span className="spacer" />
+        <button type="button" className="btn danger" disabled={busy || !left} onClick={stop}>
+          <Icon name="x" />
+          Stop
+        </button>
       </div>
     </div>
   );

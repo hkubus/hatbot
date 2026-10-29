@@ -25,6 +25,14 @@ struct TasksView: View {
             }
           }
         }
+        ForEach(store.sendingApprovals) { a in
+          Section {
+            SendingBody(approval: a)
+            if let taskId = a.taskId {
+              NavigationLink("Task", value: Route.task(taskId))
+            }
+          }
+        }
         ForEach(store.pendingApprovals) { a in
           Section {
             VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a) }
@@ -163,6 +171,9 @@ struct TaskDetailView: View {
     return List {
       if let error {
         Text(error).foregroundStyle(.red)
+      }
+      ForEach(store.sendingApprovals.filter { $0.taskId == taskId }) { a in
+        Section { SendingBody(approval: a) }
       }
       ForEach(pending) { a in
         Section {

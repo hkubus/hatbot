@@ -1018,4 +1018,38 @@ export const migrations: string[] = [
   `
   UPDATE tasks SET budget_usd = 0 WHERE runner IS NOT 'research';
   `,
+  // 66: a message to a person waits a little before it goes, for you to stop it.
+  `${REBUILD}
+  CREATE TABLE approvals_new (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER REFERENCES tasks(id),
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    sources TEXT NOT NULL DEFAULT '[]',
+    screenshot_step_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'blocked', 'sending', 'approved', 'denied', 'expired', 'cancelled')),
+    decided_via TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    note TEXT,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    conversation_id INTEGER REFERENCES conversations(id),
+    tool TEXT,
+    input TEXT,
+    target TEXT,
+    episode_id INTEGER,
+    scopes TEXT NOT NULL DEFAULT '[]',
+    scope TEXT,
+    blocked INTEGER NOT NULL DEFAULT 0,
+    used_at TEXT,
+    answers TEXT NOT NULL DEFAULT '[]'
+  );
+  INSERT INTO approvals_new (id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id, scopes, scope, blocked, used_at, answers)
+  SELECT id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id, scopes, scope, blocked, used_at, answers FROM approvals;
+  DROP TABLE approvals;
+  ALTER TABLE approvals_new RENAME TO approvals;
+  CREATE INDEX approvals_status ON approvals (status);
+  `,
 ];

@@ -50,6 +50,8 @@ export type Armed = {
   summary: string;
   control?: string;
   hold: Hold | null;
+  /** You approved it yourself, so a message it sends needn't wait for you to stop it. */
+  byOwner?: boolean;
 };
 
 const holdKey = (h: Hold) => ("label" in h ? `label:${fold(h.label)}` : JSON.stringify(h));
