@@ -38,7 +38,6 @@ export const botRoutes = new Hono<AppEnv>()
     if (!c.var.bots.delete(id)) return c.json({ error: "That's gone." }, 404);
     // Its reply in progress stops: it mustn't make more as a bot that's gone.
     c.var.chats.abortBot(id);
-    c.var.boxes.orphan(id);
     return c.json({ ok: true });
   })
   .get("/spend/by-bot", spendDays, (c) => c.json(c.var.spend.byBot(c.req.valid("query").days)));

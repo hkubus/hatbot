@@ -1,12 +1,12 @@
 import type { ModelPrice } from "@hatbot/plugin-sdk";
-import { BudgetError, estimateTokens } from "@hatbot/plugin-sdk";
+import { BudgetError, estimateTokens, fixedTokens } from "@hatbot/plugin-sdk";
 import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import { modelInfo } from "./models-known";
 import type { SettingsStore } from "./settings";
 
-export { BudgetError, estimateTokens };
+export { BudgetError, estimateTokens, fixedTokens };
 
 export type UsageLike = {
   input_tokens: number;
@@ -67,9 +67,6 @@ export function costOf(model: string, t: Tokens): number {
     1_000_000
   );
 }
-
-export const fixedTokens = (system: unknown, tools: unknown) =>
-  JSON.stringify([system, tools]).length / 3;
 
 export const searchesIn = (tools: readonly unknown[]) =>
   tools.reduce<number>((n, t) => {

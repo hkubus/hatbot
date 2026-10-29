@@ -952,4 +952,9 @@ export const migrations: string[] = [
   ALTER TABLE tasks ADD COLUMN runner TEXT;
   UPDATE tasks SET runner = 'research' WHERE research = 1;
   `,
+  // 59: what a plugin's job works from; T3 Code's box tasks are the Boxes plugin's.
+  `
+  ALTER TABLE tasks RENAME COLUMN box_job TO job;
+  UPDATE tasks SET runner = 'box' WHERE job IS NOT NULL;
+  `,
 ];

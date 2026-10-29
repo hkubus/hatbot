@@ -15,7 +15,6 @@ import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
 import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
-import type { Boxes } from "../boxes";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import type { Logins } from "../desktop/logins";
@@ -33,9 +32,9 @@ import type { Spend } from "../spend";
 import type { Skills } from "../teach/skills";
 import { clip, head } from "../text";
 import { runAgentTask } from "./agent-run";
-import { type BoxJob, runBoxTask } from "./box-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
+import { runJob } from "./job-run";
 import { Pool, ScreenLane } from "./lane";
 
 export type TasksDeps = {
@@ -56,7 +55,6 @@ export type TasksDeps = {
   memory: MemoryStore;
   plugins: Plugins;
   skills: Skills;
-  boxes?: Boxes;
   /** Set once it exists; it needs the tasks too. */
   proposals?: Proposals;
   clock?: () => number;
@@ -443,17 +441,17 @@ export class Tasks {
     parent?: Task;
     /** The hand-off whose answer asked for it, so hand-offs through chats count towards the cap. */
     askedIn?: Task;
-    /** A plugin's task runner, which shapes its loop; null back while no plugin gives it. */
+    /** A plugin's task runner, which shapes its loop, or job; null back while no plugin gives it. */
     runner?: string;
+    /** What a job works from. */
+    job?: unknown;
     /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
     todo?: string;
-    /** A box for T3 Code to make or change (box_t3): T3 Code runs it, not the model. */
-    boxJob?: BoxJob;
   }): Task | null {
     const runKey = input.runKey ?? (input.todo ? `todo:${input.todo}` : undefined);
     if (runKey && this.activeFor(runKey)) return null;
     const runner = input.runner ? this.d.plugins.runner(input.runner) : null;
-    if (input.runner && !runner) return null;
+    if (input.runner && !runner && !this.d.plugins.job(input.runner)) return null;
     const settings = this.d.settings.get();
     const taintedBy =
       input.taintedBy ||
@@ -486,7 +484,7 @@ export class Tasks {
       watcher_id: input.watcherId ?? null,
       run_key: runKey ?? null,
       todo: input.todo ?? null,
-      box_job: input.boxJob ? JSON.stringify(input.boxJob) : null,
+      job: input.job === undefined ? null : JSON.stringify(input.job),
       payload: input.payload ?? null,
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
@@ -610,10 +608,10 @@ export class Tasks {
           run_key: string | null;
           conversation_id: number | null;
           asked_in: number | null;
-          box_job: string | null;
+          job: string | null;
         },
         [number]
-      >("SELECT request, run_key, conversation_id, asked_in, box_job FROM tasks WHERE id = ?")
+      >("SELECT request, run_key, conversation_id, asked_in, job FROM tasks WHERE id = ?")
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
@@ -637,7 +635,7 @@ export class Tasks {
       askedIn: r?.asked_in ? (this.get(r.asked_in) ?? undefined) : undefined,
       runner: t.runner ?? undefined,
       todo: t.todo ?? undefined,
-      boxJob: r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : undefined,
+      job: r?.job ? JSON.parse(r.job) : undefined,
     });
   }
 
@@ -646,11 +644,12 @@ export class Tasks {
     this.emit(id);
   }
 
-  boxJobOf(id: number): BoxJob | null {
+  /** What a job task was started with. */
+  jobOf(id: number): unknown {
     const r = this.d.db
-      .query<{ box_job: string | null }, [number]>("SELECT box_job FROM tasks WHERE id = ?")
+      .query<{ job: string | null }, [number]>("SELECT job FROM tasks WHERE id = ?")
       .get(id);
-    return r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : null;
+    return r?.job ? JSON.parse(r.job) : undefined;
   }
 
   /** It may spend what's kept back for alerts. */
@@ -741,11 +740,11 @@ export class Tasks {
     const abort = new AbortController();
     this.running.set(id, abort);
     const task = this.get(id);
-    // A hand-off is answered in the other bot's chat; a box task is T3 Code's.
+    // A hand-off is answered in the other bot's chat; a plugin's job runs itself.
     const runner = task?.requestedBy
       ? runHandoff
-      : this.boxJobOf(id)
-        ? runBoxTask
+      : task?.runner && this.d.plugins.job(task.runner)
+        ? runJob
         : task?.lane === "background"
           ? runAgentTask
           : runDesktopTask;
@@ -932,8 +931,8 @@ export class Tasks {
     if (FINAL.includes(task.status)) return `Task #${id} has ended: ${task.status}.`;
     if (task.requestedBy)
       return `Task #${id} is answered in ${this.d.bots.nameOf(task.botId)}'s chat, so it can't be steered. Use ask_bot again.`;
-    if (this.boxJobOf(id))
-      return `Task #${id} works in T3 Code, so it can't be steered from here. The owner can steer it in T3 Code.`;
+    const job = task.runner ? this.d.plugins.job(task.runner) : null;
+    if (job) return job.unsteerable(id);
     if (!this.running.has(id)) return `Task #${id} isn't running.`;
     if (input.taintedBy) this.taint(id, input.taintedBy);
     if (input.suspected) this.mark(id, "injection_suspected");

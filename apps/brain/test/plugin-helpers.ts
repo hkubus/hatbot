@@ -49,7 +49,7 @@ export function realSandbox(t: TestApp) {
 }
 
 /** The plugins that ship with Hatbot switched on. */
-export const ON_BY_DEFAULT = ["automation", "research"];
+export const ON_BY_DEFAULT = ["automation", "research", "boxes"];
 
 /** The tools switched-on plugins give, without the core's own or those on by default. */
 export const pluginTools = (t: TestApp): PluginTool[] =>

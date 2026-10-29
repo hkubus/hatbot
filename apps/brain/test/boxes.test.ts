@@ -1,10 +1,10 @@
 // Boxes: small web apps a bot makes, shown sandboxed, keeping what their pages save.
 import { expect, test } from "bun:test";
+import { FRAME_CSP, previewed } from "@hatbot/plugin-boxes";
 import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { FRAME_CSP, previewed } from "../src/boxes";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 
@@ -18,12 +18,12 @@ const page = (t: TestApp, body: unknown) => t.call("POST", "/boxes/1/call", body
 
 test("a box: made in the chat, opened on an opaque origin, keeping what its page saves, changed as a new version", async () => {
   const model = new FakeModel([
-    { content: [toolUse("box_create", { title: "Habits", html: PAGE })] },
+    { content: [toolUse("boxes_create", { title: "Habits", html: PAGE })] },
     { content: [text("Made it.")] },
     {
       content: [
-        toolUse("box_edit", { box: 1, edits: [{ old: "Walk", new: "Run" }] }),
-        toolUse("box_data", { box: 1 }),
+        toolUse("boxes_edit", { box: 1, edits: [{ old: "Walk", new: "Run" }] }),
+        toolUse("boxes_data", { box: 1 }),
       ],
     },
     { content: [text("Changed.")] },
@@ -70,10 +70,10 @@ test("a box's page opens only at the address the app was given, for 10 minutes",
 
 test("a box written after reading untrusted content reads back as untrusted, in a later conversation too", async () => {
   const model = new FakeModel([
-    { content: [toolUse("box_data", { box: 1 })] },
-    { content: [toolUse("box_edit", { box: 1, title: "Habits 2" })] },
+    { content: [toolUse("boxes_data", { box: 1 })] },
+    { content: [toolUse("boxes_edit", { box: 1, title: "Habits 2" })] },
     { content: [text("Done.")] },
-    { content: [toolUse("box_read", { box: 1 })] },
+    { content: [toolUse("boxes_read", { box: 1 })] },
     { content: [text("Read.")] },
   ]);
   const t = await testApp(model);
@@ -87,12 +87,12 @@ test("a box written after reading untrusted content reads back as untrusted, in 
 
 test("a bot changes only its own boxes; with a code bot, every box is its to make and change", async () => {
   const model = new FakeModel([
-    { content: [toolUse("box_edit", { box: 1, title: "Mine now" })] },
+    { content: [toolUse("boxes_edit", { box: 1, title: "Mine now" })] },
     { content: [text("Can't.")] },
     { content: [text("Coder makes those.")] },
-    { content: [toolUse("box_edit", { box: 2, title: "Tidied" })] },
+    { content: [toolUse("boxes_edit", { box: 2, title: "Tidied" })] },
     { content: [text("Done.")] },
-    { content: [toolUse("box_feed", { box: 2, name: "load", tool: "lab_load" })] },
+    { content: [toolUse("boxes_feed", { box: 2, name: "load", tool: "lab_load" })] },
     { content: [text("I can't read that.")] },
   ]);
   const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);
@@ -107,10 +107,10 @@ test("a bot changes only its own boxes; with a code bot, every box is its to mak
   t.bots.update(coder.id, { plugins: ["code"] });
   t.boxes.create({ botId: "hatbot", conversationId: null, title: "Habits", html: PAGE }, {});
   await t.thread.post("make me a timer").done;
-  expect(toolNames(model.requests[2])).not.toContain("box_create");
+  expect(toolNames(model.requests[2])).not.toContain("boxes_create");
   expect(JSON.stringify(model.requests[2]?.system)).toContain("Code is Coder's");
   await t.chats.direct(coder.id).post("tidy the habits box").done;
-  expect(toolNames(model.requests[3])).toContain("box_create");
+  expect(toolNames(model.requests[3])).toContain("boxes_create");
   expect(t.boxes.get(2)?.title).toBe("Tidied");
   // A feed it adds runs with its own tools, not those of the bot whose box it is.
   await t.chats.direct(coder.id).post("show the load in the habits box").done;
@@ -151,13 +151,13 @@ test("a box's picture for the list: drawn once with what it saved, again after i
   expect((await picture()).status).toBe(404);
 });
 
-test("box_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
+test("boxes_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
   const model = new FakeModel([
-    { content: [toolUse("box_look", { box: 1 })] },
+    { content: [toolUse("boxes_look", { box: 1 })] },
     { content: [text("No walks yet.")] },
-    { content: [toolUse("box_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
+    { content: [toolUse("boxes_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
     { content: [text("Your walks show.")] },
-    { content: [toolUse("box_look", { box: 1 })] },
+    { content: [toolUse("boxes_look", { box: 1 })] },
     { content: [text("Can't look.")] },
   ]);
   const t = await testApp(model);
@@ -265,7 +265,7 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   const model = new FakeModel([
     {
       content: [
-        toolUse("box_feed", {
+        toolUse("boxes_feed", {
           box: 1,
           name: "load",
           tool: "lab_load",
@@ -310,7 +310,7 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
 
 test("after reading untrusted content, a feed for a box that reaches no host goes to the review; one that reaches a host waits for the owner", async () => {
   const feed = (box: number) =>
-    toolUse("box_feed", { box, name: "load", tool: "lab_load", tool_input: { node: "pve" } });
+    toolUse("boxes_feed", { box, name: "load", tool: "lab_load", tool_input: { node: "pve" } });
   const model = new FakeModel([
     { content: [text("Hi.")] },
     { content: [feed(1)] },

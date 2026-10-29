@@ -63,3 +63,19 @@ test("an upgrade keeps a database in use: its chat, tasks and links, its search,
   expect(match("renaming backup")).toEqual([{ rowid: 1 }]);
   expect(match("secret")).toEqual([]);
 });
+
+test("an upgrade gives T3 Code's box tasks to the Boxes plugin, with what they work from", () => {
+  const db = at(58);
+  const now = "2026-10-01T00:00:00Z";
+  const job = JSON.stringify({ request: "Make a timer", title: "Timer" });
+  db.exec(`INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, box_job)
+    VALUES ('a', 'g', '', 'chat', 'background', 'm', 'running', 1, '${now}', '${job}'),
+      ('b', 'g', '', 'chat', 'background', 'm', 'done', 1, '${now}', NULL)`);
+
+  migrate(db);
+
+  expect(db.query("SELECT runner, job FROM tasks ORDER BY id").all()).toEqual([
+    { runner: "box", job },
+    { runner: null, job: null },
+  ]);
+});

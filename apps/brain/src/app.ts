@@ -12,7 +12,6 @@ import { UserError } from "./errors";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { botRoutes } from "./routes/bots";
-import { boxRoutes } from "./routes/boxes";
 import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
@@ -74,7 +73,6 @@ export function createApp(deps: Deps) {
   app.route("/", searchRoutes);
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
-  app.route("/", boxRoutes);
   for (const { id, routes, publicRoutes } of deps.plugins.routed()) {
     for (const path of publicRoutes) app.all(path, toPlugin(id));
     for (const path of routes) app.on(ALL, [path, `${path}/*`], requireAuth, toPlugin(id));

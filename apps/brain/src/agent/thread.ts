@@ -27,7 +27,6 @@ import { z } from "zod";
 import { type Approvals, ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
 import { type Bots, botIndex, promptFor } from "../bots";
-import type { Boxes } from "../boxes";
 import { brokenChartsOf, chartProblemOf } from "../chart-data";
 import type { Db } from "../db";
 import type { DesktopAgent } from "../desktop/client";
@@ -226,7 +225,6 @@ export type ThreadDeps = {
   model: ModelClient;
   plugins: Plugins;
   bots: Bots;
-  boxes?: Boxes;
   clock?: () => number;
 };
 

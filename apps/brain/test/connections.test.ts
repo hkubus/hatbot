@@ -35,3 +35,12 @@ test("an API key set in Settings before providers were plugins is the Anthropic 
     ANTHROPIC_API_KEY: "sk-ant-old",
   });
 });
+
+test("a box's secrets, kept before boxes were a plugin, are the Boxes plugin's", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "hatbot-secrets-")), "secrets.json");
+  writeFileSync(path, JSON.stringify({ boxes: { "3": { WEATHER_KEY: "k" } } }));
+  const secrets = new Secrets(path, {});
+  expect(secrets.kept("boxes", "3")).toEqual({ WEATHER_KEY: "k" });
+  secrets.setKept("boxes", "4", { OTHER: "x" });
+  expect(new Secrets(path, {}).kept("boxes", "3")).toEqual({ WEATHER_KEY: "k" });
+});

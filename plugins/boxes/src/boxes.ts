@@ -1,6 +1,16 @@
 // The brain never runs a box's code: it serves the page sandboxed, on an opaque origin with no network,
 // and keeps what the page saves through the app, which answers only that box's frame.
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { DesktopHost } from "@hatbot/plugin-sdk";
+import {
+  BudgetError,
+  type CreateParams,
+  clip,
+  estimateTokens,
+  fixedTokens,
+  modelErrorText,
+  PluginError,
+} from "@hatbot/plugin-sdk";
 import {
   API_PREFIX,
   type Box,
@@ -23,23 +33,32 @@ import {
   boxConfig,
   MAX_BOX_NOTIFY,
 } from "@hatbot/shared/hatbox";
-import type { Chats } from "./agent/chats";
-import { type CreateParams, type ModelClient, modelErrorText, oneShot } from "./agent/model";
-import { sameText, secretKey } from "./auth/keys";
-import type { BoxFeeds } from "./box-feeds";
-import type { Db } from "./db";
-import type { DesktopAgent } from "./desktop/client";
-import { UserError } from "./errors";
-import type { EventBus } from "./events";
-import type { Backends } from "./hatbox/backends";
-import { modelName } from "./models-known";
-import type { Notifier } from "./notify";
-import type { Secrets } from "./secrets";
-import type { SettingsStore } from "./settings";
-import { BudgetError, estimateTokens, fixedTokens, requestCeiling, type Spend } from "./spend";
-import { clip } from "./text";
+import type { Backends } from "./backends";
+import type { Deps } from "./deps";
+import type { BoxFeeds } from "./feeds";
 
-export class BoxError extends UserError {}
+export class BoxError extends PluginError {
+  constructor(message: string, status = 400) {
+    super(message, status);
+  }
+}
+
+const sameText = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+/** Kept with the core's settings, where it was before boxes were a plugin. */
+function secretKey(d: Deps, name: string): Buffer {
+  d.db
+    .query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT DO NOTHING")
+    .run(name, randomBytes(32).toString("hex"));
+  const row = d.db
+    .query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?")
+    .get(name);
+  return Buffer.from(row?.value ?? "", "hex");
+}
 
 type Row = {
   id: number;
@@ -77,48 +96,35 @@ const NOTES_PER_HOUR = 5;
 /** Fewer than notes: each one buzzes your phone, and a schedule runs up to 288 times a day. */
 export const NOTIFY_PER_DAY = 10;
 
-export type BoxDeps = {
-  settings: SettingsStore;
-  spend: Spend;
-  model: ModelClient;
-  chats: Chats;
-  feeds: BoxFeeds;
-  notifier: Notifier;
-  publicUrl: string;
-};
-
 export class Boxes {
   private key: Buffer;
-  private d: BoxDeps | null = null;
+  private db: Deps["db"];
+  private events: Deps["events"];
+  private clock: () => number;
   /** What hatbox.ask's answers on their way may still cost, held against the boxes' daily limit. */
   private asking = 0;
   backends?: Backends;
+  feeds?: BoxFeeds;
   private previewing = new Map<string, Promise<Uint8Array | null>>();
   private drawing: Promise<unknown> = Promise.resolve();
   private failedPreviews = new Map<string, number>();
   /** Bumped when a page saves, so a picture drawn before that isn't kept. */
   private saves = new Map<number, number>();
 
-  constructor(
-    private db: Db,
-    private events: EventBus,
-    private clock: () => number = Date.now,
-    /** Boxes' secrets stay out of the database, with the brain's other secrets. */
-    private vault?: Secrets,
-  ) {
-    this.key = secretKey(db, "box_key");
+  constructor(private d: Deps) {
+    this.db = d.db;
+    this.events = d.events;
+    this.clock = d.clock;
+    this.key = secretKey(d, "box_key");
   }
 
   private now() {
     return new Date(this.clock()).toISOString();
   }
 
-  connect(d: BoxDeps) {
-    this.d = d;
-  }
-
-  get feeds(): BoxFeeds | null {
-    return this.d?.feeds ?? null;
+  /** Boxes' secrets stay out of the database, with the brain's other secrets. */
+  private vault(id: number): Record<string, string> {
+    return this.d.vault.get(String(id));
   }
 
   list(botId?: string): Box[] {
@@ -182,13 +188,13 @@ export class Boxes {
   }
 
   secrets(id: number): BoxSecret[] {
-    const set = this.vault?.box(id) ?? {};
+    const set = this.vault(id);
     return this.config(id).secrets.map((name) => ({ name, set: name in set }));
   }
 
   /** Declared by box.json now or not: a later version could declare one again. */
   setSecretNames(id: number): string[] {
-    return Object.keys(this.vault?.box(id) ?? {});
+    return Object.keys(this.vault(id));
   }
 
   hasSecrets(id: number): boolean {
@@ -197,7 +203,7 @@ export class Boxes {
 
   /** `digest` tells the guest whether it already has these. */
   secretValues(id: number): BoxSecrets {
-    const set = this.vault?.box(id) ?? {};
+    const set = this.vault(id);
     const values = Object.fromEntries(
       this.config(id).secrets.flatMap((n) => (set[n] === undefined ? [] : [[n, set[n]]])),
     );
@@ -208,18 +214,17 @@ export class Boxes {
   }
 
   async setSecrets(id: number, changes: Record<string, string | null>): Promise<BoxSecret[]> {
-    if (!this.vault) throw new BoxError("Boxes can't have secrets here.", 503);
     const declared = this.config(id).secrets;
     const unknown = Object.keys(changes).find((n) => changes[n] !== null && !declared.includes(n));
     if (unknown) throw new BoxError(`${unknown} isn't one of this box's secrets.`);
-    this.vault.setBox(id, changes);
+    this.d.vault.set(String(id), changes);
     await this.backends?.sendSecrets(id);
     return this.secrets(id);
   }
 
   /** Each secret's value also as a URL or JSON would spell it. */
   redact(id: number, text: string): string {
-    for (const [name, value] of Object.entries(this.vault?.box(id) ?? {}))
+    for (const [name, value] of Object.entries(this.vault(id)))
       for (const form of new Set([
         value,
         encodeURIComponent(value),
@@ -363,7 +368,8 @@ export class Boxes {
       this.events.emit({ type: "box.deleted", id });
       void this.backends?.remove(id);
       const names = this.setSecretNames(id);
-      if (names.length) this.vault?.setBox(id, Object.fromEntries(names.map((n) => [n, null])));
+      if (names.length)
+        this.d.vault.set(String(id), Object.fromEntries(names.map((n) => [n, null])));
     }
     return gone;
   }
@@ -441,7 +447,7 @@ export class Boxes {
         this.send(this.existing(id), c.text);
         return {};
       case "feed": {
-        const latest = this.connected().feeds.latest(id, c.name);
+        const latest = this.feeds?.latest(id, c.name);
         return latest ? { value: latest } : {};
       }
     }
@@ -453,14 +459,9 @@ export class Boxes {
     return box;
   }
 
-  private connected(): BoxDeps {
-    if (!this.d) throw new BoxError("Boxes can't do that here.", 503);
-    return this.d;
-  }
-
   /** The chat's model never sees the answer. Boxes have a daily limit of their own, besides the brain's. */
   private async ask(box: Box, c: Extract<BoxCall, { op: "ask" }>): Promise<string> {
-    const d = this.connected();
+    const { d } = this;
     const { paused, limits, smallModel } = d.settings.get();
     if (paused) throw new BoxError("Hatbot is paused.", 409);
     const params: CreateParams = {
@@ -471,23 +472,23 @@ export class Boxes {
       ...(c.system ? { system: c.system } : {}),
       messages: [{ role: "user", content: c.prompt }],
     };
-    const most = requestCeiling(smallModel, {
+    const most = d.spend.ceiling(smallModel, {
       prompt: fixedTokens(params.system, null) + estimateTokens(params.messages),
       maxTokens: params.max_tokens,
     });
     const spent = d.spend.byPurpose(1).find((p) => p.purpose === "boxes")?.costUsd ?? 0;
     if (spent + this.asking + most > limits.boxesUsd)
       throw new BoxError(
-        `Boxes have used today's $${limits.boxesUsd} for asking ${modelName(smallModel)}. It's in Settings, under Spending → More limits.`,
+        `Boxes have used today's $${limits.boxesUsd} for asking ${d.model.name(smallModel)}. It's in Settings, under Spending → More limits.`,
         429,
       );
     this.asking += most;
     try {
-      return await oneShot(d, params, { purpose: "boxes", botId: box.botId });
+      return await d.model.ask(params, { purpose: "boxes", botId: box.botId });
     } catch (err) {
       if (err instanceof BudgetError) throw new BoxError(err.message, 429);
       console.error(`box ${box.id}: ask failed`, err);
-      throw new BoxError(`${modelName(smallModel)} didn't answer: ${modelErrorText(err)}`, 502);
+      throw new BoxError(`${d.model.name(smallModel)} didn't answer: ${modelErrorText(err)}`, 502);
     } finally {
       this.asking -= most;
     }
@@ -505,7 +506,7 @@ export class Boxes {
         .get(box.id, since)?.n ?? 0;
     if (sent >= NOTES_PER_HOUR)
       throw new BoxError(`A box sends at most ${NOTES_PER_HOUR} notes an hour.`, 429);
-    this.connected().chats.boxNote(box, text);
+    this.d.chats.boxNote(box, text);
   }
 
   /**
@@ -514,7 +515,7 @@ export class Boxes {
    */
   notify(id: number, text: string): string | null {
     const box = this.get(id);
-    if (!box || !this.d) return "Boxes can't notify here.";
+    if (!box) return "Boxes can't notify here.";
     const since = new Date(this.clock() - 86400_000).toISOString();
     const sent =
       this.db
@@ -555,7 +556,8 @@ export class Boxes {
    * The top of the box's page as you'd see it, with what it saved, drawn on the desktop. Kept until a
    * new version or the page saves again. Null without a desktop, or for a while after it failed.
    */
-  async preview(id: number, dark: boolean, desktop: DesktopAgent): Promise<Uint8Array | null> {
+  async preview(id: number, dark: boolean): Promise<Uint8Array | null> {
+    const desktop = this.d.desktop();
     const box = this.get(id);
     if (!box) return null;
     const n = box.version;
@@ -567,7 +569,7 @@ export class Boxes {
     if (kept) return kept.png;
     const key = `${id}:${n}:${dark}`;
     if (
-      !desktop.configured ||
+      !desktop?.configured ||
       this.clock() - (this.failedPreviews.get(key) ?? -Infinity) < PREVIEW_RETRY_MS
     )
       return null;
@@ -587,7 +589,7 @@ export class Boxes {
     return drawn;
   }
 
-  private async drawPreview(id: number, n: number, dark: boolean, desktop: DesktopAgent) {
+  private async drawPreview(id: number, n: number, dark: boolean, desktop: DesktopHost) {
     const page = this.page(id, n);
     if (!page) return null;
     const saves = this.saves.get(id);
@@ -625,7 +627,7 @@ export class Boxes {
   }
 }
 
-/** Used in the app and in box_look's render. */
+/** Used in the app and in boxes_look's render. */
 export const FRAME_CSP =
   "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
 

@@ -1,5 +1,5 @@
 // T3 Code on the owner's computer: connecting to it, the t3_code tool in a task, and boxes it makes for
-// the chat (box_t3).
+// the chat (boxes_t3).
 import { expect, test } from "bun:test";
 import type { T3Caller, T3Code } from "@hatbot/plugin-t3/client";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -149,9 +149,11 @@ test("a task that read outside content asks before T3 Code runs on the owner's c
   expect(t3.calls.some((c) => c.tool === "t3_thread_launch")).toBe(false);
 });
 
-test("box_t3: T3 Code writes a box in a scratch thread, a failed build goes back to it, and the bot hears", async () => {
+test("boxes_t3: T3 Code writes a box in a scratch thread, a failed build goes back to it, and the bot hears", async () => {
   const chat = new FakeModel([
-    { content: [toolUse("box_t3", { title: "Habits", request: "A habit tracker with streaks." })] },
+    {
+      content: [toolUse("boxes_t3", { title: "Habits", request: "A habit tracker with streaks." })],
+    },
     { content: [text("T3 Code is on it.")] },
     { content: [text("Here it is.")] },
   ]);

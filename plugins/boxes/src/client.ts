@@ -49,8 +49,9 @@ export class HttpHatboxAgent implements HatboxAgent {
   readonly configured: boolean;
 
   constructor(
-    private baseUrl = process.env.HATBOX_AGENT_URL ?? "",
-    private token = process.env.HATBOX_AGENT_TOKEN ?? "",
+    private baseUrl: string,
+    private token: string,
+    private fetch: (url: string, init?: RequestInit) => Promise<Response> = globalThis.fetch,
   ) {
     this.configured = Boolean(baseUrl && token);
   }
@@ -69,7 +70,7 @@ export class HttpHatboxAgent implements HatboxAgent {
     if (!this.configured) throw new HatboxError("The boxes guest isn't set up.", 0);
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}${path}`, {
+      res = await this.fetch(`${this.baseUrl}${path}`, {
         method,
         headers: [
           ...(o.headers ?? []),

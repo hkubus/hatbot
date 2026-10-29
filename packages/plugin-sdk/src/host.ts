@@ -3,6 +3,7 @@
 import type {
   AppSettings,
   Bot,
+  Box,
   CheckResult,
   Commit,
   HatbotEvent,
@@ -11,6 +12,7 @@ import type {
   Task,
   TaskStep,
 } from "@hatbot/shared";
+import type { BoxLook, BoxLookResult } from "@hatbot/shared/desktop";
 import type {
   CreateParams,
   ModelMessage,
@@ -31,6 +33,7 @@ export const HOST_SERVICES = [
   "memory",
   "storage",
   "plugins",
+  "desktop",
 ] as const;
 
 export type NtfyAction =
@@ -86,8 +89,10 @@ export type BackgroundTask = {
   request?: string;
   /** The hand-off whose answer started it, so hand-offs through chats count towards the cap. */
   askedIn?: Task;
-  /** A plugin's task runner, by name, that runs it in place of a task's loop. */
+  /** A plugin's task runner or job, by name, that runs it in place of a task's loop. */
   runner?: string;
+  /** What a job works from. */
+  job?: unknown;
 };
 
 export interface TasksHost {
@@ -111,6 +116,8 @@ export interface TasksHost {
 export interface ChatsHost {
   /** A message from the bot in its own chat; `taintedBy`: it quotes what that wrote. */
   note(botId: string, text: string, taintedBy?: string | null): unknown;
+  /** A note the box's code wrote, in the chat it was made in, untrusted. */
+  boxNote(box: Box, text: string): { id: number };
 }
 
 export interface BotsHost {
@@ -120,6 +127,10 @@ export interface BotsHost {
   hatbot(): Bot;
   nameOf(id: string): string;
   list(): Bot[];
+  /** The bot all code goes to, or null. */
+  codeBot(): Bot | null;
+  /** The code bot, when it isn't `bot`. */
+  coderFor(bot: Bot): Bot | null;
 }
 
 export interface EventsHost {
@@ -162,6 +173,8 @@ export interface SpendHost {
   record(entry: { model: string; purpose: string; usage: ModelUsage; taskId?: number }): void;
   /** What a task and the tasks it started have spent. */
   treeSpend(taskId: number): number;
+  /** Spent in the last `days` days, today's included, by purpose. */
+  byPurpose(days: number): { purpose: string; costUsd: number }[];
   /** The most one request may cost. */
   ceiling(
     model: string,
@@ -188,6 +201,17 @@ export interface PluginsHost {
   tools(only?: string[] | null): import("./index").PluginTool[];
   /** What's wrong right now, the core's own (the desktop) and every plugin's. */
   signals(): Promise<import("./index").PluginSignal[]>;
+  /** Whether a plugin is ready and `bot` may use it. */
+  readyFor(id: string, bot: Bot): boolean;
+  /** The plugin a tool is from, as Settings lists it. */
+  ownerOf(tool: string): PluginInfo | null;
+}
+
+/** The core's desktop, for now. */
+export interface DesktopHost {
+  readonly configured: boolean;
+  /** A page drawn in the desktop's Chromium, with no network, and the errors it hit. */
+  lookAtBox(look: BoxLook): Promise<BoxLookResult>;
 }
 
 /** A line in Check everything. */

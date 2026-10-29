@@ -9,6 +9,7 @@ import type {
   Watchers,
   WeeklyReport,
 } from "@hatbot/plugin-automation";
+import type { Boxes } from "@hatbot/plugin-boxes";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Plugin } from "@hatbot/plugin-sdk";
 import { stepOf, totpAt } from "../src/auth/totp";
@@ -118,10 +119,10 @@ export async function testApp(
     fetch: async (url, init) =>
       url === `${ORIGIN}/api/v1/health` ? Response.json({ ok: true }) : outside.fetch(url, init),
   });
-  const automation = <T>(name: string) => {
-    const service = s.plugins.service<T>(name);
-    if (!service) throw new Error("the Automation plugin isn't ready");
-    return service;
+  const service = <T>(name: string) => {
+    const found = s.plugins.service<T>(name);
+    if (!found) throw new Error(`No plugin that's on gives "${name}".`);
+    return found;
   };
   const seen: HatbotEvent[] = [];
   s.events.on((e) => seen.push(e));
@@ -157,19 +158,22 @@ export async function testApp(
     },
     code: (secret: string) => totpAt(secret, stepOf(nowMs)),
     get schedules() {
-      return automation<Schedules>("schedules");
+      return service<Schedules>("schedules");
     },
     get triggers() {
-      return automation<Triggers>("triggers");
+      return service<Triggers>("triggers");
     },
     get watchers() {
-      return automation<Watchers>("watchers");
+      return service<Watchers>("watchers");
     },
     get heartbeat() {
-      return automation<Heartbeat>("heartbeat");
+      return service<Heartbeat>("heartbeat");
     },
     get report() {
-      return automation<WeeklyReport>("report");
+      return service<WeeklyReport>("report");
+    },
+    get boxes() {
+      return service<Boxes>("boxes");
     },
   };
 }

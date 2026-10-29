@@ -1,6 +1,6 @@
 // T3 Code works in the owner's own projects with full access, so it commits, pushes and opens pull
 // requests itself; Hatbot only hands it the request and reads its last message. Boxes go through
-// box_t3 instead.
+// boxes_t3 instead.
 
 import {
   allow,
@@ -166,7 +166,7 @@ export const t3Plugin = definePlugin({
     return ready(tools, {
       actions,
       guidance:
-        "t3_code hands code work to T3 Code, which works on its own in one of the owner's T3 projects on their computer, with full access: it can commit, push and open the pull request itself when you ask it to. t3_projects lists the projects. Check its summary before you tell the owner it's done. A new box, or a big change to one, goes to box_t3. Quick edits and one-off scripts stay with code_run and box_edit.",
+        "t3_code hands code work to T3 Code, which works on its own in one of the owner's T3 projects on their computer, with full access: it can commit, push and open the pull request itself when you ask it to. t3_projects lists the projects. Check its summary before you tell the owner it's done. A new box, or a big change to one, goes to boxes_t3. Quick edits and one-off scripts stay with code_run and boxes_edit.",
       test: async () => {
         const all = await t3.projects(AbortSignal.timeout(30_000));
         const left = until ? Math.max(0, Math.round((until - Date.now()) / 86_400_000)) : null;

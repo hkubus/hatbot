@@ -16,6 +16,7 @@ import {
   type PluginTool,
   SDK_VERSION,
   type SearchRoutine,
+  type TaskJob,
   type TaskOrigin,
   type TaskRunner,
   type ToolImage,
@@ -202,6 +203,14 @@ export class Plugins {
     for (const s of this.readyOnes(null, [])) {
       const r = s.instance?.runners?.[name];
       if (r) return r;
+    }
+    return null;
+  }
+
+  job(name: string): TaskJob | null {
+    for (const s of this.readyOnes(null, [])) {
+      const j = s.instance?.jobs?.[name];
+      if (j) return j;
     }
     return null;
   }
@@ -428,6 +437,15 @@ export class Plugins {
               if (!s.plugin.needs?.includes(name))
                 throw new Error(`plugin ${s.plugin.id} doesn't say it needs "${name}"`);
               return this.service<T>(name) as T;
+            },
+            optional: <T>(name: string) => {
+              if (!s.plugin.uses?.includes(name))
+                throw new Error(`plugin ${s.plugin.id} doesn't say it uses "${name}"`);
+              return this.service<T>(name);
+            },
+            vault: {
+              get: (key) => this.d.secrets.kept(s.plugin.id, key),
+              set: (key, changes) => this.d.secrets.setKept(s.plugin.id, key, changes),
             },
             store: {
               get: (key) => getSetting(this.d.db, `${s.plugin.id}:${key}`),

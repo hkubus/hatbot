@@ -1,3 +1,4 @@
+import { type BoxRequest, type HatboxAgent, HatboxError } from "@hatbot/plugin-boxes";
 import type {
   BoxBuild,
   BoxFile,
@@ -6,7 +7,6 @@ import type {
   GuestBox,
   HatboxStatus,
 } from "@hatbot/shared/hatbox";
-import { type BoxRequest, type HatboxAgent, HatboxError } from "../src/hatbox/client";
 
 /** The boxes guest, in memory: a build's page is index.html as it is, and a backend answers as the test says. */
 export class FakeHatbox implements HatboxAgent {

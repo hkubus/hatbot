@@ -14,7 +14,7 @@ import { HTTPException } from "hono/http-exception";
 import type { z } from "zod";
 import type { PluginCheck, SearchRoutine, TaskOrigin } from "./host";
 import type { ModelProvider } from "./models";
-import type { TaskRunner } from "./runner";
+import type { TaskJob, TaskRunner } from "./runner";
 
 export * from "./charts";
 export * from "./host";
@@ -328,6 +328,8 @@ export type PluginInstance = {
   origins?: Record<string, TaskOrigin>;
   /** Kinds of background task whose loop it shapes, by name: a task started with `runner` set. */
   runners?: Record<string, TaskRunner>;
+  /** Kinds of background task it runs itself, without the model's loop, by the same names. */
+  jobs?: Record<string, TaskJob>;
   /** Its own things whose names or instructions have `query` in them, for Search. */
   search?: (query: string) => SearchRoutine[];
 };
@@ -346,7 +348,11 @@ export function pluginRoutes(): Hono<PluginEnv> {
   const app = new Hono<PluginEnv>().basePath(API_PREFIX);
   app.notFound((c) => c.json({ error: "That's gone." }, 404));
   app.onError((err, c) => {
-    if (err instanceof PluginError) return c.json({ error: err.message }, 400);
+    if (err instanceof PluginError)
+      return c.json(
+        { error: err.message },
+        err.status >= 400 && err.status < 600 ? (err.status as 400) : 400,
+      );
     if ("getResponse" in err && typeof err.getResponse === "function")
       return err.getResponse() as Response;
     console.error(err);
@@ -396,6 +402,10 @@ export type PluginContext<C> = {
   dataDir: string;
   /** A service named in `needs`: there whenever the plugin is started. */
   service: <T>(name: string) => T;
+  /** One named in `uses`, read when called: null while nothing gives it. */
+  optional: <T>(name: string) => T | null;
+  /** Secrets it keeps by key, out of the database, with Hatbot's own. */
+  vault: PluginVault;
   /** Its own small values, kept with Hatbot's settings. */
   store: PluginStore;
   /** Saves values for its `env` variables, as Settings does; plugins reading them restart. */
@@ -410,6 +420,12 @@ export type PluginContext<C> = {
   configOf: (id: string) => unknown;
   /** Tells the host something happened, as "<id>:<event>". */
   emit: (event: string) => void;
+};
+
+export type PluginVault = {
+  get: (key: string) => Record<string, string>;
+  /** Each value replaces what's kept; null forgets it. */
+  set: (key: string, changes: Record<string, string | null>) => void;
 };
 
 export type PluginStore = {
@@ -447,6 +463,8 @@ export type Plugin<C = unknown> = {
   provides?: string[];
   /** Services it can't start without; until a plugin provides each, it says so and waits. */
   needs?: string[];
+  /** Services it uses when something gives them, and does without otherwise. */
+  uses?: string[];
   /** Its own tables: each runs once, in order, on every install that has the plugin. */
   migrations?: string[];
   /** Paths under /api/v1 it answers, for signed-in callers: "/boxes" takes /boxes and below. */

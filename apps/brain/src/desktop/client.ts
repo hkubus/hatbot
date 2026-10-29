@@ -46,7 +46,7 @@ export interface DesktopAgent extends Sandbox {
   /** The page after its scripts ran, in a headless Chromium on the desktop that isn't the bots'. */
   render(url: string): Promise<RenderResult>;
   renderCheck(): Promise<void>;
-  /** A box's page drawn in the same Chromium, with no network, and the errors it hit (box_look). */
+  /** A box's page drawn in the same Chromium, with no network, and the errors it hit (boxes_look). */
   lookAtBox(look: BoxLook): Promise<BoxLookResult>;
   browser(call: BrowserCall): Promise<BrowserResult>;
   browserState(): Promise<BrowserState>;

@@ -12,14 +12,11 @@ export const spendDays = query(
   z.object({ days: z.coerce.number().int().min(1).max(366).default(30) }),
 );
 
-export function pauseAll(
-  v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events" | "boxes">,
-) {
+export function pauseAll(v: Pick<Deps, "settings" | "chats" | "tasks" | "desktop" | "events">) {
   v.settings.update({ paused: true });
   v.chats.abortAll();
   v.tasks.cancelAll();
   void v.desktop.setPaused(true);
-  void v.boxes.backends?.stopAll();
   v.events.emit({ type: "paused", paused: true });
 }
 

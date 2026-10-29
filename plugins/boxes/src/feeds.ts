@@ -2,11 +2,8 @@
 
 import { PluginError, textOf } from "@hatbot/plugin-sdk";
 import { type BoxFeedValue, MAX_BOX_VALUE } from "@hatbot/shared";
-import type { Bots } from "./bots";
 import { BoxError } from "./boxes";
-import type { Db } from "./db";
-import type { Plugins } from "./plugins/registry";
-import type { SettingsStore } from "./settings";
+import type { Deps } from "./deps";
 
 export const MAX_BOX_FEEDS = 10;
 const PARALLEL = 4;
@@ -62,15 +59,7 @@ function parsed(out: string): unknown {
 export class BoxFeeds {
   private running = new Set<number>();
 
-  constructor(
-    private d: {
-      db: Db;
-      settings: SettingsStore;
-      plugins: Plugins;
-      bots: Bots;
-      clock: () => number;
-    },
-  ) {}
+  constructor(private d: Pick<Deps, "db" | "settings" | "plugins" | "bots" | "clock">) {}
 
   private now() {
     return new Date(this.d.clock()).toISOString();
@@ -198,8 +187,8 @@ export class BoxFeeds {
     if (!bot) throw new Stopped("The bot that added it was deleted.");
     const t = this.d.plugins.tools(bot.plugins).find((x) => x.name === tool);
     if (!t) {
-      const plugin = this.d.plugins.pluginOf(tool);
-      const state = plugin && this.d.plugins.get(plugin.id)?.state;
+      const plugin = this.d.plugins.ownerOf(tool);
+      const state = plugin?.state;
       // Starting, or failing for now: it may be back by the next run.
       if (plugin && (state === "starting" || state === "error"))
         throw new BoxError(`${plugin.name} isn't ready.`);

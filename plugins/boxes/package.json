@@ -1,0 +1,18 @@
+{
+  "name": "@hatbot/plugin-boxes",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hatbot/plugin-sdk": "workspace:*",
+    "@hatbot/plugin-t3": "workspace:*",
+    "@hatbot/shared": "workspace:*",
+    "croner": "^10.0.1",
+    "hono": "^4.13.13",
+    "zod": "^4.6.5"
+  }
+}

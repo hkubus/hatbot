@@ -2,11 +2,13 @@
 // is passed in.
 import { join } from "node:path";
 import { automationPlugin } from "@hatbot/plugin-automation";
+import { boxesPlugin, type HatboxAgent } from "@hatbot/plugin-boxes";
 import { codePlugin } from "@hatbot/plugin-code";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import { researchPlugin } from "@hatbot/plugin-research";
 import { scoutPlugin } from "@hatbot/plugin-scout";
 import type {
+  DesktopHost,
   HOST_SERVICES,
   MemoryHost,
   ModelHost,
@@ -30,8 +32,6 @@ import { Archive } from "./archive";
 import { Attachments } from "./attachments";
 import { AuthService, FailureLimiter, type PasswordCost } from "./auth/service";
 import { Bots } from "./bots";
-import { BoxFeeds } from "./box-feeds";
-import { Boxes } from "./boxes";
 import { Checks, type ChecksDeps } from "./checks";
 import type { Config } from "./config";
 import type { Db } from "./db";
@@ -39,8 +39,6 @@ import type { DesktopAgent } from "./desktop/client";
 import { Logins } from "./desktop/logins";
 import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
-import { Backends } from "./hatbox/backends";
-import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
 import { ListingPhotos } from "./listing-photos";
 import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
@@ -69,6 +67,7 @@ export type Outside = {
   model?: ModelClient;
   taskModel?: ModelClient;
   agent: DesktopAgent;
+  /** Tests' stand-in for the boxes guest. */
   hatbox?: HatboxAgent;
   notifications: Notifier;
   ntfy: ChecksDeps["ntfy"];
@@ -113,6 +112,7 @@ export async function createServices(o: Outside) {
       selfPlugin,
       automationPlugin,
       researchPlugin,
+      boxesPlugin(o.hatbox),
       ...corePlugins(() => ({
         db,
         clock,
@@ -122,11 +122,9 @@ export async function createServices(o: Outside) {
         tasks,
         schedules: () => plugins.service<SchedulesService>("schedules"),
         attachments,
-        boxes,
         desktop: agent,
         proposals,
         settings,
-        t3Ready: (bot) => plugins.readyFor("t3", bot.plugins, bots.leftToOthers(bot)),
       })),
     ],
     {
@@ -158,6 +156,7 @@ export async function createServices(o: Outside) {
           hold: (usd, task) => spend.hold(usd, task),
           record: (entry) => spend.recordResponse(entry),
           treeSpend: (taskId) => spend.treeSpend(taskId),
+          byPurpose: (days) => spend.byPurpose(days),
           ceiling: requestCeiling,
         }),
         memory: (): MemoryHost => ({
@@ -184,7 +183,13 @@ export async function createServices(o: Outside) {
               : []),
             ...(await plugins.signals()),
           ],
+          readyFor: (id, bot) => plugins.readyFor(id, bot.plugins, bots.leftToOthers(bot)),
+          ownerOf: (tool) => {
+            const p = plugins.pluginOf(tool);
+            return (p && plugins.list().find((x) => x.id === p.id)) ?? null;
+          },
         }),
+        desktop: (): DesktopHost => agent,
       } satisfies Record<(typeof HOST_SERVICES)[number], () => unknown>,
     },
   );
@@ -198,8 +203,6 @@ export async function createServices(o: Outside) {
       bots.update(haggler.id, { plugins: [...haggler.plugins, "scout"] });
   });
   const bots = new Bots(db, events, clock);
-  const boxes = new Boxes(db, events, clock, secrets);
-  boxes.backends = new Backends(boxes, o.hatbox ?? new HttpHatboxAgent("", ""), settings, clock);
   // Not given the rest at first: attach() hands it what needs the chats in turn.
   const chats = new Chats({
     db,
@@ -210,7 +213,6 @@ export async function createServices(o: Outside) {
     model,
     plugins,
     bots,
-    boxes,
     clock,
   });
   const notifier = new LinkingNotifier(
@@ -239,7 +241,6 @@ export async function createServices(o: Outside) {
     desktop,
     plugins,
     bots,
-    boxes,
     chats,
     notifier,
     approvals,
@@ -267,8 +268,6 @@ export async function createServices(o: Outside) {
     proposals,
   });
   tasks.attach({ proposals });
-  const feeds = new BoxFeeds({ db, settings, plugins, bots, clock });
-  boxes.connect({ settings, spend, model: taskModel, chats, feeds, notifier, publicUrl });
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });

@@ -10,8 +10,8 @@ type Stored = {
   env?: Values;
   /** Secrets a plugin takes by any name (MCP's ${NAME}), by plugin. */
   named?: Record<string, Values>;
-  /** Only the box's backend reads them. */
-  boxes?: Record<string, Values>;
+  /** A plugin's own, by plugin, then by its key. */
+  kept?: Record<string, Record<string, Values>>;
 };
 
 /** Only string values, so a hand-edited file can't hand a plugin anything else. */
@@ -35,7 +35,7 @@ function read(path: string): Stored {
     return {};
   }
   try {
-    const s = JSON.parse(text) as Stored & { anthropicApiKey?: unknown };
+    const s = JSON.parse(text) as Stored & { anthropicApiKey?: unknown; boxes?: unknown };
     const env = values(s.env);
     // Set in Settings before providers were plugins: now the Anthropic plugin's.
     if (typeof s.anthropicApiKey === "string") env.ANTHROPIC_API_KEY ??= s.anthropicApiKey;
@@ -46,7 +46,16 @@ function read(path: string): Stored {
           : undefined,
       env,
       named: byId(s.named),
-      boxes: byId(s.boxes),
+      kept: {
+        ...Object.fromEntries(
+          Object.entries(s.kept && typeof s.kept === "object" ? s.kept : {}).map(([id, x]) => [
+            id,
+            byId(x),
+          ]),
+        ),
+        // Boxes' secrets, kept before boxes were a plugin.
+        ...(s.boxes && !s.kept?.boxes ? { boxes: byId(s.boxes) } : {}),
+      },
     };
   } catch (err) {
     console.error(`${path} isn't readable JSON; the host's settings apply`, err);
@@ -88,15 +97,15 @@ export class Secrets {
     this.save({ ...this.stored, env: merge(this.stored.env, changes) });
   }
 
-  box(id: number): Values {
-    return this.stored.boxes?.[id] ?? {};
+  kept(plugin: string, key: string): Values {
+    return this.stored.kept?.[plugin]?.[key] ?? {};
   }
 
-  setBox(id: number, changes: Record<string, string | null>) {
-    const boxes: Record<string, Values> = { ...this.stored.boxes };
-    boxes[id] = merge(boxes[id], changes);
-    if (!Object.keys(boxes[id]).length) delete boxes[id];
-    this.save({ ...this.stored, boxes });
+  setKept(plugin: string, key: string, changes: Record<string, string | null>) {
+    const mine: Record<string, Values> = { ...this.stored.kept?.[plugin] };
+    mine[key] = merge(mine[key], changes);
+    if (!Object.keys(mine[key]).length) delete mine[key];
+    this.save({ ...this.stored, kept: { ...this.stored.kept, [plugin]: mine } });
   }
 
   setNamed(plugin: string, changes: Record<string, string | null>) {

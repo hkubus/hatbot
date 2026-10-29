@@ -1,5 +1,7 @@
 // Server boxes' backends run on the boxes guest. The brain keeps the files and secrets, the guest only
 // the running copies and the secrets in memory. What comes back has the box's secrets taken out.
+
+import type { SettingsHost } from "@hatbot/plugin-sdk";
 import type { BoxAnswer, BoxCall } from "@hatbot/shared";
 import {
   type BoxBuild,
@@ -9,8 +11,7 @@ import {
   passedHeaders,
 } from "@hatbot/shared/hatbox";
 import { Cron } from "croner";
-import { BoxError, type Boxes } from "../boxes";
-import type { SettingsStore } from "../settings";
+import { BoxError, type Boxes } from "./boxes";
 import { type BoxRequest, type HatboxAgent, HatboxError } from "./client";
 
 export const NO_GUEST = "Boxes can't have files or backends here: the boxes guest isn't set up.";
@@ -41,7 +42,7 @@ export class Backends {
   constructor(
     private boxes: Boxes,
     private agent: HatboxAgent,
-    private settings: SettingsStore,
+    private settings: SettingsHost,
     private clock: () => number,
   ) {}
 
@@ -89,7 +90,7 @@ export class Backends {
           built = true;
           if (!(await this.build(id, box.version, this.boxes.files(id))).ok)
             throw new BoxError(
-              `Box #${id} doesn't build on the boxes guest now; box_logs may say why.`,
+              `Box #${id} doesn't build on the boxes guest now; boxes_logs may say why.`,
               502,
             );
         } else throw new BoxError(this.boxes.redact(id, err.message), 502);

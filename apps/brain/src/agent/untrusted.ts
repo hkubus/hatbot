@@ -3,17 +3,9 @@
 
 // Escaping every `<` keeps it valid JSON that can't close its tag. `>` and `&` stay, so commands like
 // `cmd 2>&1` read plainly in a review.
-import { tagJson, untrustedFields } from "@hatbot/plugin-sdk";
+import { tagJson, untrustedBlock, untrustedFields } from "@hatbot/plugin-sdk";
 
-export { tagJson, untrustedFields };
-
-export function untrustedBlock(
-  tag: string,
-  text: string,
-  attrs: Record<string, string> = {},
-): string {
-  return untrustedFields(tag, tagJson(text), attrs);
-}
+export { tagJson, untrustedBlock, untrustedFields };
 
 /**
  * SQL over `messages m` with TRUST_JOINS. A bot's message is untrusted when the task it shows, or its

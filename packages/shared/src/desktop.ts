@@ -52,7 +52,7 @@ export type RenderResult = {
 };
 
 /**
- * POST /render/box: a box's page as its owner would see it, for box_look, in the same
+ * POST /render/box: a box's page as its owner would see it, for boxes_look, in the same
  * headless Chromium with no network at all.
  */
 export type BoxLook = {
@@ -85,7 +85,7 @@ export type BoxLookResult = {
   errors: BoxLookError[];
 };
 
-/** How much of a page box_look's picture shows, in CSS pixels. */
+/** How much of a page boxes_look's picture shows, in CSS pixels. */
 export const MAX_LOOK_HEIGHT = 1800;
 export const MAX_LOOK_ERRORS = 20;
 

@@ -10,6 +10,7 @@
     "@anthropic-ai/sdk": "^0.133.0",
     "@hatbot/plugin-anthropic": "workspace:*",
     "@hatbot/plugin-automation": "workspace:*",
+    "@hatbot/plugin-boxes": "workspace:*",
     "@hatbot/plugin-code": "workspace:*",
     "@hatbot/plugin-forgejo": "workspace:*",
     "@hatbot/plugin-github": "workspace:*",

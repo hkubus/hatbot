@@ -28,7 +28,7 @@ export type CoreServices = Omit<
   | "ownerSaid"
   | "answering"
   | "approve"
-> & { t3Ready?: (bot: Offer["bot"]) => boolean };
+>;
 
 type Meta = {
   plugin: string;
@@ -45,16 +45,6 @@ const WORK: Place[] = ["chat", "task"];
 const ALL: Place[] = ["chat", "task", "research"];
 const withOthers = (o: Offer) => o.others.length > 0;
 const desktop = (_: Offer, s: CoreServices) => Boolean(s.desktop?.configured);
-/** Boxes are code: with a code bot, it makes and changes them all. */
-const noCoder = (o: Offer, s: CoreServices) => !s.bots?.coderFor(o.bot);
-const box = (label: string, change = false): Meta => ({
-  plugin: "boxes",
-  label,
-  places: CHAT,
-  deferred: true,
-  ...(change ? { when: noCoder } : {}),
-});
-
 const META: Record<string, Meta> = {
   memory_list: { plugin: "memory", label: "Looking through memory", access: "read", places: ALL },
   memory_read: { plugin: "memory", label: "Reading memory", access: "read", places: ALL },
@@ -84,26 +74,11 @@ const META: Record<string, Meta> = {
   ask_bot: { plugin: "tasks", label: "Asking another bot", places: CHAT, when: withOthers },
   get_task: { plugin: "tasks", label: "Checking on a task", places: CHAT },
   steer_task: { plugin: "tasks", label: "Steering a task", places: CHAT },
-  box_create: box("Making a box", true),
-  box_edit: box("Changing a box", true),
-  box_t3: {
-    ...box("Handing the box to T3 Code", true),
-    when: (o, s) => noCoder(o, s) && Boolean(s.t3Ready?.(o.bot)),
-  },
-  box_list: box("Looking at boxes"),
-  box_read: box("Reading a box"),
-  box_revert: box("Changing a box", true),
-  box_data: box("Reading what a box saved"),
-  box_look: box("Looking at a box"),
-  box_feed: box("Giving a box a feed", true),
-  box_logs: box("Reading a box's logs"),
-  box_call: box("Trying a box's backend"),
 };
 
 const NAMES: Record<string, string> = {
   memory: "Memory",
   tasks: "Tasks",
-  boxes: "Boxes",
 };
 
 /** A call's own part of what a core tool sees; its requests to the desktop end with the call. */

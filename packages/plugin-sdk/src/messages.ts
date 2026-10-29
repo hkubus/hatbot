@@ -51,6 +51,10 @@ export class BudgetError extends Error {
   }
 }
 
+/** A request's system prompt and tools, in tokens, roughly. */
+export const fixedTokens = (system: unknown, tools: unknown) =>
+  JSON.stringify([system, tools]).length / 3;
+
 export function estimateTokens(messages: unknown): number {
   let chars = 0;
   let images = 0;
@@ -287,3 +291,23 @@ export function webTexts(
 /** Sent with the next request of the same reply or task: code paused mid-run carries on in it. */
 export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>
   res.container?.id ?? before;
+
+// Never cut through a surrogate pair: half of one is invalid UTF-8, which Swift's JSONDecoder refuses
+// (the whole event with it) and SQLite stores as U+FFFD.
+export function head(text: string, n: number): string {
+  if (text.length <= n) return text;
+  const last = text.charCodeAt(n - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? n - 1 : n);
+}
+
+export function clip(text: string, max: number): string {
+  return text.length > max ? `${head(text, max - 1)}…` : text;
+}
+
+export function untrustedBlock(
+  tag: string,
+  text: string,
+  attrs: Record<string, string> = {},
+): string {
+  return untrustedFields(tag, tagJson(text), attrs);
+}

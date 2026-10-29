@@ -1,10 +1,9 @@
 // Boxes with files and a backend: built on the boxes guest, reached through the app.
 import { expect, test } from "bun:test";
+import { HttpHatboxAgent, NO_GUEST } from "@hatbot/plugin-boxes";
 import type { BoxPage } from "@hatbot/shared";
 import type { BoxResponse } from "@hatbot/shared/hatbox";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { NO_GUEST } from "../src/hatbox/backends";
-import { HttpHatboxAgent } from "../src/hatbox/client";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { lastUserText, ORIGIN, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -22,13 +21,13 @@ const boxFetch = async (t: TestApp, body: object) => {
 
 test("a server box: made in the chat from files, built on the guest, its page reaching its backend, its logs and answers untrusted", async () => {
   const model = new FakeModel([
-    { content: [toolUse("box_create", { title: "Prices", files: files() })] },
+    { content: [toolUse("boxes_create", { title: "Prices", files: files() })] },
     { content: [text("Made it.")] },
     {
       content: [
-        toolUse("box_call", { box: 1, path: "/price" }),
-        toolUse("box_logs", { box: 1 }),
-        toolUse("box_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
+        toolUse("boxes_call", { box: 1, path: "/price" }),
+        toolUse("boxes_logs", { box: 1 }),
+        toolUse("boxes_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
       ],
     },
     { content: [text("It works.")] },
@@ -87,7 +86,7 @@ test("a server box: made in the chat from files, built on the guest, its page re
 
 test("without the boxes guest, boxes with files are refused in one sentence, and a server box's page still opens", async () => {
   const model = new FakeModel([
-    { content: [toolUse("box_create", { title: "Prices", files: files() })] },
+    { content: [toolUse("boxes_create", { title: "Prices", files: files() })] },
     { content: [text("Can't here.")] },
   ]);
   const t = await testApp(model);
@@ -116,13 +115,13 @@ test("in a chat that read untrusted content, hosts a backend couldn't reach befo
   model.script.push(
     {
       content: [
-        toolUse("box_create", { title: "Prices", files: files({ hosts: ["evil.example"] }) }),
+        toolUse("boxes_create", { title: "Prices", files: files({ hosts: ["evil.example"] }) }),
       ],
     },
-    { content: [toolUse("box_create", { title: "Prices", files: files() })] },
+    { content: [toolUse("boxes_create", { title: "Prices", files: files() })] },
     {
       content: [
-        toolUse("box_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
+        toolUse("boxes_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
       ],
     },
     { content: [text("Done.")] },
@@ -240,7 +239,7 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
   model.script.push(
     {
       content: [
-        toolUse("box_edit", {
+        toolUse("boxes_edit", {
           box: 1,
           edits: [{ file: "box.json", old: "api.weather.test", new: 'api.weather.test","x.test' }],
         }),
@@ -263,9 +262,9 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
   model.script.push(
     {
       content: [
-        toolUse("box_read", { box: 1 }),
-        toolUse("box_call", { box: 1, path: "/" }),
-        toolUse("box_logs", { box: 1 }),
+        toolUse("boxes_read", { box: 1 }),
+        toolUse("boxes_call", { box: 1, path: "/" }),
+        toolUse("boxes_logs", { box: 1 }),
       ],
     },
     { content: [text("Sunny.")] },
@@ -294,7 +293,7 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
   model.script.push(
     {
       content: [
-        toolUse("box_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
+        toolUse("boxes_edit", { box: 1, edits: [{ file: "server.ts", old: "42", new: "43" }] }),
       ],
     },
     { content: [text("Not changed.")] },

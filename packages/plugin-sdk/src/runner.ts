@@ -1,7 +1,7 @@
 // A kind of background task a plugin gives: the core runs its loop (spend, approvals, the untrusted
 // rule, steering), and the runner shapes it with its prompt, its own tools and how it ends.
 import type { Bot, Task } from "@hatbot/shared";
-import type { Place } from "./index";
+import type { CallContext, Place } from "./index";
 import type { Readable } from "./messages";
 import type { CreateParams, ModelMessageParam, ModelRole, ModelTool } from "./models";
 
@@ -73,4 +73,38 @@ export type RunnerState = {
   after?: (s: { stepsLeft: number; spentUsd: number; limitUsd: number }) => string | null;
   /** It stopped short, and wasn't cancelled: the summary to end with. */
   unfinished?: (summary: string) => Promise<string>;
+};
+
+/** Ends a job's task short, as cancelled or failed, with `summary`. */
+export class JobStop extends Error {
+  constructor(
+    readonly status: "failed" | "cancelled",
+    readonly summary: string,
+  ) {
+    super(summary);
+  }
+}
+
+/** A kind of background task a plugin runs itself, start to end, without the model's loop. */
+export type TaskJob = {
+  /** Said to a bot that tries to steer task `id`. */
+  unsteerable: (id: number) => string;
+  /** Its summary when it's done; a PluginError fails it with its message, a JobStop as it says. */
+  run: (job: JobRun) => Promise<string>;
+};
+
+export type JobRun = {
+  task: Task;
+  /** What it was started with, as `job` in the task. */
+  input: unknown;
+  signal: AbortSignal;
+  /** What untrusted content it read, or null. */
+  tainted: () => string | null;
+  taint: (by: string) => void;
+  /** Asks as a tool's write does: the review, then the owner. */
+  approve: NonNullable<CallContext["approve"]>;
+  /** A line of what it's doing, shown on its page. */
+  progress: (line: string) => void;
+  /** The reply it shows under, in the chat that started it. */
+  reply: () => number | null;
 };
