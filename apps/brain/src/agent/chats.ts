@@ -174,11 +174,24 @@ export class Chats {
    * A thread in `botId`'s own chat, opened with the bot's first message in it; its card goes in that
    * chat. `taintedBy`: the message was written after reading untrusted content.
    */
-  openThread(o: { botId: string; title: string; message: string; taintedBy?: string | null }): {
-    conversation: Conversation;
-    message: ThreadMessage;
-  } {
+  /**
+   * A bot opens one in its own chat. With a `key`, one open thread per subject: if it's open already,
+   * the message goes there (`opened` false).
+   */
+  openThread(o: {
+    botId: string;
+    title: string;
+    message: string;
+    taintedBy?: string | null;
+    key?: string;
+    taskId?: number;
+  }): { conversation: Conversation; message: ThreadMessage; opened: boolean } {
     const parent = this.direct(o.botId);
+    const keyed = o.key ? this.findThread(o.botId, { key: o.key }) : null;
+    if (keyed !== null) {
+      const message = this.postInThread(keyed, o.botId, o.message, o.taintedBy);
+      return { conversation: this.get(keyed) as Conversation, message, opened: false };
+    }
     const open = this.d.db
       .query<{ n: number }, [number]>(
         "SELECT count(*) AS n FROM conversations WHERE parent_id = ? AND resolved_at IS NULL AND deleted_at IS NULL",
@@ -190,10 +203,11 @@ export class Chats {
       );
     const id = this.d.db.transaction(() => {
       const row = this.d.db
-        .query<{ id: number }, [string, number, string]>(
-          "INSERT INTO conversations (kind, title, parent_id, created_at) VALUES ('thread', ?, ?, ?) RETURNING id",
+        .query<{ id: number }, [string, number, string | null, number | null, string]>(
+          `INSERT INTO conversations (kind, title, parent_id, thread_key, opened_by_task_id, created_at)
+           VALUES ('thread', ?, ?, ?, ?, ?) RETURNING id`,
         )
-        .get(o.title, parent.conversationId, this.now());
+        .get(o.title, parent.conversationId, o.key ?? null, o.taskId ?? null, this.now());
       if (!row) throw new Error("conversation insert failed");
       this.setBots(row.id, [o.botId]);
       return row.id;
@@ -208,25 +222,57 @@ export class Chats {
       taintedBy: o.taintedBy,
     });
     this.changed(id);
-    return { conversation: this.get(id) as Conversation, message };
+    return { conversation: this.get(id) as Conversation, message, opened: true };
   }
 
-  /** You open one on a bot's message in its own chat: the thread starts with that message. */
+  /** One of the bot's threads, by id, or the open one with this key. */
+  findThread(botId: string, by: { id?: number; key?: string }): number | null {
+    const parent = this.direct(botId).conversationId;
+    const row =
+      by.id !== undefined
+        ? this.d.db
+            .query<{ id: number }, [number, number]>(
+              "SELECT id FROM conversations WHERE id = ? AND parent_id = ? AND deleted_at IS NULL",
+            )
+            .get(by.id, parent)
+        : this.d.db
+            .query<{ id: number }, [number, string]>(
+              "SELECT id FROM conversations WHERE parent_id = ? AND thread_key = ? AND resolved_at IS NULL AND deleted_at IS NULL",
+            )
+            .get(parent, by.key ?? "");
+    return row?.id ?? null;
+  }
+
+  /** The bot writes in its thread, which opens it again if it was resolved. */
+  postInThread(id: number, botId: string, text: string, taintedBy: string | null = null) {
+    this.reopenThread(id);
+    const message = (this.thread(id) as Thread).add({ text, botId, taintedBy });
+    this.changed(id);
+    return message;
+  }
+
+  /**
+   * You open one on a bot's message in its own chat: the thread starts with that message, or with an
+   * ended task's result.
+   */
   replyInThread(conversationId: number, messageId: number) {
     const chat = this.get(conversationId);
     const m = chat?.kind === "direct" ? this.thread(chat.id)?.message(messageId) : null;
+    const task = m?.kind === "task" && m.taskId ? this.d.tasks?.get(m.taskId) : null;
+    const ended = !!task?.finishedAt;
     if (!chat || !m || m.role !== "assistant" || m.incognito || m.status === "streaming")
       throw new UserError("Only a bot's finished message in its own chat can start a thread.");
+    if (m.kind === "task" && !(task && ended))
+      throw new UserError("A task's thread starts once it has ended.");
     const thread = this.thread(chat.id) as Thread;
     return this.openThread({
       botId: chat.botIds[0] ?? HATBOT_ID,
-      title: titleOf(m.text.replace(/[#*_`>]/g, "")) || "Thread",
-      message: m.text,
-      taintedBy: thread.untrustedSource(m.id),
+      title: task ? task.title : titleOf(m.text.replace(/[#*_`>]/g, "")) || "Thread",
+      message: task ? task.summary || m.text : m.text,
+      taintedBy: task ? this.d.tasks?.readBy(task) : thread.untrustedSource(m.id),
     });
   }
 
-  /** `outcome` null: you resolved it. */
   resolveThread(id: number, outcome: string | null): Conversation | null {
     const done = this.d.db
       .query(

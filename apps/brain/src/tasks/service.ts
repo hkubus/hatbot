@@ -19,6 +19,7 @@ import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
 import type { Config } from "../config";
 import type { Db } from "../db";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Listings } from "../listings/service";
 import type { Proposals } from "../memory/proposals";
@@ -974,6 +975,57 @@ export class Tasks {
       priority: 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
     });
+  }
+
+  /**
+   * A task opens a thread with the owner in its bot's chat, notifying them: it needs them. A
+   * background task reports and asks there from then on.
+   */
+  openThread(id: number, input: { title: string; message: string; key?: string }) {
+    const task = this.get(id) as Task;
+    const r = this.d.chats.openThread({
+      botId: task.botId,
+      ...input,
+      taintedBy: this.readBy(task),
+      taskId: id,
+    });
+    this.moveTo(task, r.conversation.id);
+    if (r.opened)
+      void this.d.notifier.send({
+        title: this.titled(task, input.title),
+        message: clipBytes(input.message, NOTIFY_BYTES),
+        priority: 4,
+        click: `${this.d.config.publicUrl}/chat/${r.conversation.parentId}?thread=${r.conversation.id}`,
+      });
+    return r;
+  }
+
+  /** A task writes in one of its bot's threads, by id or by key. */
+  postInThread(id: number, input: { id?: number; key?: string; message: string }): number {
+    const task = this.get(id) as Task;
+    const thread = this.d.chats.findThread(task.botId, input);
+    if (thread === null)
+      throw new UserError(
+        input.id !== undefined
+          ? `No thread #${input.id} in your chat.`
+          : `No open thread with the key "${input.key}". Open one with thread_open.`,
+      );
+    this.d.chats.postInThread(thread, task.botId, input.message, this.readBy(task));
+    this.moveTo(task, thread);
+    return thread;
+  }
+
+  /** What a tainted task's words carry where they go. */
+  readBy(task: Task): string | null {
+    return task.tainted
+      ? `Task #${task.id}, which had read: ${task.taintedBy ?? "untrusted content"}`
+      : null;
+  }
+
+  /** One started from a chat stays under its reply there; a background task follows its thread. */
+  private moveTo(task: Task, threadId: number) {
+    if (task.origin === "chat" || task.parentId || task.requestedBy) return;
+    this.d.db.query("UPDATE tasks SET conversation_id = ? WHERE id = ?").run(threadId, task.id);
   }
 
   takeInbox(id: number): InboxItem[] {

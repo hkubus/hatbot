@@ -97,6 +97,24 @@ export type ToolContext = {
   ) => Promise<{ content: string; isError: boolean }>;
 };
 
+export const ThreadOpenInput = z.object({
+  title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
+  message: z
+    .string()
+    .min(1)
+    .max(8000)
+    .describe("The thread's first message, to the owner, with everything they need"),
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .optional()
+    .describe(
+      'One thread per subject, e.g. "backups": while one with this key is open, your message goes there instead',
+    ),
+});
+
 export const DesktopTaskInput = z.object({
   title: z
     .string()
@@ -603,23 +621,19 @@ export const TOOLS = [
   def({
     name: "thread_open",
     description: `Open a thread: a side conversation with the owner in your chat, on one topic, apart from this one. For something that needs its own back-and-forth (findings to go through, a decision with several parts) and would crowd this chat. Not for a quick answer, nor for what the owner is talking about now. Your message opens it: say what it's about and what you need from them. They answer there when they can, and you reply there. At most ${MAX_OPEN_THREADS} open at once.`,
-    schema: z.object({
-      title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
-      message: z
-        .string()
-        .min(1)
-        .max(8000)
-        .describe("The thread's first message, to the owner, with everything they need"),
-    }),
-    run: async ({ title, message }, { chats, bot, tainted }) => {
+    schema: ThreadOpenInput,
+    run: async ({ title, message, key }, { chats, bot, tainted }) => {
       if (!chats || !bot) return "Threads aren't available here.";
-      const { conversation } = chats.openThread({
+      const { conversation, opened } = chats.openThread({
         botId: bot.id,
         title,
         message,
+        key,
         taintedBy: chatTaint(tainted?.()) || null,
       });
-      return `Opened thread #${conversation.id} "${title}". The owner sees it beside this chat; you reply to them there.`;
+      return opened
+        ? `Opened thread #${conversation.id} "${title}". The owner sees it beside this chat; you reply to them there.`
+        : `Thread #${conversation.id} on "${key}" was open already: your message went there.`;
     },
   }),
   def({

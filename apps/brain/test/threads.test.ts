@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { type Conversation, MAX_OPEN_THREADS } from "@hatbot/shared";
+import { type Conversation, MAX_OPEN_THREADS, type Task } from "@hatbot/shared";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { lastUserText, requested, signIn, testApp, toolNames } from "./helpers";
+import { lastUserText, requested, signIn, testApp, toolNames, waitFor } from "./helpers";
+import { ended, finish, scheduled } from "./plugin-helpers";
 
 test("a bot opens a thread from its chat, answers in it while the chat replies, resolves it, and writing opens it again", async () => {
   const { promise: slow, resolve: release } = Promise.withResolvers<void>();
@@ -138,4 +139,98 @@ test("you open a thread on a bot's message: it starts with that message, and the
   expect(t.chats.get(thread.id)?.unread).toBe(1);
   expect(t.chats.get(1)?.unread).toBe(1);
   expect(t.chats.get(thread.id)?.latest).toBe("B is cheaper.");
+});
+
+test("a background task opens a thread: you're notified, and its question and result come there, not in the chat", async () => {
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("thread_open", {
+          title: "Backups failing",
+          message: "Two failed.",
+          key: "backups",
+        }),
+        toolUse("thread_open", { title: "Again", message: "Another." }),
+      ],
+    },
+    {
+      content: [
+        toolUse("ask_owner", {
+          questions: [{ question: "Retry?", choices: ["Yes"] }],
+          wait_hours: 1,
+        }),
+      ],
+    },
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "Retried; both passed.", notify: true }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  // The event that started it is untrusted: so is the thread's first message.
+  const task = t.tasks.createBackgroundTask({
+    title: "Check the backups",
+    goal: "Check them",
+    origin: "watch",
+    source: "w",
+    payload: '{"failed":2}',
+  }) as Task;
+  const question = await waitFor(() => t.questions.pending()[0]);
+  const [thread] = t.chats.threads(1);
+  expect(thread).toMatchObject({ title: "Backups failing", kind: "thread" });
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("a task opens one thread");
+  expect(t.notifier.sent.find((n) => n.title === "Backups failing")?.click).toBe(
+    `https://hatbot.test/chat/1?thread=${thread?.id}`,
+  );
+  expect(t.chats.threadTaint(thread?.id as number, true)).toContain(`Task #${task.id}`);
+  expect(question.conversationId).toBe(thread?.id as number);
+
+  await t.questions.answer(question.id, "Yes");
+  await ended(t, task.id);
+  const side = t.chats.thread(thread?.id as number);
+  expect(side?.list().find((m) => m.kind === "task")).toMatchObject({ taskId: task.id });
+  expect(t.thread.list().map((m) => m.kind)).toEqual(["thread"]);
+});
+
+test("a thread's key keeps one open thread per subject, and a task writes in one by key", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("thread_post", { key: "nas", message: "Disk 2 again." })] },
+    { content: [toolUse("thread_post", { key: "backups", message: "Still failing." })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const open = () =>
+    t.chats.openThread({ botId: "hatbot", title: "Backups", message: "Failed.", key: "backups" });
+  const first = open();
+  expect(open()).toMatchObject({ opened: false, conversation: { id: first.conversation.id } });
+  t.chats.resolveThread(first.conversation.id, "fixed");
+  const second = open();
+  expect(second.opened).toBe(true);
+
+  const task = scheduled(t, "Check");
+  await ended(t, task.id);
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain(
+    'No open thread with the key \\"nas\\"',
+  );
+  expect(t.chats.thread(second.conversation.id)?.list().at(-1)?.text).toBe("Still failing.");
+});
+
+test("you open a thread on a task's card once the task has ended", async () => {
+  const { promise: slow, resolve: release } = Promise.withResolvers<void>();
+  const work = new FakeModel([{ ...finish("Both backups passed."), wait: slow }]);
+  const t = await testApp(new FakeModel(), work);
+  const { cookie } = signIn(t);
+  const task = scheduled(t, "Check the backups");
+  const card = t.chats.addCard(1, "hatbot", "task", `Task #${task.id}`, { taskId: task.id });
+  const open = () => t.call("POST", "/conversations/1/threads", { messageId: card.id }, { cookie });
+  expect((await open()).status).toBe(400);
+  release();
+  await ended(t, task.id);
+  const res = await open();
+  expect(res.status).toBe(201);
+  expect(await res.json()).toMatchObject({
+    title: "Check the backups",
+    latest: "Both backups passed.",
+  });
 });
