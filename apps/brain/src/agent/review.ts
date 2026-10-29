@@ -1,6 +1,8 @@
 // The review of a change that would otherwise ask you to approve it: if it isn't destructive or
 // dangerous, and nothing untrusted could have put it there, it goes ahead. Haiku looks first, and Opus
 // looks again before a no reaches you.
+
+import type { Verdict } from "@hatbot/plugin-sdk";
 import {
   type ApprovalKind,
   type ApprovalLevel,
@@ -8,7 +10,6 @@ import {
   SAFETY_KINDS,
   type SafetyKind,
 } from "@hatbot/shared";
-import type { Verdict } from "../plugins/plugin";
 import type { Settings } from "../settings";
 import type { Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";

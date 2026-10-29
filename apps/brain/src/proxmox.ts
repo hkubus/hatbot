@@ -5,7 +5,7 @@
 import { request } from "node:http";
 import { isIP } from "node:net";
 import { checkServerIdentity, connect } from "node:tls";
-import { PluginError } from "./plugins/plugin";
+import { PluginError } from "@hatbot/plugin-sdk";
 
 export type Snapshot = { name: string; description: string; createdAt: string | null };
 

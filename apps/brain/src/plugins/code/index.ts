@@ -1,11 +1,19 @@
 // The sandbox shell is its own throwaway user on the desktop container: no browser profile, no screen,
 // no secrets and no LAN, but it does reach the internet.
+
+import {
+  definePlugin,
+  needsSetup,
+  PluginError,
+  ready,
+  type Sandbox,
+  SandboxError,
+  tool,
+} from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import type { Attachments } from "../../attachments";
-import { type DesktopAgent, DesktopError } from "../../desktop/client";
-import { definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
-export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments }) =>
+export const codePlugin = (d: { desktop: Sandbox; attachments: Attachments }) =>
   definePlugin({
     id: "code",
     name: "Code",
@@ -61,7 +69,7 @@ export const codePlugin = (d: { desktop: DesktopAgent; attachments: Attachments 
               const out = `${head}\n${r.output}`;
               return copied.length ? `Copied in: ${copied.join(", ")}\n${out}` : out;
             } catch (err) {
-              if (err instanceof DesktopError) throw new PluginError(err.message);
+              if (err instanceof SandboxError) throw new PluginError(err.message);
               throw err;
             }
           },

@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
 import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
@@ -32,7 +33,6 @@ import { ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
 import { promptFor } from "../bots";
 import { brokenChartsOf } from "../chart-data";
-import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import {
   describeCall,
   runPluginTool,

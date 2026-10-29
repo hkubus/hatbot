@@ -1,9 +1,9 @@
+import { PluginError } from "@hatbot/plugin-sdk";
 import { SetPluginSecrets, UpdatePlugin } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
-import { PluginError } from "../plugins/plugin";
 import { found, json } from "./util";
 
 export const pluginRoutes = new Hono<AppEnv>()

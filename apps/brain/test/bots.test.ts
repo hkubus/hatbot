@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { Bot, Conversation, Task, ThreadMessage } from "@hatbot/shared";
 import { z } from "zod";
 import { SCREENING_PROMPT } from "../src/agent/prompt";
-import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 

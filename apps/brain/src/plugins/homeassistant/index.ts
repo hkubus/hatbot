@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   allow,
   ask,
@@ -9,7 +8,8 @@ import {
   PluginError,
   ready,
   tool,
-} from "../plugin";
+} from "@hatbot/plugin-sdk";
+import { z } from "zod";
 
 const ENTITY_ID = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 const EntityId = z

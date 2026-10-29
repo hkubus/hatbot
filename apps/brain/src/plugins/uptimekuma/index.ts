@@ -1,6 +1,7 @@
 // Kuma's own API is socket.io, so this reads its Prometheus endpoint (/metrics) instead.
+
+import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const STATUS: Record<number, Status> = { 0: "down", 1: "up", 2: "pending", 3: "maintenance" };
 type Status = "down" | "up" | "pending" | "maintenance";

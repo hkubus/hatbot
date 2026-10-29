@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import type { PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type Box,
@@ -48,7 +49,6 @@ import { type Backends, cronProblem, NO_GUEST } from "../hatbox/backends";
 import type { Proposals } from "../memory/proposals";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
-import type { PluginTool, ToolImage } from "../plugins/plugin";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import { ScheduleError, type Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";

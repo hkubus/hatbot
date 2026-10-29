@@ -1,8 +1,9 @@
 // Core tools shaped as plugin tools, so the chat and tasks gate them the way they gate any plugin's:
 // read ones run, and writes go through their policy.
+
+import { askCareful, block, covered, PluginError, type PluginTool, tool } from "@hatbot/plugin-sdk";
 import type { Bot, Negotiation, Stated } from "@hatbot/shared";
 import { z } from "zod";
-import { askCareful, block, covered, PluginError, type PluginTool, tool } from "../plugins/plugin";
 import { appraisalText, appraise, type ListingFacts, listingFacts, parseKey } from "./appraise";
 import { collapse } from "./gate";
 import { inspect, MAX_PHOTOS } from "./inspect";

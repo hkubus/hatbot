@@ -1,6 +1,7 @@
 // A chat with your bots, run as episodes: one bot's own, or a group.
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type ChatCommand,
@@ -33,7 +34,6 @@ import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Negotiations } from "../negotiate/service";
-import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
 import {
   describeCall,
   type Plugins,

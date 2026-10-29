@@ -4,8 +4,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
-import { type DesktopAgent, DesktopError } from "../desktop/client";
-import { PluginError } from "./plugin";
+import { PluginError, type Sandbox, SandboxError } from "@hatbot/plugin-sdk";
 
 export const MAX_PATCH_BYTES = 5_000_000;
 /** The desktop takes files of up to 25 MB, so the files go in parts and are joined in the sandbox. */
@@ -100,7 +99,7 @@ const inSandbox = async <T>(f: () => Promise<T>): Promise<T> => {
   try {
     return await f();
   } catch (err) {
-    throw err instanceof DesktopError ? new PluginError(err.message) : err;
+    throw err instanceof SandboxError ? new PluginError(err.message) : err;
   }
 };
 
@@ -167,7 +166,7 @@ export async function archive(c: Checkout, sha: string): Promise<Uint8Array> {
  * `before` runs before the old checkout goes; `after`, in the new one.
  */
 export async function putCheckout(
-  shell: DesktopAgent,
+  shell: Sandbox,
   c: Checkout,
   o: {
     tar: Uint8Array;
@@ -206,7 +205,7 @@ export async function putCheckout(
   return r.output.trim();
 }
 
-export async function checkoutDiff(shell: DesktopAgent, c: Checkout) {
+export async function checkoutDiff(shell: Sandbox, c: Checkout) {
   const patchPath = `${c.scratch}/change.patch`;
   const fromWork = (path: string) => posix.relative(c.work, path);
   const { r, patch } = await inSandbox(async () => {
@@ -283,7 +282,7 @@ export async function commitAndPush(
 }
 
 /** After a push, so the next diff starts from it; what changed since stays a change. */
-export async function moveBase(shell: DesktopAgent, c: Checkout, commit: string, branch: string) {
+export async function moveBase(shell: Sandbox, c: Checkout, commit: string, branch: string) {
   const r = await inSandbox(() =>
     shell.exec(
       `${intoCheckout(c)}\ngit -c user.name=Hatbot -c user.email=hatbot@localhost commit -q --allow-empty --no-verify -m ${commit} -m ${quoted(branch)} && git tag -f base >/dev/null`,

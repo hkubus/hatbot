@@ -1,9 +1,10 @@
 // A plugin's read tool the brain runs for a box's page on a timer, without the model.
+
+import { PluginError, textOf } from "@hatbot/plugin-sdk";
 import { type BoxFeedValue, MAX_BOX_VALUE } from "@hatbot/shared";
 import type { Bots } from "./bots";
 import { BoxError } from "./boxes";
 import type { Db } from "./db";
-import { PluginError, textOf } from "./plugins/plugin";
 import type { Plugins } from "./plugins/registry";
 import type { SettingsStore } from "./settings";
 

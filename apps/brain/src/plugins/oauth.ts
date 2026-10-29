@@ -1,8 +1,8 @@
 // Connect buttons: MCP's sign-in (OAuth 2.1, PKCE, a public client registered on the fly). The
 // browser goes to the server's page to let Hatbot in, and comes back to the plugin's settings.
 import { createHash, randomBytes } from "node:crypto";
+import { PluginError } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { PluginError } from "./plugin";
 
 export type OAuthEndpoints = { register: string; authorize: string; token: string };
 export type OAuthToken = { token: string; expiresIn: number | null };

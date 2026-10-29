@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { textOf } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { textOf } from "../src/plugins/plugin";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { spawnRun, sshPlugin } from "../src/plugins/ssh";
 import { commandCount, destructive, statusOnly } from "../src/plugins/ssh/policy";

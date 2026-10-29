@@ -4,8 +4,8 @@ import { afterAll, afterEach, beforeEach } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { CallContext, Plugin, PluginTool } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
-import type { CallContext, Plugin, PluginTool } from "../src/plugins/plugin";
 import { FakeModel, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import { definePlugin, ready } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { definePlugin, ready } from "../src/plugins/plugin";
 import { RESTARTED } from "../src/tasks/service";
 import { FakeModel, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";

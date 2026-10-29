@@ -1,8 +1,8 @@
 // A call runs on the plugin as it is when it runs: not as it was when the task started, the reply
 // began, or the call was checked or approved.
 import { expect, test } from "bun:test";
+import { allow, ask, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { allow, ask, definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 import { ended, finish, scheduled } from "./plugin-helpers";

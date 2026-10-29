@@ -1,4 +1,15 @@
 // What it can reach is up to Forgejo: add the bot as a collaborator to the repos it should work on.
+
+import {
+  allow,
+  ask,
+  definePlugin,
+  httpApi,
+  needsSetup,
+  PluginError,
+  ready,
+  tool,
+} from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import { basicAuth } from "../checkout";
 import {
@@ -14,7 +25,6 @@ import {
   runsInCi,
   sameBranch,
 } from "../forge";
-import { allow, ask, definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const Repo = RepoOf("owner/repo");
 

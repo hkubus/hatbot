@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import type { PluginInfo, Task } from "@hatbot/shared";
-import { z } from "zod";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import {
   ask,
   block,
@@ -12,7 +9,10 @@ import {
   PluginError,
   ready,
   tool,
-} from "../src/plugins/plugin";
+} from "@hatbot/plugin-sdk";
+import type { PluginInfo, Task } from "@hatbot/shared";
+import { z } from "zod";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, testApp, waitFor } from "./helpers";
 import {

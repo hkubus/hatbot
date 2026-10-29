@@ -2,6 +2,7 @@
 // holds the marketplace logins posts each in a desktop task of its own, and Scout hears how it went.
 // Scout's tools are called by name through its plugin (or the MCP plugin), without the model.
 import { randomUUID } from "node:crypto";
+import { PluginError, type PluginTool } from "@hatbot/plugin-sdk";
 import type { Approval, Bot, ListingStatus, Task } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
 import type { Approvals } from "../approvals";
@@ -10,7 +11,6 @@ import type { Db } from "../db";
 import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import { readScout, scoutTool } from "../negotiate/appraise";
-import { PluginError, type PluginTool } from "../plugins/plugin";
 import { type Plugins, runPluginTool, verdictFor } from "../plugins/registry";
 import type { Tasks } from "../tasks/service";
 import { type ListingGate, listingAddress } from "./gate";

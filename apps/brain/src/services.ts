@@ -1,6 +1,7 @@
 // Built the same way for the brain (main.ts) and for tests (test/helpers.ts): only the outside world
 // is passed in.
 import { join } from "node:path";
+import type { Plugin } from "@hatbot/plugin-sdk";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
 import type { ModelClient } from "./agent/model";
@@ -31,7 +32,6 @@ import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
 import { codePlugin } from "./plugins/code";
-import type { Plugin } from "./plugins/plugin";
 import { Plugins } from "./plugins/registry";
 import { scoutPlugin } from "./plugins/scout";
 import { selfPlugin } from "./plugins/self";

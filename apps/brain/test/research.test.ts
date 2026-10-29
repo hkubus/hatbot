@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import {
   RESEARCH_CHECK_PROMPT,
@@ -9,7 +10,6 @@ import {
 import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
-import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { BudgetError } from "../src/spend";
 import { plain as plainRead, quoteFound } from "../src/tasks/research";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";

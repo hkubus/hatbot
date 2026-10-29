@@ -1,15 +1,7 @@
 // Scout (the owner's deal monitor) over its MCP server, connected with a button. Hatbot writes the
 // tools' descriptions itself and calls Scout's by name, so a Scout update can't change what the model
 // reads about them; what they return is still untrusted, since listings are strangers' text.
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import {
-  StreamableHTTPClientTransport,
-  StreamableHTTPError,
-} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-import { callFailure, resultText, unsent } from "../mcp";
-import { discover, oauthClient } from "../oauth";
+
 import {
   allow,
   block,
@@ -19,7 +11,16 @@ import {
   type PluginTool,
   ready,
   tool,
-} from "../plugin";
+} from "@hatbot/plugin-sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+import { callFailure, resultText, unsent } from "../mcp";
+import { discover, oauthClient } from "../oauth";
 
 type Http = (url: string, init?: RequestInit) => Promise<Response>;
 

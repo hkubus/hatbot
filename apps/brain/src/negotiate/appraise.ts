@@ -1,7 +1,8 @@
 // Scout's tools are called by name through the MCP plugin, as watchers call plugin tools; only ones set
 // to Chat (read) are used, so nothing here asks.
+
+import { PluginError, type PluginTool, textOf } from "@hatbot/plugin-sdk";
 import type { Appraisal, AppraisalSource } from "@hatbot/shared";
-import { PluginError, type PluginTool, textOf } from "../plugins/plugin";
 import { zl } from "./policy";
 
 export type ListingFacts = {

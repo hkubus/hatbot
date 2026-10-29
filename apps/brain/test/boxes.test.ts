@@ -1,10 +1,10 @@
 // Boxes: small web apps a bot makes, shown sandboxed, keeping what their pages save.
 import { expect, test } from "bun:test";
+import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FRAME_CSP, previewed } from "../src/boxes";
-import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 

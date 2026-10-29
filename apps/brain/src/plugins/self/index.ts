@@ -1,8 +1,17 @@
 // The brain never runs this code: it keeps a bare clone, applies the sandbox's diff to an index with
 // git, which runs nothing, and pushes.
 import { join } from "node:path";
+import {
+  definePlugin,
+  httpApi,
+  needsSetup,
+  PluginError,
+  ready,
+  type Sandbox,
+  SandboxError,
+  tool,
+} from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { type DesktopAgent, DesktopError } from "../../desktop/client";
 import type { Schedules } from "../../schedules";
 import { getSetting, setSetting } from "../../settings";
 import {
@@ -18,7 +27,6 @@ import {
   serially,
 } from "../checkout";
 import { Branch, Num, Repo, repoPath, validRef } from "../forge";
-import { definePlugin, httpApi, needsSetup, PluginError, ready, tool } from "../plugin";
 
 const WORK = "hatbot-self/work";
 const MAX_CONVERSATION = 30_000;
@@ -64,7 +72,7 @@ type Review = {
 };
 
 export const selfPlugin = (d: {
-  desktop: DesktopAgent;
+  desktop: Sandbox;
   dir: string;
   /** Made after the plugins. */
   schedules: () => Pick<Schedules, "get" | "create" | "update" | "delete">;
@@ -299,7 +307,7 @@ export const selfPlugin = (d: {
               const head = r.timedOut ? `Killed after ${timeout_s} s.` : `Exit code ${r.exitCode}`;
               return `${head}\n${r.output}`;
             } catch (err) {
-              throw err instanceof DesktopError ? new PluginError(err.message) : err;
+              throw err instanceof SandboxError ? new PluginError(err.message) : err;
             }
           },
         }),

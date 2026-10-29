@@ -1,3 +1,4 @@
+import { PluginError, textOf } from "@hatbot/plugin-sdk";
 import {
   type CreateWatcher,
   describeCondition,
@@ -18,7 +19,6 @@ import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Notifier } from "../notify";
-import { PluginError, textOf } from "../plugins/plugin";
 import { type Plugins, untrustedOf } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";

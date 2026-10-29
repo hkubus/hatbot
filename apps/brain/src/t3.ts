@@ -1,8 +1,9 @@
 // T3 Code on the owner's own computer, driven over its MCP endpoint. Everything its agents say is
 // untrusted: they read code and pages strangers wrote.
+
+import { PluginError } from "@hatbot/plugin-sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { PluginError } from "./plugins/plugin";
 
 export type T3Settings = { url: string; token: string; model: string; minutes: number };
 

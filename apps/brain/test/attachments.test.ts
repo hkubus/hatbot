@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import type { CallContext } from "@hatbot/plugin-sdk";
 import type { Attachment, ThreadMessage } from "@hatbot/shared";
 import { inlineLimit } from "../src/attachments";
-import type { CallContext } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { lastUserText, ORIGIN, signIn, type TestApp, testApp, unmarked } from "./helpers";
 

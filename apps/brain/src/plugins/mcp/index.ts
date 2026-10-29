@@ -2,15 +2,6 @@
 // elsewhere for anything you didn't write.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import {
-  StreamableHTTPClientTransport,
-  StreamableHTTPError,
-} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CallToolResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import Ajv2020 from "ajv/dist/2020.js";
-import { z } from "zod";
 import {
   allow,
   ask,
@@ -21,7 +12,16 @@ import {
   type PluginInstance,
   type PluginTool,
   tool,
-} from "../plugin";
+} from "@hatbot/plugin-sdk";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema, ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import Ajv2020 from "ajv/dist/2020.js";
+import { z } from "zod";
 
 const CONNECT_TIMEOUT_MS = 20_000;
 const CALL_TIMEOUT_MS = 120_000;

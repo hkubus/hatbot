@@ -1,5 +1,7 @@
 // T3 Code writes the box in a scratch thread on the owner's computer and sends its files back in its
 // last message; the brain builds them as box_create would.
+
+import { PluginError } from "@hatbot/plugin-sdk";
 import type { Box, Task } from "@hatbot/shared";
 import { MAX_BOX_HTML } from "@hatbot/shared";
 import {
@@ -20,7 +22,6 @@ import {
 } from "../agent/tools";
 import { ownerNote } from "../approvals";
 import { BoxError, type Made } from "../boxes";
-import { PluginError } from "../plugins/plugin";
 import { runStats, T3Error, type T3Result } from "../t3";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";

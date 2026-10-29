@@ -1,8 +1,8 @@
 // A "." or ".." part in a name would step out of the repository's endpoints once the URL is resolved,
 // and a branch git wouldn't take could land somewhere else ("main/" on main).
 import { join, posix } from "node:path";
+import { allow, ask, PluginError, type PluginTool, type Sandbox, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import type { DesktopAgent } from "../desktop/client";
 import {
   archive,
   type Checkout,
@@ -16,7 +16,6 @@ import {
   remoteHead,
   serially,
 } from "./checkout";
-import { allow, ask, PluginError, type PluginTool, tool } from "./plugin";
 
 const dotParts = (s: string) => s.split("/").some((p) => p === "." || p === "..");
 
@@ -179,7 +178,7 @@ export function checkoutTools(
   d: {
     Repo: z.ZodType<string>;
     api: <T>(method: string, path: string, body?: unknown) => Promise<T>;
-    desktop: DesktopAgent;
+    desktop: Sandbox;
     dir: string;
     gitBase: string;
     auth: () => Promise<string>;

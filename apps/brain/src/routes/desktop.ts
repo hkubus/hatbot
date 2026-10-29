@@ -1,3 +1,4 @@
+import { PluginError } from "@hatbot/plugin-sdk";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { type Context, Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
@@ -5,7 +6,6 @@ import { z } from "zod";
 import { principalOf, requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { DesktopBusy } from "../desktop/service";
-import { PluginError } from "../plugins/plugin";
 import { json } from "./util";
 
 /** Holds the screen lane while the desktop rolls back, so no task starts on it. */

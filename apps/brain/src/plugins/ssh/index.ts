@@ -1,10 +1,6 @@
 // Host keys are pinned the first time Hatbot connects; a changed key stops it.
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type ApprovalKind, MAX_BOX_VALUE } from "@hatbot/shared";
-import { z } from "zod";
-import { MAX_ATTACHMENT_BYTES, sizeText } from "../../attachments";
-import { type DesktopAgent, DesktopError } from "../../desktop/client";
 import {
   allow,
   ask,
@@ -13,9 +9,14 @@ import {
   definePlugin,
   PluginError,
   ready,
+  type Sandbox,
+  SandboxError,
   tool,
   type Verdict,
-} from "../plugin";
+} from "@hatbot/plugin-sdk";
+import { type ApprovalKind, MAX_BOX_VALUE } from "@hatbot/shared";
+import { z } from "zod";
+import { MAX_ATTACHMENT_BYTES, sizeText } from "../../attachments";
 import { saved } from "../registry";
 import { commandCount, destructive, inContainer, readOnly, statusOnly } from "./policy";
 
@@ -397,15 +398,12 @@ export const sshPlugin = definePlugin({
     };
 
     /** The desktop's sandbox, stopping with the call; what it says when it fails is fine to show. */
-    const sandbox = async <T>(
-      signal: AbortSignal,
-      use: (d: DesktopAgent) => Promise<T>,
-    ): Promise<T> => {
+    const sandbox = async <T>(signal: AbortSignal, use: (d: Sandbox) => Promise<T>): Promise<T> => {
       if (!files?.desktop.configured) throw new PluginError("The desktop's sandbox isn't set up.");
       try {
         return await use(files.desktop.withSignal?.(signal) ?? files.desktop);
       } catch (err) {
-        throw err instanceof DesktopError ? new PluginError(err.message) : err;
+        throw err instanceof SandboxError ? new PluginError(err.message) : err;
       }
     };
 

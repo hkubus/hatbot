@@ -1,0 +1,13 @@
+{
+  "name": "@hatbot/plugin-sdk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@hatbot/shared": "workspace:*",
+    "zod": "^4.6.5"
+  }
+}

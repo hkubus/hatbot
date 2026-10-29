@@ -1,12 +1,22 @@
 // T3 Code works in the owner's own projects with full access, so it commits, pushes and opens pull
 // requests itself; Hatbot only hands it the request and reads its last message. Boxes go through
 // box_t3 instead.
+
+import {
+  allow,
+  ask,
+  block,
+  definePlugin,
+  needsSetup,
+  PluginError,
+  ready,
+  tool,
+} from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import type { Db } from "../../db";
 import { getSetting, setSetting } from "../../settings";
 import { runStats, type T3Code, type T3Project } from "../../t3";
 import { oauthClient } from "../oauth";
-import { allow, ask, block, definePlugin, needsSetup, PluginError, ready, tool } from "../plugin";
 
 export const T3_MODELS = { opus: "claude-opus-5-5", haiku: "claude-haiku-5-5" } as const;
 const UNTIL = "t3:signed-in-until";

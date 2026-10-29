@@ -1,9 +1,40 @@
 // The core decides who gets a tool and when it needs your approval; a plugin only says what its tools do.
+import type { Database } from "bun:sqlite";
 import type { ApprovalKind, Attachment, Task } from "@hatbot/shared";
+import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desktop";
 import type { z } from "zod";
-import type { Attachments } from "../attachments";
-import type { Db } from "../db";
-import type { DesktopAgent } from "../desktop/client";
+
+/** The API's major version. A plugin built for another one isn't started. */
+export const SDK_VERSION = 1;
+
+export type Db = Database;
+
+export class SandboxError extends Error {
+  constructor(
+    message: string,
+    /** 400: the action was invalid (tell the model). 423: the owner has control. 0: unreachable. */
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+/** A machine for scratch work: commands, files, and pages fetched or drawn by a real browser. */
+export interface Sandbox {
+  readonly configured: boolean;
+  exec(command: string, timeoutS: number): Promise<ShellResult>;
+  putFile(path: string, bytes: Uint8Array): Promise<void>;
+  getFile(path: string): Promise<Uint8Array>;
+  fetch(url: string): Promise<FetchResult>;
+  render(url: string): Promise<RenderResult>;
+  /** Calls made through it stop when `signal` does. */
+  withSignal?(signal: AbortSignal): Sandbox;
+}
+
+export interface PluginAttachments {
+  get(id: number): Attachment | null;
+  bytes(id: number): Promise<Uint8Array | null>;
+}
 
 /** The core takes the strictest of this and the untrusted-content rule. */
 export type Verdict =
@@ -177,8 +208,8 @@ export type PluginInstance = {
 export type PluginSignal = { key: string; text: string };
 
 export type PluginFiles = {
-  desktop: DesktopAgent;
-  attachments: Attachments;
+  desktop: Sandbox;
+  attachments: PluginAttachments;
 };
 
 export type PluginContext<C> = {

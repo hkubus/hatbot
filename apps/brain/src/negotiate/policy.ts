@@ -1,7 +1,8 @@
 // negotiate_send's policy, in code rather than by a model. It fails closed: a message goes on its own
 // only when the check can read all of it and finds it inside the mandate. It never sends on a guess.
+
+import { askCareful, block, covered, type Verdict } from "@hatbot/plugin-sdk";
 import type { MandateContact, Negotiation, NegotiationMessage, Stated } from "@hatbot/shared";
-import { askCareful, block, covered, type Verdict } from "../plugins/plugin";
 import { collapse, sameHost } from "./gate";
 
 export type SendInput = {

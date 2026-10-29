@@ -1,3 +1,4 @@
+import { SandboxError as DesktopError, type Sandbox } from "@hatbot/plugin-sdk";
 import type {
   AgentAction,
   AgentActionResult,
@@ -18,17 +19,9 @@ import type {
   SignIn,
 } from "@hatbot/shared/desktop";
 
-export class DesktopError extends Error {
-  constructor(
-    message: string,
-    /** 400: the action was invalid (tell the model). 423: the owner has control. 0: unreachable. */
-    readonly status: number,
-  ) {
-    super(message);
-  }
-}
+export { SandboxError as DesktopError } from "@hatbot/plugin-sdk";
 
-export interface DesktopAgent {
+export interface DesktopAgent extends Sandbox {
   readonly configured: boolean;
   /** `deep`: also grabs a frame and asks Chromium's DevTools, for Check everything. */
   status(deep?: boolean): Promise<AgentStatus>;

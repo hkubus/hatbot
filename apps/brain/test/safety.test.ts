@@ -1,8 +1,8 @@
 // Settings → Safety: what asks you, what the review answers, and what goes ahead.
 import { expect, test } from "bun:test";
+import { ask, askCareful, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
-import { ask, askCareful, definePlugin, ready, tool } from "../src/plugins/plugin";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 

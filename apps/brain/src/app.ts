@@ -1,3 +1,4 @@
+import { PluginError } from "@hatbot/plugin-sdk";
 import { API_PREFIX, type Health } from "@hatbot/shared";
 import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -7,7 +8,6 @@ import type { AuthService } from "./auth/service";
 import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
 import { UserError } from "./errors";
-import { PluginError } from "./plugins/plugin";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { botRoutes } from "./routes/bots";

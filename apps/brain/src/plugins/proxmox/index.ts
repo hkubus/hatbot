@@ -1,6 +1,5 @@
 // Uses the scoped token host-setup.sh makes, which can't change configs or destroy.
-import { z } from "zod";
-import { Proxmox } from "../../proxmox";
+
 import {
   allow,
   ask,
@@ -11,7 +10,9 @@ import {
   PluginError,
   ready,
   tool,
-} from "../plugin";
+} from "@hatbot/plugin-sdk";
+import { z } from "zod";
+import { Proxmox } from "../../proxmox";
 
 const POWER_TIMEOUT_MS = 3 * 60_000;
 
