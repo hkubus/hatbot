@@ -23,6 +23,7 @@
         "@hatbot/plugin-proxmox": "workspace:*",
         "@hatbot/plugin-sdk": "workspace:*",
         "@hatbot/plugin-ssh": "workspace:*",
+        "@hatbot/plugin-t3": "workspace:*",
         "@hatbot/plugin-uptimekuma": "workspace:*",
         "@hatbot/shared": "workspace:*",
         "@hono/zod-validator": "^0.9.1",
@@ -147,6 +148,15 @@
         "zod": "^4.6.5",
       },
     },
+    "plugins/t3": {
+      "name": "@hatbot/plugin-t3",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.32.1",
+        "zod": "^4.6.5",
+      },
+    },
     "plugins/uptimekuma": {
       "name": "@hatbot/plugin-uptimekuma",
       "version": "1.0.0",
@@ -202,6 +212,8 @@
     "@hatbot/plugin-sdk": ["@hatbot/plugin-sdk@workspace:packages/plugin-sdk"],
 
     "@hatbot/plugin-ssh": ["@hatbot/plugin-ssh@workspace:plugins/ssh"],
+
+    "@hatbot/plugin-t3": ["@hatbot/plugin-t3@workspace:plugins/t3"],
 
     "@hatbot/plugin-uptimekuma": ["@hatbot/plugin-uptimekuma@workspace:plugins/uptimekuma"],
 

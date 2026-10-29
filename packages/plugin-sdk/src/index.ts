@@ -315,6 +315,10 @@ export type PluginContext<C> = {
   store: PluginStore;
   /** Saves values for its `env` variables, as Settings does; plugins reading them restart. */
   saveSecrets: (values: Record<string, string | null>) => Promise<void>;
+  /** Where Hatbot is reached, for links and sign-in redirects. */
+  publicUrl: string;
+  /** For requests out; tests answer them. */
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
   /** Another plugin's settings as saved, read when called, even while it's off. */
   configOf: (id: string) => unknown;
 };

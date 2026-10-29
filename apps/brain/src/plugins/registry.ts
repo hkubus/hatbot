@@ -52,6 +52,8 @@ export type PluginsDeps = {
   files?: PluginFiles;
   dataDir: string;
   reserved: string[];
+  publicUrl?: string;
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>;
 };
 
 export class Plugins {
@@ -386,6 +388,8 @@ export class Plugins {
               await this.setSecrets(s.plugin.id, values);
             },
             configOf: (id) => saved(this.d.db, id).config,
+            publicUrl: this.d.publicUrl ?? "",
+            fetch: this.d.fetch ?? fetch,
           });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;

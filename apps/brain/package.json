@@ -17,6 +17,7 @@
     "@hatbot/plugin-proxmox": "workspace:*",
     "@hatbot/plugin-sdk": "workspace:*",
     "@hatbot/plugin-ssh": "workspace:*",
+    "@hatbot/plugin-t3": "workspace:*",
     "@hatbot/plugin-uptimekuma": "workspace:*",
     "@hatbot/shared": "workspace:*",
     "@hono/zod-validator": "^0.9.1",

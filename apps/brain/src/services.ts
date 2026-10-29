@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { codePlugin } from "@hatbot/plugin-code";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Plugin } from "@hatbot/plugin-sdk";
+import { t3Plugin } from "@hatbot/plugin-t3";
+import type { T3Code } from "@hatbot/plugin-t3/client";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
 import { corePlugins } from "./agent/core-tools";
@@ -37,7 +39,6 @@ import { DeadManPing } from "./ping";
 import { Plugins } from "./plugins/registry";
 import { scoutPlugin } from "./plugins/scout";
 import { selfPlugin } from "./plugins/self";
-import { t3Plugin } from "./plugins/t3";
 import { Questions } from "./questions";
 import { WeeklyReport } from "./report";
 import { Schedules } from "./schedules";
@@ -45,7 +46,6 @@ import { Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
 import { Storage } from "./storage";
-import { T3Code } from "./t3";
 import { Tasks } from "./tasks/service";
 import { Teach } from "./teach/service";
 import { Skills } from "./teach/skills";
@@ -96,7 +96,6 @@ export async function createServices(o: Outside) {
   const storage = new Storage({ db, archive, clock });
   const desktop = new Desktop(agent, events, db);
   const files = { desktop: agent, attachments };
-  const t3 = new T3Code();
   const own = selfPlugin({
     desktop: agent,
     dir: join(config.dataDir, "self"),
@@ -106,15 +105,7 @@ export async function createServices(o: Outside) {
     [
       ...o.plugins,
       codePlugin,
-      t3Plugin({
-        t3,
-        db,
-        publicUrl,
-        saveToken: async (token) => {
-          await plugins.setSecrets("t3", { T3_TOKEN: token });
-        },
-        fetch: o.fetch,
-      }),
+      t3Plugin,
       scoutPlugin({
         publicUrl,
         saveToken: async (token) => {
@@ -154,6 +145,8 @@ export async function createServices(o: Outside) {
       files,
       dataDir: config.dataDir,
       reserved: CORE_TOOL_NAMES,
+      publicUrl,
+      fetch: o.fetch,
     },
   );
   const bots = new Bots(db, events, clock);
@@ -203,12 +196,11 @@ export async function createServices(o: Outside) {
     notifier,
     approvals,
     questions,
-    t3,
   };
   const tasks = new Tasks({ ...core });
   events.on((e) => {
     if (e.type === "task.updated" && !ACTIVE_TASK_STATUSES.includes(e.task.status))
-      t3.forget(`task-${e.task.id}`);
+      plugins.service<T3Code>("t3")?.forget(`task-${e.task.id}`);
   });
   const teach = new Teach({ ...core, lane: tasks.lane });
   const schedules = new Schedules(db, events, settings, tasks, clock);

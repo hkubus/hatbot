@@ -1,7 +1,7 @@
 // T3 Code on the owner's computer: connecting to it, the t3_code tool in a task, and boxes it makes for
 // the chat (box_t3).
 import { expect, test } from "bun:test";
-import type { T3Caller } from "../src/t3";
+import type { T3Caller, T3Code } from "@hatbot/plugin-t3/client";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { lastUserText, ORIGIN, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -63,9 +63,13 @@ function fakeT3(reply: (message: string, n: number) => string) {
 
 async function withT3(t: TestApp, reply: (message: string, n: number) => string) {
   const fake = fakeT3(reply);
-  t.t3.caller = fake.caller;
   await t.plugins.setSecrets("t3", { T3_TOKEN: "t3-token" });
   await t.plugins.update("t3", { enabled: true, config: { url: URL_ } });
+  const client = t.plugins.service<T3Code>("t3");
+  if (!client) throw new Error("T3 Code isn't on");
+  client.caller = fake.caller;
+  // Its runs are looked at again at once.
+  client.waitMs = 0;
   return fake;
 }
 

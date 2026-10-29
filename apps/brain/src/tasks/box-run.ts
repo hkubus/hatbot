@@ -2,6 +2,7 @@
 // last message; the brain builds them as box_create would.
 
 import { PluginError } from "@hatbot/plugin-sdk";
+import { runStats, type T3Code, T3Error, type T3Result } from "@hatbot/plugin-t3/client";
 import type { Box, Task } from "@hatbot/shared";
 import { MAX_BOX_HTML } from "@hatbot/shared";
 import {
@@ -22,7 +23,6 @@ import {
 } from "../agent/tools";
 import { ownerNote } from "../approvals";
 import { BoxError, type Made } from "../boxes";
-import { runStats, T3Error, type T3Result } from "../t3";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
 
@@ -79,7 +79,8 @@ const summaryOf = (text: string) => {
 
 export async function runBoxTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
-  const { boxes, t3 } = d;
+  const { boxes } = d;
+  const t3 = d.plugins.service<T3Code>("t3");
   const job = tasks.boxJobOf(id) as BoxJob;
   const task = tasks.get(id) as Task;
   tasks.setStatus(id, "running");

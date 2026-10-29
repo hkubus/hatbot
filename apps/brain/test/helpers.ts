@@ -117,8 +117,6 @@ export async function testApp(
     fetch: async (url, init) =>
       url === `${ORIGIN}/api/v1/health` ? Response.json({ ok: true }) : outside.fetch(url, init),
   });
-  // T3 Code's runs are looked at again at once.
-  s.t3.waitMs = 0;
   const seen: HatbotEvent[] = [];
   s.events.on((e) => seen.push(e));
   await s.plugins.startAll();

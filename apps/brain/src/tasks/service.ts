@@ -30,7 +30,6 @@ import type { Plugins } from "../plugins/registry";
 import type { Questions } from "../questions";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
-import type { T3Code } from "../t3";
 import type { Skills } from "../teach/skills";
 import { clip, head } from "../text";
 import { runAgentTask } from "./agent-run";
@@ -60,7 +59,6 @@ export type TasksDeps = {
   plugins: Plugins;
   skills: Skills;
   boxes?: Boxes;
-  t3?: T3Code;
   /** Set once it exists; it needs the tasks too. */
   proposals?: Proposals;
   clock?: () => number;
