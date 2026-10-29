@@ -6,22 +6,17 @@ This file lists only what's still to do and what's left out on purpose. What's b
 
 ---
 
-## 0. Modular split (decided 2026-10-29, in progress)
-Hatbot becomes a bare core plus plugins, for other people and for the owner alike.
+## 0. Modular split (decided and built 2026-10-29)
+Hatbot is a core plus plugins in `plugins/<id>`, on `@hatbot/plugin-sdk`. The design as decided is in `git show 43ae48ac:PLAN.md`. Built: the SDK; the connectors, Scout, Own code and T3 Code as packages; providers as plugins (Anthropic, OpenAI-compatible) with five roles; automation, research, boxes and desktop (connection, take over, live view, Teach) as plugins; installs from `plugins.json` or a git URL at a commit, uninstall, and deleting a plugin's data; the web hiding a plugin's views while it's off; the desktop's and boxes guest's scripts in their plugins' `infra/`, each guest optional on Proxmox and over SSH.
 
-- **Core**: login, chat with episodes, the tool loop, tasks, approvals and questions, the untrusted-content rule, spend, settings, attachments, events, memory (with to-dos, proposals and search_history), bots, chart blocks, the plugin registry and installer, and the model-provider interface. The core's own tools sit on the plugin API as internal plugins.
-- **Plugins**: one workspace package each in `plugins/<id>` (`@hatbot/plugin-<id>`), with a brain entry and a web entry, built on the versioned `@hatbot/plugin-sdk` (a plugin for another major stays off). They depend on each other through named services: desktop provides `sandbox` and `screen`, t3 `t3`, proxmox `snapshots`, scout marketplace data. Groups: the connectors as now; automation (schedules, triggers, watchers, heartbeat, weekly report); research; boxes; desktop (sandbox, screen, take over, live view, teach); marketplace (negotiation, listings, Scout logins, the Haggler template).
-- **Providers** are plugins: Anthropic, and OpenAI-compatible Chat Completions (tested on OpenRouter). Five roles, each any provider's model: chat, task, desktop, small, expert. History stays as each provider sent it; switching provider starts a new episode. Providers declare capabilities; desktop tasks need computer use. No separate search plugin yet.
-- **Install**: a curated `plugins.json` in the repo plus git URLs, pinned to a commit; full trust with a plain warning; only the owner installs. Uninstall keeps the data, with a separate delete. iOS keeps native views for first-party plugins and opens third-party pages in a web view. Each plugin owns its infra; setup asks which guests to make.
+Not as decided:
+- **Desktop tasks and marketplace stay in the core**, switched off with their plugins rather than moved: `run_desktop_task`, its prompt lines and routes come only with the Desktop plugin, and negotiation and listing tools only with Scout. Moving them would put the core loop's insides (approvals, screening, steering, the desktop's gates) into the SDK.
+- **An installed plugin restarts the brain** (exit 75; systemd starts it again), since routes can't be added to a running server. Under `bun run dev` the brain just stops: start it again.
 
-Steps, each a run of commits that leaves Hatbot working:
-1. The SDK, and the richer API (services, migrations, routes, ticks, checks, prompt pieces, task runners, web entries), with the core's tools on it.
-2. The connectors move to `plugins/<id>`, with their web forms.
-3. The provider interface, roles and the Anthropic plugin; then the OpenAI-compatible one.
-4. Automation and research move out.
-5. Boxes move out.
-6. Desktop moves out, then marketplace.
-7. The installer (index, git installs, install and uninstall), and infra per plugin.
+Left:
+- An installed plugin's own settings form: the web app is built with the first-party ones, so an installed plugin's page has its switch, its environment and secrets, and its tools.
+- iOS: the web view for installed plugins' pages, and choosing a model provider on first run. The iOS app still assumes the desktop and boxes are there.
+- Trying an install from a real forge, and a plugin with its own npm packages, on the brain guest (`bun install` under `ProtectSystem=strict`).
 
 ## 1. Deploy and try live
 Built, but not yet deployed or tried live:
