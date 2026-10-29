@@ -10,7 +10,7 @@ import type {
   WeeklyReport,
 } from "@hatbot/plugin-automation";
 import type { Boxes } from "@hatbot/plugin-boxes";
-import type { DesktopService } from "@hatbot/plugin-desktop";
+import type { DesktopService, Teach } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Plugin } from "@hatbot/plugin-sdk";
 import { stepOf, totpAt } from "../src/auth/totp";
@@ -21,7 +21,6 @@ import { MemoryStore } from "../src/memory/store";
 import type { Notification, Notifier } from "../src/notify";
 import { Secrets } from "../src/secrets";
 import { createServices } from "../src/services";
-import type { Teach } from "../src/teach/service";
 import { FakeDesktop } from "./fake-desktop";
 import { FakeHatbox } from "./fake-hatbox";
 import { FakeModel } from "./fake-model";
@@ -128,7 +127,7 @@ export async function testApp(
   const seen: HatbotEvent[] = [];
   s.events.on((e) => seen.push(e));
   await s.plugins.startAll();
-  tempTeach.push(s.teach);
+  tempTeach.push(service<DesktopService>("desktop").teach);
 
   const call = (
     method: string,
@@ -179,6 +178,9 @@ export async function testApp(
     /** Who has the desktop. */
     get desktop() {
       return service<DesktopService>("desktop").control;
+    },
+    get teach() {
+      return service<DesktopService>("desktop").teach;
     },
     /** The one screen tasks and Teach take turns at. */
     get lane() {

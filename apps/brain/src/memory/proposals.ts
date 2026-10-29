@@ -9,7 +9,7 @@ import type { Notifier } from "../notify";
 import { getSetting, type SettingsStore, setSetting } from "../settings";
 import { fixedTokens, requestCeiling, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
-import { type Skills, skillPath } from "../teach/skills";
+import { type Skills, skillPath } from "./skills";
 import { MemoryConflict, type MemoryStore } from "./store";
 
 const TIDY_KEY = "tidy:last";

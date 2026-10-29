@@ -31,6 +31,7 @@ export const HOST_SERVICES = [
   "spend",
   "memory",
   "storage",
+  "skills",
   "plugins",
 ] as const;
 
@@ -186,6 +187,13 @@ export interface MemoryHost {
   /** A new file, written as `botId`; false if one is there already. */
   create(path: string, content: string, botId: string, message: string): Promise<boolean>;
   log(limit?: number): Promise<Commit[]>;
+}
+
+/** Skills, the chores in memory's skills/ that desktop tasks follow. */
+export interface SkillsHost {
+  exists(name: string): Promise<boolean>;
+  /** Saved as the owner, which makes it trusted; its commit. */
+  save(name: string, content: string): Promise<string | null>;
 }
 
 export interface StorageHost {

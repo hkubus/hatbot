@@ -26,6 +26,7 @@ import { untrustedBlock } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { listingCheck, listingRefused } from "../listings/gate";
+import { skillPath } from "../memory/skills";
 import { modelInfo, modelName } from "../models-known";
 import {
   collapse,
@@ -38,7 +39,6 @@ import {
   typesText,
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
-import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";
 import {
   addNotes,

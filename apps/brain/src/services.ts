@@ -15,6 +15,7 @@ import type {
   Plugin,
   PluginsHost,
   SchedulesService,
+  SkillsHost,
   SpendHost,
 } from "@hatbot/plugin-sdk";
 import { selfPlugin } from "@hatbot/plugin-self";
@@ -39,6 +40,7 @@ import { EventBus } from "./events";
 import { ListingPhotos } from "./listing-photos";
 import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
+import { Skills, skillPath } from "./memory/skills";
 import { MemoryConflict, MemoryStore } from "./memory/store";
 import { modelName } from "./models-known";
 import { Logins } from "./negotiate/logins";
@@ -52,8 +54,6 @@ import { SettingsStore } from "./settings";
 import { requestCeiling, Spend } from "./spend";
 import { Storage, storageLine } from "./storage";
 import { Tasks } from "./tasks/service";
-import { Teach } from "./teach/service";
-import { Skills } from "./teach/skills";
 import { TodoReminders } from "./todo-reminders";
 import { Updates } from "./updates";
 
@@ -100,7 +100,18 @@ export async function createServices(o: Outside) {
   const archive = new Archive(config.archiveDir, clock);
   const attachments = new Attachments({ db, archive, events }, clock);
   const storage = new Storage({ db, archive, clock });
-  const files = { attachments };
+  const files = {
+    attachments,
+    screens: {
+      save: (owner: string, name: string, bytes: Uint8Array) =>
+        archive.saveScreen(owner, name, bytes),
+      read: async (path: string) => {
+        const f = archive.file(path);
+        return f && (await f.exists()) ? await f.bytes() : null;
+      },
+      remove: (owner: string, from: number, to: number) => archive.removeScreens(owner, from, to),
+    },
+  };
   const desktop = () => plugins.service<DesktopService>("desktop");
   const plugins = new Plugins(
     [
@@ -175,6 +186,10 @@ export async function createServices(o: Outside) {
           },
         }),
         storage: () => ({ line: async () => storageLine(await storage.measure()) }),
+        skills: (): SkillsHost => ({
+          exists: (name) => memory.exists(skillPath(name)),
+          save: (name, content) => skills.save(name, content, settings.get().owner),
+        }),
         plugins: (): PluginsHost => ({
           list: () => plugins.list(),
           tools: (only) => plugins.tools(only ?? null),
@@ -246,7 +261,6 @@ export async function createServices(o: Outside) {
     if (e.type === "task.updated" && !ACTIVE_TASK_STATUSES.includes(e.task.status))
       plugins.service<T3Code>("t3")?.forget(`task-${e.task.id}`);
   });
-  const teach = new Teach({ ...core });
   const todoReminders = new TodoReminders({ ...core });
   const proposals = new Proposals({ ...core, tasks });
   const negotiations = new Negotiations({ ...core, tasks });
@@ -295,7 +309,6 @@ export async function createServices(o: Outside) {
     auth,
     loginLimits,
     tasks,
-    teach,
     todoReminders,
     proposals,
     negotiations,

@@ -35,12 +35,12 @@ import type { Db } from "../db";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";
+import { skillPath } from "../memory/skills";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
-import { skillPath } from "../teach/skills";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
 export {

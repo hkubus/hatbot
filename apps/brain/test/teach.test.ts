@@ -1,14 +1,17 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { DesktopService, Live } from "@hatbot/plugin-desktop";
+import {
+  type DesktopService,
+  type FieldCheck,
+  type Live,
+  OffPage,
+  Recorder,
+  TEACH_PROMPT,
+} from "@hatbot/plugin-desktop";
 import type { TeachSession } from "@hatbot/shared";
 import type { LiveInput } from "@hatbot/shared/desktop";
-import { TEACH_PROMPT } from "../src/agent/prompt";
-import type { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
-import { type FieldCheck, OffPage, Recorder } from "../src/teach/recorder";
-import { Teach } from "../src/teach/service";
 import { FakeModel } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -349,19 +352,10 @@ test("discarding a recording deletes its screenshots, a restart's too", async ()
 
   // A brain that restarts mid-recording.
   const second = await record(t, call);
-  t.teach.close();
-  const again = new Teach({
-    db: t.db,
-    events: { on: () => {}, emit: () => {} } as unknown as EventBus,
-    desktop: () => t.plugins.service<DesktopService>("desktop"),
-    archive: t.archive,
-    model: new FakeModel(),
-    spend: t.spend,
-    settings: t.settings,
-    skills: t.skills,
-  });
+  await t.plugins.update("desktop", { enabled: false });
+  await t.plugins.update("desktop", { enabled: true });
   await waitFor(() => screensOf(t, second.id).length === 0);
-  expect(again.get(second.id)?.status).toBe("discarded");
+  expect(t.teach.get(second.id)?.status).toBe("discarded");
 });
 
 test("saving over a skill that's there needs replace", async () => {

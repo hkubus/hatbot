@@ -22,7 +22,6 @@ import { questionRoutes } from "./routes/questions";
 import { searchRoutes } from "./routes/search";
 import { streamRoutes } from "./routes/stream";
 import { approvalRoutes, taskRoutes } from "./routes/tasks";
-import { teachRoutes } from "./routes/teach";
 import { threadRoutes } from "./routes/thread";
 import { todoRoutes } from "./routes/todo";
 
@@ -67,7 +66,6 @@ export function createApp(deps: Deps) {
   app.route("/", desktopRoutes);
   app.route("/", pluginRoutes);
   app.route("/", questionRoutes);
-  app.route("/", teachRoutes);
   app.route("/", checkRoutes);
   app.route("/", negotiationRoutes);
   app.route("/", searchRoutes);

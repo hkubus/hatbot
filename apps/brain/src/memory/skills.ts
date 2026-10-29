@@ -2,7 +2,7 @@
 import { SKILL_NAME } from "@hatbot/shared";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
-import { type Author, blobSha, HATBOT, MemoryConflict, type MemoryStore } from "../memory/store";
+import { type Author, blobSha, HATBOT, MemoryConflict, type MemoryStore } from "./store";
 
 export type SkillInfo = { name: string; description: string };
 

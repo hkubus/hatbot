@@ -393,8 +393,18 @@ export async function bodyOf<S extends z.ZodType>(
 export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>
   typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
 
+/** Screenshots kept with the tasks' in the archive, by who took them and when. */
+export interface PluginScreens {
+  /** Its path, for `read`. */
+  save(owner: string, name: string, bytes: Uint8Array): Promise<string>;
+  read(path: string): Promise<Uint8Array | null>;
+  /** The ones `owner` took from `from` to `to`, in ms. */
+  remove(owner: string, from: number, to: number): Promise<void>;
+}
+
 export type PluginFiles = {
   attachments: PluginAttachments;
+  screens: PluginScreens;
 };
 
 export type PluginContext<C> = {

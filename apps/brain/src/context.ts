@@ -21,7 +21,6 @@ import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
-import type { Teach } from "./teach/service";
 import type { Updates } from "./updates";
 
 export type Deps = {
@@ -49,7 +48,6 @@ export type Deps = {
   updates: Updates;
   proposals: Proposals;
   plugins: Plugins;
-  teach: Teach;
   checks: Checks;
   negotiations: Negotiations;
   secrets: Secrets;

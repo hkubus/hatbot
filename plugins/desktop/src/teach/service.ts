@@ -1,36 +1,39 @@
 // Teach-by-showing: record the owner doing a chore, have Opus draft a skill, save it once reviewed.
-import type Anthropic from "@anthropic-ai/sdk";
-import type { DesktopService } from "@hatbot/plugin-desktop";
+import {
+  BudgetError,
+  type Db,
+  type EventsHost,
+  type ModelHost,
+  type ModelMessageParam,
+  modelErrorText,
+  PluginError,
+  type PluginScreens,
+  type SettingsHost,
+  type SkillsHost,
+} from "@hatbot/plugin-sdk";
 import { SKILL_NAME, type TeachSession } from "@hatbot/shared";
-import { type ModelClient, modelErrorText, oneShot } from "../agent/model";
-import { TEACH_PROMPT } from "../agent/prompt";
-import type { Archive } from "../archive";
-import type { Db } from "../db";
-import { UserError } from "../errors";
-import type { EventBus } from "../events";
-import type { SettingsStore } from "../settings";
-import { BudgetError, type Spend } from "../spend";
+import type { DesktopService } from "../index";
+import { TEACH_PROMPT } from "./prompt";
 import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
-import { type Skills, skillPath } from "./skills";
 
 /** Holds the screen lane while you record, so no task starts on the desktop. */
 const TEACH_LANE = -2;
 const SCREENS_SENT = 16;
 
-export class TeachError extends UserError {}
+export class TeachError extends PluginError {}
 
 export type TeachDeps = {
   db: Db;
-  events: EventBus;
-  /** Null while the Desktop plugin is off. */
-  desktop: () => DesktopService | null;
-  archive: Archive;
-  model: ModelClient;
-  spend: Spend;
-  settings: SettingsStore;
-  skills: Skills;
+  events: EventsHost;
+  desktop: Omit<DesktopService, "teach">;
+  screens: PluginScreens;
+  model: ModelHost;
+  settings: SettingsHost;
+  skills: SkillsHost;
   clock?: () => number;
 };
+
+const skillPath = (name: string) => `skills/${name}.md`;
 
 type Row = {
   id: number;
@@ -73,11 +76,12 @@ export class Teach {
     id: number;
     recorder: Recorder;
     timer: ReturnType<typeof setInterval>;
-    desk: DesktopService;
+    desk: TeachDeps["desktop"];
     /** Stops hearing the live view. */
     off: () => void;
   } | null = null;
   private clock: () => number;
+  private unlisten: () => void;
 
   constructor(private d: TeachDeps) {
     this.clock = d.clock ?? Date.now;
@@ -94,7 +98,7 @@ export class Teach {
       )
       .run();
     // Handing back some other way (the iOS app, say) ends the recording without a skill.
-    d.events.on((e) => {
+    this.unlisten = d.events.on((e) => {
       if (e.type === "desktop.state" && e.state.control === "hatbot" && this.rec)
         void this.discard(this.rec.id).catch((err) => console.error("teach discard failed", err));
     });
@@ -157,10 +161,10 @@ export class Teach {
 
   /** `replaces`: the skill this records again, whose name the draft keeps. */
   async start(replaces?: string): Promise<TeachSession> {
-    const { archive } = this.d;
+    const { screens } = this.d;
     if (this.rec) throw new TeachError("Already recording.", 409);
-    const desk = this.d.desktop();
-    if (!desk?.agent.configured || !desk.control.get().online)
+    const desk = this.d.desktop;
+    if (!desk.agent.configured || !desk.control.get().online)
       throw new TeachError("The desktop isn't answering.", 503);
     const { control: desktop, lane, agent } = desk;
     if (lane.holderId !== null)
@@ -202,7 +206,7 @@ export class Teach {
         ]);
         return page && !page.secretShown ? { bytes, url: page.url } : null;
       },
-      save: (label, bytes) => archive.saveScreen(`teach-${id}`, label, bytes),
+      save: (label, bytes) => screens.save(`teach-${id}`, label, bytes),
     });
     const poll = async () => {
       try {
@@ -283,33 +287,32 @@ export class Teach {
   }
 
   private async write(id: number) {
-    const { archive } = this.d;
+    const { screens } = this.d;
     try {
       const steps = JSON.parse(this.row(id)?.events ?? "[]") as RecStep[];
-      const { lines, screens } = describeSteps(steps);
-      const content: Anthropic.Beta.BetaContentBlockParam[] = [
+      const { lines, screens: shots } = describeSteps(steps);
+      const content: Extract<ModelMessageParam["content"], unknown[]> = [
         { type: "text", text: `<recording>\n${lines.join("\n")}\n</recording>` },
       ];
       // Full size: the log's coordinates are in the screenshots' pixels.
       const picked = spread(
-        screens.map((path, i) => ({ path, n: i + 1 })),
+        shots.map((path, i) => ({ path, n: i + 1 })),
         SCREENS_SENT,
       );
       for (const { path, n } of picked) {
-        const file = archive.file(path);
-        if (!file || !(await file.exists())) continue;
+        const bytes = await screens.read(path);
+        if (!bytes) continue;
         content.push({ type: "text", text: `Screenshot ${n}:` });
         content.push({
           type: "image",
           source: {
             type: "base64",
             media_type: "image/webp",
-            data: Buffer.from(await file.bytes()).toString("base64"),
+            data: Buffer.from(bytes).toString("base64"),
           },
         });
       }
-      const out = await oneShot(
-        this.d,
+      const out = await this.d.model.ask(
         {
           model: this.d.settings.get().expertModel,
           max_tokens: 16000,
@@ -346,11 +349,9 @@ export class Teach {
     const r = this.row(id);
     if (!r) throw new TeachError("No such recording.", 404);
     if (r.status !== "draft") throw new TeachError("There's no draft to save.", 409);
-    const { memory } = this.d.skills;
-    if (!input.replace && (await memory.exists(skillPath(input.name))))
+    if (!input.replace && (await this.d.skills.exists(input.name)))
       throw new TeachError(`There's already a skill called ${input.name}.`, 409);
-    const owner = this.d.settings.get().owner;
-    const sha = await this.d.skills.save(input.name, input.content, owner);
+    const sha = await this.d.skills.save(input.name, input.content);
     this.update(id, { status: "saved", name: input.name, draft: input.content }, "draft");
     await this.forgetScreens(id);
     return { session: this.get(id) as TeachSession, path: skillPath(input.name), sha };
@@ -374,12 +375,13 @@ export class Teach {
     const r = this.row(id);
     if (!r) return;
     const to = r.stopped_at ? Date.parse(r.stopped_at) : this.clock();
-    await this.d.archive
-      .removeScreens(`teach-${id}`, Date.parse(r.started_at), to)
+    await this.d.screens
+      .remove(`teach-${id}`, Date.parse(r.started_at), to)
       .catch((err) => console.error("teach screenshots not removed", err));
   }
 
   close() {
+    this.unlisten();
     if (this.rec) clearInterval(this.rec.timer);
   }
 }
