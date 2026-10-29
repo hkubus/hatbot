@@ -1017,8 +1017,29 @@ private struct HandoffMessage: View {
   @Environment(AppStore.self) private var store
   @Environment(\.openRoute) private var router
 
+  @State private var open = false
+
+  /// One line above the answer; a tap shows the whole request.
   var body: some View {
-    Text("From \(store.botName(m.botId)):").bold()
+    Button { open.toggle() } label: {
+      Text("\(Text(verbatim: "\(store.botName(m.botId)) asked:").bold()) \(Text(verbatim: open ? "" : oneLine))")
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .accessibilityHint(open ? "Hides the request" : "Shows the whole request")
+    if open { opened }
+  }
+
+  private var oneLine: String {
+    Markdown.plain(m.text).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+  }
+
+  @ViewBuilder
+  private var opened: some View {
     MarkdownText(text: m.text)
     if let link = m.link {
       Button(store.openLabel(link)) { router?.message(link) }

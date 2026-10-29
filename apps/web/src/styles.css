@@ -3900,6 +3900,37 @@ pre.payload {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+.msg.handoff-line {
+  justify-items: stretch;
+  /* It belongs to the answer under it, not the thread. */
+  margin-bottom: calc(var(--sp-xs) - var(--sp-lg));
+  min-width: 0;
+}
+.handoff-line > button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.handoff-line > button:hover {
+  color: var(--text);
+}
+.handoff-line.open > button {
+  white-space: normal;
+}
+.handoff-line.open > button > span {
+  display: none;
+}
+.handoff-line .body {
+  display: grid;
+  gap: var(--sp);
+  justify-items: start;
+}
 
 .nav-views {
   margin-top: var(--sp-md);

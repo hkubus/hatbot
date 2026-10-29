@@ -294,22 +294,32 @@ function useLinkOpen(link: MessageLink | undefined) {
     : undefined;
 }
 
-/** One a task asked for has no chat to go back to; its task page says which task. */
-function HandoffMessage({ m }: { m: ThreadMessage }) {
+/**
+ * Another bot's request: one line above the answer, opened to read it whole. One a task asked for has
+ * no chat to go back to; its task page says which task.
+ */
+function HandoffLine({ m }: { m: ThreadMessage }) {
   const name = useStore((s) => botName(s, m.botId));
-  const open =
+  const [open, setOpen] = useState(false);
+  const back =
     useLinkOpen(m.link) ??
     (m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined);
   return (
-    <>
-      <div className="body">
-        <p>
-          <b>{name} asked:</b>
-        </p>
-        <AssistantBody text={m.text} />
-      </div>
-      <Meta m={m} copy={m.text} open={open} />
-    </>
+    <div className={`msg handoff-line ${open ? "open" : ""}`} data-id={m.id}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <b>{name} asked:</b> <span>{plainText(m.text).replace(/\s+/g, " ")}</span>
+      </button>
+      {open && (
+        <div className="body">
+          <AssistantBody text={m.text} />
+          {back && (
+            <Link className="btn sm ghost" to={back.to}>
+              {back.label}
+            </Link>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -637,6 +647,7 @@ export const Message = memo(function Message({
         {m.text}
       </div>
     );
+  if (m.kind === "handoff") return <HandoffLine m={m} />;
   const cls = `msg ${m.role === "user" ? "user" : ""} ${animate ? "new" : ""} ${tapped ? "tapped" : ""} ${unread ? "unread" : ""}`;
   let inner: React.ReactNode;
   if (m.role === "user") {
@@ -653,8 +664,6 @@ export const Message = memo(function Message({
     inner = <ScheduleMessage m={m} scheduleId={m.scheduleId} />;
   } else if (m.kind === "box") {
     inner = <BoxNote m={m} />;
-  } else if (m.kind === "handoff") {
-    inner = <HandoffMessage m={m} />;
   } else {
     inner = (
       <ReplyMessage m={m} progress={progress} retryable={retryable} answerable={answerable} />
