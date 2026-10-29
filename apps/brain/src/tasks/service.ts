@@ -87,6 +87,7 @@ type Row = {
   payload: string | null;
   model: string;
   skill: string | null;
+  screen: string | null;
   effort: Task["effort"];
   research: number;
   runner: string | null;
@@ -133,6 +134,7 @@ const toTask = (r: Row): Task => ({
   payload: r.payload,
   model: r.model,
   skill: r.skill,
+  screen: r.screen,
   effort: r.effort,
   research: Boolean(r.research),
   runner: r.runner,

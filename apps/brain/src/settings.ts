@@ -99,6 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
       payment: "ask",
       account_security: "ask",
       access: "ask",
+      computer: "ask",
     },
     untrusted: true,
     injection: true,

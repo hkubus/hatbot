@@ -8,6 +8,7 @@ import {
   PluginError,
   ready,
   type Sandbox,
+  ScreenLane,
   type SettingsHost,
   type SkillsHost,
 } from "@hatbot/plugin-sdk";
@@ -15,14 +16,13 @@ import { z } from "zod";
 import { desktopChecks } from "./checks";
 import { type DesktopAgent, HttpDesktopAgent } from "./client";
 import { Desktop } from "./control";
-import { ScreenLane } from "./lane";
 import { Live, routes } from "./routes";
 import { teachRoutes } from "./teach/routes";
 import { Teach } from "./teach/service";
 
+export { ScreenLane } from "@hatbot/plugin-sdk";
 export { type DesktopAgent, DesktopError, HttpDesktopAgent } from "./client";
 export { Desktop, DesktopBusy } from "./control";
-export { ScreenLane } from "./lane";
 export { frameRelay, Live } from "./routes";
 export { TEACH_PROMPT } from "./teach/prompt";
 export { type FieldCheck, OffPage, Recorder } from "./teach/recorder";

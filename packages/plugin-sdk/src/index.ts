@@ -23,6 +23,7 @@ export * from "./host";
 export * from "./messages";
 export * from "./models";
 export * from "./runner";
+export * from "./screens";
 
 /** The API's major version. A plugin built for another one isn't started. */
 export const SDK_VERSION = 1;

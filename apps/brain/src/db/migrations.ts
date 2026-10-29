@@ -997,4 +997,6 @@ export const migrations: string[] = [
   `,
   // 63: a thread a bot marked as needing you, until you write in it or it's resolved.
   `ALTER TABLE conversations ADD COLUMN needs_you_at TEXT;`,
+  // 64: the computer a desktop task runs on; null for the desktop.
+  `ALTER TABLE tasks ADD COLUMN screen TEXT;`,
 ];

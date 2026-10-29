@@ -220,6 +220,8 @@ export type Task = {
   model: string;
   /** Desktop tasks: the skill (skills/<name>.md) it follows. */
   skill: string | null;
+  /** Desktop tasks: the computer it runs on, by its id; null on the desktop. */
+  screen: string | null;
   /** Background tasks: null runs at the chat's effort. */
   effort: "low" | "medium" | "high" | null;
   /** It ends in a report, attached, as research does. */
@@ -285,6 +287,8 @@ export type ApprovalKind =
   | "mandate"
   /** Posting a flip Scout marked ready on the marketplaces picked for it. */
   | "listing"
+  /** A task using one of your own computers: asked once per task, naming it. */
+  | "computer"
   | "other";
 
 /** Where one channel of a flip Scout marked ready to list is. */
@@ -314,6 +318,7 @@ export const SAFETY_KINDS = [
   "payment",
   "account_security",
   "access",
+  "computer",
 ] as const satisfies readonly ApprovalKind[];
 export type SafetyKind = (typeof SAFETY_KINDS)[number];
 /** Ask you; let the safety review answer first; or go ahead. */
@@ -422,6 +427,28 @@ export type DesktopState = {
   botId: string | null;
 };
 
+/** One of your own computers, as the Computer plugin knows it. Its id is the machine's. */
+export type ComputerInfo = {
+  id: string;
+  /** Its host name, until you rename it. */
+  name: string;
+  online: boolean;
+  /** "Let Hatbot use this computer", switched only at the computer. */
+  enabled: boolean;
+  paused: boolean;
+  locked: boolean;
+  /** You used its mouse or keyboard a moment ago. */
+  ownerActive: boolean;
+  /** Every command and file outside Downloads/Hatbot waits for you. */
+  careful: boolean;
+  /** "owner": you have control from Live during a task. */
+  control: "hatbot" | "owner";
+  request: { taskId: number; reason: string } | null;
+  activeTaskId: number | null;
+  botId: string | null;
+  lastSeenAt: string | null;
+};
+
 /**
  * What's live when the stream opens, sent as its first event: an app needn't ask for each of these.
  * Brains from before it send only `paused`.
@@ -436,6 +463,8 @@ export type Snapshot = {
   /** The pending ones. */
   questions: Question[];
   desktop: DesktopState;
+  /** Without the Computer plugin, none. Brains from before it leave it out. */
+  computers?: ComputerInfo[];
   /** Each chat's newest UNREAD_PER_CHAT unread messages; `Conversation.unread` counts them all. */
   unread: number[];
 };
@@ -482,6 +511,8 @@ export type HatbotEvent =
   | { type: "question.created"; question: Question }
   | { type: "question.resolved"; question: Question }
   | { type: "desktop.state"; state: DesktopState }
+  /** Your computers, all of them, whenever one changes. */
+  | { type: "computers"; computers: ComputerInfo[] }
   | { type: "schedule.updated"; schedule: Schedule }
   | { type: "schedule.deleted"; id: number }
   | { type: "trigger.updated"; trigger: Trigger }

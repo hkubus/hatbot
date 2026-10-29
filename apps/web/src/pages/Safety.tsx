@@ -21,13 +21,14 @@ const KINDS: readonly (readonly [SafetyKind, string])[] = [
   ["payment", "Paying"],
   ["account_security", "Accounts, passwords and keys"],
   ["access", "Doors, locks and the alarm"],
+  ["computer", "Using your computers"],
 ];
 const LEVELS: readonly (readonly [ApprovalLevel, string])[] = [
   ["ask", "Ask me"],
   ["review", "Review first"],
   ["allow", "Don't ask"],
 ];
-const RISKY: SafetyKind[] = ["purchase", "payment", "account_security", "access"];
+const RISKY: SafetyKind[] = ["purchase", "payment", "account_security", "access", "computer"];
 
 export const TOOL_LEVELS = [
   ["plugin", "As the plugin says"],

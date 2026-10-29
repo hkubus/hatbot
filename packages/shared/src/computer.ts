@@ -85,7 +85,11 @@ export type ComputerRequest =
   | { op: "get_file"; path: string }
   | { op: "live"; on: boolean }
   /** Only while the owner has control from Live. */
-  | { op: "live_input"; input: LiveInput };
+  | { op: "live_input"; input: LiveInput }
+  /** A pause, or the end of one, from the web or iOS; a status follows. */
+  | { op: "pause"; paused: boolean }
+  /** Turns "Let Hatbot use this computer" off; only the computer turns it on again. */
+  | { op: "disable" };
 
 export type ComputerResult =
   | { op: "status"; status: ComputerStatus }
@@ -102,7 +106,9 @@ export type ComputerResult =
   | { op: "put_file"; path: string }
   | { op: "get_file"; name: string; data: string }
   | { op: "live" }
-  | { op: "live_input" };
+  | { op: "live_input" }
+  | { op: "pause" }
+  | { op: "disable" };
 
 /**
  * Why a request failed, so the brain can wait rather than give up: `owner` when the owner took the
