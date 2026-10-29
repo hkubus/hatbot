@@ -21,6 +21,7 @@ import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
 import { BackHead, Disclosure, EFFORTS, Group, LinkRow, Row, Seg, Select } from "../ui";
+import { RoutinesGroup } from "./BuiltIn";
 import { AddPluginPage, PluginPage, PluginsPage } from "./Plugins";
 import { SafetyPage } from "./Safety";
 
@@ -97,6 +98,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const models = useModels();
   const paused = useStore((s) => s.paused);
   const boxes = useStore((s) => pluginOn(s.plugins, "boxes"));
+  const desktop = useStore((s) => pluginOn(s.plugins, "desktop"));
   // Saved elsewhere (the app, another tab): shown here too.
   const settingsVersion = useStore((s) => s.settingsVersion);
   const {
@@ -190,14 +192,16 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               onChange={(taskModel) => update({ taskModel })}
             />
           </Row>
-          <Row label="Desktop tasks">
-            <Select
-              label="Model for desktop tasks"
-              value={settings.desktopModel}
-              options={modelOptions(models, settings.desktopModel, (m) => m.computerUse)}
-              onChange={(desktopModel) => update({ desktopModel })}
-            />
-          </Row>
+          {desktop && (
+            <Row label="Desktop tasks">
+              <Select
+                label="Model for desktop tasks"
+                value={settings.desktopModel}
+                options={modelOptions(models, settings.desktopModel, (m) => m.computerUse)}
+                onChange={(desktopModel) => update({ desktopModel })}
+              />
+            </Row>
+          )}
           <Row label="Quick jobs">
             <Select
               label="Model for quick jobs"
@@ -214,17 +218,21 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               onChange={(expertModel) => update({ expertModel })}
             />
           </Row>
-          {settings.desktopModel !== settings.expertModel && (
-            <Row
-              label={`Try desktop tasks again on ${modelNameIn(models, settings.expertModel)} when they fail`}
-            >
-              <Switch
-                on={settings.desktopEscalate}
-                onChange={(desktopEscalate) => update({ desktopEscalate })}
-              />
-            </Row>
-          )}
+          {desktop &&
+            settings.desktopModel !== settings.expertModel &&
+            models?.find((m) => m.id === settings.expertModel)?.computerUse && (
+              <Row
+                label={`Try desktop tasks again on ${modelNameIn(models, settings.expertModel)} when they fail`}
+              >
+                <Switch
+                  on={settings.desktopEscalate}
+                  onChange={(desktopEscalate) => update({ desktopEscalate })}
+                />
+              </Row>
+            )}
         </Group>
+
+        <RoutinesGroup settings={settings} update={update} />
 
         <div id="spending">
           <Group title="Spending">

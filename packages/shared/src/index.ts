@@ -707,7 +707,7 @@ export type SpendSummary = {
 export type SpendHour = SpendWindow & { hour: string };
 export type SpendDay = { date: string; usd: number };
 export type SpendByModel = { model: string; usd: number };
-/** GET /models: what the model providers that are on offer, for Settings' pickers. */
+/** GET /models: the models offered by the providers that are on, for Settings' pickers. */
 export type ModelOption = { id: string; name: string; provider: string; computerUse: boolean };
 /** GET /spend/by-purpose: what the money went on, the most first. */
 export type SpendByPurpose = { purpose: string; costUsd: number };

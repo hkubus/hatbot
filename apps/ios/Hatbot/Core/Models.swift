@@ -701,7 +701,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   }
 }
 
-/// GET /models: what the model providers that are on offer.
+/// GET /models: the models offered by the providers that are on.
 struct ModelOption: Codable, Equatable, Sendable {
   var id: String
   var name: String

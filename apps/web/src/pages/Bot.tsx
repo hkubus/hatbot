@@ -16,7 +16,7 @@ import { Link } from "../link";
 import { PageLoad, useLoad } from "../load";
 import { chatModelOptions, modelNameIn, modelOptions, useModels } from "../models";
 import { navigate } from "../router";
-import { chatPath, createBot, deleteBot, loadBot, loadPlugins, saveBot, useStore } from "../store";
+import { chatPath, createBot, deleteBot, loadBot, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, EFFORTS, SaveBar, Select } from "../ui";
 
@@ -97,7 +97,6 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const [defaults, setDefaults] = useState<AppSettings>();
   const models = useModels();
   useEffect(() => {
-    void loadPlugins().catch(() => {});
     api<AppSettings>("/settings").then(setDefaults, () => {});
   }, []);
 

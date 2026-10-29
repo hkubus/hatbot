@@ -8,7 +8,7 @@ import {
   type WatchPreview,
   type WatchSource,
 } from "@hatbot/shared";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import {
@@ -26,7 +26,7 @@ import { stamp } from "../format";
 import { Icon } from "../icons";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
-import { loadPlugins, putWatcher, trustWatcher, useStore } from "../store";
+import { putWatcher, trustWatcher, useStore } from "../store";
 import { Switch } from "../switch";
 import type { Toast } from "../toast";
 import { BackHead, Panel, SaveBar, Seg, Select } from "../ui";
@@ -179,9 +179,6 @@ export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) 
   const edited = dirty && stored !== null;
   const release = useLeaveGuard(edited);
 
-  useEffect(() => {
-    void loadPlugins().catch(() => {});
-  }, []);
   // Its history, again when a check finds something new.
   const history = useLoad(
     () =>

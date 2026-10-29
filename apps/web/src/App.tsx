@@ -230,7 +230,8 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
       const id = PLUGIN_OF[v];
       return !id || pluginOn(plugins, id);
     });
-  const tabs = viewsOf(section).length > 1 && viewsOf(section).includes(path);
+  const views = viewsOf(section);
+  const tabs = views.length > 1 && views.includes(path);
   // The side panel is hidden on a phone; it isn't drawn either, or its live view would stream unseen.
   const taskId = /^\/tasks\/(\d+)$/.exec(path)?.[1];
   const negotiationId = /^\/negotiations\/(\d+)$/.exec(path)?.[1];
@@ -462,7 +463,7 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 )}
               </div>
             ) : tabs ? (
-              <SectionTabs label={section.title} views={viewsOf(section)} path={path} />
+              <SectionTabs label={section.title} views={views} path={path} />
             ) : (
               <h1>{pageTitle}</h1>
             )}

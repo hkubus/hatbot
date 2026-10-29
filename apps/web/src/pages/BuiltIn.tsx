@@ -1,9 +1,9 @@
 import { type AppSettings, describeEvery } from "@hatbot/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, errorText } from "../api";
 import type { PluginWeb } from "../kit";
 import { PLUGIN_WEB } from "../plugins";
-import { loadPlugins, useStore } from "../store";
+import { pluginAction, pluginRunning, useStore } from "../store";
 import { Switch } from "../switch";
 import type { Toast } from "../toast";
 import { Group, LinkRow, Row, Select } from "../ui";
@@ -30,19 +30,15 @@ function HourSelect({
   );
 }
 
-/** The jobs Hatbot runs on its own, each set only here. */
+/** Automation's own jobs, each set only here. */
 export function BuiltInGroup({ toast }: { toast: Toast }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState("");
   const settingsVersion = useStore((s) => s.settingsVersion);
-  const plugins = useStore((s) => s.plugins);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when settings change anywhere
   useEffect(() => {
     api<AppSettings>("/settings").then(setSettings, (err) => setError(errorText(err)));
   }, [settingsVersion]);
-  useEffect(() => {
-    void loadPlugins().catch(() => {});
-  }, []);
 
   if (!settings) return error ? <div className="form-error">{error}</div> : null;
   const update = (patch: Partial<AppSettings>) =>
@@ -95,6 +91,21 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
           </button>
         </Row>
       )}
+    </Group>
+  );
+}
+
+/** What else Hatbot does on its own: in Settings, so it's there whatever is switched off. */
+export function RoutinesGroup({
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (patch: Partial<AppSettings>) => void;
+}) {
+  const plugins = useStore((s) => s.plugins);
+  return (
+    <Group title="Routines">
       <Row label="To-do reminder each morning at">
         <HourSelect
           label="To-do reminder each morning at"
@@ -107,20 +118,15 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
       </Row>
       {Object.entries(PLUGIN_WEB).map(([id, web]) => {
         const p = plugins[id];
-        return p && web.builtIn ? (
-          <BuiltInRow
-            key={id}
-            id={id}
-            row={web.builtIn}
-            running={p.state === "ready" || p.state === "needs_setup"}
-          />
+        return p?.enabled && web.builtIn ? (
+          <PluginRow key={id} id={id} row={web.builtIn} running={pluginRunning(p)} />
         ) : null;
       })}
     </Group>
   );
 }
 
-function BuiltInRow({
+function PluginRow({
   id,
   row: Row,
   running,
@@ -129,10 +135,6 @@ function BuiltInRow({
   row: NonNullable<PluginWeb["builtIn"]>;
   running: boolean;
 }) {
-  const action = useCallback(
-    async <T,>(name: string, args: unknown = {}) =>
-      (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result,
-    [id],
-  );
+  const action = useMemo(() => pluginAction(id), [id]);
   return <Row action={action} running={running} />;
 }

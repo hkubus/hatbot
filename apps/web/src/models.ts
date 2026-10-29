@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { modelName } from "./format";
 
-/** What the model providers that are on offer; null until it's loaded. */
+/** The models offered by the providers that are on; null until they're loaded. */
 export function useModels(): ModelOption[] | null {
   const [models, setModels] = useState<ModelOption[] | null>(null);
   useEffect(() => {

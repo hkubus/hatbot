@@ -21,23 +21,18 @@ function randomTopic() {
   return `hatbot-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function useConnections() {
+export function NtfyPage({ toast }: { toast: Toast }) {
   const {
     data: info,
     setData: setInfo,
     error,
     retry,
   } = useLoad(() => api<ConnectionsInfo>("/connections"), []);
-  return { info, setInfo, error: error && <LoadError error={error} retry={retry} /> };
-}
-
-export function NtfyPage({ toast }: { toast: Toast }) {
-  const { info, setInfo, error } = useConnections();
   return (
     <section className="view">
       <div className="page narrow">
         <BackHead to="/settings" label="Settings" />
-        {error}
+        {error && <LoadError error={error} retry={retry} />}
         {info && (
           <NtfyForm
             key={JSON.stringify(info.ntfy)}
@@ -49,28 +44,6 @@ export function NtfyPage({ toast }: { toast: Toast }) {
       </div>
     </section>
   );
-}
-
-/** Back to the host's: asks first, since the host may have none. */
-function useHosts(what: string, path: string, onSaved: (c: ConnectionsInfo) => void, toast: Toast) {
-  const { busy, run } = useAction();
-  const reset = async () => {
-    if (
-      !(await ask({
-        text: `Forget the ${what} set here and use the host's?`,
-        ok: "Use the host's",
-      }))
-    )
-      return;
-    await run(
-      async () => {
-        onSaved(await api<ConnectionsInfo>(path, { method: "DELETE" }));
-        toast("Saved");
-      },
-      (err) => toast(errorText(err), "error"),
-    );
-  };
-  return { busy, reset };
 }
 
 function NtfyForm({
@@ -86,7 +59,7 @@ function NtfyForm({
   const [topic, setTopic] = useState(info.topic);
   const [token, setToken] = useState("");
   const { busy, error, run } = useAction();
-  const hosts = useHosts("ntfy server", "/connections/ntfy", onSaved, toast);
+  const resetting = useAction();
   const changed = url !== info.url || topic !== info.topic || token !== "";
   useLeaveGuard(changed);
 
@@ -101,6 +74,24 @@ function NtfyForm({
       );
       toast("Saved. Send a test approval from Notifications to try it.");
     });
+  };
+
+  // Back to the host's, which may have none.
+  const reset = async () => {
+    if (
+      !(await ask({
+        text: "Forget the ntfy server set here and use the host's?",
+        ok: "Use the host's",
+      }))
+    )
+      return;
+    await resetting.run(
+      async () => {
+        onSaved(await api<ConnectionsInfo>("/connections/ntfy", { method: "DELETE" }));
+        toast("Saved");
+      },
+      (err) => toast(errorText(err), "error"),
+    );
   };
 
   return (
@@ -154,7 +145,7 @@ function NtfyForm({
       {error && <div className="form-error">{error}</div>}
       <div className="form-actions">
         {info.from === "app" && (
-          <button type="button" className="btn ghost" disabled={hosts.busy} onClick={hosts.reset}>
+          <button type="button" className="btn ghost" disabled={resetting.busy} onClick={reset}>
             Use the host's
           </button>
         )}

@@ -2,12 +2,11 @@
 import type { ComponentType } from "react";
 
 export { useAction } from "./action";
-export { api, errorText } from "./api";
-export { ask, askText, useLeaveGuard } from "./confirm";
+export { errorText } from "./api";
+export { ask, useLeaveGuard } from "./confirm";
 export { Copyable } from "./copy";
 export { IdListSettings } from "./plugin-kit/id-list";
 export { useSignInReturn } from "./plugin-kit/sign-in";
-export { navigate, useRoute } from "./router";
 export { Switch } from "./switch";
 export { Disclosure, Group, LinkRow, Panel, Row, SaveBar, Seg, Select } from "./ui";
 
@@ -25,6 +24,6 @@ export type PluginWeb = {
   /** Its own part of its Settings page; without one there's only its switch, environment and Test. */
   // biome-ignore lint/suspicious/noExplicitAny: each plugin's form takes its own config
   settings?: ComponentType<PluginSettingsProps<any>>;
-  /** A row in Automations' built-in group. */
+  /** A row in Settings' Routines group, while it's on. */
   builtIn?: ComponentType<Pick<PluginSettingsProps, "action" | "running">>;
 };

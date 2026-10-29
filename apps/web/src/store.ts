@@ -499,6 +499,15 @@ export const ensureSchedule = (id: number) =>
 export const pluginOn = (plugins: Record<string, PluginInfo>, id: string) =>
   plugins[id]?.enabled !== false;
 
+/** Its pages may call its actions: it's running, or waiting to be set up. */
+export const pluginRunning = (p: PluginInfo) => p.state === "ready" || p.state === "needs_setup";
+
+/** One of the plugin's own actions, as its pages call them. */
+export const pluginAction =
+  (id: string) =>
+  async <T>(name: string, args: unknown = {}) =>
+    (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result;
+
 export async function loadPlugins() {
   const list = await api<PluginInfo[]>("/plugins");
   set({ plugins: Object.fromEntries(list.map((p) => [p.id, p])) });

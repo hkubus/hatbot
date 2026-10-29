@@ -1,6 +1,6 @@
 // Secrets are only ever sent, never shown.
 import type { AppSettings, PluginEnvInfo, PluginIndexEntry, PluginInfo } from "@hatbot/shared";
-import { type FormEvent, useCallback, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
@@ -13,6 +13,8 @@ import {
   forgetPluginData,
   installPlugin,
   loadPlugins,
+  pluginAction,
+  pluginRunning,
   savePlugin,
   savePluginSecrets,
   uninstallPlugin,
@@ -68,11 +70,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   /** The switch as you just set it, until the brain answers. */
   const [turning, setTurning] = useState<boolean | null>(null);
-  const action = useCallback(
-    async <T,>(name: string, args: unknown = {}) =>
-      (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result,
-    [id],
-  );
+  const action = useMemo(() => pluginAction(id), [id]);
   // Again when it's not known: deleted, or not loaded yet.
   const load = useLoad(() => (p ? Promise.resolve(false) : loadPlugins().then(() => true)), [!p]);
 
@@ -138,7 +136,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
             config={p.config}
             save={save}
             action={action}
-            running={p.state === "ready" || p.state === "needs_setup"}
+            running={pluginRunning(p)}
           />
         )}
 
@@ -165,7 +163,8 @@ function PluginData({ p, toast }: { p: PluginInfo; toast: (t: string) => void })
     });
   };
   const forget = async () => {
-    if (await ask({ text: `Delete ${p.name}'s settings, secrets and data?`, ok: "Delete" }))
+    // What a built-in plugin keeps in Hatbot's own tables stays.
+    if (await ask({ text: `Delete ${p.name}'s settings and secrets?`, ok: "Delete" }))
       run(async () => {
         await forgetPluginData(p.id);
         toast("Deleted");
@@ -199,7 +198,7 @@ function PluginData({ p, toast }: { p: PluginInfo; toast: (t: string) => void })
           </>
         ) : (
           <button type="button" className="btn danger-text" disabled={busy} onClick={forget}>
-            Delete its data
+            Delete its settings
           </button>
         )}
       </div>
@@ -219,7 +218,7 @@ export function AddPluginPage({ toast }: { toast: (t: string) => void }) {
   const { busy, error, run } = useAction();
   useLeaveGuard(!busy && (!!url.trim() || !!commit.trim()));
 
-  const install = async (name: string, url: string, commit: string) => {
+  const install = async (name: string, from: string, at: string) => {
     if (
       !(await ask({
         text: `Install ${name}? It runs inside Hatbot and can reach everything Hatbot can: your chats, memory, secrets and accounts.`,
@@ -228,7 +227,7 @@ export function AddPluginPage({ toast }: { toast: (t: string) => void }) {
     )
       return;
     run(async () => {
-      await installPlugin(url.trim(), commit.trim());
+      await installPlugin(from.trim(), at.trim());
       toast("Installed. Hatbot is restarting to load it.");
       navigate("/settings/plugins");
     });
