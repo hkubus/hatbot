@@ -44,7 +44,9 @@ async function apiError(res: Response): Promise<ApiError> {
   );
 }
 
-/** A stream that ended before its answer did. */
+const CUT_OFF = "the API stopped before it finished";
+
+/** An answer that ended before it was finished: asked again. */
 class CutOff extends ModelError {}
 
 export function retryable(err: unknown): boolean {
@@ -106,8 +108,11 @@ export class OpenAIModelClient implements ModelProvider {
 
   create(params: CreateParams): Promise<ModelMessage> {
     return withRetries(
-      async () =>
-        fromChat((await (await this.post(params, false)).json()) as ChatResponse, params.model),
+      async () => {
+        const res = (await (await this.post(params, false)).json()) as ChatResponse;
+        if (res.choices[0]?.finish_reason === "error") throw new CutOff(CUT_OFF);
+        return fromChat(res, params.model);
+      },
       {},
       rules,
     );
@@ -127,7 +132,7 @@ export class OpenAIModelClient implements ModelProvider {
       }
       answer.add(chunk, { text: handlers.onText, thinking: handlers.onThinking });
     }
-    if (!answer.finished) throw new CutOff("the API stopped before it finished");
+    if (!answer.finished) throw new CutOff(CUT_OFF);
     return answer.message(params.model);
   }
 
@@ -188,14 +193,18 @@ export async function catalogue(
   return listed.map((m) => {
     const input = perMillion(m.pricing?.prompt);
     const output = perMillion(m.pricing?.completion);
-    const inputs = m.architecture?.input_modalities ?? ["text"];
+    // Only OpenRouter says what a model takes: elsewhere it's sent, and the API refuses what it can't.
+    const inputs = m.architecture?.input_modalities;
     return {
       id: m.id,
       name: m.name ?? m.id,
       ...(input !== null && output !== null
         ? { price: { input, output, cacheRead: perMillion(m.pricing?.input_cache_read) ?? input } }
         : {}),
-      capabilities: { images: inputs.includes("image"), pdfs: inputs.includes("file") },
+      capabilities: {
+        images: inputs?.includes("image") ?? true,
+        pdfs: inputs?.includes("file") ?? true,
+      },
       reasoning: m.supported_parameters?.includes("reasoning") ?? false,
     };
   });

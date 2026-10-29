@@ -18,7 +18,12 @@ const LISTING = {
       architecture: { input_modalities: ["text", "image", "file"] },
     },
     { id: "acme/plain", name: "Acme: Plain", supported_parameters: ["temperature"] },
-    { id: "acme/text", name: "Acme: Text", supported_parameters: ["tools"] },
+    {
+      id: "acme/text",
+      name: "Acme: Text",
+      supported_parameters: ["tools"],
+      architecture: { input_modalities: ["text"] },
+    },
   ],
 };
 
@@ -29,7 +34,11 @@ const sse = (chunks: object[]) =>
   );
 
 /** OpenRouter as the plugin sees it: what each request asked, and scripted answers. */
-async function openRouter(answers: Response[], base = "https://openrouter.ai/api/v1") {
+async function openRouter(
+  answers: Response[],
+  base = "https://openrouter.ai/api/v1",
+  listing: object = LISTING,
+) {
   const asked: { url: string; body: Record<string, unknown> | null; key: string | null }[] = [];
   const t = track(
     await testApp(undefined, undefined, {}, [openaiPlugin], {
@@ -40,7 +49,7 @@ async function openRouter(answers: Response[], base = "https://openrouter.ai/api
   t.outside.fetch = async (url, init) => {
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
     asked.push({ url, body, key: new Headers(init?.headers).get("authorization") });
-    if (url === `${base}/models`) return Response.json(LISTING);
+    if (url === `${base}/models`) return Response.json(listing);
     return answers.shift() ?? new Response(null, { status: 500 });
   };
   await t.plugins.update("openai", { enabled: true });
@@ -197,6 +206,7 @@ test("an OpenAI-compatible API's passing failures are tried again, and its refus
     };
     const { asked, models } = await openRouter([
       Response.json({ error: { message: "Rate limited" } }, { status: 429 }),
+      Response.json({ choices: [{ message: { content: "O" }, finish_reason: "error" }] }),
       Response.json(answer),
       Response.json({ error: { message: "Context too long" } }, { status: 400 }),
     ]);
@@ -301,12 +311,17 @@ test("a model is sent only what it takes", async () => {
   });
   expect(asked.at(-1)?.body?.reasoning).toBeUndefined();
 
-  // OpenAI's own API names the limit differently.
+  // OpenAI's own API names the limit differently, and its listing doesn't say what a model takes.
   const other = await openRouter(
     [sse([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }])],
     "https://api.example.com/v1",
+    { data: [{ id: "gpt-x", object: "model", owned_by: "openai" }] },
   );
-  await ask(other.models);
-  expect(other.asked.at(-1)?.body).toMatchObject({ max_completion_tokens: 10 });
-  expect(other.asked.at(-1)?.body?.max_tokens).toBeUndefined();
+  await ask(other.models, "gpt-x");
+  const body = other.asked.at(-1)?.body;
+  expect(body).toMatchObject({ max_completion_tokens: 10 });
+  expect(body?.max_tokens).toBeUndefined();
+  expect(body?.reasoning_effort).toBeUndefined();
+  expect(JSON.stringify(body?.messages)).toContain('"image_url"');
+  expect(JSON.stringify(body?.messages)).toContain('"file"');
 });
