@@ -2,11 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist-types",
-    "rootDir": ".",
+    "rootDir": "../..",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "jsx": "react-jsx"
   },
-  "include": ["src", "vite.config.ts"],
-  "references": [{ "path": "../../packages/shared" }]
+  "include": ["src", "vite.config.ts", "../../plugins/*/web"],
+  "references": [
+    {
+      "path": "../../packages/shared"
+    }
+  ]
 }

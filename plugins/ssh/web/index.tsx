@@ -1,11 +1,17 @@
+import {
+  ask,
+  Copyable,
+  Disclosure,
+  errorText,
+  Panel,
+  type PluginSettingsProps,
+  type PluginWeb,
+  SaveBar,
+  Switch,
+  useAction,
+  useLeaveGuard,
+} from "@hatbot/web/kit";
 import { useEffect, useState } from "react";
-import { useAction } from "../action";
-import { errorText } from "../api";
-import { ask, useLeaveGuard } from "../confirm";
-import { Copyable } from "../copy";
-import { Switch } from "../switch";
-import { Disclosure, Panel, SaveBar } from "../ui";
-import type { PluginSettingsProps } from ".";
 
 type Host = {
   name: string;
@@ -160,3 +166,5 @@ export function SshSettings({ config, save, action, running }: PluginSettingsPro
     </>
   );
 }
+
+export const web: PluginWeb = { settings: SshSettings };

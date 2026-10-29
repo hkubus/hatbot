@@ -2,12 +2,22 @@
   "name": "@hatbot/web",
   "private": true,
   "type": "module",
+  "exports": {
+    "./kit": "./src/kit.ts"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hatbot/plugin-homeassistant": "workspace:*",
+    "@hatbot/plugin-mcp": "workspace:*",
+    "@hatbot/plugin-proxmox": "workspace:*",
+    "@hatbot/plugin-scout": "workspace:*",
+    "@hatbot/plugin-self": "workspace:*",
+    "@hatbot/plugin-ssh": "workspace:*",
+    "@hatbot/plugin-t3": "workspace:*",
     "@hatbot/shared": "workspace:*",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",

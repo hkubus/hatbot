@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { installDom } from "./dom";
 
 installDom();
-const { kindIn, lapsedIn, modeIn, withMode } = await import("../src/plugins/mcp");
+const { kindIn, lapsedIn, modeIn, withMode } = await import("@hatbot/plugin-mcp/web");
 
 type Server = Parameters<typeof modeIn>[0];
 type Tool = Parameters<typeof modeIn>[1];

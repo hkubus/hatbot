@@ -5,11 +5,17 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./web": "./web/index.tsx"
   },
   "dependencies": {
     "@hatbot/plugin-sdk": "workspace:*",
     "@hatbot/shared": "workspace:*",
+    "@hatbot/web": "workspace:*",
+    "react": "^19.3.0",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0"
   }
 }

@@ -1,7 +1,6 @@
 // Entities that let someone in besides locks, alarms and door covers, such as a gate on a switch, or
 // a script or an integration's scene that opens one. Every change to them asks first.
-import type { PluginSettingsProps } from ".";
-import { IdListSettings } from "./id-list";
+import { IdListSettings, type PluginSettingsProps, type PluginWeb } from "@hatbot/web/kit";
 
 const ENTITY = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 
@@ -20,3 +19,5 @@ export function HomeAssistantSettings(props: PluginSettingsProps<{ access: strin
     />
   );
 }
+
+export const web: PluginWeb = { settings: HomeAssistantSettings };

@@ -51,6 +51,13 @@
     "apps/web": {
       "name": "@hatbot/web",
       "dependencies": {
+        "@hatbot/plugin-homeassistant": "workspace:*",
+        "@hatbot/plugin-mcp": "workspace:*",
+        "@hatbot/plugin-proxmox": "workspace:*",
+        "@hatbot/plugin-scout": "workspace:*",
+        "@hatbot/plugin-self": "workspace:*",
+        "@hatbot/plugin-ssh": "workspace:*",
+        "@hatbot/plugin-t3": "workspace:*",
         "@hatbot/shared": "workspace:*",
         "qrcode": "^1.5.4",
         "react": "^19.3.0",
@@ -111,7 +118,12 @@
       "version": "1.0.0",
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/web": "workspace:*",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/mcp": {
@@ -119,9 +131,14 @@
       "version": "1.0.0",
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/web": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.1",
         "ajv": "^8.20.0",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/pbs": {
@@ -138,7 +155,12 @@
       "version": "1.0.0",
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/web": "workspace:*",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/scout": {
@@ -147,8 +169,13 @@
       "dependencies": {
         "@hatbot/plugin-mcp": "workspace:*",
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/web": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.1",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/self": {
@@ -156,7 +183,13 @@
       "version": "1.0.0",
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/shared": "workspace:*",
+        "@hatbot/web": "workspace:*",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/ssh": {
@@ -165,7 +198,12 @@
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
         "@hatbot/shared": "workspace:*",
+        "@hatbot/web": "workspace:*",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/t3": {
@@ -173,8 +211,13 @@
       "version": "1.0.0",
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/web": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.1",
+        "react": "^19.3.0",
         "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/uptimekuma": {

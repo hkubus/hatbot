@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useAction } from "../action";
 import { errorText } from "../api";
 import { useLeaveGuard } from "../confirm";
+import type { PluginSettingsProps } from "../kit";
 import { Panel, SaveBar } from "../ui";
-import type { PluginSettingsProps } from ".";
 
 export function IdListSettings<K extends string, T extends string | number>({
   config,

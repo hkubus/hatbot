@@ -6,11 +6,17 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./web": "./web/index.tsx"
   },
   "dependencies": {
     "@hatbot/plugin-sdk": "workspace:*",
+    "@hatbot/web": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "react": "^19.3.0",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0"
   }
 }

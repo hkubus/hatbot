@@ -1,10 +1,13 @@
+import {
+  errorText,
+  Panel,
+  type PluginSettingsProps,
+  type PluginWeb,
+  useAction,
+  useLeaveGuard,
+  useSignInReturn,
+} from "@hatbot/web/kit";
 import { useState } from "react";
-import { useAction } from "../action";
-import { errorText } from "../api";
-import { useLeaveGuard } from "../confirm";
-import { Panel } from "../ui";
-import type { PluginSettingsProps } from ".";
-import { useSignInReturn } from "./sign-in";
 
 type Config = { url: string };
 
@@ -52,3 +55,5 @@ export function ScoutSettings({ config, save, action, running }: PluginSettingsP
     </Panel>
   );
 }
+
+export const web: PluginWeb = { settings: ScoutSettings };

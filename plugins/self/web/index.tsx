@@ -1,9 +1,15 @@
 // One schedule, which the brain makes, changes or deletes; off by default. Set in Automations.
 import { describeCron } from "@hatbot/shared";
+import {
+  Group,
+  LinkRow,
+  type PluginSettingsProps,
+  type PluginWeb,
+  Row,
+  Seg,
+  useAction,
+} from "@hatbot/web/kit";
 import { useEffect, useState } from "react";
-import { useAction } from "../action";
-import { Group, LinkRow, Row, Seg } from "../ui";
-import type { PluginSettingsProps } from ".";
 
 type Every = "off" | "weekly" | "monthly";
 type Suggestions = { every: Every | "other"; cron?: string };
@@ -54,3 +60,5 @@ export function CodeSuggestions({
     </Row>
   );
 }
+
+export const web: PluginWeb = { settings: SelfSettings, builtIn: CodeSuggestions };

@@ -1,10 +1,15 @@
+import {
+  errorText,
+  Panel,
+  type PluginSettingsProps,
+  type PluginWeb,
+  SaveBar,
+  Seg,
+  useAction,
+  useLeaveGuard,
+  useSignInReturn,
+} from "@hatbot/web/kit";
 import { useState } from "react";
-import { useAction } from "../action";
-import { errorText } from "../api";
-import { useLeaveGuard } from "../confirm";
-import { Panel, SaveBar, Seg } from "../ui";
-import type { PluginSettingsProps } from ".";
-import { useSignInReturn } from "./sign-in";
 
 type Model = "opus" | "haiku";
 type Config = { url: string; model: Model; minutes: number };
@@ -84,3 +89,5 @@ export function T3Settings({ config, save, action, running }: PluginSettingsProp
     </Panel>
   );
 }
+
+export const web: PluginWeb = { settings: T3Settings };

@@ -1,9 +1,16 @@
+import {
+  Disclosure,
+  Panel,
+  type PluginSettingsProps,
+  type PluginWeb,
+  SaveBar,
+  Seg,
+  Select,
+  Switch,
+  useAction,
+  useLeaveGuard,
+} from "@hatbot/web/kit";
 import { useEffect, useState } from "react";
-import { useAction } from "../action";
-import { useLeaveGuard } from "../confirm";
-import { Switch } from "../switch";
-import { Disclosure, Panel, SaveBar, Seg, Select } from "../ui";
-import type { PluginSettingsProps } from ".";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
 /** What a tool's calls are: money and accounts always ask, and never in the chat. */
@@ -344,3 +351,5 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
     </>
   );
 }
+
+export const web: PluginWeb = { settings: McpSettings };

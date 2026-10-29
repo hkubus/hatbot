@@ -1,7 +1,8 @@
 import { type AppSettings, describeEvery } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText } from "../api";
-import { CodeSuggestions } from "../plugins/self";
+import type { PluginWeb } from "../kit";
+import { PLUGIN_WEB } from "../plugins";
 import { loadPlugins, useStore } from "../store";
 import { Switch } from "../switch";
 import type { Toast } from "../toast";
@@ -34,7 +35,7 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState("");
   const settingsVersion = useStore((s) => s.settingsVersion);
-  const self = useStore((s) => s.plugins.self);
+  const plugins = useStore((s) => s.plugins);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refetch when settings change anywhere
   useEffect(() => {
     api<AppSettings>("/settings").then(setSettings, (err) => setError(errorText(err)));
@@ -42,11 +43,6 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
   useEffect(() => {
     void loadPlugins().catch(() => {});
   }, []);
-  const selfAction = useCallback(
-    async <T,>(name: string, args: unknown = {}) =>
-      (await api<{ result: T }>(`/plugins/self/actions/${name}`, { body: args })).result,
-    [],
-  );
 
   if (!settings) return error ? <div className="form-error">{error}</div> : null;
   const update = (patch: Partial<AppSettings>) =>
@@ -109,12 +105,34 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
       <Row label="Propose a memory tidy-up weekly">
         <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
       </Row>
-      {self && (
-        <CodeSuggestions
-          action={selfAction}
-          running={self.state === "ready" || self.state === "needs_setup"}
-        />
-      )}
+      {Object.entries(PLUGIN_WEB).map(([id, web]) => {
+        const p = plugins[id];
+        return p && web.builtIn ? (
+          <BuiltInRow
+            key={id}
+            id={id}
+            row={web.builtIn}
+            running={p.state === "ready" || p.state === "needs_setup"}
+          />
+        ) : null;
+      })}
     </Group>
   );
+}
+
+function BuiltInRow({
+  id,
+  row: Row,
+  running,
+}: {
+  id: string;
+  row: NonNullable<PluginWeb["builtIn"]>;
+  running: boolean;
+}) {
+  const action = useCallback(
+    async <T,>(name: string, args: unknown = {}) =>
+      (await api<{ result: T }>(`/plugins/${id}/actions/${name}`, { body: args })).result,
+    [id],
+  );
+  return <Row action={action} running={running} />;
 }

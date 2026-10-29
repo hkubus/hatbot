@@ -6,7 +6,7 @@ import { api, errorText } from "../api";
 import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { LoadError, PageLoad, useLoad } from "../load";
-import { PLUGIN_SETTINGS } from "../plugins";
+import { PLUGIN_WEB } from "../plugins";
 import { loadPlugins, savePlugin, savePluginSecrets, useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, Disclosure, Group, LinkRow, Select } from "../ui";
@@ -71,7 +71,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
       />
     );
 
-  const Settings = PLUGIN_SETTINGS[p.id];
+  const Settings = PLUGIN_WEB[p.id]?.settings;
   const toggle = async (enabled: boolean) => {
     setResult(null);
     // It flips at once; a failed save flips it back.

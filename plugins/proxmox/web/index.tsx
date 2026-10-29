@@ -1,5 +1,4 @@
-import type { PluginSettingsProps } from ".";
-import { IdListSettings } from "./id-list";
+import { IdListSettings, type PluginSettingsProps, type PluginWeb } from "@hatbot/web/kit";
 
 export function ProxmoxSettings(props: PluginSettingsProps<{ careful: number[] }>) {
   return (
@@ -15,3 +14,5 @@ export function ProxmoxSettings(props: PluginSettingsProps<{ careful: number[] }
     />
   );
 }
+
+export const web: PluginWeb = { settings: ProxmoxSettings };
