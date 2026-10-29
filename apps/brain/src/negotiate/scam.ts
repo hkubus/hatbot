@@ -1,7 +1,8 @@
 // A seller's message that looks like the start of a scam holds the negotiation for the owner; the
 // template's rule alone isn't enough.
+
+import { escapeRe } from "@hatbot/plugin-sdk";
 import type { MandateContact } from "@hatbot/shared";
-import { escapeRe } from "./gate";
 import { MARKETPLACE_HOSTS } from "./marketplace";
 import { CONTACT_NAMES, contactsIn, linksIn, plain } from "./policy";
 

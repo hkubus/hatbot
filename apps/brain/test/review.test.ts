@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import { estimateTokens, fixedTokens } from "@hatbot/plugin-sdk";
 import type { ModelClient } from "../src/agent/model";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { safeToRun } from "../src/agent/review";
 import { screenPage } from "../src/agent/screening";
-import { estimateTokens, fixedTokens, requestCeiling } from "../src/spend";
+import { requestCeiling } from "../src/spend";
 import { FakeModel, text } from "./fake-model";
 import { testApp } from "./helpers";
 

@@ -2,10 +2,12 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
 import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
+  botFolder,
   containerOf,
   invalidInput,
   serverToolWaiting,
   toolParam,
+  untrustedBlock,
   type WebCall,
   webCalls,
   webReads,
@@ -30,7 +32,7 @@ import {
 } from "@hatbot/shared";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
-import { type Bots, botFolder } from "../bots";
+import type { Bots } from "../bots";
 import type { Db } from "../db";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
@@ -41,7 +43,7 @@ import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
-import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
+import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
 export {
   containerOf,

@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import type { Notifier } from "@hatbot/plugin-sdk";
 import {
   type Approval,
   type ApprovalKind,
@@ -10,7 +11,6 @@ import { sameText, secretKey } from "./auth/keys";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
-import type { Notifier } from "./notify";
 
 const TTL_MS = 24 * 3600_000;
 /** Kinds a notification may approve from a locked phone; the rest are approved in the app. */

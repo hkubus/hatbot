@@ -7,8 +7,6 @@ import type { Archive } from "./archive";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 
-export { MAX_ATTACHMENT_BYTES, sizeText };
-
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 /** Never sent to the API as is: `expand` replaces it. */
 const ATTACHMENT_REF = "hatbot_attachment";

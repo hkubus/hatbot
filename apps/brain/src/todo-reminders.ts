@@ -1,11 +1,11 @@
 // Reminders from the to-do list: each morning, what's due or overdue; and an item due at a time, at
 // that time. Without the model: a reminder you asked for mustn't hang on a triage calling it noise,
 // as the heartbeat's may.
+import type { Notifier } from "@hatbot/plugin-sdk";
 import { HATBOT_ID, localDay, parseTodos, TODO_FILE, type Todo, todoLine } from "@hatbot/shared";
 import type { Chats } from "./agent/chats";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
-import type { Notifier } from "./notify";
 import { getSetting, type SettingsStore, setSetting } from "./settings";
 
 const STATE_KEY = "todo:reminders";

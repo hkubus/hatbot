@@ -1,6 +1,13 @@
-import { ModelError, type ModelInfo, type ModelProvider } from "@hatbot/plugin-sdk";
+import {
+  type CreateParams,
+  ModelError,
+  type ModelInfo,
+  type ModelProvider,
+  type StreamHandlers,
+  type StreamParams,
+} from "@hatbot/plugin-sdk";
 import type { Plugins } from "../plugins/registry";
-import type { CreateParams, ModelClient, StreamHandlers, StreamParams } from "./model";
+import type { ModelClient } from "./model";
 
 /** Sends each request to the ready provider whose catalogue has its model. */
 export class Models implements ModelClient {

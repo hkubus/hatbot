@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicModelClient, retryAfterMs, retryable } from "@hatbot/plugin-anthropic";
-import { retryDelays, withRetries } from "@hatbot/plugin-sdk";
+import { type BudgetError, estimateTokens, retryDelays, withRetries } from "@hatbot/plugin-sdk";
 import type { ThreadMessage } from "@hatbot/shared";
 import { Chats } from "../src/agent/chats";
 import { EventBus } from "../src/events";
-import { type BudgetError, estimateTokens, requestCeiling, searchesIn } from "../src/spend";
+import { requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, requested, signIn, type TestApp, testApp, unmarked } from "./helpers";

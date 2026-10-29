@@ -8,6 +8,7 @@ import {
 } from "@anthropic-ai/sdk/helpers/beta/toolsets";
 import type { BetaBrowserMemberInput } from "@anthropic-ai/sdk/resources/beta";
 import { type DesktopAgent, DesktopBusy, DesktopError } from "@hatbot/plugin-desktop";
+import { cutOff, localStamp, type StreamParams, untrustedBlock } from "@hatbot/plugin-sdk";
 import { destructive } from "@hatbot/plugin-sdk/shell";
 import type { ApprovalKind } from "@hatbot/shared";
 import {
@@ -17,12 +18,9 @@ import {
   uploadPage,
 } from "@hatbot/shared/desktop";
 import { z } from "zod";
-import { cutOff, type StreamParams } from "../agent/model";
 import { DESKTOP_PROMPT } from "../agent/prompt";
 import { levelOf, safeToRun } from "../agent/review";
 import { type Screening, screenPage } from "../agent/screening";
-import { localStamp } from "../agent/thread";
-import { untrustedBlock } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
 import { listingCheck, listingRefused } from "../listings/gate";

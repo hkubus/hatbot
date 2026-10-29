@@ -1,12 +1,13 @@
 // A background task's questions to you: it waits, without the model, for your answer from the chat
 // or the task's page, until it runs out of time.
+
 import { createHmac } from "node:crypto";
+import type { Notifier } from "@hatbot/plugin-sdk";
 import type { Question } from "@hatbot/shared";
 import { sameText, secretKey } from "./auth/keys";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
-import type { Notifier } from "./notify";
 
 type Row = {
   id: number;

@@ -1,12 +1,10 @@
 import type { ModelPrice } from "@hatbot/plugin-sdk";
-import { BudgetError, estimateTokens, fixedTokens } from "@hatbot/plugin-sdk";
+import { BudgetError } from "@hatbot/plugin-sdk";
 import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import { modelInfo } from "./models-known";
 import type { SettingsStore } from "./settings";
-
-export { BudgetError, estimateTokens, fixedTokens };
 
 export type UsageLike = {
   input_tokens: number;

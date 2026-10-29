@@ -3,6 +3,7 @@
 // and the expert model looks again before a no reaches you.
 
 import type { Verdict } from "@hatbot/plugin-sdk";
+import { tagJson } from "@hatbot/plugin-sdk";
 import {
   type ApprovalKind,
   type ApprovalLevel,
@@ -15,7 +16,7 @@ import type { Settings, SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
-import { tagJson, tagText } from "./untrusted";
+import { tagText } from "./untrusted";
 
 /** Room for thinking, so it can't crowd out the verdict. */
 const REVIEW_MAX_TOKENS = 4000;

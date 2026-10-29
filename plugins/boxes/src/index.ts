@@ -25,10 +25,9 @@ import { routes } from "./routes";
 import { boxJob } from "./t3-job";
 import { boxTools } from "./tools";
 
-export { Backends, BOX_CRON_GAP_MS, NO_GUEST } from "./backends";
-export { BoxError, Boxes, FRAME_CSP, NOTIFY_PER_DAY, previewed } from "./boxes";
+export { NO_GUEST } from "./backends";
+export { Boxes, FRAME_CSP, previewed } from "./boxes";
 export { type BoxRequest, type HatboxAgent, HatboxError, HttpHatboxAgent } from "./client";
-export { BoxFeeds, MAX_BOX_FEEDS } from "./feeds";
 
 const CHAT = `- The tools for boxes load when you need them: find them with tool_search_tool_regex (a pattern like "boxes_"), then call them.
 - When the owner wants a tool to keep and come back to (a tracker, a calculator, a planner, a page of numbers they update), make a box with boxes_create: a small web app they open from the chat, which keeps its own data. Change it with boxes_edit when they ask for changes; boxes_list shows the ones you made. A one-off answer stays in your reply.

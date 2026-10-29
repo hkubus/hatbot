@@ -1,7 +1,7 @@
 // Scout's tools are called by name through the MCP plugin, as watchers call plugin tools.
 
 import type { DesktopService } from "@hatbot/plugin-desktop";
-import { type CallContext, PluginError, type PluginTool } from "@hatbot/plugin-sdk";
+import { botFolder, type CallContext, PluginError, type PluginTool } from "@hatbot/plugin-sdk";
 import {
   type Appraisal,
   type Approval,
@@ -19,7 +19,7 @@ import {
 import type { Chats } from "../agent/chats";
 import type { ModelClient } from "../agent/model";
 import type { Approvals } from "../approvals";
-import { type Bots, botFolder } from "../bots";
+import type { Bots } from "../bots";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import type { StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
 import { type AskResult, type ThreadMessage, threadGroups } from "@hatbot/shared";
-import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";

@@ -224,7 +224,6 @@ export class PluginError extends Error {
   }
 }
 
-/** `api` gives JSON, or text when another type is asked for; `send` the Response itself. */
 type ScheduleFields = {
   name?: string;
   prompt?: string;
@@ -249,6 +248,7 @@ export const sizeText = (n: number) =>
     ? `${(n / 1024 / 1024).toFixed(1)} MB`
     : `${Math.max(1, Math.round(n / 1024))} KB`;
 
+/** `api` gives JSON, or text when another type is asked for; `send` the Response itself. */
 export function httpApi(name: string, base: string, headers: Record<string, string>) {
   const send = async (
     method: string,

@@ -1,4 +1,5 @@
 import type { DesktopService } from "@hatbot/plugin-desktop";
+import { clip, head, type Notifier, RESTARTED } from "@hatbot/plugin-sdk";
 import {
   ACTIVE_TASK_STATUSES as ACTIVE,
   type Bot,
@@ -25,12 +26,10 @@ import type { Skills } from "../memory/skills";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Logins } from "../negotiate/logins";
 import type { Negotiations } from "../negotiate/service";
-import type { Notifier } from "../notify";
 import type { Plugins } from "../plugins/registry";
 import type { Questions } from "../questions";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
-import { clip, head } from "../text";
 import { runAgentTask } from "./agent-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
@@ -163,7 +162,6 @@ const FINAL: TaskStatus[] = ["done", "failed", "cancelled"];
 const among = (statuses: TaskStatus[]) => `IN (${statuses.map((s) => `'${s}'`).join(", ")})`;
 const STEP = `SELECT id, task_id AS taskId, kind, name, detail, screenshot, url, created_at AS createdAt
   FROM task_steps`;
-export const RESTARTED = "Stopped: the brain restarted.";
 const errorText = (err: unknown) =>
   err instanceof Error ? err.message.slice(0, 200) : "unknown error";
 /** ntfy takes up to 4,096 bytes of message; a summary with long links is cut, whole on the task. */

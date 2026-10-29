@@ -1,13 +1,22 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { type CallContext, type PluginTool, untrustedOf, type Verdict } from "@hatbot/plugin-sdk";
+import {
+  type CallContext,
+  cutOff,
+  localStamp,
+  type PluginTool,
+  type StreamParams,
+  tagJson,
+  untrustedBlock,
+  untrustedOf,
+  type Verdict,
+} from "@hatbot/plugin-sdk";
 import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
-import { cutOff, type StreamParams } from "../agent/model";
 import { agentPrompt, CHART_GUESS } from "../agent/prompt";
 import { levelOf, safeToRun, scopable, scopesFor } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
-import { localStamp, memoryIndex } from "../agent/thread";
+import { memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
   containerOf,
@@ -24,7 +33,7 @@ import {
   webReads,
   webTexts,
 } from "../agent/tools";
-import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
+import { tagText } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
 import { promptFor } from "../bots";

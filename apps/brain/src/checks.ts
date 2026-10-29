@@ -2,8 +2,9 @@
 // that was missed shows up here instead of in the middle of a task.
 
 import type { Proxmox } from "@hatbot/plugin-proxmox/client";
+import { modelErrorText } from "@hatbot/plugin-sdk";
 import type { Approval, CheckReport, CheckResult, ChecksInfo, StorageInfo } from "@hatbot/shared";
-import { type ModelClient, modelErrorText, oneShot } from "./agent/model";
+import { type ModelClient, oneShot } from "./agent/model";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
 import type { AuthService } from "./auth/service";

@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { CreateParams, ModelClient, StreamHandlers, StreamParams } from "../src/agent/model";
+import type { CreateParams, StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
+import type { ModelClient } from "../src/agent/model";
 import { SCREENING_PROMPT } from "../src/agent/prompt";
 
 const NOT_SUSPECTED = '{"suspected": false, "excerpt": ""}';

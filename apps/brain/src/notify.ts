@@ -1,8 +1,6 @@
 import type { Notification, Notifier } from "@hatbot/plugin-sdk";
 import type { NtfyConfig } from "./secrets";
 
-export type { Notification, Notifier, NtfyAction } from "@hatbot/plugin-sdk";
-
 /**
  * A topic named by hand could be guessed, and on a server that lets anyone read, read. One is random
  * only with a long run that looks it: 16 hex digits and letters (deploy.sh's hatbot-<24 hex>), or 22

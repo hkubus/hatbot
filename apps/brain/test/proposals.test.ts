@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import type { StreamParams } from "@hatbot/plugin-sdk";
 import type { Proposal } from "@hatbot/shared";
-import type { StreamParams } from "../src/agent/model";
 import { HATBOT } from "../src/memory/store";
 import { text } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";

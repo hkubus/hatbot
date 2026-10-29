@@ -1,11 +1,18 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { SandboxError } from "@hatbot/plugin-sdk";
+import {
+  BudgetError,
+  cutOff,
+  estimateTokens,
+  fixedTokens,
+  modelErrorText,
+  SandboxError,
+  type StreamParams,
+} from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
-import { cutOff, modelErrorText, type StreamParams } from "../agent/model";
 import { tagText } from "../agent/untrusted";
 import type { NewApproval, Outcome } from "../approvals";
 import { progressNotes } from "../models-known";
-import { BudgetError, estimateTokens, fixedTokens, requestCeiling, searchesIn } from "../spend";
+import { requestCeiling, searchesIn } from "../spend";
 import type { Tasks } from "./service";
 
 /** Ends the run from inside a helper. `escalate`: a failure a stronger model might get past. */

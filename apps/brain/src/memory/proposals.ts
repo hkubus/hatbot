@@ -1,13 +1,13 @@
 import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
+import { fixedTokens, modelErrorText, type Notifier } from "@hatbot/plugin-sdk";
 import { lastDue, type Proposal, type SkillStatus } from "@hatbot/shared";
 import { z } from "zod";
-import { type ModelClient, modelErrorText } from "../agent/model";
+import type { ModelClient } from "../agent/model";
 import type { Db } from "../db";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
-import type { Notifier } from "../notify";
 import { getSetting, type SettingsStore, setSetting } from "../settings";
-import { fixedTokens, requestCeiling, type Spend } from "../spend";
+import { requestCeiling, type Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "./skills";
 import { MemoryConflict, type MemoryStore } from "./store";

@@ -20,19 +20,13 @@ import { Live, routes } from "./routes";
 import { teachRoutes } from "./teach/routes";
 import { Teach } from "./teach/service";
 
-export {
-  actionTimeoutMs,
-  browserTimeoutMs,
-  type DesktopAgent,
-  DesktopError,
-  HttpDesktopAgent,
-} from "./client";
+export { type DesktopAgent, DesktopError, HttpDesktopAgent } from "./client";
 export { Desktop, DesktopBusy } from "./control";
 export { ScreenLane } from "./lane";
 export { frameRelay, Live } from "./routes";
 export { TEACH_PROMPT } from "./teach/prompt";
 export { type FieldCheck, OffPage, Recorder } from "./teach/recorder";
-export { Teach, type TeachDeps, TeachError } from "./teach/service";
+export { Teach } from "./teach/service";
 
 const CHAT = `- run_desktop_task loads when you need it: find it with tool_search_tool_regex, then call it. Use it only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript). It runs on its own; its progress and result show under your reply.
 - Skills (skills/ in memory, listed in INDEX.md) are chores the owner showed you how to do. When a desktop task matches one, pass its name as skill, and put the values for its {{placeholders}} in the goal.`;

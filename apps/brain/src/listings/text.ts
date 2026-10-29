@@ -1,6 +1,6 @@
 // What the owner approves and what the posting task reads, from Scout's draft.
+import { untrustedBlock } from "@hatbot/plugin-sdk";
 import { UPLOAD_PAGES } from "@hatbot/shared/desktop";
-import { untrustedBlock } from "../agent/untrusted";
 import { quotedTitle } from "../negotiate/mandate";
 import { zl } from "../negotiate/policy";
 

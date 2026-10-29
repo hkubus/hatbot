@@ -22,12 +22,12 @@ import {
   type TaskRunner,
   type ToolImage,
   textOf,
+  untrustedBlock,
   untrustedOf,
   type Verdict,
 } from "@hatbot/plugin-sdk";
 import type { PluginEnvInfo, PluginInfo, PluginState, SafetySettings } from "@hatbot/shared";
 import { z } from "zod";
-import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { addModels } from "../models-known";

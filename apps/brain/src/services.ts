@@ -12,6 +12,7 @@ import {
   HOST_SERVICES,
   type MemoryHost,
   type ModelHost,
+  type Notifier,
   type Plugin,
   type PluginsHost,
   type SchedulesService,
@@ -45,7 +46,7 @@ import { MemoryConflict, MemoryStore } from "./memory/store";
 import { modelName } from "./models-known";
 import { Logins } from "./negotiate/logins";
 import { Negotiations } from "./negotiate/service";
-import { LinkingNotifier, type Notifier } from "./notify";
+import { LinkingNotifier } from "./notify";
 import { DeadManPing } from "./ping";
 import { Installer } from "./plugins/installer";
 import { Plugins } from "./plugins/registry";
@@ -73,7 +74,7 @@ export type Outside = {
   ntfy: ChecksDeps["ntfy"];
   /** Tests' own; the brain's is made from the environment and Settings, afresh each time. */
   proxmox?: Proxmox;
-  /** Besides the Code plugin, which is always there. */
+  /** Those that need nothing of the brain's to be made; the rest are made here. */
   plugins: Plugin[];
   pluginEnv?: Record<string, string | undefined>;
   passwordCost?: PasswordCost;

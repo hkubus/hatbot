@@ -1,12 +1,19 @@
 // Untrusted content: what taints a chat or task, and the wrappers it's read in.
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { definePlugin, PluginError, ready, tool } from "@hatbot/plugin-sdk";
+import {
+  definePlugin,
+  PluginError,
+  ready,
+  tagJson,
+  tool,
+  untrustedBlock,
+  untrustedFields,
+} from "@hatbot/plugin-sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
 import { runCoreTool } from "../src/agent/tools";
-import { tagJson, untrustedBlock, untrustedFields } from "../src/agent/untrusted";
 import { EventBus } from "../src/events";
 import { runPluginTool } from "../src/plugins/registry";
 import { FakeModel, text, toolUse } from "./fake-model";

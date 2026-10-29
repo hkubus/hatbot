@@ -6,13 +6,12 @@ import {
   RESEARCH_CHECK_PROMPT,
   RESEARCH_WORKER_PROMPT,
 } from "@hatbot/plugin-research";
-import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
+import { BudgetError, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import { SCREENING_PROMPT } from "../src/agent/prompt";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
-import { BudgetError } from "../src/spend";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 

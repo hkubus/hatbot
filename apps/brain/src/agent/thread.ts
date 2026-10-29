@@ -1,8 +1,21 @@
 // A chat with your bots, run as episodes: one bot's own, or a group.
+
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
-import { escapeRe, localStamp } from "@hatbot/plugin-sdk";
+import {
+  BudgetError,
+  type CreateParams,
+  clip,
+  cutOff,
+  escapeRe,
+  estimateTokens,
+  fixedTokens,
+  head,
+  localStamp,
+  modelErrorText,
+  untrustedBlock,
+} from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type ChatCommand,
@@ -43,28 +56,10 @@ import {
   verdictFor,
 } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
-import {
-  BudgetError,
-  estimateTokens,
-  fixedTokens,
-  priceOf,
-  requestCeiling,
-  type Spend,
-  searchesIn,
-  tokenCount,
-  tokensOf,
-} from "../spend";
+import { priceOf, requestCeiling, type Spend, searchesIn, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
-import { clip, head } from "../text";
 import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
-import {
-  afterFallback,
-  type CreateParams,
-  cutOff,
-  type ModelClient,
-  modelErrorText,
-  oneShot,
-} from "./model";
+import { afterFallback, type ModelClient, oneShot } from "./model";
 import {
   CHART_GUESS,
   EXPERT_PROMPT,
@@ -94,9 +89,7 @@ import {
   webReads,
   webTexts,
 } from "./tools";
-import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
-
-export { escapeRe, localStamp };
+import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
 const EPISODE_IDLE_MS = 30 * 60_000;
 /** A chat's cache entries last five minutes from the request that last wrote or read them. */
@@ -2604,7 +2597,6 @@ export function activity(label: string, input: unknown): string {
   return `${label}: ${clip(detail, 80)}`;
 }
 
-/** "Thu 2026-10-09 18:04", in the brain's local time. */
 export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
   const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);

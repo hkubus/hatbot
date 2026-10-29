@@ -101,7 +101,6 @@ const fromCall = (s: CoreServices, call: CallContext): ToolContext => ({
 function coreTool(def: (typeof TOOLS)[number], services: () => CoreServices): PluginTool {
   const meta = META[def.name];
   if (!meta) throw new Error(`core tool ${def.name} has no place`);
-  const s = services;
   return {
     name: def.name,
     description: def.description,
@@ -110,13 +109,13 @@ function coreTool(def: (typeof TOOLS)[number], services: () => CoreServices): Pl
     places: meta.places,
     incognito: meta.incognito,
     deferred: meta.deferred,
-    when: meta.when && ((o) => meta.when?.(o, s()) ?? true),
+    when: meta.when && ((o) => meta.when?.(o, services()) ?? true),
     whole: true,
     label: meta.label,
     run: async (input, call) => {
       try {
         // biome-ignore lint/suspicious/noExplicitAny: each tool's run matches its own schema
-        const out = await def.run(input as any, fromCall(s(), call), call.signal);
+        const out = await def.run(input as any, fromCall(services(), call), call.signal);
         return typeof out === "string" ? out : { text: out.text, images: [out.image] };
       } catch (err) {
         if (err instanceof UserError || err instanceof NotChanged || err instanceof SandboxError)

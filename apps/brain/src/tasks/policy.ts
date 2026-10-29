@@ -4,8 +4,6 @@ import { pathOf, TRACKING } from "@hatbot/plugin-sdk";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 
-export { pathOf, TRACKING };
-
 /**
  * Folds case, accents, ł, look-alike letters ("Ｐａｙ") and invisible format characters (a zero-width
  * space inside "Kup"), so "ZAPŁAĆ" and "Zaplac" match alike.

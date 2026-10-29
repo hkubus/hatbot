@@ -7,8 +7,6 @@ import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import { type Author, HATBOT } from "./memory/store";
 
-export { botFolder, slugWords };
-
 type Row = {
   id: string;
   name: string;

@@ -1,21 +1,13 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type CreateParams,
-  cutOff,
-  type ModelMessage,
-  modelErrorText,
-  type StreamHandlers,
-  type StreamParams,
+  estimateTokens,
+  fixedTokens,
+  type ModelProvider,
 } from "@hatbot/plugin-sdk";
-import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "../spend";
+import { requestCeiling, type Spend } from "../spend";
 
-export type { CreateParams, StreamHandlers, StreamParams };
-export { cutOff, modelErrorText };
-
-export interface ModelClient {
-  stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers): Promise<ModelMessage>;
-  create(params: CreateParams): Promise<ModelMessage>;
-}
+export type ModelClient = Pick<ModelProvider, "stream" | "create">;
 
 /**
  * What it may cost is held against the limits until it's recorded: past one, it throws BudgetError

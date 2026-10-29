@@ -1,3 +1,4 @@
+import { BudgetError, MAX_ATTACHMENT_BYTES } from "@hatbot/plugin-sdk";
 import {
   CreateGroup,
   PostMessage,
@@ -8,11 +9,9 @@ import {
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import type { Thread } from "../agent/thread";
-import { MAX_ATTACHMENT_BYTES } from "../attachments";
 import { requireAuth } from "../auth/middleware";
 import { chartData } from "../chart-data";
 import type { AppEnv } from "../context";
-import { BudgetError } from "../spend";
 import { found, id, json, query, signedOut } from "./util";
 
 /** RFC 5987's encoding for filename*: encodeURIComponent leaves ' ( ) * as they are, which it doesn't allow. */

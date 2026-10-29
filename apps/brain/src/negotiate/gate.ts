@@ -1,5 +1,6 @@
 // In a negotiation's desktop task, a click or Enter goes through as the send only while the text boxes
 // hold exactly the approved message and the tab is that negotiation's conversation.
+import { escapeRe, pathOf } from "@hatbot/plugin-sdk";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
 import {
@@ -10,11 +11,8 @@ import {
   hostOf,
   onHost,
   type Press,
-  pathOf,
   pressOf,
 } from "../tasks/policy";
-
-export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export type SendGate = {
   mode: "send" | "read";

@@ -12,13 +12,12 @@ import type {
 import type { Boxes } from "@hatbot/plugin-boxes";
 import type { DesktopService, Teach } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
-import type { Plugin } from "@hatbot/plugin-sdk";
+import type { Notification, Notifier, Plugin } from "@hatbot/plugin-sdk";
 import { stepOf, totpAt } from "../src/auth/totp";
 import { loadConfig } from "../src/config";
 import { openDb } from "../src/db";
 import { EventBus, type HatbotEvent } from "../src/events";
 import { MemoryStore } from "../src/memory/store";
-import type { Notification, Notifier } from "../src/notify";
 import { Secrets } from "../src/secrets";
 import { createServices, type Outside } from "../src/services";
 import { FakeDesktop } from "./fake-desktop";

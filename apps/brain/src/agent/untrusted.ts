@@ -1,11 +1,6 @@
 // Untrusted text in a prompt goes between tags as JSON, labelled with where it came from, so it reads
 // as data. Every wrapper is built with these, so none can be closed from inside.
-
-// Escaping every `<` keeps it valid JSON that can't close its tag. `>` and `&` stay, so commands like
-// `cmd 2>&1` read plainly in a review.
-import { tagJson, untrustedBlock, untrustedFields } from "@hatbot/plugin-sdk";
-
-export { tagJson, untrustedBlock, untrustedFields };
+import { tagJson } from "@hatbot/plugin-sdk";
 
 /**
  * SQL over `messages m` with TRUST_JOINS. A bot's message is untrusted when the task it shows, or its
