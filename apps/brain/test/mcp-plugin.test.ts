@@ -24,6 +24,7 @@ import {
   ended,
   finish,
   pluginApp,
+  pluginTools,
   scheduled,
   stopPluginsAfterEach,
   tainted,
@@ -73,7 +74,7 @@ test("a task's MCP call asks first, then runs, its output marked untrusted", asy
     finish(),
   ]);
   const t = await mcp(fixture, work);
-  expect(t.plugins.tools().map((x) => x.name)).toEqual([
+  expect(pluginTools(t).map((x) => x.name)).toEqual([
     "mcp_fix_echo",
     "mcp_fix_secret",
     "mcp_fix_broken",
@@ -104,7 +105,7 @@ test("a stdio server gets what mcp.env and its page set, not the brain's own sec
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin's own placeholder syntax
   const t = await mcp({ ...fixture, env: { KEY: "${ANTHROPIC_API_KEY}" } });
   expect(t.info.message).toContain("ANTHROPIC_API_KEY isn't set:");
-  expect(t.plugins.tools()).toHaveLength(0);
+  expect(pluginTools(t)).toHaveLength(0);
 
   // A secret added on MCP's page is there at once, by its name.
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the plugin's own placeholder syntax
@@ -217,7 +218,7 @@ test("Chat, Allow and Off hold for the definition they were chosen for; once it 
   const t = await mcp(server);
   const pinned = Object.fromEntries((await status(t)).map((x) => [x.name, x.hash]));
   await t.plugins.update("mcp", { config: { servers: [{ ...server, pinned }] } });
-  expect(t.plugins.tools().map((x) => [x.name, x.access])).toEqual([
+  expect(pluginTools(t).map((x) => [x.name, x.access])).toEqual([
     ["mcp_fix_echo", "read"],
     ["mcp_fix_broken", "write"],
   ]);
@@ -295,7 +296,7 @@ test("definitions the API wouldn't take are left out with the reason; clashing o
       { name: "later", inputSchema: text, execution: { taskSupport: "required" } },
     ]),
   );
-  const names = t.plugins.tools().map((x) => x.name);
+  const names = pluginTools(t).map((x) => x.name);
   expect(names).toEqual(["mcp_fix_echo", "mcp_fix_get_user", toolName("fix", "get_user", true)]);
   expect(names[2]).toMatch(/^mcp_fix_get_user_[0-9a-f]{6}$/);
   const problems = Object.fromEntries((await status(t)).map((x) => [x.name, !!x.problem]));

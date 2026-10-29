@@ -16,7 +16,7 @@ export type PluginInfo = {
   named: string[] | null;
   /** Its settings, in the plugin's own shape. */
   config: unknown;
-  tools: { name: string; access: "read" | "write"; description: string }[];
+  tools: { name: string; access: "read" | "write" | "own"; description: string }[];
   testable: boolean;
 };
 

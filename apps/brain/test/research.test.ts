@@ -7,7 +7,7 @@ import {
   RESEARCH_WORKER_PROMPT,
   SCREENING_PROMPT,
 } from "../src/agent/prompt";
-import { runTool } from "../src/agent/tools";
+import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { BudgetError } from "../src/spend";
@@ -362,15 +362,15 @@ test("research's notes, read back, are untrusted and taint the reader; other not
     events: new EventBus(),
     taint: (by: string) => tainted.push(by),
   };
-  const read = await runTool("memory_read", { path: "./research/sites.md" }, ctx);
+  const read = await runCoreTool("memory_read", { path: "./research/sites.md" }, ctx);
   expect(read.content).toStartWith('<tool_output tool="memory_read" trusted="false">');
   expect(read.content.match(/<\/tool_output>/g)).toHaveLength(1);
   expect(tainted).toEqual(["Research notes: research/sites.md"]);
-  const found = await runTool("memory_search", { query: "nas-okazje" }, ctx);
+  const found = await runCoreTool("memory_search", { query: "nas-okazje" }, ctx);
   expect(found.content).toStartWith('<tool_output tool="memory_search" trusted="false">');
   expect(tainted).toHaveLength(2);
   // Other notes are the owner's.
-  expect((await runTool("memory_read", { path: "notes/nas.md" }, ctx)).content).toBe(
+  expect((await runCoreTool("memory_read", { path: "notes/nas.md" }, ctx)).content).toBe(
     "The NAS sits in the hall.\n",
   );
   expect(tainted).toHaveLength(2);

@@ -4,6 +4,8 @@ import {
   askCareful,
   type CallContext,
   covered,
+  type Offer,
+  type Place,
   type Plugin,
   PluginError,
   type PluginFiles,
@@ -11,7 +13,6 @@ import {
   type PluginSignal,
   type PluginTick,
   type PluginTool,
-  type PromptPlace,
   SDK_VERSION,
   type ToolImage,
   textOf,
@@ -163,7 +164,7 @@ export class Plugins {
   }
 
   /** Ready plugins' lines for the prompt at `place`, in a stable order. */
-  prompt(place: PromptPlace, only: string[] | null = null, except: string[] = []): string {
+  prompt(place: Place, only: string[] | null = null, except: string[] = []): string {
     return this.readyOnes(only, except)
       .flatMap((s) => s.instance?.prompt?.[place]?.trim() || [])
       .join("\n");
@@ -287,7 +288,11 @@ export class Plugins {
           (everyBot(s.plugin) ||
             ((!only || only.includes(s.plugin.id)) && !except.includes(s.plugin.id))),
       )
-      .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
+      .sort(
+        (a, b) =>
+          Number(!a.plugin.internal) - Number(!b.plugin.internal) ||
+          a.plugin.id.localeCompare(b.plugin.id),
+      );
   }
 
   readyFor(id: string, only: string[] | null = null, except: string[] = []): boolean {
@@ -320,7 +325,12 @@ export class Plugins {
   }
 
   pluginOf(toolName: string): Plugin | null {
-    return this.slots.get(toolName.split("_")[0] ?? "")?.plugin ?? null;
+    const has = (s: Slot) => s.instance?.tools.some((t) => t.name === toolName);
+    const named = this.slots.get(toolName.split("_")[0] ?? "");
+    if (named && (!named.plugin.internal || has(named))) return named.plugin;
+    // Only the core's plugins name tools after something else.
+    for (const s of this.slots.values()) if (s.plugin.internal && has(s)) return s.plugin;
+    return null;
   }
 
   private load(plugin: Plugin): { enabled: boolean; config: unknown } {
@@ -519,10 +529,10 @@ export class Plugins {
     for (const t of tools) {
       if ((!plugin.internal && !t.name.startsWith(`${plugin.id}_`)) || !TOOL_NAME.test(t.name))
         throw new Error(`plugin ${plugin.id}: tool "${t.name}" must be named ${plugin.id}_…`);
-      if (seen.has(t.name) || this.d.reserved.includes(t.name))
+      if (seen.has(t.name) || (!plugin.internal && this.d.reserved.includes(t.name)))
         throw new Error(`plugin ${plugin.id}: tool name "${t.name}" is taken`);
-      if (t.access === "read" && t.policy)
-        throw new Error(`plugin ${plugin.id}: read tool "${t.name}" can't have a policy`);
+      if (t.access !== "write" && t.policy)
+        throw new Error(`plugin ${plugin.id}: ${t.access} tool "${t.name}" can't have a policy`);
       seen.add(t.name);
     }
   }
@@ -616,10 +626,21 @@ export async function runPluginTool(
     return { content, isError: true, untrusted: false, text: content };
   }
   const untrusted = untrustedOf(t, parsed.data, out);
-  if (out.length > MAX_OUTPUT_CHARS)
+  if (out.length > MAX_OUTPUT_CHARS && !t.whole)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
   return { content: label(out, untrusted), isError: false, untrusted, text: out, images };
 }
+
+/** Whether `t` is offered where the model is working. */
+export function offered(t: PluginTool, o: Offer): boolean {
+  const places = t.places ?? (t.access === "read" ? ALL_PLACES : WORK_PLACES);
+  if (t.brainOnly || !places.includes(o.place)) return false;
+  if (o.incognito && !(t.incognito ?? t.access === "read")) return false;
+  return t.when ? t.when(o) : true;
+}
+
+const ALL_PLACES: Place[] = ["chat", "task", "research"];
+const WORK_PLACES: Place[] = ["chat", "task"];
 
 export function untrustedDefinitions(tools: PluginTool[]): string | null {
   const servers = new Set(
@@ -648,7 +669,7 @@ export function verdictFor(
   tainted = call.task?.tainted ?? false,
   safety?: Pick<SafetySettings, "tools" | "untrusted">,
 ): Verdict {
-  if (t.access === "read") return allow();
+  if (t.access !== "write") return allow();
   const parsed = t.schema.safeParse(input);
   // Bad input fails in runPluginTool, before anything runs.
   if (!parsed.success) return allow();

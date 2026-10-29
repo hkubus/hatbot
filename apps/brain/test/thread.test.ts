@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { type AskResult, type ThreadMessage, threadGroups } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
-import { runTool } from "../src/agent/tools";
+import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, testApp, toolNames } from "./helpers";
@@ -440,7 +440,7 @@ test("search_history finds older conversations by any of the words, in any form,
       .run();
     const ctx = { db: t.db, memory: t.memory, events: new EventBus(), bot: t.bots.hatbot() };
     const search = async (dates: { after?: string; before?: string }) =>
-      (await runTool("search_history", { query: "vault", ...dates }, ctx)).content;
+      (await runCoreTool("search_history", { query: "vault", ...dates }, ctx)).content;
     expect(await search({ after: "2026-10-17" })).toContain("17 Oct 2026, 00:30");
     expect(await search({ before: "2026-10-17" })).toBe("No matches.");
   } finally {

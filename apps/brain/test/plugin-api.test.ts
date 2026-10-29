@@ -40,7 +40,7 @@ test("an internal plugin is always on, gives every bot its tools, and isn't in S
   });
   const t = await app([plain({ id: "core", internal: true, start: () => ready([look]) })]);
   expect(t.plugins.list().map((p) => p.id)).not.toContain("core");
-  expect(t.plugins.tools([], ["core"]).map((x) => x.name)).toEqual(["look_around"]);
+  expect(t.plugins.tools([], ["core"]).map((x) => x.name)).toContain("look_around");
   expect(t.plugins.names()).toEqual([]);
   await expect(t.plugins.update("core", { enabled: false })).rejects.toThrow("No plugin");
 });

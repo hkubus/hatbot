@@ -1,6 +1,13 @@
 // The core decides who gets a tool and when it needs your approval; a plugin only says what its tools do.
 import type { Database } from "bun:sqlite";
-import { API_PREFIX, type ApprovalKind, type Attachment, type Task } from "@hatbot/shared";
+import {
+  API_PREFIX,
+  type ApprovalKind,
+  type Attachment,
+  type Bot,
+  type Schedule,
+  type Task,
+} from "@hatbot/shared";
 import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desktop";
 import { Hono } from "hono";
 import type { z } from "zod";
@@ -87,7 +94,35 @@ export type CallContext = {
   progress?: (line: string) => void;
   /** From a task: runs `fn` without holding the task's slot. */
   away?: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** The bot the call is made for. */
+  bot?: Bot;
+  /** From the chat: the conversation, and the stretch of it the model sees. */
+  conversationId?: number;
+  episodeId?: number;
+  /** What untrusted content was read first, or null: work the call starts begins tainted. */
+  tainted?: () => string | null;
+  /** Marks the conversation or task as having read untrusted `text`, from `by`. */
+  taint?: (by: string, text?: string) => void;
+  /** Suspected prompt injection: work it starts is marked so, and the review won't let it through. */
+  suspected?: () => Promise<boolean>;
+  /** What the owner said in this stretch of the chat. */
+  ownerSaid?: () => string;
+  /** The hand-off the reply answers, if it answers one. */
+  answering?: Task;
+  /** For an `own` tool: asks as a write's change asks, the review then you; `always`: only you. */
+  approve?: (
+    call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
+    signal: AbortSignal,
+  ) => Promise<{ content: string; isError: boolean }>;
+  /** Shows a schedule made in the chat as a card in it. */
+  scheduleCard?: (s: Schedule) => void;
 };
+
+/** Where the model works: the chat, a background task, or research. */
+export type Place = "chat" | "task" | "research";
+
+/** Whether to offer a tool, decided per reply or task. */
+export type Offer = { place: Place; bot: Bot; others: Bot[]; incognito: boolean };
 
 /** A picture shown to the model with a tool's result. */
 export type ToolImage = {
@@ -104,8 +139,21 @@ export type PluginTool<I = unknown> = {
   schema: z.ZodType<I>;
   /** Sent to the model instead of `schema`'s JSON Schema: for tools defined elsewhere (MCP servers). */
   jsonSchema?: Record<string, unknown>;
-  /** Only tasks get write tools, and their policy applies; the chat may call read tools directly. */
-  access: "read" | "write";
+  /**
+   * A write's policy and the untrusted-content rule apply to it. `own`: one of Hatbot's own features,
+   * which runs where it's offered and asks through `call.approve` itself when it must.
+   */
+  access: "read" | "write" | "own";
+  /** Where it's offered; without it, the chat and tasks, and research too for a read. */
+  places?: Place[];
+  /** Offered in an incognito conversation; without it, a read is. */
+  incognito?: boolean;
+  /** In the chat, loaded only when the model looks for it, to keep the prompt short. */
+  deferred?: boolean;
+  /** Offered only when this says so. */
+  when?: (o: Offer) => boolean;
+  /** Its output isn't cut short. */
+  whole?: boolean;
   /** The brain calls it itself (listing Scout's flips); it's never offered to the model. */
   brainOnly?: boolean;
   /** Output is untrusted content. Called without `output` before the call: whether it may be. */
@@ -211,12 +259,10 @@ export type PluginInstance = {
   /** Jobs the brain runs while it's ready, each every `everyMs`. */
   ticks?: PluginTick[];
   /** Lines for the system prompt, by where the model works, while it's ready. */
-  prompt?: Partial<Record<PromptPlace, string>>;
+  prompt?: Partial<Record<Place, string>>;
 };
 
 export type PluginTick = { name: string; everyMs: number; run: () => unknown };
-
-export type PromptPlace = "chat" | "task" | "research";
 
 export type PluginPrincipal = { kind: "session" | "token"; id: number };
 

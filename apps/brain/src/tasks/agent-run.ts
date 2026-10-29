@@ -11,17 +11,13 @@ import { localStamp, memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
   containerOf,
-  DESKTOP_TOOLS,
   DesktopTaskInput,
   imageBlocks,
   inBatches,
   invalidInput,
-  LOOKUP_TOOLS,
   liveTool,
   missingSkill,
-  runTool,
   serverToolWaiting,
-  TOOL_PARAMS,
   type ToolImage,
   toolParam,
   WEB_TOOLS,
@@ -35,6 +31,7 @@ import { promptFor } from "../bots";
 import { brokenChartsOf } from "../chart-data";
 import {
   describeCall,
+  offered,
   runPluginTool,
   untrustedDefinitions,
   untrustedOf,
@@ -60,7 +57,7 @@ import {
   LEAD_WEB_TOOLS,
   MAX_RESEARCH_STEPS,
   RESEARCH_BETA,
-  RESEARCH_CORE_TOOLS,
+  RESEARCH_LOOP_TOOLS,
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
   ResearchState,
@@ -83,20 +80,6 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
   "thinking-display-updates-2026-08-18",
   "context-management-2025-06-27",
 ];
-/** Schedules and triggers stay with the chat. */
-const SHARED_TOOLS = [
-  "memory_list",
-  "memory_read",
-  "memory_write",
-  "memory_delete",
-  "memory_search",
-  "todo_list",
-  "todo_add",
-  "todo_done",
-  "search_history",
-  "send_file",
-];
-
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 
 const FinishTask = z.object({
@@ -133,8 +116,8 @@ const NotifyOwner = z.object({
 
 const MAX_NOTIFICATIONS = 5;
 
-const CORE_TOOLS: Anthropic.Beta.BetaTool[] = [
-  ...TOOL_PARAMS.filter((t) => SHARED_TOOLS.includes(t.name)),
+/** The task loop's own tools; the rest come from the plugins, the core's among them. */
+const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "run_desktop_task",
     description:
@@ -248,15 +231,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
   // anything.
   const { research } = task;
+  const others = d.bots.list().filter((b) => b.id !== bot.id);
+  const offer = { place: research ? "research" : "task", bot, others, incognito: false } as const;
   const negotiating = (from: PluginTool[]) => ({
     from,
     tools: tasks.negotiations?.tools(bot, from, { conversationId: null }) ?? [],
   });
   let negotiation = negotiating(own);
   const pluginTools = new Map<string, PluginTool>(
-    [...own, ...negotiation.tools]
-      .filter((t) => !research || t.access === "read")
-      .map((t) => [t.name, t]),
+    [...own, ...negotiation.tools].filter((t) => offered(t, offer)).map((t) => [t.name, t]),
   );
   const current = (name: string): PluginTool | string => {
     const offered = pluginTools.get(name);
@@ -273,16 +256,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       onlyLooks: research ? "research only looks things up" : undefined,
     });
   };
-  const others = d.bots.list().filter((b) => b.id !== bot.id);
   const tools = [
-    ...CORE_TOOLS.filter(
+    ...[...pluginTools.values()].map(toolParam),
+    ...LOOP_TOOLS.filter(
       (t) =>
         (others.length || t.name !== "ask_bot") &&
-        (ctx.desktop?.configured || !DESKTOP_TOOLS.includes(t.name)) &&
-        (!research || RESEARCH_CORE_TOOLS.includes(t.name)),
+        (ctx.desktop?.configured || t.name !== "run_desktop_task") &&
+        (!research || RESEARCH_LOOP_TOOLS.includes(t.name)),
     ),
     ...(research ? RESEARCH_TOOLS : []),
-    ...[...pluginTools.values()].map(toolParam),
     ...(research ? LEAD_WEB_TOOLS : WEB_TOOLS),
   ];
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
@@ -580,6 +562,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const cc: CallContext = {
       task: { id, tainted: task.tainted },
       signal,
+      bot,
+      conversationId: task.conversationId ?? undefined,
+      tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),
+      // History search taints the task with what the messages it found had read, and research's
+      // notes, read back, taint it too.
+      taint,
       sendFile: attachments
         ? (name, bytes) =>
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
@@ -640,9 +628,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           true,
         );
     }
-    tasks.addStep(id, { kind: "action", name: t.name, detail: what, url: null });
+    const core = Boolean(d.plugins.pluginOf(t.name)?.internal);
+    if (t.name !== "send_file")
+      tasks.addStep(id, {
+        kind: "action",
+        name: t.name,
+        detail: core ? describe(t.name, call.input) : what,
+        url: null,
+      });
     const r = await runPluginTool(t, call.input, cc);
     if (r.untrusted) taint(what, r.text);
+    if (t.name === "send_file" && !r.isError)
+      tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
     return result(
       call,
       note ? `${r.content}\n\n${ownerNote(note)}` : r.content,
@@ -841,7 +838,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // thing (checking updates on every host); anything that asks runs on its own.
       const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
         if (cutOff(res)) return false;
-        if (LOOKUP_TOOLS.includes(call.name)) return true;
         const t = pluginTools.has(call.name) ? current(call.name) : null;
         if (!t || typeof t === "string") return false;
         if (t.access === "read") return true;
@@ -902,12 +898,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "ask_bot") return askBot(call);
         if (call.name === "wait") return wait(call);
         if (call.name === "ask_owner") return ask(call);
-        if (call.name === "send_file") {
-          const r = await runTool(call.name, call.input, { ...ctx, taskId: id });
-          if (!r.isError)
-            tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
-          return result(call, r.content, r.isError);
-        }
         if (call.name === "send_to_chat") {
           const p = SendToChat.safeParse(call.input);
           if (!p.success) return result(call, invalidInput(p.error), true);
@@ -939,18 +929,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           const foreign = untrustedDefinitions([plugin]);
           if (foreign) taint(foreign);
           return pluginCall(plugin, call);
-        }
-        if (SHARED_TOOLS.includes(call.name)) {
-          tasks.addStep(id, {
-            kind: "action",
-            name: call.name,
-            detail: describe(call.name, call.input),
-            url: null,
-          });
-          // History search taints the task with what the messages it found had read, and research's
-          // notes, read back, taint it too.
-          const r = await runTool(call.name, call.input, { ...ctx, taint });
-          return result(call, r.content, r.isError);
         }
         return result(call, `Unknown tool "${call.name}".`, true);
       });

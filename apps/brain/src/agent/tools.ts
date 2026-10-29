@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { PluginTool, ToolImage } from "@hatbot/plugin-sdk";
+import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type Box,
@@ -44,13 +44,14 @@ import type { BoxFeed } from "../box-feeds";
 import { BoxError, type Boxes, FRAME_CSP, previewed } from "../boxes";
 import type { Db } from "../db";
 import { type DesktopAgent, DesktopError } from "../desktop/client";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import { type Backends, cronProblem, NO_GUEST } from "../hatbox/backends";
 import type { Proposals } from "../memory/proposals";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
-import { ScheduleError, type Schedules } from "../schedules";
+import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
@@ -86,7 +87,6 @@ export type ToolContext = {
   boxes?: Boxes;
   desktop?: DesktopAgent;
   scheduleCard?: (s: Schedule) => void;
-  pluginTools?: PluginTool[];
   proposals?: Proposals;
   /** For what Settings → Safety asks for; without it, everything asks as by default. */
   settings?: SettingsStore;
@@ -101,13 +101,6 @@ export type ToolContext = {
   ownerSaid?: () => string;
   /** The hand-off the reply answers, if it answers one: hand-offs it makes count from there. */
   answering?: Task;
-  /** A plugin tool as it is now, for a call: the reply's may be from before a change; a string says why not. */
-  livePlugin?: (t: PluginTool) => PluginTool | string;
-  gated?: (
-    t: PluginTool,
-    input: unknown,
-    signal: AbortSignal,
-  ) => Promise<{ content: string; isError: boolean; images?: ToolImage[] }>;
   /** Asks as a plugin's change asks: Haiku's review, then you. `always`: only you. */
   approve?: (
     call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
@@ -1879,55 +1872,34 @@ export function liveTool(
     return `Not run: ${name} isn't available any more. Its plugin was switched off, or taken from ${bot}, ${since}.`;
   if (JSON.stringify(toolParam(tool)) !== JSON.stringify(toolParam(offered)))
     return `Not run: ${name} has changed ${since}.`;
-  if (onlyLooks && tool.access !== "read")
+  if (onlyLooks && tool.access === "write")
     return `Not run: ${name} changes things now, and ${onlyLooks}.`;
   return tool;
 }
-
-/** Order and content must stay stable to keep the cache. */
-export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
-
-/**
- * Chat tools that load only when the model searches for them: about a third of the prompt's tokens,
- * paid on every cold cache, for things most conversations never touch.
- */
-const DEFERRED = /^(box|watch|trigger|schedule)_|^run_desktop_task$/;
 
 export const TOOL_SEARCH: Anthropic.Beta.BetaToolUnion = {
   type: "tool_search_tool_regex_20251119",
   name: "tool_search_tool_regex",
 };
 
-export const deferRare = (t: Anthropic.Beta.BetaTool): Anthropic.Beta.BetaTool =>
-  DEFERRED.test(t.name) ? { ...t, defer_loading: true } : t;
+/**
+ * A deferred tool loads only when the model searches for it: about a third of the chat prompt's
+ * tokens, paid on every cold cache, for things most conversations never touch.
+ */
+export const chatToolParam = (t: PluginTool): Anthropic.Beta.BetaTool =>
+  t.deferred ? { ...toolParam(t), defer_loading: true } : toolParam(t);
 
-/** Input is validated here: with eager input streaming the API doesn't. */
-export async function runTool(
+type Ran = { content: string; isError: boolean; untrusted?: boolean; images?: ToolImage[] };
+
+/** A core tool on its own, as tests call one. */
+export async function runCoreTool(
   name: string,
   input: unknown,
   ctx: ToolContext,
   signal: AbortSignal = new AbortController().signal,
-): Promise<{ content: string; isError: boolean; untrusted?: boolean; images?: ToolImage[] }> {
-  const tool =
-    TOOLS.find((t) => t.name === name) ??
-    TOOLS.find((t) => t.name.toLowerCase() === name.toLowerCase());
-  if (!tool) {
-    const offered = ctx.pluginTools ?? [];
-    const found = offered.find((t) => t.name === name);
-    const plugin = found && ctx.livePlugin ? ctx.livePlugin(found) : found;
-    if (typeof plugin === "string") return { content: plugin, isError: true };
-    if (plugin?.access === "write") {
-      if (!ctx.gated) return { content: `${name} can't run here.`, isError: true };
-      return ctx.gated(plugin, input, signal);
-    }
-    if (plugin) {
-      const r = await runPluginTool(plugin, input, { task: null, signal });
-      if (r.untrusted) ctx.taint?.(describeCall(plugin, input), r.text);
-      return r;
-    }
-    const names = [...TOOLS, ...offered].map((t) => t.name);
-    return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
-  }
+): Promise<Ran> {
+  const tool = TOOLS.find((t) => t.name === name);
+  if (!tool) return { content: `Unknown tool "${name}".`, isError: true };
   const parsed = tool.schema.safeParse(input);
   if (!parsed.success) return { content: invalidInput(parsed.error), isError: true };
   try {
@@ -1936,42 +1908,44 @@ export async function runTool(
     if (typeof out === "string") return { content: out, isError: false };
     return { content: out.text, images: [out.image], isError: false };
   } catch (err) {
-    if (
-      err instanceof MemoryError ||
-      err instanceof ScheduleError ||
-      err instanceof DesktopError ||
-      err instanceof NotChanged ||
-      err instanceof BoxError
-    )
+    if (err instanceof UserError || err instanceof DesktopError || err instanceof NotChanged)
       return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);
     return { content: "The tool failed with an internal error.", isError: true };
   }
 }
 
-export const DESKTOP_TOOLS = ["run_desktop_task", "send_file"];
-
-/** Only the code bot gets these, when there is one. */
-export const BOX_CHANGE_TOOLS = ["box_create", "box_edit", "box_revert", "box_feed", "box_t3"];
-
-/** Lookups that leave nothing behind; not history search, which incognito doesn't see. */
-export const INCOGNITO_TOOLS = [
-  "memory_list",
-  "memory_read",
-  "memory_search",
-  "todo_list",
-  "schedule_list",
-  "trigger_list",
-  "watch_list",
-];
-
-export const LOOKUP_TOOLS = [
-  "memory_list",
-  "memory_read",
-  "memory_search",
-  "todo_list",
-  "search_history",
-];
+/**
+ * One of the tools offered, by name. A write goes through `gated`, which applies its policy and the
+ * untrusted-content rule; `live` says what a plugin's tool is now, or why it can't run.
+ */
+export async function runOffered(
+  name: string,
+  input: unknown,
+  o: {
+    offered: PluginTool[];
+    call: CallContext;
+    live?: (t: PluginTool) => PluginTool | string;
+    gated?: (t: PluginTool, input: unknown, signal: AbortSignal) => Promise<Ran>;
+  },
+): Promise<Ran> {
+  const found =
+    o.offered.find((t) => t.name === name) ??
+    o.offered.find((t) => t.name.toLowerCase() === name.toLowerCase());
+  if (!found) {
+    const names = o.offered.map((t) => t.name);
+    return { content: `Unknown tool "${name}". Available: ${names.join(", ")}`, isError: true };
+  }
+  const tool = o.live ? o.live(found) : found;
+  if (typeof tool === "string") return { content: tool, isError: true };
+  if (tool.access === "write") {
+    if (!o.gated) return { content: `${tool.name} can't run here.`, isError: true };
+    return o.gated(tool, input, o.call.signal);
+  }
+  const r = await runPluginTool(tool, input, o.call);
+  if (r.untrusted) o.call.taint?.(describeCall(tool, input), r.text);
+  return r;
+}
 
 /**
  * Calls in a row run together when `parallel` allows (true, or the thing a change acts on), changes

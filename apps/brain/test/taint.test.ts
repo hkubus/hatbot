@@ -5,7 +5,7 @@ import { definePlugin, PluginError, ready, tool } from "@hatbot/plugin-sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
-import { runTool } from "../src/agent/tools";
+import { runCoreTool } from "../src/agent/tools";
 import { tagJson, untrustedBlock, untrustedFields } from "../src/agent/untrusted";
 import { EventBus } from "../src/events";
 import { runPluginTool } from "../src/plugins/registry";
@@ -149,19 +149,19 @@ test("another bot's folder can't be written through a path that isn't normalised
     bots: t.bots,
   });
   for (const path of ["notes/../bots/coder/rules.md", ".//bots//coder/rules.md"]) {
-    const write = await runTool(
+    const write = await runCoreTool(
       "memory_write",
       { path, content: "x", reason: "r" },
       as(t.bots.hatbot()),
     );
     expect(write.content).toContain("Coder's own memory folder");
     expect(
-      (await runTool("memory_delete", { path, reason: "r" }, as(t.bots.hatbot()))).isError,
+      (await runCoreTool("memory_delete", { path, reason: "r" }, as(t.bots.hatbot()))).isError,
     ).toBe(true);
   }
   expect(await t.memory.exists("bots/coder/rules.md")).toBe(false);
   // Its own folder, however it's written.
-  const own = await runTool(
+  const own = await runCoreTool(
     "memory_write",
     { path: "notes/../bots/coder/rules.md", content: "x", reason: "r" },
     as(coder),

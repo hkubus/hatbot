@@ -19,6 +19,7 @@ import {
   call,
   ended,
   finish,
+  pluginTools,
   scheduled,
   stopPluginsAfterEach,
   toolOf,
@@ -131,7 +132,7 @@ test("Settings: off until switched on, what's missing and set there, bad setting
   ]);
   const on = (await (await api("PATCH", "/plugins/lab", { enabled: true })).json()) as PluginInfo;
   expect(on).toMatchObject({ enabled: true, state: "needs_setup" });
-  expect(t.plugins.tools()).toHaveLength(0);
+  expect(pluginTools(t)).toHaveLength(0);
   expect((await api("PATCH", "/plugins/lab", { config: { greeting: 5 } })).status).toBe(400);
 
   // Set on its page, the token starts it at once; the app is told it's set, never what to.
@@ -193,7 +194,7 @@ test("a plugin reaches only its own: tools named after it, also once it recovers
   expect((await t.plugins.update("rogue", { enabled: true })).state).toBe("error");
   expect((await t.plugins.update("shifty", { enabled: true })).state).toBe("ready");
   await waitFor(() => t.plugins.get("shifty")?.state === "error");
-  expect(t.plugins.tools()).toHaveLength(0);
+  expect(pluginTools(t)).toHaveLength(0);
 
   await t.plugins.update("formed", { enabled: true });
   expect(await t.plugins.action("formed", "hello", {})).toBe("hi");

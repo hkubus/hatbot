@@ -1,13 +1,14 @@
 import { beforeEach, expect, test } from "bun:test";
 import { pbsPlugin } from "../src/plugins/pbs";
 import { FakeModel, toolUse } from "./fake-model";
-import { waitFor } from "./helpers";
+import { type TestApp, waitFor } from "./helpers";
 import {
   ended,
   fakeApi,
   finish,
   PVE_FINGERPRINT,
   pluginApp,
+  pluginTools,
   scheduled,
   stopPluginsAfterEach,
 } from "./plugin-helpers";
@@ -43,8 +44,7 @@ const env = {
   PBS_TOKEN_SECRET: "s3cret",
   PBS_TLS_FINGERPRINT: PVE_FINGERPRINT,
 };
-const names = (t: { plugins: { tools: () => { name: string }[] } }) =>
-  t.plugins.tools().map((x) => x.name);
+const names = (t: TestApp) => pluginTools(t).map((x) => x.name);
 
 test("a task verifies right away; deleting a backup waits for approval and names the snapshot", async () => {
   const work = new FakeModel([

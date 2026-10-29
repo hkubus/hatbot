@@ -48,6 +48,10 @@ export function realSandbox(t: TestApp) {
   return box;
 }
 
+/** The tools switched-on plugins give, without the core's own. */
+export const pluginTools = (t: TestApp): PluginTool[] =>
+  t.plugins.tools().filter((x) => !t.plugins.pluginOf(x.name)?.internal);
+
 export function toolOf(t: TestApp, name: string): PluginTool {
   const found = t.plugins.tools().find((x) => x.name === name);
   if (!found) throw new Error(`no tool ${name}`);

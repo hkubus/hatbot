@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Plugin } from "@hatbot/plugin-sdk";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
+import { corePlugins } from "./agent/core-tools";
 import type { ModelClient } from "./agent/model";
 import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
@@ -127,6 +128,23 @@ export async function createServices(o: Outside) {
         fetch: o.fetch,
       }),
       own,
+      ...corePlugins(() => ({
+        db,
+        clock,
+        memory,
+        events,
+        bots,
+        tasks,
+        schedules,
+        triggers,
+        watchers,
+        attachments,
+        boxes,
+        desktop: agent,
+        proposals,
+        settings,
+        t3Ready: (bot) => plugins.readyFor("t3", bot.plugins, bots.leftToOthers(bot)),
+      })),
     ],
     {
       db,

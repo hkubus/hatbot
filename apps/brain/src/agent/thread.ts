@@ -36,6 +36,7 @@ import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Negotiations } from "../negotiate/service";
 import {
   describeCall,
+  offered,
   type Plugins,
   runPluginTool,
   untrustedDefinitions,
@@ -81,19 +82,14 @@ import { levelOf, safeToRun, scopable, scopesFor } from "./review";
 import { type Readable, Screener } from "./screening";
 import {
   addSources,
-  BOX_CHANGE_TOOLS,
   CHAT_WEB_TOOLS,
+  chatToolParam,
   containerOf,
-  DESKTOP_TOOLS,
-  deferRare,
-  INCOGNITO_TOOLS,
   imageBlocks,
   inBatches,
   invalidInput,
-  LOOKUP_TOOLS,
   liveTool,
-  runTool,
-  TOOL_PARAMS,
+  runOffered,
   TOOL_SEARCH,
   type ToolImage,
   toolParam,
@@ -576,8 +572,8 @@ export class Thread {
 
   private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
     const { plugins, bots } = this.d;
-    // Negotiation's tools aren't a plugin's.
-    if (!plugins.pluginOf(offered.name)) return offered;
+    // Negotiation's tools aren't a plugin's, and the core's own don't change.
+    if (!plugins.pluginOf(offered.name) || plugins.pluginOf(offered.name)?.internal) return offered;
     const now = bots.get(bot.id) ?? bot;
     return liveTool(offered, plugins.tools(now.plugins, bots.leftToOthers(now)), {
       bot: bot.name,
@@ -888,27 +884,20 @@ export class Thread {
     const base = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
     const system = incognito ? `${base}\n\n${INCOGNITO_PROMPT}` : base;
     const own = plugins.tools(bot.plugins, left);
+    const offer = { place: "chat" as const, bot, others, incognito };
     // Negotiation's tools come with Scout's.
     const pluginTools = [
       ...own,
       ...(negotiations?.tools(bot, own, { conversationId: this.conversationId }) ?? []),
-    ].filter((t) => !incognito || t.access === "read");
+    ].filter((t) => offered(t, offer));
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
     const chatModel = bot.chatModel ?? settings.get().chatModel;
     const onHaiku = chatModel === "claude-haiku-5-5";
     const tools = [
-      ...(incognito ? TOOL_PARAMS.filter((t) => INCOGNITO_TOOLS.includes(t.name)) : TOOL_PARAMS)
-        // Alone, Hatbot's tools stay as they were, and its cache with them.
-        .filter((t) => others.length || t.name !== "ask_bot")
-        .filter((t) => this.d.desktop?.configured || !DESKTOP_TOOLS.includes(t.name))
-        // Boxes are code: with a code bot, it makes and changes them all.
-        .filter((t) => !bots.coderFor(bot) || !BOX_CHANGE_TOOLS.includes(t.name))
-        .filter((t) => t.name !== "box_t3" || plugins.readyFor("t3", bot.plugins, left))
-        .map(deferRare),
+      ...pluginTools.map(chatToolParam),
       ASK_OWNER,
       TOOL_SEARCH,
       ...(onHaiku ? [ASK_OPUS] : []),
-      ...pluginTools.map(toolParam),
       ...CHAT_WEB_TOOLS,
     ];
     return {
@@ -2351,9 +2340,7 @@ export class Thread {
 
         // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
         const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
-          !cutOff(res) &&
-          (LOOKUP_TOOLS.includes(call.name) ||
-            pluginTools.find((t) => t.name === call.name)?.access === "read");
+          !cutOff(res) && pluginTools.find((t) => t.name === call.name)?.access === "read";
         const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
           if (abort.signal.aborted)
             return toolResult(call.id, "Not run: the reply was stopped.", true);
@@ -2383,13 +2370,29 @@ export class Thread {
           // A change says what it's doing once its checks are done.
           if (plugin?.access !== "write")
             progress(activity(plugin?.label ?? toolLabel(call.name, plugins), call.input));
-          const r = await runTool(
-            call.name,
-            call.input,
-            {
-              ...this.d,
+          const r = await runOffered(call.name, call.input, {
+            offered: pluginTools,
+            live: (t) => this.livePlugin(bot, t, incognito),
+            gated: async (t, input, signal) => {
+              // The sandbox is scratch space; only commands on the homelab and accounts count.
+              if (plugins.pluginOf(t.name)?.id !== "code") {
+                const parsed = t.schema.safeParse(input);
+                commands += parsed.success && t.commands ? t.commands(parsed.data) : 1;
+                const most = this.d.settings.get().safety.chatCommands;
+                if (commands > most)
+                  return {
+                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command counts, and a loop is many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
+                    isError: true,
+                  };
+              }
+              return checked(() =>
+                this.gatedCall(episode.id, bot, t, input, signal, progress, out.id, screen),
+              );
+            },
+            call: {
+              task: null,
+              signal: abort.signal,
               bot,
-              pluginTools,
               conversationId: this.conversationId,
               messageId: out.id,
               episodeId: episode.id,
@@ -2404,23 +2407,6 @@ export class Thread {
               },
               ownerSaid: () => this.ownerSaid(episode.id),
               answering: this.currentHandoff?.task,
-              livePlugin: (t) => this.livePlugin(bot, t, incognito),
-              gated: async (t, input, signal) => {
-                // The sandbox is scratch space; only commands on the homelab and accounts count.
-                if (plugins.pluginOf(t.name)?.id !== "code") {
-                  const parsed = t.schema.safeParse(input);
-                  commands += parsed.success && t.commands ? t.commands(parsed.data) : 1;
-                  const most = this.d.settings.get().safety.chatCommands;
-                  if (commands > most)
-                    return {
-                      content: `Not run: that would take this reply past ${most} commands (each part of a chained command counts, and a loop is many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
-                      isError: true,
-                    };
-                }
-                return checked(() =>
-                  this.gatedCall(episode.id, bot, t, input, signal, progress, out.id, screen),
-                );
-              },
               approve: ({ why, always, ...call }, signal) =>
                 checked(async () => {
                   const verdict = { action: "ask" as const, why, tainted: true, always };
@@ -2438,8 +2424,7 @@ export class Thread {
                   taintedBy: this.trust(episode.id).tainted,
                 }),
             },
-            abort.signal,
-          );
+          });
           return toolResult(call.id, r.content, r.isError, r.images);
         });
         this.appendTurn(episode.id, bot.id, "user", results);
@@ -2575,43 +2560,7 @@ export function answered(turns: Turn[]): Turn[] {
 }
 
 function toolLabel(name: string, plugins: Plugins): string {
-  const labels: Record<string, string> = {
-    memory_list: "Looking through memory",
-    memory_read: "Reading memory",
-    memory_write: "Saving to memory",
-    memory_delete: "Removing from memory",
-    memory_search: "Searching memory",
-    search_history: "Searching earlier messages",
-    run_desktop_task: "Starting a desktop task",
-    get_task: "Checking on a task",
-    schedule_create: "Creating a schedule",
-    schedule_list: "Looking at schedules",
-    schedule_update: "Changing a schedule",
-    schedule_delete: "Deleting a schedule",
-    trigger_list: "Looking at triggers",
-    trigger_update: "Changing a trigger",
-    watch_create: "Setting up a watcher",
-    watch_list: "Looking at watchers",
-    watch_update: "Changing a watcher",
-    watch_delete: "Deleting a watcher",
-    run_task: "Starting a task",
-    ask_bot: "Asking another bot",
-    ask_opus: "Asking Opus",
-    send_file: "Sending a file",
-    box_create: "Making a box",
-    box_edit: "Changing a box",
-    box_t3: "Handing the box to T3 Code",
-    box_list: "Looking at boxes",
-    box_read: "Reading a box",
-    box_revert: "Changing a box",
-    box_data: "Reading what a box saved",
-    box_logs: "Reading a box's logs",
-    box_call: "Trying a box's backend",
-    box_feed: "Giving a box a feed",
-    box_look: "Looking at a box",
-  };
-  const plugin = plugins.pluginOf(name);
-  return labels[name] ?? `Using ${plugin?.name ?? name}`;
+  return `Using ${plugins.pluginOf(name)?.name ?? name}`;
 }
 
 export function titleOf(text: string, max = 80): string {
