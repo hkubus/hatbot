@@ -1,5 +1,5 @@
-// Set here, the API key and ntfy server replace the host's (deploy.sh's) until removed. The key and
-// the token are only ever sent, never shown.
+// Set here, the ntfy server replaces the host's (deploy.sh's) until removed. The token is only ever
+// sent, never shown.
 import type { ConnectionSource, Connections as ConnectionsInfo } from "@hatbot/shared";
 import { type FormEvent, useState } from "react";
 import { useAction } from "../action";
@@ -29,19 +29,6 @@ function useConnections() {
     retry,
   } = useLoad(() => api<ConnectionsInfo>("/connections"), []);
   return { info, setInfo, error: error && <LoadError error={error} retry={retry} /> };
-}
-
-export function ApiKeyPage({ toast }: { toast: Toast }) {
-  const { info, setInfo, error } = useConnections();
-  return (
-    <section className="view">
-      <div className="page narrow">
-        <BackHead to="/settings" label="Settings" />
-        {error}
-        {info && <ApiKeyForm info={info.anthropic} onSaved={setInfo} toast={toast} />}
-      </div>
-    </section>
-  );
 }
 
 export function NtfyPage({ toast }: { toast: Toast }) {
@@ -84,66 +71,6 @@ function useHosts(what: string, path: string, onSaved: (c: ConnectionsInfo) => v
     );
   };
   return { busy, reset };
-}
-
-function ApiKeyForm({
-  info,
-  onSaved,
-  toast,
-}: {
-  info: ConnectionsInfo["anthropic"];
-  onSaved: (c: ConnectionsInfo) => void;
-  toast: Toast;
-}) {
-  const [key, setKey] = useState("");
-  const { busy, error, run } = useAction();
-  const hosts = useHosts("API key", "/connections/anthropic", onSaved, toast);
-  useLeaveGuard(!!key);
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    run(async () => {
-      onSaved(
-        await api<ConnectionsInfo>("/connections/anthropic", { method: "PUT", body: { key } }),
-      );
-      setKey("");
-      toast("Saved. Chats and tasks use the new key from now on.");
-    });
-  };
-
-  return (
-    <form className="panel form" onSubmit={submit}>
-      <h3 className="section-title">Anthropic API key</h3>
-      <div className="muted">
-        {info.set && info.from
-          ? `${SOURCE[info.from]}${info.ending ? `, ending in ${info.ending}` : ""}.`
-          : "Not set: chats and tasks fail until there's one."}
-      </div>
-      <label>
-        <span className="label">{info.set ? "New key" : "Key"}</span>
-        <input
-          className="field mono"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="sk-ant-…"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-        />
-      </label>
-      {error && <div className="form-error">{error}</div>}
-      <div className="form-actions">
-        {info.from === "app" && (
-          <button type="button" className="btn ghost" disabled={hosts.busy} onClick={hosts.reset}>
-            Use the host's
-          </button>
-        )}
-        <button type="submit" className="btn accent" disabled={busy || !key.trim()}>
-          {busy ? "Trying it…" : "Try and save"}
-        </button>
-      </div>
-    </form>
-  );
 }
 
 function NtfyForm({

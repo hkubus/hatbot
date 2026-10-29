@@ -1,0 +1,15 @@
+{
+  "name": "@hatbot/plugin-anthropic",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@hatbot/plugin-sdk": "workspace:*",
+    "zod": "^4.6.5"
+  }
+}

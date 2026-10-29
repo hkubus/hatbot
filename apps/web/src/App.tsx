@@ -107,7 +107,6 @@ const TAB_OF: Partial<Record<Section["title"], Section["title"]>> = { Boxes: "Se
 const SUB_TITLE: Record<string, string> = {
   "/settings/plugins": "Plugins",
   "/settings/notifications": "ntfy server",
-  "/settings/api-key": "Anthropic API key",
   "/settings/allowed": "Always allowed",
   "/settings/safety": "Approvals and guardrails",
   "/settings/account": "Password and authenticator",

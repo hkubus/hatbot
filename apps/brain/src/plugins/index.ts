@@ -1,3 +1,4 @@
+import { anthropicPlugin } from "@hatbot/plugin-anthropic";
 import { forgejoPlugin } from "@hatbot/plugin-forgejo";
 import { githubPlugin } from "@hatbot/plugin-github";
 import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
@@ -9,6 +10,7 @@ import { sshPlugin } from "@hatbot/plugin-ssh";
 import { uptimeKumaPlugin } from "@hatbot/plugin-uptimekuma";
 
 export const PLUGINS: Plugin[] = [
+  anthropicPlugin,
   proxmoxPlugin,
   pbsPlugin,
   sshPlugin,

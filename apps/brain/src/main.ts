@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { websocket } from "hono/bun";
-import { AnthropicModelClient } from "./agent/model";
 import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
 import { HttpDesktopAgent } from "./desktop/client";
@@ -13,17 +12,11 @@ import { webHandler } from "./web";
 
 const config = loadConfig();
 const secrets = new Secrets(join(config.dataDir, "secrets.json"));
-const model = new AnthropicModelClient(secrets.apiKey());
 const ntfy = new NtfyNotifier(secrets.ntfy());
-secrets.onChange(() => {
-  model.setApiKey(secrets.apiKey());
-  ntfy.configure(secrets.ntfy());
-});
+secrets.onChange(() => ntfy.configure(secrets.ntfy()));
 const brain = await createServices({
   config,
   db: openDb(config.dbPath),
-  model,
-  taskModel: model,
   agent: new HttpDesktopAgent(),
   hatbox: new HttpHatboxAgent(),
   notifications: ntfy,
@@ -108,5 +101,3 @@ console.log(`hatbot brain listening on http://${urlHost(config.host)}:${server.p
 if (!auth.isSetUp()) {
   console.log(`First run: open ${config.publicUrl}/setup and enter setup code ${auth.setupCode}`);
 }
-if (!secrets.apiKey())
-  console.warn("No Anthropic API key is set; chat replies fail until one is added in Settings");

@@ -35,7 +35,6 @@ import { PluginPage, PluginsPage } from "./Plugins";
 import { SafetyPage } from "./Safety";
 
 const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account })));
-const ApiKeyPage = lazy(() => import("./Connections").then((m) => ({ default: m.ApiKeyPage })));
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
 const Devices = lazy(() => import("./Devices").then((m) => ({ default: m.Devices })));
 const NtfyPage = lazy(() => import("./Connections").then((m) => ({ default: m.NtfyPage })));
@@ -43,7 +42,8 @@ const NtfyPage = lazy(() => import("./Connections").then((m) => ({ default: m.Nt
 /** Old addresses, for bookmarks and links from before the regroup. */
 const MOVED: Record<string, string> = {
   "/settings/heartbeat": "/schedules/heartbeat",
-  "/settings/connections": "/settings/api-key",
+  "/settings/connections": "/settings/plugins/anthropic",
+  "/settings/api-key": "/settings/plugins/anthropic",
 };
 
 /**
@@ -75,8 +75,6 @@ export function Settings({
     <Account toast={toast} />
   ) : path === "/settings/devices" ? (
     <Devices toast={toast} />
-  ) : path === "/settings/api-key" ? (
-    <ApiKeyPage toast={toast} />
   ) : path === "/settings/notifications" ? (
     <NtfyPage toast={toast} />
   ) : path === "/settings/safety" ? (
@@ -246,7 +244,6 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
         <Group title="Integrations">
           <LinkRow to="/settings/plugins" label="Plugins" />
-          <LinkRow to="/settings/api-key" label="Anthropic API key" />
         </Group>
 
         <Group title="Account">

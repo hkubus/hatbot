@@ -1,7 +1,6 @@
-import { SetApiKey, SetNtfy } from "@hatbot/shared";
+import { SetNtfy } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
-import { modelErrorText } from "../agent/model";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv, Deps } from "../context";
 import { guessableTopic } from "../notify";
@@ -48,20 +47,8 @@ export const adminRoutes = new Hono<AppEnv>()
     c.var.events.emit({ type: "settings.updated", settings });
     return c.json(settings);
   })
-  // The API key and ntfy server: set here, they replace the host's until removed.
+  // The ntfy server: set here, it replaces the host's until removed.
   .get("/connections", (c) => c.json(c.var.secrets.view()))
-  .put("/connections/anthropic", json(SetApiKey), async (c) => {
-    try {
-      await c.var.secrets.setApiKey(c.req.valid("json").key);
-    } catch (err) {
-      return c.json({ error: `The key wasn't saved: ${modelErrorText(err)}.`, field: "key" }, 400);
-    }
-    return c.json(c.var.secrets.view());
-  })
-  .delete("/connections/anthropic", async (c) => {
-    await c.var.secrets.setApiKey(null);
-    return c.json(c.var.secrets.view());
-  })
   .put("/connections/ntfy", json(SetNtfy), (c) => {
     const ntfy = c.req.valid("json");
     // Whoever guesses the topic may read every notification and press its Approve buttons.

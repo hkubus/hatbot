@@ -11,6 +11,9 @@ import {
 import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desktop";
 import { Hono } from "hono";
 import type { z } from "zod";
+import type { ModelProvider } from "./models";
+
+export * from "./models";
 
 /** The API's major version. A plugin built for another one isn't started. */
 export const SDK_VERSION = 1;
@@ -284,6 +287,8 @@ export type PluginInstance = {
   ticks?: PluginTick[];
   /** Lines for the system prompt, by where the model works, while it's ready. */
   prompt?: Partial<Record<Place, string>>;
+  /** It gives models: Settings lists them for each role. */
+  models?: ModelProvider;
 };
 
 export type PluginTick = { name: string; everyMs: number; run: () => unknown };

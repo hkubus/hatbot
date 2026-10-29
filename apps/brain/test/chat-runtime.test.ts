@@ -1,14 +1,9 @@
 import { expect, test } from "bun:test";
 import Anthropic from "@anthropic-ai/sdk";
+import { AnthropicModelClient, retryAfterMs, retryable } from "@hatbot/plugin-anthropic";
+import { retryDelays, withRetries } from "@hatbot/plugin-sdk";
 import type { ThreadMessage } from "@hatbot/shared";
 import { Chats } from "../src/agent/chats";
-import {
-  AnthropicModelClient,
-  retryAfterMs,
-  retryable,
-  retryDelays,
-  withRetries,
-} from "../src/agent/model";
 import { EventBus } from "../src/events";
 import { type BudgetError, estimateTokens, requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
@@ -102,21 +97,22 @@ test("a stream that fails is tried three times at most, after retry-after; not o
   expect(retryable(new Anthropic.APIUserAbortError())).toBe(false);
   expect(retryable(new Anthropic.APIError(400, undefined, "bad", undefined))).toBe(false);
 
+  const rules = { retryable, retryAfterMs };
   let tries = 0;
   const failing =
     (times: number, err: unknown = overloaded) =>
     () =>
       ++tries <= times ? Promise.reject(err) : Promise.resolve("ok");
   let retries = 0;
-  expect(await withRetries(failing(2), { onRetry: () => retries++ }, [0, 0])).toBe("ok");
+  expect(await withRetries(failing(2), { onRetry: () => retries++ }, rules, [0, 0])).toBe("ok");
   expect([tries, retries]).toEqual([3, 2]);
   tries = 0;
-  await expect(withRetries(failing(3), {}, [0, 0])).rejects.toBe(overloaded);
+  await expect(withRetries(failing(3), {}, rules, [0, 0])).rejects.toBe(overloaded);
   expect(tries).toBe(3);
   tries = 0;
   const stopped = new AbortController();
   stopped.abort();
-  await expect(withRetries(failing(3), { signal: stopped.signal }, [0, 0])).rejects.toBe(
+  await expect(withRetries(failing(3), { signal: stopped.signal }, rules, [0, 0])).rejects.toBe(
     overloaded,
   );
   expect(tries).toBe(1);
@@ -140,14 +136,20 @@ test("a stream that fails is tried three times at most, after retry-after; not o
   const waits: number[] = [];
   tries = 0;
   expect(
-    await withRetries(failing(1, limited({ "retry-after-ms": "60" })), {}, [0, 0], async (ms) => {
-      waits.push(ms);
-    }),
+    await withRetries(
+      failing(1, limited({ "retry-after-ms": "60" })),
+      {},
+      rules,
+      [0, 0],
+      async (ms) => {
+        waits.push(ms);
+      },
+    ),
   ).toBe("ok");
   expect(waits).toEqual([60]);
   tries = 0;
   await expect(
-    withRetries(failing(3, limited({ "retry-after": "3600" })), {}, [0, 0]),
+    withRetries(failing(3, limited({ "retry-after": "3600" })), {}, rules, [0, 0]),
   ).rejects.toBeInstanceOf(Anthropic.APIError);
   expect(tries).toBe(1);
 

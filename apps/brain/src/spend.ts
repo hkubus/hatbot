@@ -1,31 +1,25 @@
+import type { ModelInfo, ModelPrice } from "@hatbot/plugin-sdk";
 import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import type { SettingsStore } from "./settings";
 
-type Price = { input: number; output: number; cacheRead: number };
+/** What the model providers that started gave, by model id: a model's price doesn't change with who asks. */
+const prices = new Map<string, ModelPrice>();
+const fallbacks = new Map<string, string[]>();
 
-/**
- * USD per million tokens. `longPrompt`: above that many prompt tokens (input + cache reads and
- * writes), the whole request is billed at the higher price.
- */
-export const PRICES: Record<string, Price & { longPrompt?: { above: number } & Price }> = {
-  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },
-  // What a declined Opus 5.5 request may be answered by (FALLBACK_MODELS).
-  "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5 },
-  "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2 },
-  "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2 },
-  // Haiku 5.5's long-prompt cache-read price isn't published separately; assumed 5x like the rest.
-  "claude-haiku-5-5": {
-    input: 0.1,
-    output: 0.5,
-    cacheRead: 0.01,
-    longPrompt: { above: 100_000, input: 0.5, output: 2.5, cacheRead: 0.05 },
-  },
-  // Older rows in the ledger.
-  "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1 },
-};
+export function addPrices(models: ModelInfo[]) {
+  for (const m of models) {
+    prices.set(m.id, m.price);
+    if (m.fallbacks?.length) {
+      fallbacks.set(
+        m.id,
+        m.fallbacks.map((f) => f.id),
+      );
+      addPrices(m.fallbacks);
+    }
+  }
+}
 
 export type UsageLike = {
   input_tokens: number;
@@ -59,18 +53,12 @@ export function tokensOf(u: UsageLike): Tokens {
   };
 }
 
-/** The models `fallbacks: "default"` may answer with instead of the one asked, which each need a price. */
-export const FALLBACK_MODELS: Record<string, string[]> = {
-  "claude-opus-5-5": ["claude-opus-5", "claude-opus-4-8"],
-  "claude-sonnet-5-5": ["claude-sonnet-5"],
-};
-
 // Unknown models get the highest rates (Claude Fable's), so spend is never under-counted.
-const UNKNOWN_PRICE: (typeof PRICES)[string] = { input: 10, output: 50, cacheRead: 1 };
+const UNKNOWN_PRICE: ModelPrice = { input: 10, output: 50, cacheRead: 1 };
 const unpriced = new Set<string>();
 
 export function priceOf(model: string) {
-  const p = PRICES[model] ?? PRICES[model.replace(/-\d{8}$/, "")];
+  const p = prices.get(model) ?? prices.get(model.replace(/-\d{8}$/, ""));
   if (p) return p;
   if (!unpriced.has(model)) {
     unpriced.add(model);
@@ -160,7 +148,7 @@ export function requestCeiling(
   };
   const searches = (r.webSearches ?? 0) * WEB_SEARCH_USD;
   const own = ceiling(model, r.cached ?? 0, r.maxTokens);
-  const others = r.fallbacks ? (FALLBACK_MODELS[model] ?? []) : [];
+  const others = r.fallbacks ? (fallbacks.get(model) ?? []) : [];
   if (!others.length) return own + searches;
   const declined = ceiling(model, r.cached ?? 0, 0);
   const rescue = Math.max(...others.map((m) => ceiling(m, 0, r.maxTokens)));

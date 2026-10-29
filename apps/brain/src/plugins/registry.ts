@@ -4,6 +4,7 @@ import {
   askCareful,
   type CallContext,
   covered,
+  type ModelProvider,
   type Offer,
   type Place,
   type Plugin,
@@ -25,6 +26,7 @@ import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { Secrets } from "../secrets";
 import { deleteSetting, getSetting, setSetting } from "../settings";
+import { addPrices } from "../spend";
 
 const MAX_OUTPUT_CHARS = 30_000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -318,6 +320,13 @@ export class Plugins {
       .map((s) => s.plugin.name);
   }
 
+  /** Ready plugins' model providers, in a stable order. */
+  modelProviders(): { id: string; provider: ModelProvider }[] {
+    return this.readyOnes(null, []).flatMap((s) =>
+      s.instance?.models ? [{ id: s.plugin.id, provider: s.instance.models }] : [],
+    );
+  }
+
   /** What the model may be offered. */
   tools(only: string[] | null = null, except: string[] = []): PluginTool[] {
     return this.brainTools(only, except).filter((t) => !t.brainOnly);
@@ -421,6 +430,7 @@ export class Plugins {
     s.instance = instance;
     s.state = state;
     s.message = message;
+    if (state === "ready" && instance?.models) addPrices(instance.models.models());
     this.emit(s);
     this.later(s);
     this.time(s);

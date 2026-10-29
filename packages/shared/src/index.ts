@@ -710,21 +710,10 @@ export type SpendByPurpose = { purpose: string; costUsd: number };
 
 /** Where a connection's settings come from: Settings, the host's /etc/hatbot (deploy.sh), or nowhere. */
 export type ConnectionSource = "app" | "host" | null;
-/** GET /connections: the Anthropic API key and the ntfy server. The key and the token never come back. */
+/** GET /connections: the ntfy server. The token never comes back. */
 export type Connections = {
-  /** `ending`: the key's last four characters, to tell keys apart. */
-  anthropic: { set: boolean; from: ConnectionSource; ending: string | null };
   ntfy: { url: string; topic: string; tokenSet: boolean; from: ConnectionSource };
 };
-/** PUT /connections/anthropic. The brain tries the key before it keeps it. */
-export const SetApiKey = z.object({
-  key: z
-    .string()
-    .trim()
-    .min(20, "That's too short for an API key.")
-    .max(500)
-    .regex(/^\S+$/, "An API key has no spaces."),
-});
 /** PUT /connections/ntfy. A token left out stays as it is. */
 export const SetNtfy = z.object({
   url: z

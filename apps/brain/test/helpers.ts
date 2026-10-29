@@ -105,13 +105,7 @@ export async function testApp(
     proxmox,
     plugins: pluginList,
     pluginEnv,
-    secrets: new Secrets(
-      join(dir, "secrets.json"),
-      { ANTHROPIC_API_KEY: "sk-ant-host-key-000000-HOST" },
-      async (key) => {
-        if (key.includes("bad")) throw new Error("invalid x-api-key");
-      },
-    ),
+    secrets: new Secrets(join(dir, "secrets.json"), {}),
     // Argon2id at its lowest cost: the brain's own takes ~75 ms a hash, on every sign-in.
     passwordCost: { memoryCost: 8, timeCost: 1 },
     fetch: async (url, init) =>

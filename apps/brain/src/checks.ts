@@ -54,7 +54,8 @@ export type ChecksDeps = {
   > | null;
   auth?: Pick<AuthService, "untrustedProxy">;
   ping?: Pick<DeadManPing, "configured" | "lastPing">;
-  apiKeySet?: () => boolean;
+  /** Whether any model provider is on. */
+  modelsReady?: () => boolean;
   /** The brain's time zone; the desktop's should match it. */
   timeZone?: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
@@ -231,8 +232,8 @@ export class Checks {
 
   private async modelCall() {
     if (this.d.settings.get().paused) return skip("Paused.");
-    if (this.d.apiKeySet?.() === false)
-      return fail("There's no API key. Add one in Settings → Integrations → Anthropic API key.");
+    if (this.d.modelsReady?.() === false)
+      return fail("No model provider is on. Set one up in Settings → Plugins.");
     try {
       await oneShot(
         this.d,

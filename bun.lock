@@ -14,6 +14,7 @@
       "name": "@hatbot/brain",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.133.0",
+        "@hatbot/plugin-anthropic": "workspace:*",
         "@hatbot/plugin-code": "workspace:*",
         "@hatbot/plugin-forgejo": "workspace:*",
         "@hatbot/plugin-github": "workspace:*",
@@ -78,6 +79,7 @@
       "name": "@hatbot/plugin-sdk",
       "version": "1.0.0",
       "dependencies": {
+        "@anthropic-ai/sdk": "^0.133.0",
         "@hatbot/shared": "workspace:*",
         "hono": "^4.13.13",
         "zod": "^4.6.5",
@@ -86,6 +88,15 @@
     "packages/shared": {
       "name": "@hatbot/shared",
       "dependencies": {
+        "zod": "^4.6.5",
+      },
+    },
+    "plugins/anthropic": {
+      "name": "@hatbot/plugin-anthropic",
+      "version": "1.0.0",
+      "dependencies": {
+        "@anthropic-ai/sdk": "^0.133.0",
+        "@hatbot/plugin-sdk": "workspace:*",
         "zod": "^4.6.5",
       },
     },
@@ -257,6 +268,8 @@
     "@hatbot/desktop-agent": ["@hatbot/desktop-agent@workspace:apps/desktop-agent"],
 
     "@hatbot/hatbox": ["@hatbot/hatbox@workspace:apps/hatbox"],
+
+    "@hatbot/plugin-anthropic": ["@hatbot/plugin-anthropic@workspace:plugins/anthropic"],
 
     "@hatbot/plugin-code": ["@hatbot/plugin-code@workspace:plugins/code"],
 

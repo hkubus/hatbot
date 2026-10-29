@@ -1,13 +1,11 @@
 // Kept in a file of their own, mode 600, not in the database, so the nightly snapshots and the
 // settings every client is sent don't carry them. Unset, the host's apply (/etc/hatbot).
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import Anthropic from "@anthropic-ai/sdk";
 import type { ConnectionSource, Connections } from "@hatbot/shared";
 
 export type NtfyConfig = { url: string; topic: string; token: string };
 type Values = Record<string, string>;
 type Stored = {
-  anthropicApiKey?: string;
   ntfy?: NtfyConfig;
   env?: Values;
   /** Secrets a plugin takes by any name (MCP's ${NAME}), by plugin. */
@@ -29,13 +27,6 @@ const byId = (v: unknown): Record<string, Values> =>
     Object.entries(v && typeof v === "object" ? v : {}).map(([id, x]) => [id, values(x)]),
   );
 
-export type KeyCheck = (key: string) => Promise<void>;
-
-/** The cheapest call that needs a working key. */
-export const checkApiKey: KeyCheck = async (key) => {
-  await new Anthropic({ apiKey: key, maxRetries: 0, timeout: 15_000 }).models.list({ limit: 1 });
-};
-
 function read(path: string): Stored {
   let text: string;
   try {
@@ -44,19 +35,21 @@ function read(path: string): Stored {
     return {};
   }
   try {
-    const s = JSON.parse(text) as Stored;
+    const s = JSON.parse(text) as Stored & { anthropicApiKey?: unknown };
+    const env = values(s.env);
+    // Set in Settings before providers were plugins: now the Anthropic plugin's.
+    if (typeof s.anthropicApiKey === "string") env.ANTHROPIC_API_KEY ??= s.anthropicApiKey;
     return {
-      anthropicApiKey: typeof s.anthropicApiKey === "string" ? s.anthropicApiKey : undefined,
       ntfy:
         s.ntfy && typeof s.ntfy.url === "string" && typeof s.ntfy.topic === "string"
           ? { url: s.ntfy.url, topic: s.ntfy.topic, token: String(s.ntfy.token ?? "") }
           : undefined,
-      env: values(s.env),
+      env,
       named: byId(s.named),
       boxes: byId(s.boxes),
     };
   } catch (err) {
-    console.error(`${path} isn't readable JSON; the host's API key and ntfy apply`, err);
+    console.error(`${path} isn't readable JSON; the host's settings apply`, err);
     return {};
   }
 }
@@ -68,13 +61,8 @@ export class Secrets {
   constructor(
     readonly path: string,
     private env: Record<string, string | undefined> = process.env,
-    private checkKey: KeyCheck = checkApiKey,
   ) {
     this.stored = read(path);
-  }
-
-  apiKey(): string {
-    return this.stored.anthropicApiKey ?? this.env.ANTHROPIC_API_KEY ?? "";
   }
 
   ntfy(): NtfyConfig {
@@ -118,18 +106,12 @@ export class Secrets {
     });
   }
 
-  /** Never the key or the token. */
+  /** Never the token. */
   view(): Connections {
-    const key = this.apiKey();
     const ntfy = this.ntfy();
     const from = (app: unknown, set: boolean): ConnectionSource =>
       app !== undefined ? "app" : set ? "host" : null;
     return {
-      anthropic: {
-        set: Boolean(key),
-        from: from(this.stored.anthropicApiKey, Boolean(key)),
-        ending: key.length >= 20 ? key.slice(-4) : null,
-      },
       ntfy: {
         url: ntfy.url,
         topic: ntfy.topic,
@@ -137,11 +119,6 @@ export class Secrets {
         from: from(this.stored.ntfy, Boolean(ntfy.url)),
       },
     };
-  }
-
-  async setApiKey(key: string | null) {
-    if (key) await this.checkKey(key);
-    this.save({ ...this.stored, anthropicApiKey: key ?? undefined });
   }
 
   /** A token left out stays as it is now, the host's included. */

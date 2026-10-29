@@ -12,6 +12,7 @@ import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
 import { corePlugins } from "./agent/core-tools";
 import type { ModelClient } from "./agent/model";
+import { Models } from "./agent/models";
 import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
 import { Approvals } from "./approvals";
@@ -58,8 +59,9 @@ export type Outside = {
   config: Config;
   db: Db;
   clock?: () => number;
-  model: ModelClient;
-  taskModel: ModelClient;
+  /** Tests' own; the brain's sends each model to the provider plugin that offers it. */
+  model?: ModelClient;
+  taskModel?: ModelClient;
   agent: DesktopAgent;
   hatbox?: HatboxAgent;
   notifications: Notifier;
@@ -134,6 +136,9 @@ export async function createServices(o: Outside) {
       services: { schedules: () => schedules },
     },
   );
+  const models = new Models(plugins);
+  const model = o.model ?? models;
+  const taskModel = o.taskModel ?? o.model ?? models;
   // Haggler, which haggles and lists, gets Scout once it's connected.
   plugins.on("scout:connected", () => {
     const haggler = bots.list().find((b) => b.name.toLowerCase() === "haggler");
@@ -150,7 +155,7 @@ export async function createServices(o: Outside) {
     events,
     spend,
     settings,
-    model: o.model,
+    model,
     plugins,
     bots,
     boxes,
@@ -173,7 +178,7 @@ export async function createServices(o: Outside) {
     events,
     settings,
     spend,
-    model: o.taskModel,
+    model: taskModel,
     memory,
     skills,
     archive,
@@ -219,7 +224,7 @@ export async function createServices(o: Outside) {
   });
   tasks.attach({ proposals });
   const feeds = new BoxFeeds({ db, settings, plugins, bots, clock });
-  boxes.connect({ settings, spend, model: o.taskModel, chats, feeds, notifier, publicUrl });
+  boxes.connect({ settings, spend, model: taskModel, chats, feeds, notifier, publicUrl });
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });
@@ -231,7 +236,7 @@ export async function createServices(o: Outside) {
     ntfy: o.ntfy,
     auth,
     ping,
-    apiKeySet: () => Boolean(secrets.apiKey()),
+    modelsReady: model === models ? () => plugins.modelProviders().length > 0 : undefined,
     fetch: o.fetch,
   });
   const loginLimits = {
@@ -249,6 +254,7 @@ export async function createServices(o: Outside) {
 
   const services = {
     ...core,
+    models,
     agent,
     auth,
     loginLimits,

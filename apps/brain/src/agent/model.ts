@@ -1,92 +1,31 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import {
+  type CreateParams,
+  ModelError,
+  type ModelMessage,
+  type StreamHandlers,
+  type StreamParams,
+} from "@hatbot/plugin-sdk";
 import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "../spend";
 
+export type { CreateParams, StreamHandlers, StreamParams };
+
+/** An API's error object, as Anthropic's and OpenAI's SDKs give it. */
+type ApiFailure = Error & { status?: number; error?: { error?: { message?: string } } };
+
 export function modelErrorText(err: unknown): string {
-  if (err instanceof Anthropic.APIError) {
-    const detail = (err.error as { error?: { message?: string } } | undefined)?.error?.message;
-    return `the API said ${err.status ?? "nothing"}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
+  if (err instanceof ModelError) return err.message.slice(0, 300);
+  const api = err as ApiFailure;
+  if (err instanceof Error && typeof api.status === "number") {
+    const detail = api.error?.error?.message;
+    return `the API said ${api.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
   }
   return err instanceof Error ? err.message.slice(0, 300) : "unknown error";
 }
 
-export type StreamParams = Anthropic.Beta.Messages.MessageCreateParamsStreaming;
-export type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
-export type StreamHandlers = {
-  onText?: (delta: string) => void;
-  onThinking?: (delta: string) => void;
-  onServerTool?: (name: string, input: Record<string, unknown>) => void;
-  onRetry?: () => void;
-  /** A failed attempt may still be billed. Required, so no caller leaves it out of the ledger. */
-  onFailedUsage: (model: string, usage: Anthropic.Beta.BetaUsage) => void;
-  signal?: AbortSignal;
-};
-
 export interface ModelClient {
-  stream(
-    params: Omit<StreamParams, "stream">,
-    handlers: StreamHandlers,
-  ): Promise<Anthropic.Beta.BetaMessage>;
-  create(params: CreateParams): Promise<Anthropic.Beta.BetaMessage>;
-}
-
-export class AnthropicModelClient implements ModelClient {
-  private client: Anthropic;
-
-  constructor(apiKey?: string) {
-    this.client = new Anthropic(apiKey ? { apiKey } : {});
-  }
-
-  setApiKey(apiKey: string) {
-    this.client = new Anthropic(apiKey ? { apiKey } : {});
-  }
-
-  stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
-    return withRetries(() => this.streamOnce(params, handlers), handlers);
-  }
-
-  private async streamOnce(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
-    // Only withRetries tries again, so a failure isn't tried three times inside each of its tries.
-    const stream = this.client.beta.messages.stream(params, {
-      signal: handlers.signal,
-      maxRetries: 0,
-    });
-    const server = new Map<number, { name: string; json: string }>();
-    let used: { model: string; usage: Anthropic.Beta.BetaUsage } | null = null;
-    try {
-      for await (const event of stream) {
-        if (event.type === "message_start")
-          used = { model: event.message.model, usage: { ...event.message.usage } };
-        if (event.type === "message_delta" && used)
-          for (const [k, v] of Object.entries(event.usage))
-            if (v !== null) (used.usage as unknown as Record<string, unknown>)[k] = v;
-        if (event.type === "content_block_start") {
-          // Each thinking block starts on a line of its own, so the last line is the latest thought.
-          if (event.content_block.type === "thinking") handlers.onThinking?.("\n");
-          if (event.content_block.type === "server_tool_use")
-            server.set(event.index, { name: event.content_block.name, json: "" });
-        }
-        if (event.type === "content_block_stop") {
-          const call = server.get(event.index);
-          if (call) handlers.onServerTool?.(call.name, parseInput(call.json));
-        }
-        if (event.type !== "content_block_delta") continue;
-        if (event.delta.type === "text_delta") handlers.onText?.(event.delta.text);
-        else if (event.delta.type === "thinking_delta") handlers.onThinking?.(event.delta.thinking);
-        else if (event.delta.type === "input_json_delta") {
-          const call = server.get(event.index);
-          if (call) call.json += event.delta.partial_json;
-        }
-      }
-      return await stream.finalMessage();
-    } catch (err) {
-      if (used) handlers.onFailedUsage(used.model, used.usage);
-      throw err;
-    }
-  }
-
-  create(params: CreateParams) {
-    return this.client.beta.messages.create(params);
-  }
+  stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers): Promise<ModelMessage>;
+  create(params: CreateParams): Promise<ModelMessage>;
 }
 
 /**
@@ -117,27 +56,6 @@ export async function oneShot(
   }
 }
 
-export const retryDelays = { ms: [1000, 4000] };
-const MAX_RETRY_AFTER_MS = 60_000;
-const RETRYABLE_TYPES = ["overloaded_error", "api_error", "timeout_error"];
-const NETWORK_CODES = ["ECONNRESET", "ETIMEDOUT", "EPIPE", "ECONNREFUSED", "UND_ERR_SOCKET"];
-
-export function retryable(err: unknown): boolean {
-  if (err instanceof Anthropic.APIUserAbortError) return false;
-  if (err instanceof Anthropic.APIConnectionError) return true;
-  if (err instanceof Anthropic.APIError)
-    return (
-      RETRYABLE_TYPES.includes(err.type ?? "") ||
-      (err.status !== undefined && (err.status >= 500 || err.status === 429))
-    );
-  const e = err as { code?: string; message?: string; name?: string } | null;
-  if (e?.name === "AbortError") return false;
-  return (
-    NETWORK_CODES.includes(e?.code ?? "") ||
-    (e?.name === "TypeError" && /terminated|fetch failed|socket/i.test(e.message ?? ""))
-  );
-}
-
 export const cutOff = (res: Pick<Anthropic.Beta.BetaMessage, "stop_reason">) =>
   res.stop_reason === "max_tokens" || res.stop_reason === "model_context_window_exceeded";
 
@@ -163,61 +81,4 @@ export function afterFallback(
       ("tool_use_id" in b && paired.has(b.tool_use_id)),
   );
   return [...kept, ...content.slice(at)];
-}
-
-export function retryAfterMs(err: unknown, now = Date.now()): number | null {
-  const headers = err instanceof Anthropic.APIError ? err.headers : undefined;
-  const ms = Number.parseFloat(headers?.get("retry-after-ms") ?? "");
-  if (ms > 0) return ms;
-  const after = headers?.get("retry-after");
-  if (!after) return null;
-  const seconds = Number.parseFloat(after);
-  const wait = Number.isNaN(seconds) ? Date.parse(after) - now : seconds * 1000;
-  return wait > 0 ? wait : null;
-}
-
-/** The SDK doesn't retry streams itself. `onRetry` tells the caller to drop what that attempt streamed. */
-export async function withRetries<T>(
-  attempt: () => Promise<T>,
-  handlers: Pick<StreamHandlers, "onRetry" | "signal">,
-  delays = retryDelays.ms,
-  wait = sleep,
-): Promise<T> {
-  for (let i = 0; ; i++) {
-    try {
-      return await attempt();
-    } catch (err) {
-      const delay = delays[i];
-      if (delay === undefined || handlers.signal?.aborted || !retryable(err)) throw err;
-      const asked = retryAfterMs(err);
-      if (asked !== null && asked > MAX_RETRY_AFTER_MS) throw err;
-      const ms = Math.max(delay, asked ?? 0);
-      console.warn(`model stream failed (${modelErrorText(err)}); trying again in ${ms} ms`);
-      handlers.onRetry?.();
-      await wait(ms, handlers.signal);
-    }
-  }
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }, ms);
-    const abort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    signal?.addEventListener("abort", abort, { once: true });
-  });
-}
-
-function parseInput(json: string): Record<string, unknown> {
-  try {
-    return JSON.parse(json) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
 }
