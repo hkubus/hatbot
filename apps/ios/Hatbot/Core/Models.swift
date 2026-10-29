@@ -236,6 +236,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var reportPath: String?
   /// The to-do item it works on, ticked off when it ends done.
   var todo: String?
+  /// A desktop task's screen: one of your computers' ids, or nil for the desktop.
+  var screen: String?
 
   var isActive: Bool { finishedAt == nil }
   var isFull: Bool { goal != nil }
@@ -366,6 +368,28 @@ struct DesktopState: Codable, Equatable, Sendable {
   var request: Request?
   var activeTaskId: Int?
   var botId: String?
+}
+
+/// One of your own computers, through the Linux app (ComputerInfo in packages/shared).
+struct ComputerInfo: Codable, Identifiable, Equatable, Sendable {
+  let id: String
+  var name: String
+  var online: Bool
+  var enabled: Bool
+  var paused: Bool
+  var locked: Bool
+  var ownerActive: Bool
+  var careful: Bool
+  var control: DesktopState.Control
+  var request: DesktopState.Request?
+  var activeTaskId: Int?
+  var botId: String?
+  var lastSeenAt: String?
+
+  /// What Live needs of it, as of the desktop.
+  var screen: DesktopState {
+    DesktopState(online: online, control: control, request: request, activeTaskId: activeTaskId, botId: botId)
+  }
 }
 
 struct Schedule: Codable, Identifiable, Equatable, Sendable {
@@ -750,6 +774,8 @@ struct Snapshot: Decodable, Sendable {
   var approvals: [Approval]
   var questions: [Question]
   var desktop: DesktopState?
+  /// Missing from a brain without the Your computers plugin.
+  var computers: [ComputerInfo]?
   /// Each chat's newest unread.
   var unread: [Int]
 }
@@ -785,6 +811,7 @@ enum HatbotEvent: Decodable, Sendable {
   case questionCreated(Question)
   case questionResolved(Question)
   case desktopState(DesktopState)
+  case computers([ComputerInfo])
   case scheduleUpdated(Schedule)
   case scheduleDeleted(id: Int)
   case triggerUpdated(Trigger)
@@ -807,7 +834,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link
+    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link, computers
   }
 
   init(from decoder: Decoder) throws {
@@ -843,6 +870,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "question.created": self = try .questionCreated(v(.question))
     case "question.resolved": self = try .questionResolved(v(.question))
     case "desktop.state": self = try .desktopState(v(.state))
+    case "computers": self = try .computers(v(.computers))
     case "schedule.updated": self = try .scheduleUpdated(v(.schedule))
     case "schedule.deleted": self = try .scheduleDeleted(id: v(.id))
     case "trigger.updated": self = try .triggerUpdated(v(.trigger))

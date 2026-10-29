@@ -13,9 +13,9 @@ final class LiveFeed {
   @ObservationIgnored private var decoding = false
   @ObservationIgnored private var next: Data?
 
-  func start(_ store: AppStore) {
+  func start(_ store: AppStore, screen: String?) {
     guard socket == nil else { return }
-    let socket = store.liveSocket()
+    let socket = store.liveSocket(screen)
     socket.onOpen = { [weak self] _ in self?.conn = .live }
     socket.onClose = { [weak self] in self?.conn = .offline }
     socket.onMessage = { [weak self] message in
@@ -29,6 +29,7 @@ final class LiveFeed {
     socket?.stop()
     socket = nil
     conn = .connecting
+    frame = nil
   }
 
   func send(_ input: LiveInput) {
@@ -74,18 +75,29 @@ struct LiveView: View {
   @State private var typing = false
   @State private var error: String?
   @State private var zoom = Zoom()
+  /// The computer you picked to watch; nil for the desktop.
+  @State private var picked: String?
 
   private var landscape: Bool { fullScreen && sectionShown && vertical == .compact }
   /// Frames come only while you can see them: not under another page, in a hidden section or with the
   /// app in the background.
   private var streaming: Bool { visible && sectionShown && phase != .background }
 
+  /// A task's view shows its own screen; otherwise the one you picked.
+  private var screenId: String? {
+    if let taskId { return store.tasks[taskId]?.screen }
+    return store.computers.contains { $0.id == picked } ? picked : nil
+  }
+  private var machine: ComputerInfo? { screenId.flatMap { id in store.computers.first { $0.id == id } } }
+  private var current: DesktopState? { screenId == nil ? store.desktop : machine?.screen }
+  private var screenName: String { machine?.name ?? "The desktop" }
+
   var body: some View {
-    let control = store.desktop?.control == .owner
+    let control = current?.control == .owner
     Group {
       if landscape {
         HStack(alignment: .top, spacing: 12) {
-          screen(control: control, online: store.desktop?.online ?? true)
+          screen(control: control, online: current?.online ?? true)
             // The scroll view's height, less the padding.
             .containerRelativeFrame(.vertical) { height, _ in max(height - 24, 100) }
           VStack(alignment: .leading, spacing: 12) {
@@ -107,7 +119,12 @@ struct LiveView: View {
     .onAppear { visible = true }
     .onDisappear { visible = false }
     .onChange(of: streaming, initial: true) { _, on in
-      if on { feed.start(store) } else { feed.stop() }
+      if on { feed.start(store, screen: screenId) } else { feed.stop() }
+    }
+    .onChange(of: screenId) { _, id in
+      feed.stop()
+      zoom = Zoom()
+      if streaming { feed.start(store, screen: id) }
     }
     .onChange(of: control) { _, control in if !control { typing = false } }
     // Taking over and handing back, felt once even when another section keeps a live view too.
@@ -118,15 +135,23 @@ struct LiveView: View {
 
   @ViewBuilder
   private func controls(control: Bool, screen showsScreen: Bool = false) -> some View {
-    let desktop = store.desktop
+    let desktop = current
+    let id = screenId
     Group {
+      if taskId == nil && !store.computers.isEmpty {
+        Picker("Screen", selection: $picked) {
+          Text("Desktop").tag(String?.none)
+          ForEach(store.computers) { Text($0.name).tag(Optional($0.id)) }
+        }
+        .pickerStyle(.segmented)
+      }
       if control {
         banner(icon: "hand.raised.fill", text: "You're in control. Hatbot is paused.") {
-          Button("Hand back") { run { try await store.handback() } }.glassButton(prominent: true)
+          Button("Hand back") { run { try await store.handback(id) } }.glassButton(prominent: true)
         }
       } else if let request = desktop?.request {
         banner(icon: "hand.raised.fill", text: "**Hatbot needs you:** \(request.reason)") {
-          Button("Take over") { run { try await store.takeover() } }.glassButton(prominent: true)
+          Button("Take over") { run { try await store.takeover(id) } }.glassButton(prominent: true)
         }
       }
 
@@ -137,8 +162,11 @@ struct LiveView: View {
           Button("Keyboard", systemImage: "keyboard") { typing.toggle() }
             .glassButton(prominent: typing)
             .tint(.attention)
-        } else if desktop?.request == nil && desktop?.online == true {
-          Button("Take over", systemImage: "hand.raised") { run { try await store.takeover() } }
+        } else if desktop?.request == nil && desktop?.online == true
+          // A computer only during a task.
+          && (id == nil || desktop?.activeTaskId != nil)
+        {
+          Button("Take over", systemImage: "hand.raised") { run { try await store.takeover(id) } }
             .glassButton()
             .tint(.attention)
         }
@@ -154,7 +182,7 @@ struct LiveView: View {
   }
 
   private var activeTaskId: Int? {
-    taskId ?? store.desktop?.activeTaskId ?? store.desktop?.request?.taskId
+    taskId ?? current?.activeTaskId ?? current?.request?.taskId
   }
 
   private func banner<A: View>(icon: String, text: LocalizedStringKey, @ViewBuilder action: () -> A) -> some View {
@@ -177,7 +205,7 @@ struct LiveView: View {
           .offset(x: zoom.offset.x, y: zoom.offset.y)
       }
       if !online || feed.conn != .live {
-        Text(!online || feed.conn == .offline ? "The desktop isn't answering." : "Connecting…")
+        Text(!online || feed.conn == .offline ? "\(screenName) isn't answering." : "Connecting…")
           .font(.subheadline)
           .foregroundStyle(.white.opacity(0.8))
       }
@@ -189,7 +217,7 @@ struct LiveView: View {
       RoundedRectangle(cornerRadius: 10)
         .strokeBorder(control ? Color.attention : Color(uiColor: .separator), lineWidth: control ? 2 : 0.5)
     }
-    .accessibilityLabel("The desktop")
+    .accessibilityLabel(screenName)
   }
 
   private func run(_ action: @escaping @MainActor () async throws -> Void) {

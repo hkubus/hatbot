@@ -49,6 +49,7 @@ final class AppStore {
   var approvals: [Int: Approval] = [:]
   var questions: [Int: Question] = [:]
   var desktop: DesktopState?
+  var computers: [ComputerInfo] = []
   var schedules: [Int: Schedule] = [:]
   /// Schedules a message points at that no longer exist.
   var deletedSchedules: Set<Int> = []
@@ -165,7 +166,7 @@ final class AppStore {
 
   var needsYou: Int {
     approvals.values.filter { $0.status == .pending }.count + pendingQuestions.count
-      + (desktop?.request == nil ? 0 : 1)
+      + (desktop?.request == nil ? 0 : 1) + computers.filter { $0.request != nil }.count
   }
 
   var pendingQuestions: [Question] {
@@ -265,6 +266,7 @@ final class AppStore {
       conversations = s.conversations
       paused = s.paused
       take(approvals: s.approvals, questions: s.questions, desktop: s.desktop, unread: s.unread)
+      computers = s.computers ?? []
       persist()
       prefetch()
       Task { await refreshTasks() }
@@ -318,6 +320,8 @@ final class AppStore {
       questions[q.id] = q
     case let .desktopState(state):
       desktop = state
+    case let .computers(list):
+      computers = list
     case let .scheduleUpdated(s):
       schedules[s.id] = s
       deletedSchedules.remove(s.id)
@@ -1093,10 +1097,12 @@ final class AppStore {
     async let stateLoad: DesktopState? = try? api.get("/desktop/status")
     // A brain from before unread answers 404.
     async let unreadLoad: [Int]? = try? api.get("/thread/unread")
+    async let computersLoad: [ComputerInfo]? = try? api.get("/computers")
     async let taskLoads: Void = refreshTasks()
     let pending = try await approvalsLoad
     let state = await stateLoad
     take(approvals: pending, questions: await questionsLoad, desktop: state, unread: await unreadLoad)
+    computers = await computersLoad ?? []
     _ = await (chats, taskLoads)
   }
 
@@ -1145,18 +1151,32 @@ final class AppStore {
 
   // MARK: Desktop
 
-  func takeover() async throws {
-    desktop = try await api.post("/desktop/takeover", body: Empty())
+  /// `screen`: one of your computers; the desktop by default.
+  func takeover(_ screen: String? = nil) async throws {
+    if let screen {
+      putComputer(try await api.post("/computers/\(screen)/takeover", body: Empty()))
+    } else {
+      desktop = try await api.post("/desktop/takeover", body: Empty())
+    }
   }
 
-  func handback() async throws {
-    desktop = try await api.post("/desktop/handback", body: Empty())
+  func handback(_ screen: String? = nil) async throws {
+    if let screen {
+      putComputer(try await api.post("/computers/\(screen)/handback", body: Empty()))
+    } else {
+      desktop = try await api.post("/desktop/handback", body: Empty())
+    }
+  }
+
+  private func putComputer(_ c: ComputerInfo) {
+    if let i = computers.firstIndex(where: { $0.id == c.id }) { computers[i] = c }
   }
 
   /// The live view's socket: JPEG frames out, your input in while you have control.
-  func liveSocket() -> Socket {
+  func liveSocket(_ screen: String? = nil) -> Socket {
     let api = self.api
-    let socket = Socket(maxDelay: 15) { api.webSocket("/desktop/live") }
+    let path = screen.map { "/computer/live/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0)" }
+    let socket = Socket(maxDelay: 15) { api.webSocket(path ?? "/desktop/live") }
     socket.onUnauthorized = { api.unauthorized() }
     return socket
   }

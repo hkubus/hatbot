@@ -857,7 +857,8 @@ final class NetworkTests: XCTestCase {
     SlowBrain.routes["/tasks?ids=7&view=card"] =
       #"[{"id":7,"title":"t","origin":"chat","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"createdAt":"2026-10-15T08:00:00Z","finishedAt":"2026-10-15T09:00:00Z"}]"#
     let approval = #"{"id":3,"kind":"send","summary":"s","reason":"r","sources":[],"status":"pending","costUsd":0,"createdAt":"2026-10-15T08:00:00Z","expiresAt":"2026-10-15T09:00:00Z"}"#
-    let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"unread":[5]}"#
+    let computer = #"{"id":"m1","name":"laptop","online":true,"enabled":true,"paused":false,"locked":false,"ownerActive":false,"careful":false,"control":"hatbot","request":{"taskId":9,"reason":"Log in"},"activeTaskId":9,"lastSeenAt":null}"#
+    let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"computers":[\#(computer)],"unread":[5]}"#
     await MainActor.run {
       store.streamOpened(reconnected: false)
       store.streamed(try? decode(HatbotEvent.self, snapshot))
@@ -869,6 +870,9 @@ final class NetworkTests: XCTestCase {
       XCTAssertEqual(store.pendingApprovals.map(\.id), [3])
       XCTAssertEqual(store.bots["hatbot"]?.brief, true)
       XCTAssertEqual(store.conversations.first?.unread, 1)
+      // The approval, and the computer's task asking for you.
+      XCTAssertEqual(store.computers.map(\.name), ["laptop"])
+      XCTAssertEqual(store.needsYou, 2)
     }
     XCTAssertEqual(SlowBrain.requested.filter { !$0.contains("/messages") }, ["GET /tasks?ids=7&view=card"])
 
