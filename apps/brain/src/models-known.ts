@@ -22,14 +22,20 @@ export const progressNotes = (id: string) => Boolean(modelInfo(id)?.capabilities
 
 const ROLES = ["chatModel", "taskModel", "desktopModel", "smallModel", "expertModel"] as const;
 
-/** What's wrong with the models a change picks, among those on offer, as a 400's body; null when nothing. */
+type Picks = Partial<Record<(typeof ROLES)[number], string | null>>;
+
+/**
+ * What's wrong with the models a change picks, among those on offer, as a 400's body; null when
+ * nothing. One it keeps as it was isn't checked: its provider may be down for now.
+ */
 export function modelProblem(
-  change: Partial<Record<(typeof ROLES)[number], string | null>>,
+  change: Picks,
   offered: ModelInfo[],
+  was: Picks | null = null,
 ): { error: string; field: string } | null {
   for (const field of ROLES) {
     const id = change[field];
-    if (!id) continue;
+    if (!id || id === was?.[field]) continue;
     const info = offered.find((m) => m.id === id);
     if (!info) return { error: "No model provider offers that model.", field };
     if (field === "desktopModel" && !info.capabilities.computerUse)

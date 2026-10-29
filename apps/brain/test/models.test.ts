@@ -101,6 +101,14 @@ test("Settings and bots take only a model a provider that's on offers, and the d
 
   const bot = await t.call("POST", "/bots", { name: "Cook", chatModel: "nobody-1" }, { cookie });
   expect(bot.status).toBe(400);
+
+  // One kept as it was saves while its provider is off.
+  await t.plugins.update("gamma", { enabled: true });
+  const made = await t.call("POST", "/bots", { name: "Cook", chatModel: "gamma-1" }, { cookie });
+  const { id } = (await made.json()) as { id: string };
+  await t.plugins.update("gamma", { enabled: false });
+  const kept = { chatModel: "gamma-1", instructions: "Answer in French." };
+  expect((await t.call("PATCH", `/bots/${id}`, kept, { cookie })).status).toBe(200);
 });
 
 test("the review asks the small model first and the expert model before a no", async () => {

@@ -30,7 +30,8 @@ export const botRoutes = new Hono<AppEnv>()
   })
   .get("/bots/:id", (c) => found(c, c.var.bots.active(c.req.param("id"))))
   .patch("/bots/:id", json(UpdateBot), (c) => {
-    const problem = modelProblem(c.req.valid("json"), c.var.models.catalogue());
+    const was = c.var.bots.active(c.req.param("id"));
+    const problem = modelProblem(c.req.valid("json"), c.var.models.catalogue(), was);
     if (problem) return c.json(problem, 400);
     return found(c, c.var.bots.update(c.req.param("id"), c.req.valid("json")));
   })
