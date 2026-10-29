@@ -47,6 +47,7 @@ const withOthers = (o: Offer) => o.others.length > 0;
 const mainChat = (o: Offer) => o.chat === "direct";
 const inThread = (o: Offer) => o.chat === "thread";
 const desktop = (_: Offer, s: CoreServices) => Boolean(s.desktop?.configured);
+const screen = (_: Offer, s: CoreServices) => Boolean(s.tasks?.hasScreen());
 const META: Record<string, Meta> = {
   memory_list: { plugin: "memory", label: "Looking through memory", access: "read", places: ALL },
   memory_read: { plugin: "memory", label: "Reading memory", access: "read", places: ALL },
@@ -69,7 +70,7 @@ const META: Record<string, Meta> = {
     label: "Starting a desktop task",
     places: CHAT,
     deferred: true,
-    when: desktop,
+    when: screen,
   },
   run_task: { plugin: "tasks", label: "Starting a task", places: CHAT },
   todo_work: { plugin: "tasks", label: "Starting a task on a to-do", places: CHAT },

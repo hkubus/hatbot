@@ -1,3 +1,4 @@
+import type { ComputersService } from "@hatbot/plugin-computer";
 import type { DesktopService } from "@hatbot/plugin-desktop";
 import { clip, head, type Notifier, RESTARTED } from "@hatbot/plugin-sdk";
 import {
@@ -46,6 +47,8 @@ export type TasksDeps = {
   model: ModelClient;
   /** Null while the Desktop plugin is off. */
   desktop: () => DesktopService | null;
+  /** Null while the Your computers plugin is off. */
+  computers: () => ComputersService | null;
   approvals: Approvals;
   questions: Questions;
   notifier: Notifier;
@@ -353,6 +356,8 @@ export class Tasks {
     taintedBy?: string | null;
     /** Your own recent chat messages, when you started it from the chat. */
     request?: string;
+    /** One of your computers, by id; the desktop by default. */
+    screen?: string | null;
   }): Task {
     const p = input.parent;
     const taintedBy =
@@ -379,6 +384,7 @@ export class Tasks {
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
+      screen: input.screen ?? null,
     });
     if (!p && !(input.message && this.d.chats.attachTask(input.message, id)))
       this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {
@@ -388,6 +394,34 @@ export class Tasks {
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
+  }
+
+  /** Whether a desktop task has a screen to run on. */
+  hasScreen(): boolean {
+    return (
+      Boolean(this.d.desktop()?.agent.configured) || Boolean(this.d.computers()?.list().length)
+    );
+  }
+
+  /** A desktop task's screen: one of your computers by name, or the desktop. */
+  screenFor(name: string | undefined): { screen: string | null } | { error: string } {
+    const computers = this.d.computers();
+    const names = computers?.list().map((c) => c.name) ?? [];
+    if (!name) {
+      if (this.d.desktop()?.agent.configured) return { screen: null };
+      return {
+        error: names.length
+          ? `There's no desktop: pass screen with one of the owner's computers (${names.join(", ")}).`
+          : "Desktop tasks aren't available.",
+      };
+    }
+    const c = computers?.find(name);
+    if (c) return { screen: c.id };
+    return {
+      error: names.length
+        ? `There's no computer called "${name}". The owner's: ${names.join(", ")}.`
+        : "None of the owner's computers has connected. Leave screen out to use your desktop.",
+    };
   }
 
   private home(botId: string): number {

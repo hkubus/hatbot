@@ -263,7 +263,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...LOOP_TOOLS.filter(
       (t) =>
         (others.length || t.name !== "ask_bot") &&
-        (ctx.desktop?.configured || t.name !== "run_desktop_task") &&
+        (tasks.hasScreen() || t.name !== "run_desktop_task") &&
         (!runner?.loopTools || runner.loopTools.includes(t.name)),
     ),
     ...(runner?.tools ?? []),
@@ -349,7 +349,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (refused) return result(call, refused, true);
     const missing = await missingSkill(d.memory, p.data.skill);
     if (missing) return result(call, missing, true);
+    const where = tasks.screenFor(p.data.screen);
+    if ("error" in where) return result(call, where.error, true);
     const child = tasks.createDesktopTask({
+      screen: where.screen,
       title,
       goal,
       successCriteria: success_criteria,

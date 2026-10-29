@@ -1,3 +1,4 @@
+import type { ComputersService } from "@hatbot/plugin-computer";
 import type { DesktopState, HatbotEvent } from "@hatbot/shared";
 import { type Context, Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
@@ -93,6 +94,7 @@ export const streamRoutes = new Hono<AppEnv>().get(
           approvals: v.approvals.list(true),
           questions: v.questions.pending(),
           desktop: v.desktop()?.control.get() ?? NO_DESKTOP,
+          computers: v.plugins.service<ComputersService>("computers")?.list() ?? [],
           unread: v.chats.unread(),
         } satisfies HatbotEvent);
         // Apps from before the snapshot.

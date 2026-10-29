@@ -142,6 +142,14 @@ export const DesktopTaskInput = z.object({
     .describe(
       "A skill to follow, when one fits: its name, from skills/<name>.md. The desktop model gets its steps; put the values for its {{placeholders}} in the goal",
     ),
+  screen: z
+    .string()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      "One of the owner's own computers, by name, to work on instead of your desktop: only when the owner names it, or the task needs their own logins, apps or files there",
+    ),
 });
 
 export async function missingSkill(memory: MemoryStore, skill?: string): Promise<string | null> {
@@ -514,13 +522,16 @@ export const TOOLS = [
       "Start a task on your Linux desktop (Chromium, plus a shell), for anything that needs a real browser: booking, buying, filling in forms, pages that need a login. To compute or run a script, use code_run when the Code plugin is on; to look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live and approves consequential steps. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
     schema: DesktopTaskInput,
     run: async (
-      { title, goal, success_criteria, skill },
+      { title, goal, success_criteria, skill, screen },
       { tasks, messageId, memory, bot, conversationId, tainted, ownerSaid },
     ) => {
       if (!tasks) return "Desktop tasks aren't available.";
       const missing = await missingSkill(memory, skill);
       if (missing) return missing;
+      const where = tasks.screenFor(screen);
+      if ("error" in where) return where.error;
       const task = tasks.createDesktopTask({
+        screen: where.screen,
         title,
         goal,
         successCriteria: success_criteria,
