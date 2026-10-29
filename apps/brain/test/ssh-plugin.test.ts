@@ -105,6 +105,10 @@ test("a task restarts a service over ssh with the pinned key; stopping one waits
   t.approvals.decide(approval.id, "deny", "web");
   await ended(t, task.id);
   expect(lastArgs()).not.toContain("systemctl stop");
+  // It tells what it changed, and not what you denied.
+  expect(t.tasks.get(task.id)?.summary).toEndWith(
+    "Changed outside Hatbot:\n- On nas: echo restarted smbd",
+  );
 });
 
 test("the destructive check: what loses data, stops things or lets someone in asks; everyday changes don't", () => {

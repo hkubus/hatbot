@@ -28,6 +28,12 @@ export class Stop extends Error {
 }
 
 /** A note the chat sent a running task (`Tasks.steer`). */
+/** A task acts, then tells: its summary ends with what it changed outside Hatbot. */
+export const withChanges = (summary: string, changed: string[]) =>
+  changed.length
+    ? `${summary}\n\nChanged outside Hatbot:\n${[...new Set(changed)].map((c) => `- ${c}`).join("\n")}`
+    : summary;
+
 export const steerNote = (note: string) => `<steer from="chat">\n${tagText(note)}\n</steer>`;
 
 export const thinkingFor = (model: string) =>
