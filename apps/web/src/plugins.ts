@@ -1,4 +1,5 @@
 // The web entries of the plugins that have one.
+import { web as computer } from "@hatbot/plugin-computer/web";
 import { web as homeassistant } from "@hatbot/plugin-homeassistant/web";
 import { web as mcp } from "@hatbot/plugin-mcp/web";
 import { web as openai } from "@hatbot/plugin-openai/web";
@@ -10,6 +11,7 @@ import { web as t3 } from "@hatbot/plugin-t3/web";
 import type { PluginWeb } from "./kit";
 
 export const PLUGIN_WEB: Record<string, PluginWeb> = {
+  computer,
   homeassistant,
   mcp,
   openai,

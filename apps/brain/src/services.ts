@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { automationPlugin } from "@hatbot/plugin-automation";
 import { boxesPlugin, type HatboxAgent } from "@hatbot/plugin-boxes";
 import { codePlugin } from "@hatbot/plugin-code";
+import { computerPlugin } from "@hatbot/plugin-computer";
 import { type DesktopAgent, type DesktopService, desktopPlugin } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import { researchPlugin } from "@hatbot/plugin-research";
@@ -118,6 +119,7 @@ export async function createServices(o: Outside) {
   const builtIn: Plugin[] = [
     ...o.plugins,
     desktopPlugin(o.agent),
+    computerPlugin,
     codePlugin,
     t3Plugin,
     scoutPlugin,
