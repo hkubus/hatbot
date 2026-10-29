@@ -36,6 +36,7 @@ export function Search({ query }: { query: string }) {
   const [results, setResults] = useState<SearchResults | null>(null);
   const [error, setError] = useState("");
   const conversations = useStore((s) => s.conversations);
+  const threads = useStore((s) => s.threads);
   const manyChats = conversations.length > 1;
   const input = useRef<HTMLInputElement>(null);
   const latest = useRef(query);
@@ -87,7 +88,8 @@ export function Search({ query }: { query: string }) {
         {results && results.messages.length > 0 && (
           <Group title="Chats">
             {results.messages.map((m) => {
-              const chat = conversations.find((c) => c.id === m.conversationId);
+              const chat =
+                conversations.find((c) => c.id === m.conversationId) ?? threads[m.conversationId];
               const who = m.botId ? botName(getState(), m.botId) : "You";
               return (
                 <LinkRow
@@ -100,7 +102,9 @@ export function Search({ query }: { query: string }) {
                   }
                 >
                   <span className="val">
-                    {manyChats && chat ? `${chatName(getState(), chat)}, ` : ""}
+                    {chat && (manyChats || chat.kind === "thread")
+                      ? `${chatName(getState(), chat)}, `
+                      : ""}
                     {timeOrDay(m.createdAt)}
                   </span>
                 </LinkRow>
