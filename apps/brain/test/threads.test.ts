@@ -214,6 +214,11 @@ test("a thread's key keeps one open thread per subject, and a task writes in one
     'No open thread with the key \\"nas\\"',
   );
   expect(t.chats.thread(second.conversation.id)?.list().at(-1)?.text).toBe("Still failing.");
+
+  // Writing in the old one opens it again without its key, which the newer one has.
+  t.chats.ownerWrote(first.conversation.id);
+  expect(t.chats.get(first.conversation.id)?.resolvedAt).toBeNull();
+  expect(t.chats.findThread("hatbot", { key: "backups" })).toBe(second.conversation.id);
 });
 
 test("you open a thread on a task's card once the task has ended", async () => {
