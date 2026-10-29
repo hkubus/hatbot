@@ -14,7 +14,6 @@ import { getSetting, type SettingsStore, setSetting } from "./settings";
 import type { Spend } from "./spend";
 import { RESTARTED, type Tasks } from "./tasks/service";
 
-export const HEARTBEAT_MODEL = "claude-haiku-5-5";
 /** Room for thinking, so it can't crowd out the answer. */
 const TRIAGE_MAX_TOKENS = 4000;
 const STATE_KEY = "heartbeat:state";
@@ -318,7 +317,7 @@ export class Heartbeat {
     const out = await oneShot(
       this.d,
       {
-        model: HEARTBEAT_MODEL,
+        model: this.d.settings.get().smallModel,
         max_tokens: TRIAGE_MAX_TOKENS,
         thinking: { type: "adaptive" },
         output_config: { effort: "low", format: { type: "json_schema", schema: CHOICE } },

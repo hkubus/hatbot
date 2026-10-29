@@ -24,8 +24,6 @@ import { BudgetError, estimateTokens, requestCeiling } from "../spend";
 import { pathOf, TRACKING } from "./policy";
 import type { Tasks } from "./service";
 
-const WORKER_MODEL = "claude-haiku-5-5";
-const CHECK_MODEL = "claude-haiku-5-5";
 /** Room for the number check's thinking and its verdict. */
 const CHECK_TOKENS = 16000;
 export const MAX_RESEARCH_STEPS = 60;
@@ -382,11 +380,10 @@ const isSeen = (link: string, seen: Set<string>) =>
 
 /**
  * A helper's next request at most: its prompt, all that its searches and fetches may add within the
- * request, all of its max_tokens, and the searches' fees. Past 100k tokens Haiku 5.5 bills the whole
- * request at 5x.
+ * request, all of its max_tokens, and the searches' fees.
  */
-const estimate = (messages: Anthropic.Beta.BetaMessageParam[]) =>
-  requestCeiling(WORKER_MODEL, {
+const estimate = (model: string, messages: Anthropic.Beta.BetaMessageParam[]) =>
+  requestCeiling(model, {
     prompt:
       estimateTokens(messages) + 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS),
     write: "5m",
@@ -404,13 +401,14 @@ type HelperReport = Findings & {
 const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "report_findings" };
 
 /**
- * One helper: Haiku with the web, until it reports. Spend is the task's, within its limit, leaving room
+ * One helper: the small model with the web, until it reports. Spend is the task's, within its limit, leaving room
  * for the lead's next request. Its last step, and one the limit leaves room for only, must report what
  * it has.
  */
 async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
   const { tasks, task, signal } = run;
   const { d } = tasks;
+  const model = d.settings.get().smallModel;
   const read: Read = {
     texts: [],
     visited: new Set(),
@@ -438,7 +436,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   // Two more steps than the cap, for paused turns to finish before the last, forced one.
   for (let step = 0; step < MAX_WORKER_STEPS + 2; step++) {
     if (signal.aborted) throw signal.reason;
-    const cost = estimate(messages);
+    const cost = estimate(model, messages);
     const limit = { id: task.id, limitUsd: tasks.budget(task.id) };
     // The checks count the other helpers' requests in flight, which Spend holds.
     try {
@@ -460,7 +458,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     try {
       res = await d.model.stream(
         {
-          model: WORKER_MODEL,
+          model,
           max_tokens: WORKER_TOKENS,
           system: [
             { type: "text", text: RESEARCH_WORKER_PROMPT, cache_control: { type: "ephemeral" } },
@@ -499,7 +497,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
       release();
     }
     d.spend.recordResponse({
-      model: WORKER_MODEL,
+      model,
       purpose: "research",
       usage: res.usage,
       taskId: task.id,
@@ -779,7 +777,7 @@ async function checkNumbers(
     const out = await oneShot(
       d,
       {
-        model: CHECK_MODEL,
+        model: d.settings.get().smallModel,
         max_tokens: CHECK_TOKENS,
         thinking: { type: "adaptive" },
         output_config: { effort: "low", format: { type: "json_schema", schema: CHECK_SCHEMA } },

@@ -24,6 +24,7 @@ import type { Desktop } from "../desktop/service";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import { runPluginTool, verdictFor } from "../plugins/registry";
+import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
@@ -54,6 +55,7 @@ export type NegotiationsDeps = {
   desktop: Desktop;
   model: ModelClient;
   spend: Spend;
+  settings: SettingsStore;
   clock?: () => number;
 };
 

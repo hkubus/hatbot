@@ -32,6 +32,7 @@ import type { DesktopAgent } from "./desktop/client";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import type { Backends } from "./hatbox/backends";
+import { modelName } from "./models-known";
 import type { Notifier } from "./notify";
 import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
@@ -71,7 +72,6 @@ const OPEN_MS = 10 * 60_000;
 const PREVIEW_SCREEN = { width: 960, height: 600 };
 const PREVIEW_RETRY_MS = 10 * 60_000;
 
-export const BOX_ASK_MODEL = "claude-haiku-5-5";
 const ASK_TOKENS = 4000;
 const NOTES_PER_HOUR = 5;
 /** Fewer than notes: each one buzzes your phone, and a schedule runs up to 288 times a day. */
@@ -461,24 +461,24 @@ export class Boxes {
   /** The chat's model never sees the answer. Boxes have a daily limit of their own, besides the brain's. */
   private async ask(box: Box, c: Extract<BoxCall, { op: "ask" }>): Promise<string> {
     const d = this.connected();
-    const { paused, limits } = d.settings.get();
+    const { paused, limits, smallModel } = d.settings.get();
     if (paused) throw new BoxError("Hatbot is paused.", 409);
     const params: CreateParams = {
-      model: BOX_ASK_MODEL,
+      model: smallModel,
       max_tokens: c.maxTokens ?? ASK_TOKENS,
       thinking: { type: "adaptive" },
       output_config: { effort: "low" },
       ...(c.system ? { system: c.system } : {}),
       messages: [{ role: "user", content: c.prompt }],
     };
-    const most = requestCeiling(BOX_ASK_MODEL, {
+    const most = requestCeiling(smallModel, {
       prompt: fixedTokens(params.system, null) + estimateTokens(params.messages),
       maxTokens: params.max_tokens,
     });
     const spent = d.spend.byPurpose(1).find((p) => p.purpose === "boxes")?.costUsd ?? 0;
     if (spent + this.asking + most > limits.boxesUsd)
       throw new BoxError(
-        `Boxes have used today's $${limits.boxesUsd} for asking Haiku. It's in Settings, under Spending → More limits.`,
+        `Boxes have used today's $${limits.boxesUsd} for asking ${modelName(smallModel)}. It's in Settings, under Spending → More limits.`,
         429,
       );
     this.asking += most;
@@ -487,7 +487,7 @@ export class Boxes {
     } catch (err) {
       if (err instanceof BudgetError) throw new BoxError(err.message, 429);
       console.error(`box ${box.id}: ask failed`, err);
-      throw new BoxError(`Haiku didn't answer: ${modelErrorText(err)}`, 502);
+      throw new BoxError(`${modelName(smallModel)} didn't answer: ${modelErrorText(err)}`, 502);
     } finally {
       this.asking -= most;
     }

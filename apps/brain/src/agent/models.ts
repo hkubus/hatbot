@@ -18,11 +18,11 @@ export class Models implements ModelClient {
     return this.catalogue().find((m) => m.id === model) ?? null;
   }
 
-  stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
+  async stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers) {
     return this.providerOf(params.model).stream(params, handlers);
   }
 
-  create(params: CreateParams) {
+  async create(params: CreateParams) {
     return this.providerOf(params.model).create(params);
   }
 

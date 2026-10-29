@@ -1,25 +1,9 @@
-import type { ModelInfo, ModelPrice } from "@hatbot/plugin-sdk";
+import type { ModelPrice } from "@hatbot/plugin-sdk";
 import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
+import { modelInfo } from "./models-known";
 import type { SettingsStore } from "./settings";
-
-/** What the model providers that started gave, by model id: a model's price doesn't change with who asks. */
-const prices = new Map<string, ModelPrice>();
-const fallbacks = new Map<string, string[]>();
-
-export function addPrices(models: ModelInfo[]) {
-  for (const m of models) {
-    prices.set(m.id, m.price);
-    if (m.fallbacks?.length) {
-      fallbacks.set(
-        m.id,
-        m.fallbacks.map((f) => f.id),
-      );
-      addPrices(m.fallbacks);
-    }
-  }
-}
 
 export type UsageLike = {
   input_tokens: number;
@@ -58,7 +42,7 @@ const UNKNOWN_PRICE: ModelPrice = { input: 10, output: 50, cacheRead: 1 };
 const unpriced = new Set<string>();
 
 export function priceOf(model: string) {
-  const p = prices.get(model) ?? prices.get(model.replace(/-\d{8}$/, ""));
+  const p = modelInfo(model)?.price;
   if (p) return p;
   if (!unpriced.has(model)) {
     unpriced.add(model);
@@ -148,7 +132,7 @@ export function requestCeiling(
   };
   const searches = (r.webSearches ?? 0) * WEB_SEARCH_USD;
   const own = ceiling(model, r.cached ?? 0, r.maxTokens);
-  const others = r.fallbacks ? (fallbacks.get(model) ?? []) : [];
+  const others = r.fallbacks ? (modelInfo(model)?.fallbacks?.map((f) => f.id) ?? []) : [];
   if (!others.length) return own + searches;
   const declined = ceiling(model, r.cached ?? 0, 0);
   const rescue = Math.max(...others.map((m) => ceiling(m, 0, r.maxTokens)));

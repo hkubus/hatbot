@@ -2,11 +2,11 @@
 import { afterAll } from "bun:test";
 import { rmSync } from "node:fs";
 import { MODELS } from "@hatbot/plugin-anthropic";
-import { addPrices } from "../src/spend";
+import { addModels } from "../src/models-known";
 import { tempDirs, tempTeach } from "./helpers";
 
 // Tests' models are fakes, so Claude's prices come from its catalogue rather than a running provider.
-addPrices(MODELS);
+addModels(MODELS);
 
 afterAll(() => {
   for (const t of tempTeach.splice(0)) t.close();

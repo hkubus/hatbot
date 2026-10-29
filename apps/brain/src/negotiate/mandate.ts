@@ -4,6 +4,7 @@ import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema
 import { MANDATE_CONTACTS, type Mandate, type Negotiation } from "@hatbot/shared";
 import { z } from "zod";
 import { type ModelClient, oneShot } from "../agent/model";
+import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { allowance, zl } from "./policy";
 
@@ -185,15 +186,13 @@ export function widened(n: Pick<Negotiation, "mandate" | "role">, after: Mandate
   return out;
 }
 
-const NOTE_MODEL = "claude-haiku-5-5";
-
 export const NOTE_PROMPT = `You apply the owner's note to the mandate of a negotiation on a second-hand marketplace. The mandate says what a bot may do on its own while haggling for one listing: the opening offer, the target, the limit (buying: the most to pay; selling: the least to take), delivery terms, how many days it lasts, and which contact details its messages may carry.
 
 Change only what the note asks to change, and keep everything else exactly as it is. A note that doesn't touch the mandate, such as advice on tone, leaves it as it is. Keep the numbers in order: buying, opening ≤ target ≤ limit; selling, opening ≥ target ≥ limit. If the note sets only the limit, move the target or the opening only as far as that order needs. Amounts are plain numbers in the mandate's currency. Answer with the whole mandate.`;
 
 /** When the note can't be applied, it's shown to the owner again with the old numbers. */
 export async function applyNote(
-  d: { model: ModelClient; spend: Spend },
+  d: { model: ModelClient; spend: Spend; settings: SettingsStore },
   n: Negotiation,
   note: string,
   now: number,
@@ -212,7 +211,7 @@ export async function applyNote(
     const out = await oneShot(
       d,
       {
-        model: NOTE_MODEL,
+        model: d.settings.get().smallModel,
         max_tokens: 1000,
         output_config: {
           format: {

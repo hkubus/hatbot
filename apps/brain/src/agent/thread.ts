@@ -33,6 +33,7 @@ import type { DesktopAgent } from "../desktop/client";
 import type { EventBus } from "../events";
 import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
+import { hasFallbacks, modelName, progressNotes } from "../models-known";
 import type { Negotiations } from "../negotiate/service";
 import {
   describeCall,
@@ -99,8 +100,6 @@ import {
 } from "./tools";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
-export const EXPERT_MODEL = "claude-opus-5-5";
-export const SUMMARY_MODEL = "claude-haiku-5-5";
 const EPISODE_IDLE_MS = 30 * 60_000;
 /** A chat's cache entries last five minutes from the request that last wrote or read them. */
 const CACHE_MS = 5 * 60_000;
@@ -167,7 +166,7 @@ const hash16 = (text: string) => createHash("sha256").update(text).digest("hex")
 const prefixOf = (model: string, system: string, tools: Anthropic.Beta.BetaToolUnion[]) =>
   hash16(JSON.stringify([model, system, tools]));
 
-const AskOpus = z.object({
+const AskExpert = z.object({
   question: z
     .string()
     .min(1)
@@ -177,14 +176,14 @@ const AskOpus = z.object({
     .string()
     .max(60_000)
     .describe(
-      "Everything Opus needs: the owner's relevant messages as they wrote them, code, errors, file contents, versions. It can't see this conversation",
+      "Everything it needs: the owner's relevant messages as they wrote them, code, errors, file contents, versions. It can't see this conversation",
     ),
   quoted: z
     .string()
     .max(30_000)
     .optional()
     .describe(
-      "Text copied from web pages, issues or logs that the answer depends on, as is. Opus gets it marked as data, not instructions",
+      "Text copied from web pages, issues or logs that the answer depends on, as is. It gets it marked as data, not instructions",
     ),
 });
 
@@ -194,12 +193,12 @@ const ASK_OWNER = toolParam({
   schema: AskOwner,
 });
 
-const ASK_OPUS = toolParam({
-  name: "ask_opus",
-  description:
-    "Hand one hard part of this reply to Claude Opus 5.5, a stronger and costlier model. Use it only for: writing or reviewing more than a few lines of code, debugging, a problem that needs several careful steps of reasoning, or when the owner asks for Opus. Not for looking things up, memory, schedules, chat, summaries, short answers or anything you can answer well yourself. At most once per reply. Opus can't see the conversation or use tools, so give it the question and all the context it needs. Its answer is shown to the owner as is; you don't repeat it.",
-  schema: AskOpus,
-});
+const askExpert = (name: string) =>
+  toolParam({
+    name: "ask_expert",
+    description: `Hand one hard part of this reply to ${name}, a stronger and costlier model. Use it only for: writing or reviewing more than a few lines of code, debugging, a problem that needs several careful steps of reasoning, or when the owner asks for ${name}. Not for looking things up, memory, schedules, chat, summaries, short answers or anything you can answer well yourself. At most once per reply. It can't see the conversation or use tools, so give it the question and all the context it needs. Its answer is shown to the owner as is; you don't repeat it.`,
+    schema: AskExpert,
+  });
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 type Turn = Anthropic.Beta.BetaMessageParam;
@@ -892,12 +891,13 @@ export class Thread {
     ].filter((t) => offered(t, offer));
     // Fixed for the reply; a change starts a new episode, since thinking blocks are bound to the model.
     const chatModel = bot.chatModel ?? settings.get().chatModel;
-    const onHaiku = chatModel === "claude-haiku-5-5";
+    const expert = settings.get().expertModel;
+    const asksExpert = chatModel !== expert;
     const tools = [
       ...pluginTools.map(chatToolParam),
       ASK_OWNER,
       TOOL_SEARCH,
-      ...(onHaiku ? [ASK_OPUS] : []),
+      ...(asksExpert ? [askExpert(modelName(expert))] : []),
       ...CHAT_WEB_TOOLS,
     ];
     return {
@@ -905,7 +905,8 @@ export class Thread {
       pluginTools,
       chatModel,
       chatEffort: bot.chatEffort ?? settings.get().chatEffort,
-      onHaiku,
+      expert,
+      asksExpert,
       tools,
       prefix: prefixOf(chatModel, system, tools),
     };
@@ -1459,7 +1460,7 @@ export class Thread {
   private summaryRequest(prompt: string, content: string): CreateParams {
     const names = this.members().map((b) => b.name);
     return {
-      model: SUMMARY_MODEL,
+      model: this.d.settings.get().smallModel,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
       output_config: { effort: "low" },
@@ -1794,10 +1795,8 @@ export class Thread {
     const incognito = !!(user ?? again)?.incognito;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const asked = user?.kind === "handoff" ? (this.currentHandoff?.task ?? null) : null;
-    const { system, pluginTools, chatModel, chatEffort, onHaiku, tools, prefix } = this.turnSetup(
-      bot,
-      incognito,
-    );
+    const { system, pluginTools, chatModel, chatEffort, expert, asksExpert, tools, prefix } =
+      this.turnSetup(bot, incognito);
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
     // A group's episode is bound to every bot's prefix.
     const episode = again
@@ -2106,18 +2105,22 @@ export class Thread {
       events.emit({ type: "message.usage", id: out.id, ...used });
     };
 
-    let askedOpus = false;
-    const askOpus = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
+    const expertName = modelName(expert);
+    let askedExpert = false;
+    const askExpertNow = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
       const result = (content: string, isError = false) => toolResult(call.id, content, isError);
-      const p = AskOpus.safeParse(call.input);
+      const p = AskExpert.safeParse(call.input);
       if (!p.success) return result(invalidInput(p.error), true);
-      if (askedOpus)
-        return result("Opus was already asked once in this reply. Work with its answer.", true);
-      askedOpus = true;
+      if (askedExpert)
+        return result(
+          `${expertName} was already asked once in this reply. Work with its answer.`,
+          true,
+        );
+      askedExpert = true;
       const { question, context, quoted } = p.data;
       const content = `<question>\n${question}\n</question>\n\n<context>\n${context || "(none)"}\n</context>${quoted ? `\n\n${untrustedBlock("quoted", quoted)}` : ""}`;
       const held = hold(
-        requestCeiling(EXPERT_MODEL, {
+        requestCeiling(expert, {
           prompt: fixedTokens(EXPERT_PROMPT, null) + estimateTokens([{ content }]),
           maxTokens: MAX_TOKENS,
           fallbacks: true,
@@ -2128,10 +2131,11 @@ export class Thread {
       const restore = checkpoint();
       const res = await model.stream(
         {
-          model: EXPERT_MODEL,
+          model: expert,
           max_tokens: MAX_TOKENS,
-          betas: ["server-side-fallback-2026-07-01"],
-          fallbacks: "default",
+          ...(hasFallbacks(expert)
+            ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
+            : {}),
           system: EXPERT_PROMPT,
           thinking: { type: "adaptive" },
           output_config: { effort: "high" },
@@ -2151,16 +2155,17 @@ export class Thread {
         },
       );
       held();
-      bill(EXPERT_MODEL, "expert", res.usage);
+      bill(expert, "expert", res.usage);
       separate = true;
-      if (res.stop_reason === "refusal") return result("Opus declined to answer this.", true);
+      if (res.stop_reason === "refusal")
+        return result(`${expertName} declined to answer this.`, true);
       // The answer itself too, so what comes after it can follow on from it.
       return result(
         `${
           cutOff(res)
-            ? "Opus's answer was cut off; it's in your reply as far as it got. Tell the owner, briefly."
-            : "Opus's answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply."
-        }\n\n<opus_answer>\n${answer.trim()}\n</opus_answer>`,
+            ? `${expertName}'s answer was cut off; it's in your reply as far as it got. Tell the owner, briefly.`
+            : `${expertName}'s answer is now in your reply, shown to the owner as is. Don't repeat, summarise or rewrite it. Add at most a line if something needs saying; otherwise end your reply.`
+        }\n\n<expert_answer>\n${answer.trim()}\n</expert_answer>`,
       );
     };
 
@@ -2205,7 +2210,7 @@ export class Thread {
               write: "5m",
               maxTokens: MAX_TOKENS,
               webSearches: searchesIn(tools),
-              fallbacks: !onHaiku,
+              fallbacks: true,
             }),
           );
         } catch (err) {
@@ -2218,8 +2223,8 @@ export class Thread {
           model: chatModel,
           max_tokens: MAX_TOKENS,
           betas: BETAS,
-          // Haiku 5.5 has no server-side fallback; a refusal there ends the reply with a note.
-          ...(onHaiku ? {} : { fallbacks: "default" as const }),
+          // Without a server-side fallback, a refusal ends the reply with a note.
+          ...(hasFallbacks(chatModel) ? { fallbacks: "default" as const } : {}),
           // Five minutes, kept warm by keepWarm: an hour's cache costs 2x input to write, five minutes' 1.25x.
           system: [
             { type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } },
@@ -2228,10 +2233,10 @@ export class Thread {
           tools,
           // If a replayed thinking block fails the conversation check anyway, lose that reasoning
           // rather than the reply.
-          // Haiku 5.5 writes no progress notes between tools; its thinking shows summarized.
+          // A model that writes no progress notes between tools shows its thinking summarized.
           thinking: {
             type: "adaptive" as const,
-            display: onHaiku ? ("summarized" as const) : ("updates" as const),
+            display: progressNotes(chatModel) ? ("updates" as const) : ("summarized" as const),
             block_binding: { prefix_mismatch_behavior: "drop_block" as const },
           },
           output_config: { effort: effort ?? chatEffort },
@@ -2362,9 +2367,9 @@ export class Thread {
               true,
             );
           }
-          if (call.name === "ask_opus" && onHaiku) {
-            progress("Asking Opus…");
-            return askOpus(call);
+          if (call.name === "ask_expert" && asksExpert) {
+            progress(`Asking ${expertName}…`);
+            return askExpertNow(call);
           }
           const plugin = pluginTools.find((t) => t.name === call.name);
           // A change says what it's doing once its checks are done.

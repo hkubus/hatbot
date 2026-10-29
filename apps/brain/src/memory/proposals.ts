@@ -13,7 +13,6 @@ import type { Tasks } from "../tasks/service";
 import { type Skills, skillPath } from "../teach/skills";
 import { MemoryConflict, type MemoryStore } from "./store";
 
-export const PROPOSAL_MODEL = "claude-opus-5-5";
 const TIDY_KEY = "tidy:last";
 /** Memory larger than this is tidied in part: the files that fit. */
 const MAX_INPUT_CHARS = 200_000;
@@ -380,8 +379,9 @@ export class Proposals {
   }
 
   private async ask(system: string, content: string, purpose: string) {
+    const model = this.d.settings.get().expertModel;
     const release = this.d.spend.hold(
-      requestCeiling(PROPOSAL_MODEL, {
+      requestCeiling(model, {
         prompt: fixedTokens(system, content),
         maxTokens: MAX_TOKENS,
       }),
@@ -390,7 +390,7 @@ export class Proposals {
     const res = await this.d.model
       .stream(
         {
-          model: PROPOSAL_MODEL,
+          model,
           max_tokens: MAX_TOKENS,
           thinking: { type: "adaptive" },
           output_config: {
@@ -401,11 +401,11 @@ export class Proposals {
           messages: [{ role: "user", content }],
         },
         {
-          onFailedUsage: (model, usage) => this.d.spend.recordResponse({ model, purpose, usage }),
+          onFailedUsage: (m, usage) => this.d.spend.recordResponse({ model: m, purpose, usage }),
         },
       )
       .then((r) => {
-        this.d.spend.recordResponse({ model: PROPOSAL_MODEL, purpose, usage: r.usage });
+        this.d.spend.recordResponse({ model, purpose, usage: r.usage });
         return r;
       })
       .finally(release);

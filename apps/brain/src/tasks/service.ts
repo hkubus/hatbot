@@ -38,7 +38,7 @@ import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
 import { Pool, ScreenLane } from "./lane";
 import { keepAfterRestart } from "./research";
-import { earlierReport, RESEARCH_MODEL, refreshing } from "./research-goal";
+import { earlierReport, refreshing } from "./research-goal";
 
 export type TasksDeps = {
   db: Db;
@@ -469,7 +469,7 @@ export class Tasks {
       origin: input.origin,
       lane: "background",
       // Fixed for the task, like a desktop task's.
-      model: input.research ? RESEARCH_MODEL : this.d.settings.get().taskModel,
+      model: input.research ? this.d.settings.get().smallModel : this.d.settings.get().taskModel,
       // Research runs at RESEARCH_EFFORT, which the column can't hold.
       effort: input.research ? null : (input.effort ?? null),
       research: input.research ? 1 : 0,

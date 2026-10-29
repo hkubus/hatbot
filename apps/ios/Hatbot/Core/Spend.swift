@@ -96,7 +96,7 @@ enum SpendCharts {
     "summary": "Summaries",
     "review": "Reviewing changes",
     "screening": "Screening",
-    "expert": "Asking Opus",
+    "expert": "Hard parts",
     "research": "Research",
     "check": "Checks",
     "teach": "Teaching",

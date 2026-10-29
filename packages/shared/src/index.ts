@@ -561,7 +561,7 @@ const botFields = {
   icon: z.enum(BOT_ICONS),
   color: z.enum(BOT_COLORS),
   instructions: z.string().trim().max(8000),
-  chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]).nullable(),
+  chatModel: z.string().min(1).max(200).nullable(),
   chatEffort: z.enum(CHAT_EFFORTS).nullable(),
   plugins: z.array(z.string().min(1).max(40)).max(50).nullable(),
 };
@@ -705,6 +705,8 @@ export type SpendSummary = {
 export type SpendHour = SpendWindow & { hour: string };
 export type SpendDay = { date: string; usd: number };
 export type SpendByModel = { model: string; usd: number };
+/** GET /models: what the model providers that are on offer, for Settings' pickers. */
+export type ModelOption = { id: string; name: string; provider: string; computerUse: boolean };
 /** GET /spend/by-purpose: what the money went on, the most first. */
 export type SpendByPurpose = { purpose: string; costUsd: number };
 
@@ -735,8 +737,8 @@ export const SetNtfy = z.object({
 export type AppSettings = {
   limits: Limits;
   chatEffort: (typeof CHAT_EFFORTS)[number];
-  /** The chat's model; on Haiku 5.5 it can ask Opus 5.5 for hard parts. */
-  chatModel: "claude-haiku-5-5" | "claude-opus-5-5";
+  /** The chat's model; unless it's the expert model, it can ask the expert for hard parts. */
+  chatModel: string;
   owner: { name: string; email: string };
   paused: boolean;
   /** Changes Haiku finds safe go ahead without asking. */
@@ -744,11 +746,16 @@ export type AppSettings = {
   safety: SafetySettings;
   /** What tapping a notification opens: the web app, or the iOS app (hatbot:// links). */
   notificationsOpen: "web" | "app";
-  desktopModel: "claude-opus-5-5" | "claude-haiku-5-5";
-  /** A desktop task Haiku fails at carries on once on Opus. */
+  /** It needs computer use. */
+  desktopModel: string;
+  /** A desktop task the desktop model fails at carries on once on the expert model. */
   desktopEscalate: boolean;
   /** The model background tasks (SSH, Proxmox, code work) run on. */
-  taskModel: "claude-haiku-5-5" | "claude-opus-5-5";
+  taskModel: string;
+  /** Quick jobs: checks, screening pages, summaries, research helpers, approval reviews. */
+  smallModel: string;
+  /** Hard parts: what the chat asks for help with, memory proposals, teaching. */
+  expertModel: string;
   heartbeat: HeartbeatSettings;
   /** A tidy-up of memory proposed weekly, at the weekly report's time. */
   memoryTidy: boolean;

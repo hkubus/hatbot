@@ -659,11 +659,15 @@ struct AppSettings: Codable, Equatable, Sendable {
   var paused: Bool
   var notificationsOpen: Opens?
   var desktopModel: ModelID?
-  /// A desktop task Haiku fails at carries on once on Opus.
+  /// A desktop task the desktop model fails at carries on once on the expert model.
   var desktopEscalate: Bool?
   var taskModel: ModelID?
   var chatModel: ModelID?
-  /// Changes Haiku finds safe go ahead without asking.
+  /// Quick jobs: checks, screening pages, summaries, research helpers, approval reviews.
+  var smallModel: ModelID?
+  /// Hard parts: what the chat asks for help with, memory proposals, teaching.
+  var expertModel: ModelID?
+  /// Changes the reviewing model finds safe go ahead without asking.
   var reviewChanges: Bool?
   var heartbeat: Heartbeat?
   var weeklyReport: WeeklyReport?
@@ -692,6 +696,25 @@ struct AppSettings: Codable, Equatable, Sendable {
     static let known = [haiku, opus]
 
     var name: String { Format.modelName(rawValue) }
+  }
+}
+
+/// GET /models: what the model providers that are on offer.
+struct ModelOption: Codable, Equatable, Sendable {
+  var id: String
+  var name: String
+  var provider: String
+  var computerUse: Bool
+}
+
+extension [ModelOption] {
+  /// A picker's models; the one set now stays among them even when no provider offers it.
+  func choices(_ current: AppSettings.ModelID?, only: (ModelOption) -> Bool = { _ in true }) -> [AppSettings.ModelID] {
+    filter(only).map { AppSettings.ModelID(rawValue: $0.id) }.including(current)
+  }
+
+  func name(_ m: AppSettings.ModelID) -> String {
+    first { $0.id == m.rawValue }?.name ?? m.name
   }
 }
 

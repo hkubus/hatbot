@@ -14,7 +14,6 @@ import type { ScreenLane } from "../tasks/lane";
 import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
 import { type Skills, skillPath } from "./skills";
 
-export const TEACH_MODEL = "claude-opus-5-5";
 /** Holds the screen lane while you record, so no task starts on the desktop. */
 const TEACH_LANE = -2;
 const SCREENS_SENT = 16;
@@ -293,7 +292,7 @@ export class Teach {
       const out = await oneShot(
         this.d,
         {
-          model: TEACH_MODEL,
+          model: this.d.settings.get().expertModel,
           max_tokens: 16000,
           thinking: { type: "adaptive" },
           output_config: { effort: "medium" },

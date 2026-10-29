@@ -9,6 +9,8 @@ import { z } from "zod";
 import type { Db } from "./db";
 
 const Level = z.enum(APPROVAL_LEVELS);
+/** Any provider's: one that's on is checked for when it's set. */
+const ModelId = z.string().min(1).max(200);
 const Safety = z.object({
   kinds: z.object(
     Object.fromEntries(SAFETY_KINDS.map((k) => [k, Level])) as Record<SafetyKind, typeof Level>,
@@ -32,8 +34,8 @@ export const Settings = z.object({
     boxesUsd: z.number().min(0),
   }),
   chatEffort: z.enum(CHAT_EFFORTS),
-  /** On Haiku 5.5 the chat can ask Opus 5.5 once per reply (ask_opus). */
-  chatModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
+  /** Unless it's the expert model, the chat can ask the expert once per reply (ask_opus). */
+  chatModel: ModelId,
   /** Name and email on memory commits you make from the UI. */
   owner: z.object({ name: z.string().min(1), email: z.string().min(1) }),
   paused: z.boolean(),
@@ -41,12 +43,15 @@ export const Settings = z.object({
   reviewChanges: z.boolean(),
   safety: Safety,
   notificationsOpen: z.enum(["web", "app"]),
-  /** Haiku 5.5 is far cheaper, Opus 5.5 fails less. */
-  desktopModel: z.enum(["claude-opus-5-5", "claude-haiku-5-5"]),
-  /** A desktop task Haiku fails at carries on once on Opus. */
+  desktopModel: ModelId,
+  /** A desktop task the desktop model fails at carries on once on the expert model. */
   desktopEscalate: z.boolean(),
   /** The model background tasks run on (SSH, Proxmox, code work: anything without a screen). */
-  taskModel: z.enum(["claude-haiku-5-5", "claude-opus-5-5"]),
+  taskModel: ModelId,
+  /** Quick jobs: checks, screening pages, summaries, research helpers, approval reviews. */
+  smallModel: ModelId,
+  /** Hard parts: what the chat asks for help with, memory proposals, teaching. */
+  expertModel: ModelId,
   heartbeat: z.object({
     enabled: z.boolean(),
     everyMinutes: z.number().int().min(5).max(1440),
@@ -104,6 +109,8 @@ export const DEFAULT_SETTINGS: Settings = {
   desktopModel: "claude-haiku-5-5",
   desktopEscalate: true,
   taskModel: "claude-haiku-5-5",
+  smallModel: "claude-haiku-5-5",
+  expertModel: "claude-opus-5-5",
   heartbeat: {
     enabled: true,
     everyMinutes: 30,

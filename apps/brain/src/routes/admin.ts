@@ -1,8 +1,9 @@
-import { SetNtfy } from "@hatbot/shared";
+import { type ModelOption, SetNtfy } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv, Deps } from "../context";
+import { modelProblem } from "../models-known";
 import { guessableTopic } from "../notify";
 import { SettingsPatch } from "../settings";
 import { json, query } from "./util";
@@ -25,6 +26,7 @@ export function pauseAll(
 export const adminRoutes = new Hono<AppEnv>()
   .use("/spend/*", requireAuth)
   .use("/settings", requireAuth)
+  .use("/models", requireAuth)
   .use("/connections", requireAuth)
   .use("/connections/*", requireAuth)
   .use("/pause-all", requireAuth)
@@ -43,10 +45,24 @@ export const adminRoutes = new Hono<AppEnv>()
   )
   .get("/settings", (c) => c.json(c.var.settings.get()))
   .put("/settings", json(SettingsPatch.omit({ paused: true })), (c) => {
+    const problem = modelProblem(c.req.valid("json"));
+    if (problem) return c.json(problem, 400);
     const settings = c.var.settings.update(c.req.valid("json"));
     c.var.events.emit({ type: "settings.updated", settings });
     return c.json(settings);
   })
+  .get("/models", (c) =>
+    c.json(
+      c.var.models.catalogue().map(
+        (m): ModelOption => ({
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+          computerUse: Boolean(m.capabilities.computerUse),
+        }),
+      ),
+    ),
+  )
   // The ntfy server: set here, it replaces the host's until removed.
   .get("/connections", (c) => c.json(c.var.secrets.view()))
   .put("/connections/ntfy", json(SetNtfy), (c) => {

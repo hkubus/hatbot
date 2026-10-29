@@ -20,7 +20,7 @@ const PURPOSE_NAMES: Record<string, string> = {
   "keep-warm": "Keeping chats cached",
   task: "Tasks",
   summary: "Summaries",
-  expert: "Asking Opus",
+  expert: "Hard parts",
   research: "Research",
   review: "Reviewing changes",
   screening: "Checking pages",

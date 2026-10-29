@@ -26,7 +26,7 @@ export const MODELS: ModelInfo[] = [
     id: "claude-opus-5-5",
     name: "Opus 5.5",
     price: { input: 4, output: 20, cacheRead: 0.2 },
-    capabilities: ALL,
+    capabilities: { ...ALL, progressNotes: true },
     // What a declined request may be answered by, with `fallbacks: "default"`.
     fallbacks: [
       {

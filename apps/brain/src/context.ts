@@ -1,5 +1,6 @@
 import type { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Chats } from "./agent/chats";
+import type { Models } from "./agent/models";
 import type { Approvals } from "./approvals";
 import type { Archive } from "./archive";
 import type { Attachments } from "./attachments";
@@ -63,6 +64,7 @@ export type Deps = {
   checks: Checks;
   negotiations: Negotiations;
   secrets: Secrets;
+  models: Models;
 };
 
 export type AppEnv = {

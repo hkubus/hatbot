@@ -1,4 +1,3 @@
-export const RESEARCH_MODEL = "claude-haiku-5-5";
 /** Fixed for research, above what a task's effort can be set to (the tasks table takes up to high). */
 export const RESEARCH_EFFORT = "xhigh";
 const EARLIER_REPORT = "Earlier report to refresh: ";

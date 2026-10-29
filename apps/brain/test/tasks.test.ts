@@ -463,7 +463,7 @@ test("desktop_shell runs commands as text; destructive ones go to the review, th
     kind: "delete",
     summary: "On the desktop: rm -rf ~/experiments",
   });
-  expect(approval.reason).toContain("Opus: Nothing else has these files.");
+  expect(approval.reason).toContain("Opus 5.5: Nothing else has these files.");
   expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'", "rm -rf ~/build"]);
   t.approvals.decide(approval.id, "deny", "web");
   await t.tasks.idle();
@@ -534,7 +534,7 @@ test("each line break in typed text is checked on its own: one send the review a
   // The approved Enter, then the text after it; the next Enter waits for another approval.
   expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
   expect(lastText(work.requests[4])).toContain('submit with \\"Send\\"');
-  expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku found it safe")).toBe(
+  expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku 5.5 found it safe")).toBe(
     true,
   );
   expect(t.approvals.list(false)).toHaveLength(0);

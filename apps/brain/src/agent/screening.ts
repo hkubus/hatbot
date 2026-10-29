@@ -1,14 +1,13 @@
-// Haiku screens untrusted text for prompt injection, as defence in depth.
+// The small model screens untrusted text for prompt injection, as defence in depth.
 import { createHash } from "node:crypto";
+import type { SettingsStore } from "../settings";
 import { BudgetError, type Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
 import { SCREENING_PROMPT } from "./prompt";
 import { tagJson } from "./untrusted";
 
-export const SCREENING_MODEL = "claude-haiku-5-5";
-
 /**
- * `failed`: Haiku gave no verdict, twice. The text isn't suspected for it: the timeline says it
+ * `failed`: the model gave no verdict, twice. The text isn't suspected for it: the timeline says it
  * couldn't be checked, and the review still looks at what it leads to.
  */
 export type Screening = { suspected: boolean; excerpt: string; failed?: true };
@@ -24,9 +23,10 @@ const MAX_SCREENED_CHARS = 150_000;
 
 export type Readable = string | { pdf: string };
 
+type ScreenDeps = { model: ModelClient; spend: Spend; settings: SettingsStore };
+
 export async function screenPage(
-  model: ModelClient,
-  spend: Spend,
+  d: ScreenDeps,
   where: { taskId?: number; episodeId?: number },
   page: { url: string | null; title: string | null; text: Readable },
   { reserve = false }: { reserve?: boolean } = {},
@@ -39,10 +39,10 @@ export async function screenPage(
   for (let attempt = 1; ; attempt++) {
     try {
       const out = await oneShot(
-        { model, spend },
+        d,
         {
-          model: SCREENING_MODEL,
-          // Haiku 5.5 thinks by default; low effort, with room so thinking can't crowd out the verdict.
+          model: d.settings.get().smallModel,
+          // Low effort, with room so thinking can't crowd out the verdict.
           max_tokens: 2000,
           thinking: { type: "adaptive" },
           output_config: { effort: "low", format: { type: "json_schema", schema: VERDICT } },
@@ -90,7 +90,7 @@ export class Screener {
   private pending = new Set<Promise<void>>();
 
   constructor(
-    private d: { model: ModelClient; spend: Spend },
+    private d: ScreenDeps,
     private ref: { taskId?: number; episodeId?: number },
     private suspect: (source: string, verdict: Screening) => void,
     private opts: { reserve?: boolean } = {},
@@ -106,13 +106,7 @@ export class Screener {
     const seen = cache.get(key);
     const verdict = seen
       ? Promise.resolve(seen)
-      : screenPage(
-          this.d.model,
-          this.d.spend,
-          this.ref,
-          { url: null, title: source, text },
-          this.opts,
-        ).then((v) => {
+      : screenPage(this.d, this.ref, { url: null, title: source, text }, this.opts).then((v) => {
           if (v.failed) return v;
           if (cache.size >= MAX_KNOWN) cache.delete(cache.keys().next().value as string);
           cache.set(key, v);

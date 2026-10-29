@@ -9,6 +9,7 @@ struct BotView: View {
   @State private var plugins: [PluginName] = []
   /// The chat's model and effort in Settings, which a bot without its own uses.
   @State private var defaults: AppSettings?
+  @State private var models: [ModelOption] = []
   @State private var templates: [BotTemplate] = []
   @State private var template: String?
   /// What the form was last filled with, blank or from a template, to tell whether you've changed it.
@@ -126,10 +127,10 @@ struct BotView: View {
       }
       Section {
         Picker("Model", selection: $form.chatModel) {
-          Text(byDefault(defaults?.chatModel?.name)).tag(AppSettings.ModelID?.none)
-          // One set elsewhere that this app doesn't know is kept as it is.
-          ForEach(AppSettings.ModelID.known.including(form.chatModel), id: \.self) { m in
-            Text(m.name).tag(AppSettings.ModelID?.some(m))
+          Text(byDefault(defaults?.chatModel.map(models.name))).tag(AppSettings.ModelID?.none)
+          // One no provider offers now is kept as it is.
+          ForEach(models.choices(form.chatModel), id: \.self) { m in
+            Text(models.name(m)).tag(AppSettings.ModelID?.some(m))
           }
         }
         Picker("Effort", selection: $form.chatEffort) {
@@ -217,6 +218,7 @@ struct BotView: View {
       }
       plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
       defaults = try? await store.loadSettings()
+      models = await store.loadModels()
     }
   }
 

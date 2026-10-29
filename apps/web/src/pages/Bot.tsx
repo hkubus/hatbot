@@ -14,10 +14,11 @@ import { toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
 import { Link } from "../link";
 import { PageLoad, useLoad } from "../load";
+import { chatModelOptions, modelNameIn, modelOptions, useModels } from "../models";
 import { navigate } from "../router";
 import { chatPath, createBot, deleteBot, loadBot, loadPlugins, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
-import { BackHead, CHAT_MODELS, EFFORTS, MODELS, SaveBar, Select } from "../ui";
+import { BackHead, EFFORTS, SaveBar, Select } from "../ui";
 
 type Form = {
   name: string;
@@ -94,6 +95,7 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
   const missing = load.missing;
 
   const [defaults, setDefaults] = useState<AppSettings>();
+  const models = useModels();
   useEffect(() => {
     void loadPlugins().catch(() => {});
     api<AppSettings>("/settings").then(setDefaults, () => {});
@@ -246,7 +248,12 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
               className="field"
               label="Model"
               value={form.chatModel ?? ""}
-              options={[["", byDefault(MODELS, defaults?.chatModel)], ...CHAT_MODELS]}
+              options={[
+                ["", defaults ? `Default (${modelNameIn(models, defaults.chatModel)})` : "Default"],
+                ...(defaults
+                  ? chatModelOptions(models, form.chatModel, defaults.expertModel)
+                  : modelOptions(models, form.chatModel)),
+              ]}
               onChange={(chatModel) => set({ chatModel: chatModel || null })}
             />
           </div>

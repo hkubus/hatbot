@@ -1,6 +1,6 @@
 // The review of a change that would otherwise ask you to approve it: if it isn't destructive or
-// dangerous, and nothing untrusted could have put it there, it goes ahead. Haiku looks first, and Opus
-// looks again before a no reaches you.
+// dangerous, and nothing untrusted could have put it there, it goes ahead. The small model looks first,
+// and the expert model looks again before a no reaches you.
 
 import type { Verdict } from "@hatbot/plugin-sdk";
 import {
@@ -10,16 +10,13 @@ import {
   SAFETY_KINDS,
   type SafetyKind,
 } from "@hatbot/shared";
-import type { Settings } from "../settings";
+import { modelName } from "../models-known";
+import type { Settings, SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
 import { REVIEW_PROMPT } from "./prompt";
 import { tagJson, tagText } from "./untrusted";
 
-const REVIEWERS = [
-  { by: "Haiku", model: "claude-haiku-5-5" },
-  { by: "Opus", model: "claude-opus-5-5" },
-] as const;
 /** Room for thinking, so it can't crowd out the verdict. */
 const REVIEW_MAX_TOKENS = 4000;
 
@@ -60,14 +57,15 @@ export function levelOf(
 export const scopesFor = (verdict: Extract<Verdict, { action: "ask" }>): ApprovalScope[] =>
   verdict.tainted ? ["session", "always"] : ["always"];
 
-export type Review = { safe: boolean; why: string; by: (typeof REVIEWERS)[number]["by"] };
+/** `by`: the reviewing model's name. */
+export type Review = { safe: boolean; why: string; by: string };
 
 /**
  * Whether it's needed isn't the review's call. Neither model sees untrusted content, only its sources.
  * `reserve`: alert and heartbeat work, which may spend what's kept for alerts.
  */
 export async function safeToRun(
-  d: { model: ModelClient; spend: Spend },
+  d: { model: ModelClient; spend: Spend; settings: SettingsStore },
   ref: { taskId?: number; episodeId?: number },
   context: { ownerSaid: string | null; goal: string; sources: string[] },
   action: { tool: string; input: unknown; what: string; why: string },
@@ -81,8 +79,11 @@ export async function safeToRun(
     `<untrusted_sources>\n${tagJson(context.sources)}\n</untrusted_sources>`,
     `<action>\n${tagJson({ tool: action.tool, input: action.input, summary: action.what, would_ask_because: action.why })}\n</action>`,
   ].join("\n\n");
-  let review: Review = { safe: false, why: "", by: "Haiku" };
-  for (const { by, model } of REVIEWERS) {
+  const { smallModel, expertModel } = d.settings.get();
+  const models = [...new Set([smallModel, expertModel])];
+  let review: Review = { safe: false, why: "", by: modelName(smallModel) };
+  for (const model of models) {
+    const by = modelName(model);
     try {
       const out = await oneShot(
         d,

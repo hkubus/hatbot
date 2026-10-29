@@ -5,6 +5,7 @@ struct SettingsView: View {
   @Environment(Session.self) private var session
   @Environment(AppStore.self) private var store
   @State private var settings: AppSettings?
+  @State private var models: [ModelOption] = []
   @State private var confirmSignOut = false
   @State private var error: String?
   /// What's been changed here, shown until it's saved or put back.
@@ -33,10 +34,11 @@ struct SettingsView: View {
         }
         if let settings {
           Section("Models") {
+            let expert = settings.expertModel ?? .opus
             if let model = settings.chatModel {
               Picker("Chat", selection: setting(model, \.chatModel)) {
-                ForEach(AppSettings.ModelID.known.including(model), id: \.self) { m in
-                  Text(m == .haiku ? "\(m.name), asks Opus for hard parts" : m.name).tag(m)
+                ForEach(models.choices(model), id: \.self) { m in
+                  Text(m == expert ? models.name(m) : "\(models.name(m)), asks \(models.name(expert)) for hard parts").tag(m)
                 }
               }
             }
@@ -47,16 +49,28 @@ struct SettingsView: View {
             }
             if let model = settings.taskModel {
               Picker("Background tasks", selection: setting(model, \.taskModel)) {
-                ForEach(AppSettings.ModelID.known.including(model), id: \.self) { m in Text(m.name).tag(m) }
+                ForEach(models.choices(model), id: \.self) { m in Text(models.name(m)).tag(m) }
               }
             }
             if let model = settings.desktopModel {
               let desktop = setting(model, \.desktopModel)
               Picker("Desktop tasks", selection: desktop) {
-                ForEach(AppSettings.ModelID.known.including(model), id: \.self) { m in Text(m.name).tag(m) }
+                ForEach(models.choices(model, only: \.computerUse), id: \.self) { m in Text(models.name(m)).tag(m) }
               }
-              if desktop.wrappedValue == .haiku, let escalate = settings.desktopEscalate {
-                Toggle("Try desktop tasks again on Opus when Haiku fails", isOn: setting(escalate, \.desktopEscalate))
+              if desktop.wrappedValue != expert, let escalate = settings.desktopEscalate {
+                Toggle(
+                  "Try desktop tasks again on \(models.name(expert)) when they fail",
+                  isOn: setting(escalate, \.desktopEscalate))
+              }
+            }
+            if let model = settings.smallModel {
+              Picker("Quick jobs", selection: setting(model, \.smallModel)) {
+                ForEach(models.choices(model), id: \.self) { m in Text(models.name(m)).tag(m) }
+              }
+            }
+            if let model = settings.expertModel {
+              Picker("Hard parts", selection: setting(model, \.expertModel)) {
+                ForEach(models.choices(model), id: \.self) { m in Text(models.name(m)).tag(m) }
               }
             }
           }
@@ -120,6 +134,7 @@ struct SettingsView: View {
 
   private func load() async {
     let seen = changes
+    models = await store.loadModels()
     await attempt($error) {
       let loaded = try await store.loadSettings()
       // Each change's own answer brings the settings: this one may be from before it.

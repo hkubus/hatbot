@@ -276,15 +276,7 @@ export function Select<T extends string | number>({
   );
 }
 
-// The models and efforts Settings and a bot offer, so a new one is added in one place.
-export const CHAT_MODELS = [
-  ["claude-haiku-5-5", "Haiku 5.5, asks Opus for hard parts"],
-  ["claude-opus-5-5", "Opus 5.5"],
-] as const;
-export const MODELS = [
-  ["claude-haiku-5-5", "Haiku 5.5"],
-  ["claude-opus-5-5", "Opus 5.5"],
-] as const;
+// The efforts Settings and a bot offer, so a new one is added in one place.
 export const EFFORTS = [
   ["low", "Low"],
   ["medium", "Medium"],

@@ -14,6 +14,7 @@ import { inWorker } from "./db/worker";
 import { DesktopError } from "./desktop/client";
 import type { Desktop } from "./desktop/service";
 import type { MemoryStore } from "./memory/store";
+import { modelName } from "./models-known";
 import { guessableTopic, type NtfyNotifier } from "./notify";
 import { type DeadManPing, errorText } from "./ping";
 import type { Plugins } from "./plugins/registry";
@@ -23,7 +24,6 @@ import { bytes, type Storage, storageLine } from "./storage";
 import type { Updates } from "./updates";
 
 /** The cheapest real model call there is: it proves the key, the network and billing. */
-export const CHECK_MODEL = "claude-haiku-5-5";
 const CHECK_TIMEOUT_MS = 30_000;
 const LOW_DISK_BYTES = 5 * 1024 ** 3;
 /** A write-ahead log this big means checkpoints aren't keeping up: something holds a read open. */
@@ -234,17 +234,18 @@ export class Checks {
     if (this.d.settings.get().paused) return skip("Paused.");
     if (this.d.modelsReady?.() === false)
       return fail("No model provider is on. Set one up in Settings → Plugins.");
+    const model = this.d.settings.get().smallModel;
     try {
       await oneShot(
         this.d,
         {
-          model: CHECK_MODEL,
+          model,
           max_tokens: 16,
           messages: [{ role: "user", content: "Reply with the word OK." }],
         },
         { purpose: "check" },
       );
-      return ok("Haiku 5.5 answered.");
+      return ok(`${modelName(model)} answered.`);
     } catch (err) {
       return fail(`The call failed: ${modelErrorText(err)}`);
     }

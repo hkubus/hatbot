@@ -24,9 +24,9 @@ import { z } from "zod";
 import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import { addModels } from "../models-known";
 import type { Secrets } from "../secrets";
 import { deleteSetting, getSetting, setSetting } from "../settings";
-import { addPrices } from "../spend";
 
 const MAX_OUTPUT_CHARS = 30_000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -430,7 +430,7 @@ export class Plugins {
     s.instance = instance;
     s.state = state;
     s.message = message;
-    if (state === "ready" && instance?.models) addPrices(instance.models.models());
+    if (state === "ready" && instance?.models) addModels(instance.models.models());
     this.emit(s);
     this.later(s);
     this.time(s);

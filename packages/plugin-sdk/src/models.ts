@@ -33,6 +33,8 @@ export type ModelCapabilities = {
   webFetch?: boolean;
   images?: boolean;
   pdfs?: boolean;
+  /** Notes between tools as it works, shown while a reply or task runs. */
+  progressNotes?: boolean;
 };
 
 export type ModelInfo = {

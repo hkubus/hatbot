@@ -5,6 +5,7 @@ import type { Chats } from "./agent/chats";
 import type { Bots } from "./bots";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
+import { modelName } from "./models-known";
 import type { Notifier } from "./notify";
 import { getSetting, type SettingsStore, setSetting } from "./settings";
 import { type Storage, storageLine } from "./storage";
@@ -34,10 +35,6 @@ export function lastDue(now: number, weekday: number, hour: number): number {
 }
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
-const MODEL_NAMES: Record<string, string> = {
-  "claude-haiku-5-5": "Haiku 5.5",
-  "claude-opus-5-5": "Opus 5.5",
-};
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export class WeeklyReport {
@@ -158,7 +155,7 @@ export class WeeklyReport {
     for (const t of failed) lines.push(`  - Failed: [${t.title}](/tasks/${t.id})`);
     for (const r of desktop)
       lines.push(
-        `- Desktop on ${MODEL_NAMES[r.model] ?? r.model}: ${r.done} done, ${r.failed} failed${r.rescued ? `, ${r.rescued} of them then done on Opus` : ""}.`,
+        `- Desktop on ${modelName(r.model)}: ${r.done} done, ${r.failed} failed${r.rescued ? `, ${r.rescued} of them then done on another model` : ""}.`,
       );
     if (answered || expired)
       lines.push(

@@ -1293,6 +1293,14 @@ final class AppStore {
     try await api.get("/settings")
   }
 
+  /// A brain from before model providers were plugins has no /models: it offers Claude's.
+  func loadModels() async -> [ModelOption] {
+    let list: [ModelOption]? = try? await api.get("/models")
+    return list ?? AppSettings.ModelID.known.map {
+      ModelOption(id: $0.rawValue, name: $0.name, provider: "anthropic", computerUse: true)
+    }
+  }
+
   /// Settings to change; the ones left nil aren't sent, and stay as they are.
   struct SettingsChange: Encodable, Sendable {
     var limits: Limits?
@@ -1302,6 +1310,8 @@ final class AppStore {
     var desktopEscalate: Bool?
     var taskModel: AppSettings.ModelID?
     var chatModel: AppSettings.ModelID?
+    var smallModel: AppSettings.ModelID?
+    var expertModel: AppSettings.ModelID?
     var reviewChanges: Bool?
     var heartbeat: AppSettings.Heartbeat?
     var weeklyReport: AppSettings.WeeklyReport?

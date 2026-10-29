@@ -13,24 +13,14 @@ import { ask } from "../confirm";
 import { clearDrafts } from "../drafts";
 import { prTitle, shortSha, stamp } from "../format";
 import { LoadError, PageLoad, useLoad } from "../load";
+import { chatModelOptions, modelNameIn, modelOptions, useModels } from "../models";
 import { navigate } from "../router";
 import { parseLimit, parseName, SavedRow } from "../saved-row";
 import { setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
 import type { Toast } from "../toast";
-import {
-  BackHead,
-  CHAT_MODELS,
-  Disclosure,
-  EFFORTS,
-  Group,
-  LinkRow,
-  MODELS,
-  Row,
-  Seg,
-  Select,
-} from "../ui";
+import { BackHead, Disclosure, EFFORTS, Group, LinkRow, Row, Seg, Select } from "../ui";
 import { PluginPage, PluginsPage } from "./Plugins";
 import { SafetyPage } from "./Safety";
 
@@ -102,6 +92,7 @@ const MORE_LIMITS = [
 function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => void }) {
   const [rules, setRules] = useState<number | null>(null);
   const theme = useTheme();
+  const models = useModels();
   const paused = useStore((s) => s.paused);
   // Saved elsewhere (the app, another tab): shown here too.
   const settingsVersion = useStore((s) => s.settingsVersion);
@@ -174,7 +165,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <Select
               label="Chat model"
               value={settings.chatModel}
-              options={CHAT_MODELS}
+              options={chatModelOptions(models, settings.chatModel, settings.expertModel)}
               onChange={(chatModel) => update({ chatModel })}
             />
           </Row>
@@ -190,7 +181,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <Select
               label="Model for background tasks"
               value={settings.taskModel}
-              options={MODELS}
+              options={modelOptions(models, settings.taskModel)}
               onChange={(taskModel) => update({ taskModel })}
             />
           </Row>
@@ -198,12 +189,30 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <Select
               label="Model for desktop tasks"
               value={settings.desktopModel}
-              options={MODELS}
+              options={modelOptions(models, settings.desktopModel, (m) => m.computerUse)}
               onChange={(desktopModel) => update({ desktopModel })}
             />
           </Row>
-          {settings.desktopModel === "claude-haiku-5-5" && (
-            <Row label="Try desktop tasks again on Opus when Haiku fails">
+          <Row label="Quick jobs">
+            <Select
+              label="Model for quick jobs"
+              value={settings.smallModel}
+              options={modelOptions(models, settings.smallModel)}
+              onChange={(smallModel) => update({ smallModel })}
+            />
+          </Row>
+          <Row label="Hard parts">
+            <Select
+              label="Model for hard parts"
+              value={settings.expertModel}
+              options={modelOptions(models, settings.expertModel)}
+              onChange={(expertModel) => update({ expertModel })}
+            />
+          </Row>
+          {settings.desktopModel !== settings.expertModel && (
+            <Row
+              label={`Try desktop tasks again on ${modelNameIn(models, settings.expertModel)} when they fail`}
+            >
               <Switch
                 on={settings.desktopEscalate}
                 onChange={(desktopEscalate) => update({ desktopEscalate })}
