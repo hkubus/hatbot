@@ -30,7 +30,10 @@ export class Models implements ModelClient {
     const found = this.plugins
       .modelProviders()
       .find(({ provider }) => provider.models().some((m) => m.id === model));
-    if (!found) throw new ModelError(`no model provider that's on offers ${model}`);
+    if (!found)
+      throw new ModelError(
+        `no model provider that's on offers ${model}; pick another in Settings → Models`,
+      );
     return found.provider;
   }
 }

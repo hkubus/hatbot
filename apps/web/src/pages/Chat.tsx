@@ -37,6 +37,7 @@ import { Link } from "../link";
 import { LoadError } from "../load";
 import { AssistantBody, isMarkdownFile } from "../markdown";
 import { touchScreen } from "../media";
+import { useModels } from "../models";
 import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
 import {
@@ -71,7 +72,7 @@ import {
   taskLines,
   whenText,
 } from "../tasks";
-import { Empty } from "../ui";
+import { Empty, Group, LinkRow } from "../ui";
 import { splitWaiting } from "../waiting";
 
 const SEEN_AFTER_MS = 1500;
@@ -808,6 +809,7 @@ export function Chat({ id }: { id: number }) {
   const [error, setError] = useState("");
   // Until the thread has loaded there's nothing to say about it, not even hello.
   const [ready, setReady] = useState(false);
+  const models = useModels();
   const [loadError, setLoadError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const scroller = useRef<HTMLElement>(null);
@@ -1024,7 +1026,16 @@ export function Chat({ id }: { id: number }) {
             {loadError && !messages.length && (
               <LoadError error={loadError} retry={() => setAttempt((n) => n + 1)} />
             )}
-            {ready && !messages.length && (
+            {ready && !messages.length && models?.length === 0 && (
+              <Group title="Choose a model provider">
+                <LinkRow to="/settings/plugins/anthropic" label="Anthropic: Claude" />
+                <LinkRow
+                  to="/settings/plugins/openai"
+                  label="OpenRouter, or another OpenAI-compatible API"
+                />
+              </Group>
+            )}
+            {ready && !messages.length && models?.length !== 0 && (
               <Empty>
                 {incognito
                   ? `${name} can't see earlier conversations here, and this one is deleted when you leave.`
