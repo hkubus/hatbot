@@ -3,7 +3,8 @@ import { Desktop, frameRelay } from "@hatbot/plugin-desktop";
 import { websocket } from "hono/bun";
 import { EventBus } from "../src/events";
 import { FakeDesktop } from "./fake-desktop";
-import { ORIGIN, signIn, testApp } from "./helpers";
+import { FakeModel, text } from "./fake-model";
+import { ORIGIN, signIn, testApp, toolNames } from "./helpers";
 
 test("you keep control of the desktop across a brain restart", async () => {
   const kept = new Map<string, string | null>();
@@ -90,4 +91,24 @@ test("the live view is only for the signed-in, from Hatbot's address, and closes
     brain.stop(true);
     upstream.stop(true);
   }
+});
+
+test("with the Desktop plugin off, the chat has no desktop tasks and no word of them", async () => {
+  const model = new FakeModel([{ content: [text("Hi.")] }, { content: [text("Hi.")] }]);
+  const t = await testApp(model);
+  const sent = async () => {
+    await t.thread.post("hi").done;
+    const req = model.requests.at(-1);
+    return { tools: toolNames(req), system: JSON.stringify(req?.system) };
+  };
+  const on = await sent();
+  expect(on.tools).toContain("run_desktop_task");
+  expect(on.system).toContain("run_desktop_task");
+
+  await t.plugins.update("desktop", { enabled: false });
+  const off = await sent();
+  expect(off.tools).not.toContain("run_desktop_task");
+  expect(off.tools).not.toContain("send_file");
+  expect(off.system).not.toContain("run_desktop_task");
+  expect((await t.call("GET", "/desktop/status", undefined, signIn(t))).status).toBe(404);
 });

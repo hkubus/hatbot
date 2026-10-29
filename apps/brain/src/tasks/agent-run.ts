@@ -4,7 +4,7 @@ import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { cutOff, type StreamParams } from "../agent/model";
-import { AGENT_PROMPT, CHART_GUESS } from "../agent/prompt";
+import { agentPrompt, CHART_GUESS } from "../agent/prompt";
 import { levelOf, safeToRun, scopable, scopesFor } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
@@ -233,11 +233,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const runnerTools = new Set((runner?.tools ?? []).flatMap((t) => ("name" in t ? [t.name] : [])));
   /** Results never cleared: a research task's findings are what it cites. */
   const keptTools = ["finish_task", ...runnerTools].filter((n) => sent.has(n));
-  const guidance = d.plugins.guidance(bot.plugins, d.bots.leftToOthers(bot));
+  const left = d.bots.leftToOthers(bot);
+  const guidance = d.plugins.guidance(bot.plugins, left);
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
   const prompt = runner
     ? promptFor(runner.prompt(bot), bot, others, { plugins, handOver: runner.handOver })
-    : promptFor(AGENT_PROMPT, bot, others, { plugins });
+    : promptFor(agentPrompt(d.plugins.prompt("task", bot.plugins, left)), bot, others, {
+        plugins,
+      });
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   const screener = new Screener(
     d,

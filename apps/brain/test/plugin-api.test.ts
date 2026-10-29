@@ -8,6 +8,7 @@ import {
   tool,
 } from "@hatbot/plugin-sdk";
 import { z } from "zod";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, testApp } from "./helpers";
 import { ON_BY_DEFAULT, stopPluginsAfterEach, track } from "./plugin-helpers";
 
@@ -150,8 +151,12 @@ test("a plugin keeps small values of its own, and adds lines to the prompt while
       return ready([], { prompt: { chat: "Keep things.", task: "Keep at it." } });
     },
   });
-  const t = await app([p]);
-  for (const id of ON_BY_DEFAULT) await t.plugins.update(id, { enabled: false });
+  const chat = new FakeModel([{ content: [text("Hi.")] }, { content: [text("Hi.")] }]);
+  const finish = {
+    content: [toolUse("finish_task", { outcome: "done", summary: "Went.", notify: false })],
+  };
+  const work = new FakeModel([finish, finish]);
+  const t = track(await testApp(chat, work, {}, [p]));
   // biome-ignore lint/style/noNonNullAssertion: set by start
   const mine = store!;
   mine.set("last", "42");
@@ -159,9 +164,21 @@ test("a plugin keeps small values of its own, and adds lines to the prompt while
   expect(t.db.query("SELECT value FROM settings WHERE key = 'keeper:last'").get()).toEqual({
     value: "42",
   });
-  expect(t.plugins.prompt("chat")).toBe("Keep things.");
+  const systems = async () => {
+    await t.thread.post("hi").done;
+    t.tasks.createBackgroundTask({ title: "Go", goal: "Go", origin: "chat" });
+    await t.tasks.idle();
+    return [chat.requests.at(-1)?.system, work.requests.at(-1)?.system].map((x) =>
+      JSON.stringify(x),
+    );
+  };
+  const [said, worked] = await systems();
+  expect(said).toContain("Keep things.");
+  expect(worked).toContain("Keep at it.");
   await t.plugins.update("keeper", { enabled: false });
-  expect(t.plugins.prompt("chat")).toBe("");
+  const [after, workedAfter] = await systems();
+  expect(after).not.toContain("Keep things.");
+  expect(workedAfter).not.toContain("Keep at it.");
 });
 
 test("a plugin's tick runs only while it's on", async () => {

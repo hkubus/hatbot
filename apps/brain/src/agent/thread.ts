@@ -73,7 +73,7 @@ import {
   INCOGNITO_PROMPT,
   MAX_GROUP_REPLIES,
   SUMMARY_PROMPT,
-  SYSTEM_PROMPT,
+  systemPrompt,
 } from "./prompt";
 import { levelOf, safeToRun, scopable, scopesFor } from "./review";
 import { type Readable, Screener } from "./screening";
@@ -861,7 +861,7 @@ export class Thread {
     const left = bots.leftToOthers(bot);
     const guidance = plugins.guidance(bot.plugins, left);
     const others = bots.list().filter((b) => b.id !== bot.id);
-    const solo = promptFor(SYSTEM_PROMPT, bot, others, {
+    const solo = promptFor(systemPrompt(plugins.prompt("chat", bot.plugins, left)), bot, others, {
       plugins: (b) => plugins.names(b.plugins, bots.leftToOthers(b)),
       chat: true,
     });
