@@ -38,6 +38,12 @@ type Row = {
 
 const LATEST_CHARS = 200;
 
+/** A thread opened again gives up its key while a newer one on the subject is open. */
+const KEY_IF_FREE = `thread_key = CASE WHEN EXISTS (SELECT 1 FROM conversations o
+  WHERE o.parent_id = conversations.parent_id AND o.thread_key = conversations.thread_key
+    AND o.id != conversations.id AND o.resolved_at IS NULL AND o.deleted_at IS NULL)
+  THEN NULL ELSE thread_key END`;
+
 export class Chats {
   private running = new Map<number, Thread>();
   /** Shared by every chat, so what attach adds reaches the chats open already. */
@@ -312,10 +318,12 @@ export class Chats {
     });
   }
 
-  resolveThread(id: number, outcome: string | null): Conversation | null {
+  /** `settled`: what its subject came to, even if it was resolved before. */
+  resolveThread(id: number, outcome: string | null, settled = false): Conversation | null {
     const done = this.d.db
       .query(
-        "UPDATE conversations SET resolved_at = ?, outcome = ?, needs_you_at = NULL WHERE id = ? AND kind = 'thread' AND resolved_at IS NULL",
+        `UPDATE conversations SET resolved_at = coalesce(resolved_at, ?), outcome = ?, needs_you_at = NULL
+         WHERE id = ? AND kind = 'thread' AND ${settled ? "1" : "resolved_at IS NULL"}`,
       )
       .run(this.now(), outcome, id).changes;
     if (done) this.changed(id);
@@ -345,7 +353,7 @@ export class Chats {
   reopenThread(id: number) {
     const done = this.d.db
       .query(
-        "UPDATE conversations SET resolved_at = NULL, outcome = NULL WHERE id = ? AND kind = 'thread' AND resolved_at IS NOT NULL",
+        `UPDATE conversations SET resolved_at = NULL, outcome = NULL, ${KEY_IF_FREE} WHERE id = ? AND kind = 'thread' AND resolved_at IS NOT NULL`,
       )
       .run(id).changes;
     if (done) this.changed(id);
@@ -355,7 +363,7 @@ export class Chats {
   ownerWrote(id: number) {
     const done = this.d.db
       .query(
-        "UPDATE conversations SET resolved_at = NULL, outcome = NULL, needs_you_at = NULL WHERE id = ? AND kind = 'thread' AND (resolved_at IS NOT NULL OR needs_you_at IS NOT NULL)",
+        `UPDATE conversations SET resolved_at = NULL, outcome = NULL, needs_you_at = NULL, ${KEY_IF_FREE} WHERE id = ? AND kind = 'thread' AND (resolved_at IS NOT NULL OR needs_you_at IS NOT NULL)`,
       )
       .run(id).changes;
     if (done) this.changed(id);

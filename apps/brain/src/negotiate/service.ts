@@ -364,13 +364,6 @@ export class Negotiations {
     }
   }
 
-  /** The chat a negotiation's thread is in, or where it was started. */
-  private chatOf(n: Negotiation): number | null {
-    if (n.conversationId === null) return null;
-    const c = this.d.chats.get(n.conversationId);
-    return c?.kind === "thread" ? c.parentId : n.conversationId;
-  }
-
   /** A reply work shows under, if it's where the negotiation reports; else its card goes there. */
   private shownUnder(n: Negotiation, messageId: number | undefined): number | undefined {
     if (messageId === undefined) return undefined;
@@ -510,8 +503,11 @@ export class Negotiations {
     return this.askMandates([n], before);
   }
 
-  /** One approval for several sellers started together. */
-  askMandates(ns: Negotiation[], before?: string): Approval {
+  /**
+   * One approval for several sellers started together. `from`: the chat they were started in, where it
+   * waits, since each has its own thread; without one, their bot's chat.
+   */
+  askMandates(ns: Negotiation[], before?: string, from?: number | null): Approval {
     const [n] = ns;
     if (!n) throw new Error("no negotiation to ask about");
     const bot = this.d.bots.nameOf(n.botId);
@@ -519,8 +515,10 @@ export class Negotiations {
     const approval = this.d.approvals.create({
       taskId: null,
       botId: n.botId,
-      // Several sellers' threads share one approval, so it waits in the chat they came from.
-      conversationId: (ns.length > 1 ? this.chatOf(n) : n.conversationId) ?? undefined,
+      conversationId:
+        (ns.length > 1
+          ? (from ?? this.d.chats.get(n.conversationId ?? 0)?.parentId)
+          : n.conversationId) ?? undefined,
       kind: "mandate",
       summary: ns.length > 1 ? groupSummary(ns) : mandateSummary(n),
       reason: before ? `${before}\n\n${reason}` : reason,
@@ -1208,11 +1206,12 @@ export class Negotiations {
     if (!ended) return false;
     this.emit(id);
     const n = this.get(id);
-    const thread = n && this.d.chats.findThread(n.botId, { key: `negotiation:${id}` });
-    if (n && thread)
+    const thread = n?.conversationId && this.d.chats.get(n.conversationId);
+    if (n && thread && thread.kind === "thread")
       this.d.chats.resolveThread(
-        thread,
+        thread.id,
         price === null ? status : `${status} at ${zl(price, n.mandate.currency)}`,
+        true,
       );
     // A send already queued mustn't go now.
     this.stopTasks(id, from);
