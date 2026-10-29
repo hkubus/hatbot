@@ -1,5 +1,7 @@
-// Lists every installed dependency's licence, and fails on a copyleft or unknown one, MPL included.
+// Lists every installed dependency's licence, and fails on a copyleft or unknown one, MPL included:
+// the JavaScript packages, and the Linux app's crates from `cargo metadata`.
 // Run after `bun install`: `bun run licenses`.
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,6 +18,7 @@ const PERMISSIVE = new Set([
   "MIT",
   "MIT-0",
   "Python-2.0",
+  "Unicode-3.0",
   "Unlicense",
   "Zlib",
 ]);
@@ -72,8 +75,11 @@ function read(dir: string, out: Map<string, Pkg>) {
 
 /** An SPDX expression is fine if one of its OR choices is all permissive. */
 function permissive(expr: string): boolean {
+  // Old crates write "MIT/Apache-2.0"; LLVM's exception only takes from Apache's conditions.
   return expr
     .replace(/[()]/g, "")
+    .replaceAll("/", " OR ")
+    .replace(/\s+WITH\s+LLVM-exception/gi, "")
     .split(/\s+OR\s+/i)
     .some((choice) => choice.split(/\s+AND\s+/i).every((l) => PERMISSIVE.has(l.trim())));
 }
@@ -82,6 +88,26 @@ const root = join(import.meta.dir, "..");
 const all = packages(join(root, "node_modules"));
 for (const w of ["apps", "packages", "plugins"])
   for (const name of readdirSync(join(root, w))) packages(join(root, w, name, "node_modules"), all);
+
+/** Every crate the Linux app's workspace could build, for any platform. */
+function crates(): Pkg[] {
+  const r = spawnSync(
+    "cargo",
+    ["metadata", "--format-version", "1", "--locked", "--manifest-path", "apps/linux/Cargo.toml"],
+    { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (r.status !== 0) {
+    console.error(`cargo metadata failed (is Rust installed?):\n${r.stderr || r.error}`);
+    process.exit(1);
+  }
+  const meta = JSON.parse(r.stdout) as {
+    packages: { name: string; version: string; license: string | null; source: string | null }[];
+  };
+  return meta.packages
+    .filter((p) => p.source)
+    .map((p) => ({ name: `crate:${p.name}`, version: p.version, license: p.license ?? "" }));
+}
+for (const c of crates()) all.set(`${c.name}@${c.version}`, c);
 
 const list = [...all.values()]
   .filter((p) => !p.name.startsWith("@hatbot/"))
