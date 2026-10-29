@@ -226,6 +226,12 @@ test("a signed webhook starts an untrusted task; oversized, unsigned or replayed
   t.advance(11 * 24 * 3600_000);
   expect((await forge(ping, "d-1", rotated.secret)).status).toBe(202);
   await t.tasks.idle();
+
+  // With Automation off, nothing answers: not the hook, not its pages.
+  await t.plugins.update("automation", { enabled: false });
+  const five = JSON.stringify({ n: 5 });
+  expect((await forge(five, "d-5", rotated.secret)).status).toBe(404);
+  expect((await t.call("GET", "/schedules", undefined, signIn(t))).status).toBe(404);
 });
 
 test("Uptime Kuma: a monitor down starts a task, at once or after more failed checks; later events go on its timeline", async () => {

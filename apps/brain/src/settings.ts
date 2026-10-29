@@ -34,7 +34,7 @@ export const Settings = z.object({
     boxesUsd: z.number().min(0),
   }),
   chatEffort: z.enum(CHAT_EFFORTS),
-  /** Unless it's the expert model, the chat can ask the expert once per reply (ask_opus). */
+  /** Unless it's the expert model, the chat can ask the expert once per reply (ask_expert). */
   chatModel: ModelId,
   /** Name and email on memory commits you make from the UI. */
   owner: z.object({ name: z.string().min(1), email: z.string().min(1) }),

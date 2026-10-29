@@ -15,7 +15,7 @@ import { replyPause } from "../src/negotiate/service";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
+import { type TestApp, tempDirs, testApp, toolNames, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 replyPause.minMs = 0;
@@ -180,6 +180,19 @@ const results = (model: FakeModel, i: number) => JSON.stringify(model.requests[i
 const sendOffer = (t: TestApp, n: Negotiation) =>
   t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
 const clicks = (t: TestApp) => t.agent.actions.filter((a) => a.name === "left_click").length;
+
+test("the chat can haggle only while Scout is connected", async () => {
+  const chat = new FakeModel([{ content: [text("Hi.")] }, { content: [text("Hi.")] }]);
+  const t = await testApp(chat, new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t);
+  const haggling = async () => {
+    await t.thread.post("hi").done;
+    return toolNames(chat.requests.at(-1)).filter((n) => String(n).startsWith("negotiate_"));
+  };
+  expect(await haggling()).toContain("negotiate_start");
+  await t.plugins.update("mcp", { enabled: false });
+  expect(await haggling()).toEqual([]);
+});
 
 test("a negotiation starts once you approve its mandate, then sends inside it without asking", async () => {
   const chat = new FakeModel([

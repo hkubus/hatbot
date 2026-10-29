@@ -173,7 +173,8 @@ export class Listings {
   }
 
   private async check() {
-    if (this.d.tasks.paused()) return;
+    // Each listing is posted by a desktop task.
+    if (this.d.tasks.paused() || !this.d.desktop()) return;
     const l = this.lister();
     const list = l && scoutTool(l.tools, "scout_flips_to_list");
     if (!l || !list) return;

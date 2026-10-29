@@ -3,7 +3,7 @@ import { Desktop, frameRelay } from "@hatbot/plugin-desktop";
 import { websocket } from "hono/bun";
 import { EventBus } from "../src/events";
 import { FakeDesktop } from "./fake-desktop";
-import { FakeModel, text } from "./fake-model";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { ORIGIN, signIn, testApp, toolNames } from "./helpers";
 
 test("you keep control of the desktop across a brain restart", async () => {
@@ -111,4 +111,27 @@ test("with the Desktop plugin off, the chat has no desktop tasks and no word of 
   expect(off.tools).not.toContain("send_file");
   expect(off.system).not.toContain("run_desktop_task");
   expect((await t.call("GET", "/desktop/status", undefined, signIn(t))).status).toBe(404);
+});
+
+test("with the Desktop plugin off, a desktop task isn't started and other tasks can't start one", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Done.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  await t.plugins.update("desktop", { enabled: false });
+  const desk = t.tasks.createDesktopTask({
+    title: "Book",
+    goal: "Book",
+    successCriteria: "",
+    origin: "chat",
+  });
+  t.tasks.createBackgroundTask({ title: "Tidy", goal: "Tidy", origin: "chat" });
+  await t.tasks.idle();
+  expect(t.tasks.get(desk.id)).toMatchObject({
+    status: "failed",
+    summary: "Not started: the Desktop plugin is off.",
+  });
+  expect(work.requests).toHaveLength(1);
+  expect(toolNames(work.requests[0])).toContain("finish_task");
+  expect(toolNames(work.requests[0])).not.toContain("run_desktop_task");
 });

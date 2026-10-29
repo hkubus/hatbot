@@ -66,6 +66,14 @@ test("Settings lists the desktop's snapshots, newest first, and rolls back to on
   expect(pve.seen.length).toBe(before);
 });
 
+test("rolling back is refused with the Desktop plugin off", async () => {
+  const t = await testApp(undefined, undefined, env());
+  await t.plugins.update("desktop", { enabled: false });
+  const res = await t.call("POST", "/desktop/rollback", { name: "nightly_20261008" }, signIn(t));
+  expect(res.status).toBe(503);
+  expect(await res.json()).toEqual({ error: "The Desktop plugin is off." });
+});
+
 test("rolling back is refused while you or a task use the desktop", async () => {
   const t = await testApp(undefined, undefined, env());
   const { cookie } = signIn(t);

@@ -162,7 +162,9 @@ export class Checks {
       { id: "updates", name: "Last update", run: async () => this.lastUpdate() },
       { id: "notifications", name: "Notifications", run: () => this.notifications() },
       { id: "ping", name: "Dead-man ping", run: async () => this.ping() },
-      { id: "proxmox", name: "Desktop snapshots", run: () => this.snapshots() },
+      ...(d.plugins.get("desktop")?.enabled
+        ? [{ id: "proxmox", name: "Desktop snapshots", run: () => this.snapshots() }]
+        : []),
       { id: "approvals", name: "Approvals", run: async () => this.approvals() },
     ];
     for (const p of d.plugins.list().filter((p) => p.enabled)) {

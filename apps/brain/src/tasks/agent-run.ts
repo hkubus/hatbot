@@ -193,6 +193,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   // A plugin's runner shapes the loop: research gets the plugins' lookups only, its own tools, and
   // ends in a report.
   const runner = task.runner ? d.plugins.runner(task.runner) : null;
+  // Switched off while it waited for its turn.
+  if (task.runner && !runner)
+    return tasks.finish(
+      id,
+      "failed",
+      `Stopped: the plugin that runs "${task.runner}" tasks is off.`,
+    );
   const others = d.bots.list().filter((b) => b.id !== bot.id);
   const offer = { place: runner?.place ?? "task", bot, others, incognito: false } as const;
   const negotiating = (from: PluginTool[]) => ({

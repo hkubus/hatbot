@@ -85,9 +85,8 @@ export const selfPlugin = definePlugin({
     },
   ],
   config: z.object({}),
-  needs: ["schedules"],
-  uses: ["sandbox"],
-  start: ({ env, optional, dataDir, store, service }) => {
+  uses: ["sandbox", "schedules"],
+  start: ({ env, optional, dataDir, store }) => {
     const desktop = optional<Sandbox>("sandbox");
     if (!desktop?.configured)
       return needsSetup("The desktop isn't set up yet; Hatbot reads and tests its code there.");
@@ -184,7 +183,7 @@ export const selfPlugin = definePlugin({
     };
     // One task at a time changes the bare clone.
     const serial = serially();
-    const schedules = service<SchedulesService>("schedules");
+    const schedules = optional<SchedulesService>("schedules");
     const sandbox = (signal: AbortSignal) => desktop.withSignal?.(signal) ?? desktop;
 
     const push = (o: {
@@ -229,7 +228,7 @@ export const selfPlugin = definePlugin({
     /** By id and creation time: a deleted schedule's id can come back. */
     const suggestions = () => {
       const [id, created] = (store.get(SUGGEST_KEY) ?? "").split(" ");
-      const s = schedules.get(Number(id));
+      const s = schedules?.get(Number(id));
       return s && s.createdAt === created ? s : null;
     };
 
@@ -430,6 +429,7 @@ export const selfPlugin = definePlugin({
           const parsed = z.object({ every: z.enum(["off", "weekly", "monthly"]) }).safeParse(args);
           if (!parsed.success) throw new PluginError("Choose off, weekly or monthly.");
           const { every } = parsed.data;
+          if (!schedules) throw new PluginError("Switch on Automation first.");
           const s = suggestions();
           if (every === "off") {
             if (s) schedules.delete(s.id);

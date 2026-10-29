@@ -197,6 +197,15 @@ test("a flip Scout marks ready is asked about once, posted on each marketplace i
   await t.plugins.stopAll();
 });
 
+test("with the Desktop plugin off, flips aren't asked about", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  const scout = await withScout(t, [flip()]);
+  await t.plugins.update("desktop", { enabled: false });
+  await t.listings.tick();
+  expect(pendingListing(t)).toEqual([]);
+  expect(scout.calls("scout_flips_to_list")).toEqual([]);
+});
+
 test("a flip changed in Scout is asked about again, one taken back posts nothing, and a no tells Scout", async () => {
   const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
   const scout = await withScout(t, [flip()]);

@@ -210,4 +210,9 @@ test("suggestions run on a schedule set on the plugin's page, one open pull requ
   await suggest("off");
   expect(t.schedules.get(id)).toBeNull();
   expect(await t.plugins.action("self", "suggestions", {})).toEqual({ every: "off" });
+
+  // Without Automation it still works, but can't suggest on a schedule.
+  await t.plugins.update("automation", { enabled: false });
+  expect(t.plugins.get("self")?.state).toBe("ready");
+  await expect(suggest("weekly")).rejects.toThrow("Switch on Automation first.");
 });

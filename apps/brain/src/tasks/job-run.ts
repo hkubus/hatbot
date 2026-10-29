@@ -54,7 +54,7 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
     const note = answer.note ? ` ${ownerNote(answer.note)}` : "";
     return answer.outcome === "approved"
       ? { content: note && `\n\n${note.trim()}`, isError: false }
-      : { content: `Not saved: the owner said no.${note}`, isError: true };
+      : { content: `Not done: the owner said no.${note}`, isError: true };
   };
 
   try {

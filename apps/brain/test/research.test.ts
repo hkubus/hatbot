@@ -616,3 +616,13 @@ test("a research tree's raises are research's size, and its spend counts the tas
   expect(t.spend.treeSpend(screen)).toBeCloseTo(3, 9);
   expect(t.spend.treeSpend(plain)).toBe(0);
 });
+
+test("with the Research and Boxes plugins off, no research or box task starts", async () => {
+  const t = await testApp();
+  await t.plugins.update("research", { enabled: false });
+  await t.plugins.update("boxes", { enabled: false });
+  for (const runner of ["research", "box"])
+    expect(
+      t.tasks.createBackgroundTask({ title: "Look", goal: "Look", origin: "chat", runner }),
+    ).toBeNull();
+});
