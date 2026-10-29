@@ -13,7 +13,12 @@ fn main() {
         return;
     }
     let daemon = args.iter().any(|a| a == "--daemon");
-    let page = args.iter().position(|a| a == "--open").and_then(|i| args.get(i + 1)).cloned();
+    let page = args
+        .iter()
+        .position(|a| a == "--open")
+        .and_then(|i| args.get(i + 1))
+        .or_else(|| args.iter().find(|a| a.starts_with("hatbot://")))
+        .cloned();
     if instance::ask_running(!daemon, page.as_deref()) {
         return;
     }

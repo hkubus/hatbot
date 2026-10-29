@@ -975,6 +975,25 @@ pub struct ApiToken {
     pub last_used_at: Option<String>,
 }
 
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BotTemplate {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub instructions: String,
+    #[serde(default)]
+    pub chat_model: Option<String>,
+    #[serde(default)]
+    pub chat_effort: Option<String>,
+    #[serde(default)]
+    pub plugins: Option<Vec<String>>,
+}
+
 pub const CHAT_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 pub const MAX_GROUP_BOTS: usize = 6;

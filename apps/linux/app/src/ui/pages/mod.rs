@@ -6,6 +6,7 @@ use super::markdown;
 use super::widgets;
 use crate::core::models::Event;
 
+pub mod bots;
 pub mod boxes;
 pub mod computer;
 pub mod live;
@@ -13,6 +14,7 @@ pub mod memory;
 pub mod schedules;
 pub mod search;
 pub mod settings;
+pub mod spend;
 pub mod tasks;
 pub mod todo;
 
@@ -27,6 +29,8 @@ pub enum Msg {
     Search(search::Msg),
     Settings(settings::Msg),
     Computer(computer::Msg),
+    Bots(bots::Msg),
+    Spend(spend::Msg),
     OpenBox(i64),
 }
 
@@ -41,10 +45,15 @@ pub struct Pages {
     pub boxes: boxes::State,
     pub search: search::State,
     pub settings: settings::State,
+    pub bots: bots::State,
+    pub spend: spend::State,
 }
 
 pub fn title(s: &Session) -> String {
-    match s.route {
+    match &s.route {
+        Route::Bot(id) => return s.store.bot_name(Some(id.as_str())),
+        Route::Group(Some(id)) => return s.store.chat_name(s.store.conversations.iter().find(|c| c.id == *id)),
+        Route::Group(None) => "New group",
         Route::Tasks | Route::Task(_) => "Tasks",
         Route::Live => "Live",
         Route::Schedules => "Automations",
@@ -56,7 +65,7 @@ pub fn title(s: &Session) -> String {
         Route::Spend => "Spend",
         Route::Computer => "This computer",
         Route::NewBot => "New bot",
-        Route::Bot(_) | Route::Group(_) | Route::Chat | Route::Threads => "",
+        Route::Chat | Route::Threads => "",
     }
     .into()
 }
@@ -72,7 +81,9 @@ pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
         Route::Boxes => boxes::view(s),
         Route::Search => search::view(s, app.dark),
         Route::Settings => settings::view(s),
+        Route::Spend => spend::view(s, app.dark),
         Route::Computer => computer::view(app),
+        r @ (Route::Bot(_) | Route::NewBot | Route::Group(_)) => bots::view(s, r),
         _ => widgets::page(widgets::empty(title(s))),
     }
 }
@@ -98,11 +109,26 @@ pub fn link(page: &str) -> Option<Vec<Message>> {
         "settings" => Route::Settings,
         "spend" => Route::Spend,
         "computer" => Route::Computer,
-        p => match p.split_once('/')? {
-            ("tasks", id) => Route::Task(id.parse().ok()?),
-            ("boxes", id) => return Some(vec![Message::Page(Msg::OpenBox(id.parse().ok()?))]),
-            _ => return None,
-        },
+        "bots/new" => Route::NewBot,
+        "groups/new" => Route::Group(None),
+        p if p.starts_with("bots/") => Route::Bot(p["bots/".len()..].to_string()),
+        p => {
+            let (kind, id) = p.split_once('/')?;
+            let id: i64 = id.parse().ok()?;
+            match kind {
+                "tasks" => Route::Task(id),
+                "boxes" => return Some(vec![Message::Page(Msg::OpenBox(id))]),
+                "threads" => return Some(vec![Message::Chat(super::chat::Msg::Open(id))]),
+                "schedules" => {
+                    let edit = Message::Page(Msg::Schedules(schedules::Msg::Edit(id)));
+                    return Some(vec![Message::Go(Route::Schedules), edit]);
+                }
+                "triggers" => Route::Schedules,
+                // Every approval waiting shows at the top of Tasks.
+                "approvals" => Route::Tasks,
+                _ => return None,
+            }
+        }
     };
     Some(vec![Message::Go(r)])
 }
@@ -122,6 +148,8 @@ pub fn update(app: &mut App, m: Msg) -> Task<Message> {
         Msg::Boxes(m) => boxes::update(s, m),
         Msg::Search(m) => search::update(s, m),
         Msg::Settings(m) => settings::update(s, m),
+        Msg::Bots(m) => bots::update(s, m),
+        Msg::Spend(m) => spend::update(s, m),
         Msg::Computer(_) => Task::none(),
         Msg::OpenBox(id) => {
             super::app::open_link(&format!("{}/boxes/{id}", s.api.server));
@@ -157,6 +185,8 @@ pub fn opened(s: &mut Session, r: &Route) -> Task<Message> {
         Route::Boxes => boxes::opened(s),
         Route::Search => search::opened(s),
         Route::Settings => settings::opened(s),
+        Route::Spend => spend::opened(s),
+        Route::Bot(_) | Route::NewBot | Route::Group(_) => bots::opened(s, r),
         _ => Task::none(),
     };
     keep_markdown(s);
