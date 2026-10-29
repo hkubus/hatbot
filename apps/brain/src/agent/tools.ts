@@ -869,6 +869,9 @@ export const CORE_TOOL_NAMES = [
   "request_takeover",
   "record_conversation",
   "ask_owner",
+  "notify_owner",
+  "send_to_chat",
+  "thread_post",
   ...NEGOTIATE_TOOL_NAMES,
 ];
 
