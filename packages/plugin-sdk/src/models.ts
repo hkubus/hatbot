@@ -6,6 +6,8 @@ export type StreamParams = Anthropic.Beta.Messages.MessageCreateParamsStreaming;
 export type CreateParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
 export type ModelMessage = Anthropic.Beta.BetaMessage;
 export type ModelUsage = Anthropic.Beta.BetaUsage;
+export type ModelMessageParam = CreateParams["messages"][number];
+export type ModelTool = NonNullable<CreateParams["tools"]>[number];
 
 export type StreamHandlers = {
   onText?: (delta: string) => void;
@@ -40,7 +42,8 @@ export type ModelCapabilities = {
 export type ModelInfo = {
   id: string;
   name: string;
-  price: ModelPrice;
+  /** Unknown, it's billed at the highest rates Hatbot knows. */
+  price?: ModelPrice;
   capabilities: ModelCapabilities;
   /** What may answer instead when it declines, each with its own price. */
   fallbacks?: ModelInfo[];

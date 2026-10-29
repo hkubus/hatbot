@@ -1,0 +1,20 @@
+{
+  "name": "@hatbot/plugin-openai",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./web": "./web/index.tsx"
+  },
+  "dependencies": {
+    "@hatbot/plugin-sdk": "workspace:*",
+    "@hatbot/web": "workspace:*",
+    "react": "^19.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0"
+  }
+}

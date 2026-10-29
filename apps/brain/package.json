@@ -14,6 +14,7 @@
     "@hatbot/plugin-github": "workspace:*",
     "@hatbot/plugin-homeassistant": "workspace:*",
     "@hatbot/plugin-mcp": "workspace:*",
+    "@hatbot/plugin-openai": "workspace:*",
     "@hatbot/plugin-pbs": "workspace:*",
     "@hatbot/plugin-proxmox": "workspace:*",
     "@hatbot/plugin-scout": "workspace:*",

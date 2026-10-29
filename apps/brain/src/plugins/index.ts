@@ -3,6 +3,7 @@ import { forgejoPlugin } from "@hatbot/plugin-forgejo";
 import { githubPlugin } from "@hatbot/plugin-github";
 import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
 import { mcpPlugin } from "@hatbot/plugin-mcp";
+import { openaiPlugin } from "@hatbot/plugin-openai";
 import { pbsPlugin } from "@hatbot/plugin-pbs";
 import { proxmoxPlugin } from "@hatbot/plugin-proxmox";
 import type { Plugin } from "@hatbot/plugin-sdk";
@@ -11,6 +12,7 @@ import { uptimeKumaPlugin } from "@hatbot/plugin-uptimekuma";
 
 export const PLUGINS: Plugin[] = [
   anthropicPlugin,
+  openaiPlugin,
   proxmoxPlugin,
   pbsPlugin,
   sshPlugin,

@@ -1,6 +1,6 @@
 // Lists every installed dependency's licence, and fails on a copyleft or unknown one, MPL included.
 // Run after `bun install`: `bun run licenses`.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 /** Licences that ask nothing of Hatbot's own code. */
@@ -49,9 +49,15 @@ function packages(dir: string, out = new Map<string, Pkg>()): Map<string, Pkg> {
   return out;
 }
 
+/** Workspaces link to each other (the web to plugins, plugins to the web's kit): each is read once. */
+const seen = new Set<string>();
+
 function read(dir: string, out: Map<string, Pkg>) {
   const file = join(dir, "package.json");
   if (!existsSync(file)) return;
+  const real = realpathSync(dir);
+  if (seen.has(real)) return;
+  seen.add(real);
   const j = JSON.parse(readFileSync(file, "utf8"));
   // Old package.json files say it as {type} or a list of them.
   const license: string =
@@ -74,7 +80,7 @@ function permissive(expr: string): boolean {
 
 const root = join(import.meta.dir, "..");
 const all = packages(join(root, "node_modules"));
-for (const w of ["apps", "packages"])
+for (const w of ["apps", "packages", "plugins"])
   for (const name of readdirSync(join(root, w))) packages(join(root, w, name, "node_modules"), all);
 
 const list = [...all.values()]

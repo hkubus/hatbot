@@ -20,6 +20,7 @@
         "@hatbot/plugin-github": "workspace:*",
         "@hatbot/plugin-homeassistant": "workspace:*",
         "@hatbot/plugin-mcp": "workspace:*",
+        "@hatbot/plugin-openai": "workspace:*",
         "@hatbot/plugin-pbs": "workspace:*",
         "@hatbot/plugin-proxmox": "workspace:*",
         "@hatbot/plugin-scout": "workspace:*",
@@ -54,6 +55,7 @@
       "dependencies": {
         "@hatbot/plugin-homeassistant": "workspace:*",
         "@hatbot/plugin-mcp": "workspace:*",
+        "@hatbot/plugin-openai": "workspace:*",
         "@hatbot/plugin-proxmox": "workspace:*",
         "@hatbot/plugin-scout": "workspace:*",
         "@hatbot/plugin-self": "workspace:*",
@@ -145,6 +147,19 @@
         "@hatbot/web": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.1",
         "ajv": "^8.20.0",
+        "react": "^19.3.0",
+        "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
+      },
+    },
+    "plugins/openai": {
+      "name": "@hatbot/plugin-openai",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/web": "workspace:*",
         "react": "^19.3.0",
         "zod": "^4.6.5",
       },
@@ -280,6 +295,8 @@
     "@hatbot/plugin-homeassistant": ["@hatbot/plugin-homeassistant@workspace:plugins/homeassistant"],
 
     "@hatbot/plugin-mcp": ["@hatbot/plugin-mcp@workspace:plugins/mcp"],
+
+    "@hatbot/plugin-openai": ["@hatbot/plugin-openai@workspace:plugins/openai"],
 
     "@hatbot/plugin-pbs": ["@hatbot/plugin-pbs@workspace:plugins/pbs"],
 

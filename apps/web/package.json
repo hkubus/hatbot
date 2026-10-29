@@ -13,6 +13,7 @@
   "dependencies": {
     "@hatbot/plugin-homeassistant": "workspace:*",
     "@hatbot/plugin-mcp": "workspace:*",
+    "@hatbot/plugin-openai": "workspace:*",
     "@hatbot/plugin-proxmox": "workspace:*",
     "@hatbot/plugin-scout": "workspace:*",
     "@hatbot/plugin-self": "workspace:*",
