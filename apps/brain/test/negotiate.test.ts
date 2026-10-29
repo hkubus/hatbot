@@ -287,6 +287,8 @@ test("closing a negotiation resolves its thread with what came of it", async () 
   const n = openNegotiation(t);
   const [thread] = t.chats.threads(1);
   expect(n.conversationId).toBe(thread?.id as number);
+  // Even once it was resolved before it ended.
+  t.chats.resolveThread(thread?.id as number, "Waiting on the seller");
   await t.negotiations.close(n, "agreed", 1250, null);
   expect(t.chats.get(thread?.id as number)).toMatchObject({ outcome: "agreed at 1,250 zł" });
 });
@@ -380,7 +382,17 @@ test("a Scout tool that asks isn't called by the negotiate tools", async () => {
 test("several sellers at once: one approval opens them all, and the first agreement ends the others", async () => {
   const t = await testApp(new FakeModel(), new FakeModel([later, later]), {}, [mcpPlugin], {});
   await withScout(t);
-  const tools = negotiateTools(t, t.plugins.tools());
+  const haggler = t.bots.create({
+    name: "Haggler",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: null,
+  });
+  const group = t.chats.createGroup("Shopping", ["hatbot", haggler.id]);
+  const tools = t.negotiations.tools(t.bots.hatbot(), t.plugins.tools(), {
+    conversationId: group.id,
+  });
   const started = await runPluginTool(
     named(tools, "negotiate_start"),
     {
@@ -408,7 +420,7 @@ test("several sellers at once: one approval opens them all, and the first agreem
       .map((n) => n.conversationId)
       .sort(),
   ).toEqual(threads.map((c) => c.id).sort());
-  expect(approval?.conversationId).toBe(t.thread.conversationId);
+  expect(approval?.conversationId).toBe(group.id);
   t.approvals.decide((approval as Approval).id, "approve", "web");
   await waitFor(() => t.negotiations.list().every((n) => n.status === "open"));
   await t.tasks.idle();

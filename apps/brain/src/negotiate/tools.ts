@@ -216,7 +216,7 @@ export function negotiateTools(
             messageId: call.messageId,
           }),
         );
-        neg.askMandates(made);
+        neg.askMandates(made, undefined, conversationId);
         const ids = made.map((n) => `#${n.id}`);
         const threads = made.flatMap((n) =>
           n.conversationId !== null && neg.d.chats.get(n.conversationId)?.kind === "thread"

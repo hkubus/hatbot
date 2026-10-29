@@ -318,10 +318,12 @@ export class Chats {
     });
   }
 
-  resolveThread(id: number, outcome: string | null): Conversation | null {
+  /** `settled`: what its subject came to, even if it was resolved before. */
+  resolveThread(id: number, outcome: string | null, settled = false): Conversation | null {
     const done = this.d.db
       .query(
-        "UPDATE conversations SET resolved_at = ?, outcome = ?, needs_you_at = NULL WHERE id = ? AND kind = 'thread' AND resolved_at IS NULL",
+        `UPDATE conversations SET resolved_at = coalesce(resolved_at, ?), outcome = ?, needs_you_at = NULL
+         WHERE id = ? AND kind = 'thread' AND ${settled ? "1" : "resolved_at IS NULL"}`,
       )
       .run(this.now(), outcome, id).changes;
     if (done) this.changed(id);
