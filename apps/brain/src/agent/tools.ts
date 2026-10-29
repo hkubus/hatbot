@@ -21,6 +21,7 @@ import {
   findTodo,
   HATBOT_ID,
   localDay,
+  MAX_OPEN_THREADS,
   parseTodos,
   SKILL_NAME,
   type Source,
@@ -44,6 +45,7 @@ import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
+import type { Chats } from "./chats";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
 export {
@@ -60,6 +62,7 @@ export {
 
 export type ToolContext = {
   db: Db;
+  chats?: Chats;
   clock?: () => number;
   memory: MemoryStore;
   events: EventBus;
@@ -595,6 +598,73 @@ export const TOOLS = [
       if (typeof task === "string") return task;
       if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
+    },
+  }),
+  def({
+    name: "thread_open",
+    description: `Open a thread: a side conversation with the owner in your chat, on one topic, apart from this one. For something that needs its own back-and-forth (findings to go through, a decision with several parts) and would crowd this chat. Not for a quick answer, nor for what the owner is talking about now. Your message opens it: say what it's about and what you need from them. They answer there when they can, and you reply there. At most ${MAX_OPEN_THREADS} open at once.`,
+    schema: z.object({
+      title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
+      message: z
+        .string()
+        .min(1)
+        .max(8000)
+        .describe("The thread's first message, to the owner, with everything they need"),
+    }),
+    run: async ({ title, message }, { chats, bot, tainted }) => {
+      if (!chats || !bot) return "Threads aren't available here.";
+      const { conversation } = chats.openThread({
+        botId: bot.id,
+        title,
+        message,
+        taintedBy: chatTaint(tainted?.()) || null,
+      });
+      return `Opened thread #${conversation.id} "${title}". The owner sees it beside this chat; you reply to them there.`;
+    },
+  }),
+  def({
+    name: "thread_read",
+    description: "Read one of this chat's threads: its latest messages. Without an id, list them.",
+    schema: z.object({ id: z.number().int().optional() }),
+    run: async ({ id }, { chats, conversationId, taint }) => {
+      if (!chats || conversationId === undefined) return "Threads aren't available here.";
+      const all = chats.threads(conversationId);
+      if (id === undefined)
+        return (
+          all
+            .map(
+              (c) =>
+                `#${c.id} "${tagText(c.title ?? "")}": ${c.resolvedAt ? `resolved ${c.resolvedAt.slice(0, 10)}` : "open"}`,
+            )
+            .join("\n") || "No threads."
+        );
+      const c = all.find((t) => t.id === id);
+      const thread = c && chats.thread(c.id);
+      if (!c || !thread) return `No thread #${id} in this chat.`;
+      const { text, taintedBy } = thread.readOut();
+      // What the thread read comes with it.
+      const by = chats.threadTaint(c.id) ?? taintedBy;
+      if (by) taint?.(`Thread #${c.id}: ${by}`, text);
+      const head = `Thread #${c.id} "${tagText(c.title ?? "")}": ${c.resolvedAt ? `resolved, ${tagText(c.outcome ?? "by the owner")}` : "open"}.`;
+      return `${head}\n${text || "(no messages)"}`;
+    },
+  }),
+  def({
+    name: "thread_resolve",
+    description:
+      "Mark this thread settled, once its topic is done, with what it came to. The main chat hears the outcome. The owner can open it again by writing in it.",
+    schema: z.object({
+      outcome: z
+        .string()
+        .trim()
+        .min(1)
+        .max(300)
+        .describe('What it came to, in a line: "Offered 350 zł; the seller agreed"'),
+    }),
+    run: async ({ outcome }, { chats, conversationId }) => {
+      if (!chats || conversationId === undefined) return "Threads aren't available here.";
+      const c = chats.resolveThread(conversationId, outcome);
+      return c?.resolvedAt ? "Resolved." : "This isn't an open thread.";
     },
   }),
   def({

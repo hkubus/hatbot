@@ -131,6 +131,7 @@ export async function createServices(o: Outside) {
       memory,
       events,
       bots,
+      chats,
       tasks,
       schedules: () => plugins.service<SchedulesService>("schedules"),
       attachments,

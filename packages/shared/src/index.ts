@@ -102,9 +102,10 @@ export type ThreadMessage = {
    * you typed, or what came of it (one with a task shows the task like a reply does). "box": a note the
    * box `boxId` sent (hatbox.send, or its backend's scheduled() as a notification), shown as from the
    * box: neither yours nor the bot's words. "handoff": another bot (`botId`) handing this chat's bot
-   * work (ask_bot); its text is the request, and `taskId` the hand-off.
+   * work (ask_bot); its text is the request, and `taskId` the hand-off. "thread": a thread's card in
+   * its chat, linking to the thread's first message; its text is the title.
    */
-  kind: "text" | "task" | "schedule" | "command" | "box" | "handoff";
+  kind: "text" | "task" | "schedule" | "command" | "box" | "handoff" | "thread";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
@@ -584,13 +585,21 @@ export const MAX_GROUP_BOTS = 6;
 
 export type Conversation = {
   id: number;
-  kind: "direct" | "group";
-  /** A group's name; null for a bot's own chat, which goes by the bot's. */
+  /** "thread": a side conversation in a bot's own chat (`parentId`), on one topic. */
+  kind: "direct" | "group" | "thread";
+  /** A group's or a thread's name; null for a bot's own chat, which goes by the bot's. */
   title: string | null;
   botIds: string[];
   unread: number;
   lastMessageAt: string | null;
+  parentId: number | null;
+  resolvedAt: string | null;
+  /** What a resolved thread came to, in a line. */
+  outcome: string | null;
 };
+
+/** Most open threads a bot may have. */
+export const MAX_OPEN_THREADS = 12;
 export const CreateGroup = z.object({
   title: z.string().trim().max(80).optional(),
   botIds: z.array(z.string().regex(BOT_ID)).min(2).max(MAX_GROUP_BOTS),

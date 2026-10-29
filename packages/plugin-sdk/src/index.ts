@@ -141,8 +141,14 @@ export type CallContext = {
 /** Where the model works: the chat, a background task, or research. */
 export type Place = "chat" | "task" | "research";
 
-/** Whether to offer a tool, decided per reply or task. */
-export type Offer = { place: Place; bot: Bot; others: Bot[]; incognito: boolean };
+/** Whether to offer a tool, decided per reply or task. `chat`: which kind, in the chat. */
+export type Offer = {
+  place: Place;
+  bot: Bot;
+  others: Bot[];
+  incognito: boolean;
+  chat?: "direct" | "group" | "thread";
+};
 
 /** A picture shown to the model with a tool's result. */
 export type ToolImage = {

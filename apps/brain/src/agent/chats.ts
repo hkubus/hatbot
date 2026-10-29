@@ -2,11 +2,14 @@ import {
   type Box,
   type Conversation,
   HATBOT_ID,
+  MAX_OPEN_THREADS,
   type MessageLink,
   type Task,
+  type ThreadMessage,
   UNREAD_PER_CHAT,
 } from "@hatbot/shared";
 import { BotError } from "../bots";
+import { UserError } from "../errors";
 import { resultText, Thread, type ThreadDeps } from "./thread";
 
 type Parts = Pick<ThreadDeps, "tasks" | "approvals" | "attachments" | "negotiations" | "proposals">;
@@ -26,16 +29,19 @@ type Row = {
   bot_ids: string | null;
   unread: number;
   last_message_at: string | null;
+  parent_id: number | null;
+  resolved_at: string | null;
+  outcome: string | null;
 };
 
 export class Chats {
-  private threads = new Map<number, Thread>();
+  private running = new Map<number, Thread>();
   /** Shared by every chat, so what attach adds reaches the chats open already. */
   private d: ThreadDeps;
   private clock: () => number;
 
   constructor(d: ThreadDeps) {
-    this.d = { ...d };
+    this.d = { ...d, chats: this };
     this.clock = d.clock ?? Date.now;
     // A restart cuts off any reply that was streaming: it keeps what was saved of it, and says so.
     const note = "_This reply was cut off._";
@@ -52,14 +58,14 @@ export class Chats {
   }
 
   thread(conversationId: number): Thread | null {
-    const known = this.threads.get(conversationId);
+    const known = this.running.get(conversationId);
     if (known) return known;
     const exists = this.d.db
       .query("SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NULL")
       .get(conversationId);
     if (!exists) return null;
     const thread = new Thread(this.d, conversationId);
-    this.threads.set(conversationId, thread);
+    this.running.set(conversationId, thread);
     return thread;
   }
 
@@ -93,9 +99,22 @@ export class Chats {
   list(): Conversation[] {
     // Every bot has its own chat, even before anything is said in it.
     for (const bot of this.d.bots.list()) this.direct(bot.id);
+    return this.rows(`${LISTED_CHAT} AND c.kind != 'thread'`, "c.kind = 'group', c.id");
+  }
+
+  /** A chat's threads, the open ones first, then by their latest message. */
+  threads(parentId: number): Conversation[] {
+    return this.rows(
+      `${LISTED_CHAT} AND c.parent_id = ?1`,
+      "c.resolved_at IS NOT NULL, coalesce(last_message_at, c.created_at) DESC",
+      parentId,
+    );
+  }
+
+  private rows(where: string, order: string, ...args: number[]): Conversation[] {
     return this.d.db
-      .query<Row, []>(
-        `SELECT c.id, c.kind, c.title,
+      .query<Row, number[]>(
+        `SELECT c.id, c.kind, c.title, c.parent_id, c.resolved_at, c.outcome,
            (SELECT json_group_array(bot_id) FROM
              (SELECT bot_id FROM conversation_bots WHERE conversation_id = c.id ORDER BY position, bot_id)) AS bot_ids,
            coalesce(u.n, 0) AS unread,
@@ -105,15 +124,15 @@ export class Chats {
          FROM conversations c
          LEFT JOIN (SELECT conversation_id, count(*) AS n FROM messages WHERE ${UNREAD} GROUP BY conversation_id) u
            ON u.conversation_id = c.id
-         WHERE ${LISTED_CHAT}
-         ORDER BY c.kind = 'group', c.id`,
+         WHERE ${where}
+         ORDER BY ${order}`,
       )
-      .all()
+      .all(...args)
       .map((r) => this.toConversation(r));
   }
 
   get(id: number): Conversation | null {
-    return this.list().find((c) => c.id === id) ?? null;
+    return this.rows(`${LISTED_CHAT} AND c.id = ?1`, "c.id", id)[0] ?? null;
   }
 
   /** A deleted bot's own chat: kept, but out of the list, and it takes no new messages. */
@@ -123,7 +142,7 @@ export class Chats {
         .query(
           `SELECT 1 FROM conversations c JOIN conversation_bots cb ON cb.conversation_id = c.id
            JOIN bots b ON b.id = cb.bot_id
-           WHERE c.id = ? AND c.kind = 'direct' AND b.deleted_at IS NOT NULL`,
+           WHERE c.id = ? AND c.kind != 'group' AND b.deleted_at IS NOT NULL`,
         )
         .get(conversationId),
     );
@@ -137,7 +156,91 @@ export class Chats {
       botIds: r.bot_ids ? (JSON.parse(r.bot_ids) as string[]) : [],
       unread: r.unread,
       lastMessageAt: r.last_message_at,
+      parentId: r.parent_id,
+      resolvedAt: r.resolved_at,
+      outcome: r.outcome,
     };
+  }
+
+  /**
+   * A thread in `botId`'s own chat, opened with the bot's first message in it; its card goes in that
+   * chat. `taintedBy`: the message was written after reading untrusted content.
+   */
+  openThread(o: { botId: string; title: string; message: string; taintedBy?: string | null }): {
+    conversation: Conversation;
+    message: ThreadMessage;
+  } {
+    const parent = this.direct(o.botId);
+    const open = this.d.db
+      .query<{ n: number }, [number]>(
+        "SELECT count(*) AS n FROM conversations WHERE parent_id = ? AND resolved_at IS NULL AND deleted_at IS NULL",
+      )
+      .get(parent.conversationId)?.n;
+    if ((open ?? 0) >= MAX_OPEN_THREADS)
+      throw new UserError(
+        `Not opened: ${MAX_OPEN_THREADS} threads are open already. Resolve some first.`,
+      );
+    const id = this.d.db.transaction(() => {
+      const row = this.d.db
+        .query<{ id: number }, [string, number, string]>(
+          "INSERT INTO conversations (kind, title, parent_id, created_at) VALUES ('thread', ?, ?, ?) RETURNING id",
+        )
+        .get(o.title, parent.conversationId, this.now());
+      if (!row) throw new Error("conversation insert failed");
+      this.setBots(row.id, [o.botId]);
+      return row.id;
+    })();
+    const thread = this.thread(id) as Thread;
+    const message = thread.add({ text: o.message, botId: o.botId, taintedBy: o.taintedBy });
+    parent.add({
+      kind: "thread",
+      text: o.title,
+      botId: o.botId,
+      link: { conversationId: id, messageId: message.id },
+      taintedBy: o.taintedBy,
+    });
+    this.changed(id);
+    return { conversation: this.get(id) as Conversation, message };
+  }
+
+  /** `outcome` null: you resolved it. */
+  resolveThread(id: number, outcome: string | null): Conversation | null {
+    const done = this.d.db
+      .query(
+        "UPDATE conversations SET resolved_at = ?, outcome = ? WHERE id = ? AND kind = 'thread' AND resolved_at IS NULL",
+      )
+      .run(this.now(), outcome, id).changes;
+    if (done) this.changed(id);
+    return this.get(id);
+  }
+
+  /**
+   * What a thread read: its first message's taint (it was written after reading untrusted content),
+   * or, unless `openerOnly`, what any of its conversations read since.
+   */
+  threadTaint(id: number, openerOnly = false): string | null {
+    const opener = this.d.db
+      .query<{ by: string | null }, [number]>(
+        "SELECT tainted_by AS by FROM messages WHERE conversation_id = ? ORDER BY id LIMIT 1",
+      )
+      .get(id)?.by;
+    if (opener || openerOnly) return opener ?? null;
+    return (
+      this.d.db
+        .query<{ by: string }, [number]>(
+          "SELECT coalesce(tainted_by, 'Untrusted content') AS by FROM episodes WHERE conversation_id = ? AND tainted = 1 ORDER BY id LIMIT 1",
+        )
+        .get(id)?.by ?? null
+    );
+  }
+
+  reopenThread(id: number) {
+    const done = this.d.db
+      .query(
+        "UPDATE conversations SET resolved_at = NULL, outcome = NULL WHERE id = ? AND kind = 'thread' AND resolved_at IS NOT NULL",
+      )
+      .run(id).changes;
+    if (done) this.changed(id);
   }
 
   attach(parts: Parts) {
@@ -146,15 +249,15 @@ export class Chats {
 
   private open(): Thread[] {
     for (const c of this.list()) this.thread(c.id);
-    return [...this.threads.values()];
+    return [...this.running.values()];
   }
 
   abortAll() {
-    for (const t of this.threads.values()) t.abortCurrent();
+    for (const t of this.running.values()) t.abortCurrent();
   }
 
   abortBot(botId: string) {
-    for (const t of this.threads.values()) t.abortCurrent(botId);
+    for (const t of this.running.values()) t.abortCurrent(botId);
   }
 
   async sweep() {
@@ -166,7 +269,7 @@ export class Chats {
   }
 
   async idle() {
-    await Promise.all([...this.threads.values()].map((t) => t.idle()));
+    await Promise.all([...this.running.values()].map((t) => t.idle()));
   }
 
   /**
@@ -313,8 +416,8 @@ export class Chats {
 
   deleteGroup(id: number): boolean {
     if (this.get(id)?.kind !== "group") return false;
-    this.threads.get(id)?.abortCurrent();
-    this.threads.delete(id);
+    this.running.get(id)?.abortCurrent();
+    this.running.delete(id);
     this.d.db.query("UPDATE conversations SET deleted_at = ? WHERE id = ?").run(this.now(), id);
     this.d.events.emit({ type: "conversation.deleted", id });
     return true;
