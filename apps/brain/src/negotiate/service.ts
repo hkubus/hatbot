@@ -27,6 +27,7 @@ import type { ModelClient } from "../agent/model";
 import type { Approvals } from "../approvals";
 import type { Bots } from "../bots";
 import type { Db } from "../db";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import { runPluginTool, verdictFor } from "../plugins/registry";
@@ -339,8 +340,46 @@ export class Negotiations {
       )?.id;
     if (!id) throw new Error("negotiation insert failed");
     if (input.messageId) this.attach(input.messageId, id);
+    const thread = this.openThread(this.get(id) as Negotiation);
+    if (thread !== null) this.update(id, { conversation_id: thread });
     this.emit(id);
     return this.get(id) as Negotiation;
+  }
+
+  /**
+   * Each negotiation talks to you in its own thread: its mandate, holds, tasks and the seller's
+   * replies go there. Named by the want, not the listing's title, which is the seller's words.
+   */
+  private openThread(n: Negotiation): number | null {
+    try {
+      return this.d.chats.openThread({
+        botId: n.botId,
+        title: n.want === n.title.slice(0, 200) ? `Negotiation #${n.id}` : n.want.slice(0, 80),
+        message: `Negotiation #${n.id}, for ${n.listingUrl}: ${mandateAims(n)}. I'll ask you about it here and tell you here how it goes.`,
+        key: `negotiation:${n.id}`,
+      }).conversation.id;
+    } catch (err) {
+      if (err instanceof UserError) return null;
+      throw err;
+    }
+  }
+
+  /** The chat a negotiation's thread is in, or where it was started. */
+  private chatOf(n: Negotiation): number | null {
+    if (n.conversationId === null) return null;
+    const c = this.d.chats.get(n.conversationId);
+    return c?.kind === "thread" ? c.parentId : n.conversationId;
+  }
+
+  /** A reply work shows under, if it's where the negotiation reports; else its card goes there. */
+  private shownUnder(n: Negotiation, messageId: number | undefined): number | undefined {
+    if (messageId === undefined) return undefined;
+    const at = this.d.db
+      .query<{ conversation_id: number }, [number]>(
+        "SELECT conversation_id FROM messages WHERE id = ?",
+      )
+      .get(messageId)?.conversation_id;
+    return at === (n.conversationId ?? undefined) ? messageId : undefined;
   }
 
   private attach(messageId: number, negotiationId: number) {
@@ -480,7 +519,8 @@ export class Negotiations {
     const approval = this.d.approvals.create({
       taskId: null,
       botId: n.botId,
-      conversationId: n.conversationId ?? undefined,
+      // Several sellers' threads share one approval, so it waits in the chat they came from.
+      conversationId: (ns.length > 1 ? this.chatOf(n) : n.conversationId) ?? undefined,
       kind: "mandate",
       summary: ns.length > 1 ? groupSummary(ns) : mandateSummary(n),
       reason: before ? `${before}\n\n${reason}` : reason,
@@ -614,7 +654,7 @@ export class Negotiations {
       origin: "chat",
       botId: n.botId,
       conversationId: n.conversationId ?? undefined,
-      message: card,
+      message: this.shownUnder(n, card),
       runKey: `negotiation:${n.id}`,
       // The listing's title is the seller's words, so it isn't among the owner's.
       request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateAims(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
@@ -737,7 +777,7 @@ export class Negotiations {
       successCriteria: input.successCriteria,
       origin: parent?.origin ?? "chat",
       parent,
-      message: parent ? undefined : call.messageId,
+      message: parent ? undefined : this.shownUnder(n, call.messageId),
       botId: n.botId,
       conversationId: parent ? undefined : (n.conversationId ?? undefined),
       // Before it runs: its gate comes from this row.
@@ -1167,6 +1207,13 @@ export class Negotiations {
       .run(status, price, now, now, id).changes;
     if (!ended) return false;
     this.emit(id);
+    const n = this.get(id);
+    const thread = n && this.d.chats.findThread(n.botId, { key: `negotiation:${id}` });
+    if (n && thread)
+      this.d.chats.resolveThread(
+        thread,
+        price === null ? status : `${status} at ${zl(price, n.mandate.currency)}`,
+      );
     // A send already queued mustn't go now.
     this.stopTasks(id, from);
     const approval = this.get(id)?.approvalId;

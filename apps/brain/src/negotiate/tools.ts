@@ -218,9 +218,20 @@ export function negotiateTools(
         );
         neg.askMandates(made);
         const ids = made.map((n) => `#${n.id}`);
+        const threads = made.flatMap((n) =>
+          n.conversationId !== null && neg.d.chats.get(n.conversationId)?.kind === "thread"
+            ? [`#${n.conversationId}`]
+            : [],
+        );
+        const told =
+          threads.length === made.length
+            ? several
+              ? ` Each has its own thread with the owner (${threads.join(", ")}), where what comes of it is told.`
+              : ` It has its own thread with the owner, ${threads[0]}: they approve the mandate there, and what comes of it is told there.`
+            : "";
         return several
-          ? `Negotiations ${ids.join(", ")} are made, for want #${wantId}, and wait for the owner to approve their mandates together. Once they do, a task sends each opening message; until then nothing goes to the sellers. The first agreement ends the others. Don't call negotiate_send for them now.`
-          : `Negotiation ${ids[0]} is made, for want #${wantId}, and waits for the owner to approve its mandate. Once they do, a task sends the opening message; until then nothing goes to the seller. Don't call negotiate_send for it now.`;
+          ? `Negotiations ${ids.join(", ")} are made, for want #${wantId}, and wait for the owner to approve their mandates together.${told} Once they do, a task sends each opening message; until then nothing goes to the sellers. The first agreement ends the others. Don't call negotiate_send for them now.`
+          : `Negotiation ${ids[0]} is made, for want #${wantId}, and waits for the owner to approve its mandate.${told} Once they do, a task sends the opening message; until then nothing goes to the seller. Don't call negotiate_send for it now.`;
       },
     }),
 

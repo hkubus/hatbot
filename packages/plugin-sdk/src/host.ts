@@ -23,6 +23,7 @@ import type {
 export const HOST_SERVICES = [
   "tasks",
   "chats",
+  "threads",
   "bots",
   "notifier",
   "events",
@@ -39,6 +40,7 @@ export const HOST_SERVICES = [
 export type Hosts = {
   tasks: TasksHost;
   chats: ChatsHost;
+  threads: ThreadsHost;
   bots: BotsHost;
   notifier: Notifier;
   events: EventsHost;
@@ -133,6 +135,21 @@ export interface ChatsHost {
   note(botId: string, text: string, taintedBy?: string | null): unknown;
   /** A note the box's code wrote, in the chat it was made in, untrusted. */
   boxNote(box: Box, text: string): { id: number };
+}
+
+export interface ThreadsHost {
+  /**
+   * What a bot found on its own: in its open thread with `key`, or a new one, or a note in its chat
+   * while too many are open. `taintedBy`: it was written from untrusted content. Returns the app's
+   * path that shows it.
+   */
+  finding(o: {
+    botId: string;
+    title: string;
+    message: string;
+    key: string;
+    taintedBy: string | null;
+  }): string;
 }
 
 export interface BotsHost {

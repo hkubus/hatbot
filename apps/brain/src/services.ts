@@ -167,6 +167,7 @@ export async function createServices(o: Outside) {
     services: {
       tasks: () => tasks,
       chats: () => chats,
+      threads: () => ({ finding: (o) => chats.finding(o) }),
       bots: () => bots,
       notifier: () => notifier,
       events: () => events,
