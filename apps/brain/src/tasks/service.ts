@@ -139,7 +139,6 @@ const toTask = (r: Row): Task => ({
   status: r.status,
   tainted: Boolean(r.tainted),
   taintedBy: r.tainted_by,
-  injectionSuspected: Boolean(r.injection_suspected),
   summary: r.summary,
   costUsd: r.cost_usd ?? 0,
   steps: r.steps,
@@ -811,11 +810,6 @@ export class Tasks {
     };
   }
 
-  mark(id: number, flag: "injection_suspected") {
-    this.d.db.query(`UPDATE tasks SET ${flag} = 1 WHERE id = ?`).run(id);
-    this.emit(id);
-  }
-
   /** It has read untrusted content; `by` is what, kept only the first time. */
   taint(id: number, by: string) {
     this.d.db
@@ -919,7 +913,6 @@ export class Tasks {
       botId: string;
       note: string;
       taintedBy?: string | null;
-      suspected?: boolean;
       ownerSaid?: string;
     },
   ): string | null {
@@ -933,7 +926,6 @@ export class Tasks {
     if (job) return job.unsteerable(id);
     if (!this.running.has(id)) return `Task #${id} isn't running.`;
     if (input.taintedBy) this.taint(id, input.taintedBy);
-    if (input.suspected) this.mark(id, "injection_suspected");
     const was = this.requestOf(id);
     const said = input.ownerSaid;
     if (said && !was?.includes(said)) {

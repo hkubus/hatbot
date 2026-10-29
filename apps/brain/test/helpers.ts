@@ -65,7 +65,7 @@ async function fromTemplate(memoryDir: string) {
   return db;
 }
 
-/** `model` answers the chat thread; `taskModel` answers desktop tasks and screening. */
+/** `model` answers the chat thread; `taskModel` answers desktop tasks. */
 export async function testApp(
   model = new FakeModel(),
   taskModel = new FakeModel(),
@@ -94,7 +94,6 @@ export async function testApp(
   mkdirSync(config.archiveDir);
   mkdirSync(updateDir);
   const db = await fromTemplate(config.memoryDir);
-  taskModel.onCreate ??= () => '{"suspected": false, "excerpt": ""}';
   const agent = new FakeDesktop();
   const hatbox = new FakeHatbox();
   const sent = new FakeNotifier();

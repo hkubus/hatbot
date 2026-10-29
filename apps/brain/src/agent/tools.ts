@@ -12,7 +12,6 @@ import {
   type WebCall,
   webCalls,
   webReads,
-  webTexts,
   webTools,
 } from "@hatbot/plugin-sdk";
 import {
@@ -54,7 +53,6 @@ export {
   type WebCall,
   webCalls,
   webReads,
-  webTexts,
   webTools,
 };
 
@@ -78,12 +76,7 @@ export type ToolContext = {
   settings?: SettingsStore;
   /** What untrusted content was read first, or null; tasks it starts begin tainted. */
   tainted?: () => string | null;
-  taint?: (by: string, text?: string) => void;
-  /**
-   * Suspected prompt injection: work it starts is marked so, and Haiku's review doesn't let its
-   * changes through.
-   */
-  suspected?: () => Promise<boolean>;
+  taint?: (by: string) => void;
   ownerSaid?: () => string;
   /** The hand-off the reply answers, if it answers one: hand-offs it makes count from there. */
   answering?: Task;
@@ -178,7 +171,7 @@ const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
 
 function researchNotes(ctx: ToolContext, tool: string, path: string, text: string): string {
-  ctx.taint?.(`Research notes: ${path}`, text);
+  ctx.taint?.(`Research notes: ${path}`);
   return untrustedBlock("tool_output", text, { tool });
 }
 
@@ -513,10 +506,9 @@ export const TOOLS = [
     schema: RunTaskInput,
     run: async (
       { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
-      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title,
         goal,
@@ -530,7 +522,6 @@ export const TOOLS = [
         askedIn: answering,
       });
       if (!task) return "The task couldn't start.";
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
     },
   }),
@@ -548,12 +539,11 @@ export const TOOLS = [
     }),
     run: async (
       { item, details },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       const t = findTodo((await memory.readOrNull(TODO_FILE)) ?? "", item);
       if (typeof t === "string") return t;
-      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title: clip(t.text, 80),
         goal: details ? `${t.text}\n\n${details}` : t.text,
@@ -567,7 +557,6 @@ export const TOOLS = [
         askedIn: answering,
       });
       if (!task) return `A task is already working on "${t.text}".`;
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id} on "${t.text}". The owner sees its progress and result under this reply; the item is ticked off if it ends done. Don't wait for it.`;
     },
   }),
@@ -578,10 +567,9 @@ export const TOOLS = [
     schema: AskBotInput,
     run: async (
       { bot: to, request },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, answering },
     ) => {
       if (!tasks || !bot) return "Other bots aren't available.";
-      const suspect = await suspected?.();
       const task = tasks.askBot({
         from: bot,
         to,
@@ -593,7 +581,6 @@ export const TOOLS = [
         ownerSaid: ownerSaid?.(),
       });
       if (typeof task === "string") return task;
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
     },
   }),
@@ -631,13 +618,12 @@ export const TOOLS = [
       id: z.number().int(),
       note: z.string().min(1).max(4000).describe("What the task should do now, in full"),
     }),
-    run: async ({ id, note }, { tasks, bot, tainted, suspected, ownerSaid }) => {
+    run: async ({ id, note }, { tasks, bot, tainted, ownerSaid }) => {
       if (!tasks) return "Tasks aren't available.";
       const refused = tasks.steer(id, {
         botId: bot?.id ?? HATBOT_ID,
         note,
         taintedBy: chatTaint(tainted?.()),
-        suspected: await suspected?.(),
         ownerSaid: ownerSaid?.(),
       });
       return refused ?? `Sent to task #${id}. It reads it after its current step.`;
@@ -731,7 +717,7 @@ export async function runOffered(
     return o.gated(tool, input, o.call.signal);
   }
   const r = await runPluginTool(tool, input, o.call);
-  if (r.untrusted) o.call.taint?.(describeCall(tool, input), r.text);
+  if (r.untrusted) o.call.taint?.(describeCall(tool, input));
   return r;
 }
 

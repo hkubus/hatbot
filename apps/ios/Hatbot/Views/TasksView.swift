@@ -273,15 +273,10 @@ private struct TaskDetails: View {
     }
     LabeledContent("Started", value: task.startedAt?.stampText ?? "–")
     LabeledContent("Model", value: Format.modelName(task.model))
-    LabeledContent("Trust") {
-      if task.injectionSuspected {
-        Label("Possible prompt injection", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-      } else {
-        Text(
-          task.tainted
-            ? (task.lane == .screen ? "Read web pages" : "Read untrusted content") : "Trusted sources only")
-      }
-    }
+    LabeledContent(
+      "Trust",
+      value: task.tainted
+        ? (task.lane == .screen ? "Read web pages" : "Read untrusted content") : "Trusted sources only")
     if let taintedBy = task.taintedBy {
       LabeledContent("Tainted by") { Text(taintedBy).multilineTextAlignment(.trailing) }
     }

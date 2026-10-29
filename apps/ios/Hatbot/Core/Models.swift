@@ -219,7 +219,6 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var tainted: Bool
   /// The first untrusted thing it read, or what started it tainted.
   var taintedBy: String?
-  var injectionSuspected: Bool
   var summary: String?
   var costUsd: Double?
   var steps: Int?
@@ -666,7 +665,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var desktopEscalate: Bool?
   var taskModel: ModelID?
   var chatModel: ModelID?
-  /// Quick jobs: checks, screening pages, summaries, research helpers, approval reviews.
+  /// Quick jobs: checks, summaries, research helpers, approval reviews.
   var smallModel: ModelID?
   /// Hard parts: what the chat asks for help with, memory proposals, teaching.
   var expertModel: ModelID?

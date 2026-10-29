@@ -233,20 +233,11 @@ function Details({ task }: { task: Task }) {
       <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>
       <dd>
-        {task.injectionSuspected ? (
-          <span className="status bad">
-            <Icon name="alert" />
-            Possible prompt injection
-          </span>
-        ) : task.tainted ? (
-          task.lane === "screen" ? (
-            "Read web pages"
-          ) : (
-            "Read untrusted content"
-          )
-        ) : (
-          "Trusted sources only"
-        )}
+        {task.tainted
+          ? task.lane === "screen"
+            ? "Read web pages"
+            : "Read untrusted content"
+          : "Trusted sources only"}
       </dd>
       {task.taintedBy && (
         <>

@@ -45,10 +45,9 @@ export async function runHandoff(tasks: Tasks, id: number, signal: AbortSignal):
     sub = under();
     const m = thread.message(said.id);
     const name = bots.nameOf(task.botId);
-    const { tainted, suspected } = await thread.endHandoff(said.id);
+    const tainted = await thread.endHandoff(said.id);
     if (tainted) tasks.taint(id, `${name}'s chat had read: ${tainted}`);
     else if (sub?.tainted) tasks.taint(id, `Task #${sub.id} by ${name}`);
-    if (suspected) tasks.mark(id, "injection_suspected");
     // Its task cancelled, the answer is what it said before it, which waited for the task.
     if (sub?.status === "cancelled")
       return tasks.finish(id, "cancelled", `${name}'s task #${sub.id} was cancelled.`, false);

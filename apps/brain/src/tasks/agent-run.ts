@@ -15,7 +15,6 @@ import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { agentPrompt, CHART_GUESS } from "../agent/prompt";
 import { Blocks, blockedText, levelOf, safeToRun, scopable } from "../agent/review";
-import { type Readable, Screener } from "../agent/screening";
 import { memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
@@ -31,7 +30,6 @@ import {
   toolParam,
   WEB_TOOLS,
   webReads,
-  webTexts,
 } from "../agent/tools";
 import { tagText } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
@@ -149,9 +147,6 @@ const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
-const SUSPECTED =
-  "Something it read may be instructions aimed at Hatbot, so the review is skipped.";
-
 /** An event's trusted part, then the part whoever reaches its source could write. */
 const eventBlock = (
   { trusted, untrusted }: { trusted: string; untrusted?: { text: string } },
@@ -258,24 +253,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         plugins,
       });
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
-  const screener = new Screener(
-    d,
-    { taskId: id },
-    (source, verdict) => {
-      // One that couldn't be checked only says so; the review still looks at what it leads to.
-      if (!verdict.failed && !tasks.get(id)?.injectionSuspected)
-        tasks.mark(id, "injection_suspected");
-      tasks.addStep(id, {
-        kind: "note",
-        name: verdict.failed ? "Couldn't check what it read" : "Possible prompt injection",
-        detail: verdict.failed ? source : `${source}: ${verdict.excerpt}`,
-        url: null,
-      });
-    },
-    { reserve: tasks.reserves(task) },
-  );
-  const taint = (source: string, text?: Readable) => {
-    if (text !== undefined) screener.add(source, text);
+  const taint = (source: string) => {
     sources.add(source);
     if (task.tainted) return;
     task.tainted = true;
@@ -349,8 +327,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (!p.success) return result(call, invalidInput(p.error), true);
     const refused = state?.refuse?.(p.data.request, "the bot");
     if (refused) return result(call, refused, true);
-    // What this task read is screened first: a suspicion goes with the request.
-    await screener.settled();
     const child = tasks.askBot({
       from: bot,
       to: p.data.bot,
@@ -363,20 +339,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ownerSaid: withNotes(ownerWords()) ?? undefined,
     });
     if (typeof child === "string") return result(call, child, true);
-    if (tasks.get(id)?.injectionSuspected) tasks.mark(child.id, "injection_suspected");
     const name = d.bots.nameOf(child.botId);
     const ended = await waitForChild(child.id, `Asked ${name}: ${child.title}`);
     if (ended.tainted) taint(`Task #${child.id} by ${name}`);
-    // A suspicion comes back with the answer, as it went with the request.
-    if (ended.injectionSuspected && !tasks.get(id)?.injectionSuspected) {
-      tasks.mark(id, "injection_suspected");
-      tasks.addStep(id, {
-        kind: "note",
-        name: "Possible prompt injection",
-        detail: `What ${name} had read`,
-        url: null,
-      });
-    }
     const summary = ended.summary ?? "";
     return result(
       call,
@@ -434,18 +399,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** Why the run stops, once the review has blocked too much. */
   let gaveUp: string | null = null;
 
-  /** As Settings → Safety says; by default never for money, accounts, what's careful, or suspected injection. */
+  /** As Settings → Safety says; by default never for money, accounts, doors or what's careful. */
   const reviewed = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
     verdict: Extract<Verdict, { action: "ask" }>,
-  ): Promise<{ safe: boolean; why: string; by?: string; suspected?: boolean }> => {
-    // What it read so far is screened first: suspected injection skips the review.
-    await screener.settled();
-    const settings = d.settings.get();
-    const suspected = (tasks.get(id)?.injectionSuspected ?? false) && settings.safety.injection;
-    const level = levelOf(settings, verdict, suspected);
+  ): Promise<{ safe: boolean; why: string; by?: string }> => {
+    const level = levelOf(d.settings.get(), verdict);
     if (level === "allow") {
       tasks.addStep(id, {
         kind: "approval",
@@ -456,7 +417,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return { safe: true, why: "" };
     }
     const granted =
-      scopable(verdict, suspected) &&
+      scopable(verdict) &&
       d.approvals.granted({
         botId: bot.id,
         tool: t.name,
@@ -473,7 +434,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
       return { safe: true, why: granted };
     }
-    if (level === "ask") return { safe: false, why: "", suspected };
+    if (level === "ask") return { safe: false, why: "" };
     const check = await safeToRun(
       d,
       { taskId: id },
@@ -531,8 +492,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (verdict.action === "ask") {
       const check = await reviewed(t, call, what, verdict);
       const target = t.target?.(call.input as never) ?? null;
-      // Never for money, accounts, doors, what you said to always ask about, or a suspicion.
-      const scopes = scopable(verdict, check.suspected) ? (["always"] as const) : [];
+      // Never for money, accounts, doors or what you said to always ask about.
+      const scopes = scopable(verdict) ? (["always"] as const) : [];
       if (!check.safe && check.by) {
         d.approvals.block({
           taskId: id,
@@ -559,11 +520,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           summary: what,
           call: { tool: t.name, input: call.input, target },
           scopes: [...scopes],
-          reason: check.suspected
-            ? `${verdict.why} ${SUSPECTED}`
-            : check.why
-              ? `${verdict.why} ${check.by}: ${check.why}`
-              : verdict.why,
+          reason: verdict.why,
         });
         note = answer.note;
         if (answer.outcome !== "approved")
@@ -596,7 +553,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
     const r = await runPluginTool(t, call.input, cc);
     if (t.access === "write") blocks.ran();
-    if (r.untrusted) taint(what, r.text);
+    if (r.untrusted) taint(what);
     if (t.name === "send_file" && !r.isError)
       tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
     return result(
@@ -688,10 +645,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const event = task.payload ? (origin?.event?.(task.payload) ?? null) : null;
-    // What started it is screened like what it reads: an event's untrusted part, or an untrusted event.
-    if (event?.untrusted) screener.add(event.untrusted.source, event.untrusted.text);
-    else if (task.tainted && task.payload)
-      screener.add(task.taintedBy ?? "What started it", task.payload);
     const payload = event
       ? eventBlock(event, tagJson)
       : task.payload
@@ -794,7 +747,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
         taint(read);
       }
-      for (const page of webTexts(res.content)) screener.add(page.source, page.text);
       addNotes(tasks, id, res);
       const calls = callsOf(res, nudge);
       if (!calls) continue;
@@ -897,7 +849,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             continue;
           }
           const parts = origin?.event?.(event) ?? null;
-          if (parts?.untrusted) taint(parts.untrusted.source, parts.untrusted.text);
+          if (parts?.untrusted) taint(parts.untrusted.source);
           results.push({
             type: "text",
             text: parts

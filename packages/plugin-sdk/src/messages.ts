@@ -23,9 +23,6 @@ export const toolParam = (t: {
   eager_input_streaming: true,
 });
 
-/** Untrusted text to screen: a PDF as it came. */
-export type Readable = string | { pdf: string };
-
 /** An API's error object, as Anthropic's and OpenAI's SDKs give it. */
 type ApiFailure = Error & { status?: number; error?: { error?: { message?: string } } };
 
@@ -253,39 +250,6 @@ export function serverToolWaiting(content: Anthropic.Beta.BetaContentBlock[]): b
     ),
   );
   return content.some((b) => b.type === "server_tool_use" && !done.has(b.id));
-}
-
-/**
- * The untrusted text to screen: pages fetched (a PDF as it came), search results' titles (their text
- * comes encrypted), what the web tools' code printed, and files viewed in its container.
- */
-export function webTexts(
-  content: Anthropic.Beta.BetaContentBlock[],
-): { source: string; text: Readable }[] {
-  const out: { source: string; text: Readable }[] = [];
-  for (const b of content) {
-    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
-      const { source, title } = b.content.content;
-      out.push({
-        source: `Read ${b.content.url}`,
-        text: source.type === "text" ? `${title ?? ""}\n${source.data}` : { pdf: source.data },
-      });
-    } else if (
-      b.type === "text_editor_code_execution_tool_result" &&
-      b.content.type === "text_editor_code_execution_view_result"
-    ) {
-      out.push({ source: CODE_READ, text: b.content.content });
-    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
-      const titles = b.content.map((r) => `${r.title} (${r.url})`).join("\n");
-      out.push({ source: "Web search results", text: titles });
-    } else if (
-      (b.type === "code_execution_tool_result" && b.content.type === "code_execution_result") ||
-      (b.type === "bash_code_execution_tool_result" &&
-        b.content.type === "bash_code_execution_result")
-    )
-      out.push({ source: CODE_READ, text: `${b.content.stdout}\n${b.content.stderr}` });
-  }
-  return out;
 }
 
 /** Sent with the next request of the same reply or task: code paused mid-run carries on in it. */

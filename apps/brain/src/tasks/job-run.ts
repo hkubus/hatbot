@@ -20,8 +20,7 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
     const verdict = { action: "ask" as const, why, tainted: true, always };
     const by = tainted();
     const sources = by ? [by] : [];
-    const suspected = tasks.get(id)?.injectionSuspected ?? false;
-    const level = levelOf(d.settings.get(), verdict, suspected);
+    const level = levelOf(d.settings.get(), verdict);
     if (level === "allow") return { content: "", isError: false };
     if (level === "review") {
       if (d.approvals.granted({ botId: task.botId, ...call, target: null, taskId: id }))

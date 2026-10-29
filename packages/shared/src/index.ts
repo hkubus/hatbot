@@ -233,7 +233,6 @@ export type Task = {
   tainted: boolean;
   /** The first untrusted thing it read, or what started it tainted. Null before this was kept. */
   taintedBy: string | null;
-  injectionSuspected: boolean;
   summary: string | null;
   costUsd: number;
   steps: number;
@@ -320,8 +319,6 @@ export type SafetySettings = {
   kinds: Record<SafetyKind, ApprovalLevel>;
   /** After reading untrusted content, changes ask first. */
   untrusted: boolean;
-  /** Once something read looks like instructions aimed at a bot, every change asks you. */
-  injection: boolean;
   /** By write tool: always ask you, or never ask. Tools not here do as their plugin says. */
   tools: Record<string, "ask" | "allow">;
   /** Commands one chat reply runs itself before the work has to go to a task. */
@@ -753,7 +750,7 @@ export type AppSettings = {
   desktopEscalate: boolean;
   /** The model background tasks (SSH, Proxmox, code work) run on. */
   taskModel: string;
-  /** Quick jobs: checks, screening pages, summaries, research helpers, approval reviews. */
+  /** Quick jobs: checks, summaries, research helpers, approval reviews. */
   smallModel: string;
   /** Hard parts: what the chat asks for help with, memory proposals, teaching. */
   expertModel: string;

@@ -36,17 +36,16 @@ const ALWAYS_ASK: ApprovalKind[] = [
   "injection_warning",
 ];
 
-/** Approvals you may stretch past this once: not money, accounts, doors, what's careful, or a suspicion. */
-export const scopable = (verdict: Extract<Verdict, { action: "ask" }>, suspected = false) =>
-  !suspected && !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
+/** Approvals you may stretch past this once: not money, accounts, doors or what's careful. */
+export const scopable = (verdict: Extract<Verdict, { action: "ask" }>) =>
+  !verdict.always && !ALWAYS_ASK.includes(verdict.kind ?? "other");
 
 /** Whether an ask goes to you, to the review first, or ahead, as Safety settings say. */
 export function levelOf(
   settings: Settings,
   verdict: Extract<Verdict, { action: "ask" }>,
-  suspected = false,
 ): ApprovalLevel {
-  if (verdict.careful || (suspected && settings.safety.injection)) return "ask";
+  if (verdict.careful) return "ask";
   const kind = verdict.kind ?? "other";
   if (!SAFETY_KINDS.includes(kind as SafetyKind)) return "ask";
   const level = settings.safety.kinds[kind as SafetyKind];

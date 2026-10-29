@@ -25,7 +25,6 @@ replyPause.everyMs = 1;
 const LISTING_URL = "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001.html";
 const CHAT_URL = "https://www.olx.pl/myaccount/answers/555";
 const TEXT = "Dzień dobry, czy przyjmie Pan 1060 zł za kartę?";
-const NOT_SUSPECTED = '{"suspected": false, "excerpt": ""}';
 const call = (): CallContext => ({ task: null, signal: new AbortController().signal });
 
 const finish = (summary = "Sent it.") => ({
@@ -479,7 +478,7 @@ test("a note on the mandate changes its numbers, held at what it may cost; one t
   };
   let heldMeanwhile = false;
   work.onCreate = (p) => {
-    if (p.system !== NOTE_PROMPT) return NOT_SUSPECTED;
+    if (p.system !== NOTE_PROMPT) return undefined;
     notes.push(String(p.messages[0]?.content));
     heldMeanwhile = holding();
     return noted({ limit: notes.length === 1 ? 1300 : 13000 });
@@ -522,7 +521,7 @@ test("a note that gives the mandate more room is asked about again, then reaches
   work.onCreate = (p) =>
     p.system === NOTE_PROMPT
       ? noted({ opening: 1060, target: 1300, limit: 1450, allow: ["phone"] })
-      : NOT_SUSPECTED;
+      : undefined;
   work.script.push(later);
   const t = await testApp(new FakeModel(), work);
   const n = openNegotiation(t);
@@ -544,7 +543,7 @@ test("a mandate approval with a note is applied once, however often it's seen", 
   const work = new FakeModel();
   let asked = 0;
   work.onCreate = (p) => {
-    if (p.system !== NOTE_PROMPT) return NOT_SUSPECTED;
+    if (p.system !== NOTE_PROMPT) return undefined;
     asked++;
     return noted({});
   };
@@ -569,7 +568,7 @@ test("a Stop while a mandate note is being applied stands", async () => {
     release = r;
   });
   let asked = false;
-  work.onCreate = (p) => (p.system === NOTE_PROMPT ? noted({}) : NOT_SUSPECTED);
+  work.onCreate = (p) => (p.system === NOTE_PROMPT ? noted({}) : undefined);
   const create = work.create.bind(work);
   work.create = async (p) => {
     if (p.system === NOTE_PROMPT) {

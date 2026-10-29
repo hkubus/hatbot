@@ -1,9 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CreateParams, StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
 import type { ModelClient } from "../src/agent/model";
-import { SCREENING_PROMPT } from "../src/agent/prompt";
-
-const NOT_SUSPECTED = '{"suspected": false, "excerpt": ""}';
 
 type Block = Anthropic.Beta.BetaContentBlock;
 export type Scripted = {
@@ -48,7 +45,7 @@ export class FakeModel implements ModelClient {
   creates: CreateParams[] = [];
   /** Picks a response for a request before the script does: for requests made at once. */
   route: ((p: Omit<StreamParams, "stream">) => Scripted | undefined) | null = null;
-  /** Replies to create() calls other than summaries, e.g. injection screening. */
+  /** Replies to create() calls other than summaries, e.g. reviews. */
   onCreate: ((p: CreateParams) => string | undefined) | null = null;
   constructor(
     public script: Scripted[] = [],
@@ -89,12 +86,7 @@ export class FakeModel implements ModelClient {
         output_tokens: 0,
         cache_read_input_tokens: 1000,
       });
-    // Injection screening finds nothing unless a test says otherwise; it takes no summary's place.
-    const reply =
-      this.onCreate?.(params) ??
-      (params.system === SCREENING_PROMPT ? NOT_SUSPECTED : undefined) ??
-      this.summaries.shift() ??
-      "summary";
+    const reply = this.onCreate?.(params) ?? this.summaries.shift() ?? "summary";
     // A forced tool call: the reply is its input, as JSON.
     if (params.tool_choice?.type === "tool")
       return message(

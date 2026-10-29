@@ -71,7 +71,6 @@ import {
   systemPrompt,
 } from "./prompt";
 import { BLOCKS_IN_A_ROW, blockedText, levelOf, safeToRun, scopable } from "./review";
-import { type Readable, Screener } from "./screening";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -87,7 +86,6 @@ import {
   toolParam,
   webCalls,
   webReads,
-  webTexts,
 } from "./tools";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
@@ -255,7 +253,6 @@ export class Thread {
    * What each episode read, being screened. Kept across replies: a verdict the last reply didn't
    * wait for still holds back a change the next one makes.
    */
-  private screeners = new Map<number, Screener>();
   private clock: () => number;
 
   constructor(
@@ -468,35 +465,16 @@ export class Thread {
       .run(by, episodeId);
   }
 
-  /**
-   * Carried-over messages keep their untrusted labels but not their taint; only what the earlier
-   * conversation was suspected of reading comes along, and taints it.
-   */
-  private inheritSuspicion(episodeId: number, beforeMessageId: number) {
-    const carried = [
-      ...this.untrusted(this.list(beforeMessageId, RECENT_MESSAGES).map((m) => m.id)).values(),
-    ];
-    this.carrySuspicion(episodeId, carried.find((m) => m.suspected)?.suspected ?? null);
-  }
-
-  private carrySuspicion(episodeId: number, suspected: string | null) {
-    if (!suspected) return;
-    this.suspect(episodeId, suspected);
-    this.taint(episodeId, suspected);
-  }
-
-  private untrusted(ids: number[]): Map<number, { source: string; suspected: string | null }> {
+  private untrusted(ids: number[]): Map<number, { source: string }> {
     if (!ids.length) return new Map();
     const rows = this.d.db
-      .query<{ id: number; source: string | null; suspected: string | null }, number[]>(
-        `SELECT m.id, ${UNTRUSTED_SOURCE} AS source, e.injection_suspected AS suspected
+      .query<{ id: number; source: string | null }, number[]>(
+        `SELECT m.id, ${UNTRUSTED_SOURCE} AS source
          FROM messages m ${TRUST_JOINS}
          WHERE m.id IN (${ids.map(() => "?").join(", ")}) ORDER BY m.id`,
       )
       .all(...ids);
-    return new Map(
-      rows.flatMap((r) => (r.source ? [[r.id, { source: r.source, suspected: r.suspected }]] : [])),
-    );
+    return new Map(rows.flatMap((r) => (r.source ? [[r.id, { source: r.source }]] : [])));
   }
 
   /**
@@ -541,20 +519,6 @@ export class Thread {
       .join("\n\n");
   }
 
-  /**
-   * `own`: Haiku found it in what the episode read itself, so the running summary carries it on; a
-   * suspicion carried in from elsewhere doesn't.
-   */
-  private suspect(episodeId: number, what: string, own = false) {
-    this.d.db
-      .query(
-        `UPDATE episodes SET injection_suspected = coalesce(injection_suspected, ?1),
-         read_suspected = CASE WHEN ?2 THEN coalesce(read_suspected, ?1) ELSE read_suspected END
-         WHERE id = ?3`,
-      )
-      .run(what, own ? 1 : 0, episodeId);
-  }
-
   private livePlugin(bot: Bot, offered: PluginTool, incognito: boolean): PluginTool | string {
     const { plugins, bots } = this.d;
     // Negotiation's tools aren't a plugin's, and the core's own don't change.
@@ -568,29 +532,14 @@ export class Thread {
     });
   }
 
-  private screenerFor(episodeId: number): Screener {
-    let screener = this.screeners.get(episodeId);
-    if (!screener) {
-      for (const [id, other] of this.screeners) if (other.idle) this.screeners.delete(id);
-      // One that couldn't be checked isn't suspected: the review still looks at what it leads to.
-      screener = new Screener(this.d, { episodeId }, (source, verdict) => {
-        if (!verdict.failed) this.suspect(episodeId, `${source}: "${verdict.excerpt}"`, true);
-      });
-      this.screeners.set(episodeId, screener);
-    }
-    return screener;
-  }
-
-  private trust(episodeId: number): { tainted: string | null; suspected: string | null } {
+  /** What tainted the conversation, or null. */
+  private tainted(episodeId: number): string | null {
     const e = this.d.db
-      .query<{ tainted: number; by: string | null; suspected: string | null }, [number]>(
-        "SELECT tainted, tainted_by AS by, injection_suspected AS suspected FROM episodes WHERE id = ?",
+      .query<{ tainted: number; by: string | null }, [number]>(
+        "SELECT tainted, tainted_by AS by FROM episodes WHERE id = ?",
       )
       .get(episodeId);
-    return {
-      tainted: e?.tainted ? (e.by ?? "Untrusted content") : null,
-      suspected: e?.suspected ?? null,
-    };
+    return e?.tainted ? (e.by ?? "Untrusted content") : null;
   }
 
   private async approve(
@@ -602,11 +551,10 @@ export class Thread {
     progress: (line: string) => void,
   ): Promise<{ note: string | null } | { content: string; isError: true; blocked?: true }> {
     const { approvals, settings } = this.d;
-    const { tainted: taintedBy, ...trust } = this.trust(episodeId);
-    const suspected = settings.get().safety.injection ? trust.suspected : null;
-    const level = levelOf(settings.get(), verdict, suspected !== null);
+    const taintedBy = this.tainted(episodeId);
+    const level = levelOf(settings.get(), verdict);
     if (level === "allow") return { note: null };
-    const reviewable = scopable(verdict, suspected !== null);
+    const reviewable = scopable(verdict);
     if (
       reviewable &&
       approvals?.granted({
@@ -656,9 +604,7 @@ export class Thread {
       conversationId: this.conversationId,
       kind: verdict.kind ?? "other",
       summary: call.what,
-      reason: suspected
-        ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so the review is skipped: ${suspected}`
-        : verdict.why,
+      reason: verdict.why,
       sources,
       call: { tool: call.tool, input: call.input, target: call.target ?? null },
       episodeId,
@@ -693,7 +639,6 @@ export class Thread {
     signal: AbortSignal,
     progress: (line: string) => void,
     messageId: number,
-    screen?: (source: string, text: string) => void,
   ): Promise<{ content: string; isError: boolean; images?: ToolImage[]; blocked?: true }> {
     const { attachments } = this.d;
     const cc: CallContext = {
@@ -710,7 +655,7 @@ export class Thread {
       t,
       input,
       cc,
-      this.trust(episodeId).tainted !== null,
+      this.tainted(episodeId) !== null,
       this.d.settings.get().safety,
     );
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
@@ -732,10 +677,7 @@ export class Thread {
     }
     progress(activity(t.label ?? `Using ${t.name}`, input));
     const r = await runPluginTool(t, input, cc);
-    if (r.untrusted) {
-      this.taint(episodeId, what);
-      screen?.(what, r.text);
-    }
+    if (r.untrusted) this.taint(episodeId, what);
     return {
       content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content,
       isError: r.isError,
@@ -1136,24 +1078,6 @@ export class Thread {
     );
   }
 
-  /**
-   * What the running summary drew on that may be a prompt injection, or null. It was written from
-   * every summarized conversation, so one suspected of reading one itself makes it suspect until that
-   * one is deleted; what a conversation only carried over doesn't. Mere untrusted reads don't carry.
-   */
-  private summarySuspected(): string | null {
-    if (!this.threadSummary()) return null;
-    return (
-      this.d.db
-        .query<{ s: string }, [number]>(
-          `SELECT 'The summary of earlier conversations, which drew on: ' || read_suspected AS s
-           FROM episodes WHERE conversation_id = ? AND summarized = 1 AND read_suspected IS NOT NULL
-           ORDER BY id LIMIT 1`,
-        )
-        .get(this.conversationId)?.s ?? null
-    );
-  }
-
   private threadSummary(): string {
     return (
       this.d.db
@@ -1365,16 +1289,11 @@ export class Thread {
     return this.enqueue(() => this.inSummaryTurn(() => this.forget(episodeId)));
   }
 
-  /**
-   * You trust what a conversation read (2026-10-20, the owner's choice): it's no longer tainted or
-   * suspected, and the summary doesn't carry a suspicion from it.
-   */
+  /** You trust what a conversation read (2026-10-20, the owner's choice): it's no longer tainted. */
   trustEpisode(episodeId: number): boolean {
     if (!this.ownEpisode(episodeId)) return false;
     this.d.db
-      .query(
-        "UPDATE episodes SET tainted = 0, tainted_by = NULL, injection_suspected = NULL, read_suspected = NULL WHERE id = ?",
-      )
+      .query("UPDATE episodes SET tainted = 0, tainted_by = NULL WHERE id = ?")
       .run(episodeId);
     return true;
   }
@@ -1538,10 +1457,7 @@ export class Thread {
       ...(incognito
         ? []
         : [
-            // One written from a conversation suspected of reading an injection is data, like what it read.
-            this.summarySuspected()
-              ? untrustedBlock("summary_of_earlier_conversations", this.threadSummary())
-              : `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
+            `<summary_of_earlier_conversations>\n${this.threadSummary() || "(none yet)"}\n</summary_of_earlier_conversations>`,
           ]),
       `<recent_messages>\n${recent || "(none)"}\n</recent_messages>`,
       "</context>",
@@ -1660,22 +1576,15 @@ export class Thread {
   }
 
   /**
-   * What the episodes a hand-off's answer was written in read, once screened. The answer is written
-   * again in a new episode when the chat moved on before its task ended.
+   * What tainted the episodes a hand-off's answer was written in. The answer is written again in a
+   * new episode when the chat moved on before its task ended.
    */
-  async endHandoff(
-    answerId: number | null,
-  ): Promise<{ tainted: string | null; suspected: string | null }> {
+  async endHandoff(answerId: number | null): Promise<string | null> {
     const h = answerId === null ? undefined : this.handoffAnswers.get(answerId);
     if (answerId !== null) this.handoffAnswers.delete(answerId);
     const first = answerId === null ? undefined : this.message(answerId)?.episodeId;
     const episodes = [...new Set([...(first ? [first] : []), ...(h?.episodes ?? [])])];
-    await Promise.all(episodes.map((id) => this.screeners.get(id)?.settled()));
-    const trust = episodes.map((id) => this.trust(id));
-    return {
-      tainted: trust.find((t) => t.tainted)?.tainted ?? null,
-      suspected: trust.find((t) => t.suspected)?.suspected ?? null,
-    };
+    return episodes.map((id) => this.tainted(id)).find(Boolean) ?? null;
   }
 
   retry(messageId: number): Promise<void> | null {
@@ -1834,14 +1743,6 @@ export class Thread {
           type: "text",
           text: await this.episodeContext(bot, contextBefore, episode.id, episode.fresh, incognito),
         });
-        if (episode.isNew && !incognito) {
-          // What the earlier conversations read is screened before it's carried on.
-          await Promise.allSettled([...this.screeners.values()].map((s) => s.settled()));
-          // A new conversation starts untainted; only a suspected injection carries on. /new leaves
-          // the messages before behind, and that with them.
-          if (!episode.fresh) this.inheritSuspicion(episode.id, userId);
-          this.carrySuspicion(episode.id, this.summarySuspected());
-        }
       } else {
         const commands = this.commandsSince(episode.id, userId);
         if (commands)
@@ -1855,12 +1756,9 @@ export class Thread {
       if (foreign) this.taint(episode.id, foreign);
       // Task news waits for the conversation that's kept.
       ended = incognito ? [] : (this.d.tasks?.takeUnreported(this.conversationId, bot.id) ?? []);
-      // What tainted tasks report carries what they read; a bot this one asked, its suspicion too.
+      // What tainted tasks report carries what they read.
       const tainted = ended.find((t) => t.tainted);
       if (tainted) this.taint(episode.id, `Task #${tainted.id} "${tainted.title}"`);
-      const suspected = ended.find((t) => t.injectionSuspected && t.requestedBy === bot.id);
-      if (suspected)
-        this.suspect(episode.id, `What ${this.d.bots.nameOf(suspected.botId)} had read`);
       if (ended.length) {
         const files = this.d.attachments?.ofTasks(ended.map((t) => t.id)) ?? [];
         const named = (list: typeof files) => list.map((a) => `#${a.id} "${a.name}"`).join(", ");
@@ -1889,7 +1787,6 @@ export class Thread {
       const notes = incognito ? [] : this.boxNotes(bot, userId);
       if (notes.length) {
         this.taint(episode.id, notes[0]?.tainted_by ?? "A box");
-        for (const n of notes) this.screenerFor(episode.id).add(n.tainted_by ?? "A box", n.text);
         // A new conversation has them in its recent messages, unless /new left them behind; a group
         // in <group_messages>.
         if (!group && (!firstTurn || episode.fresh))
@@ -1925,11 +1822,7 @@ export class Thread {
         const asker = this.d.bots.nameOf(asked.requestedBy ?? HATBOT_ID);
         const by = asked.tainted ? (asked.taintedBy ?? "Untrusted content") : null;
         // What the asker had read comes with its request.
-        if (by) {
-          this.taint(episode.id, by);
-          this.screenerFor(episode.id).add(`${asker}'s request`, user.text);
-        }
-        if (asked.injectionSuspected) this.suspect(episode.id, `What ${asker} had read`);
+        if (by) this.taint(episode.id, by);
         userBlocks.push({
           type: "text",
           text: messageTag(asker, localStamp(new Date(user.createdAt)), user.text, {
@@ -1948,15 +1841,6 @@ export class Thread {
       if (user?.attachments?.length && this.d.attachments) {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
-        // And screened, as what the model reads of them.
-        if (!incognito)
-          for (const a of user.attachments)
-            for (const b of await this.d.attachments.blocks([a]))
-              if (b.type === "document" && (b.source.type === "text" || b.source.type === "base64"))
-                this.screenerFor(episode.id).add(
-                  `Attached file "${a.name}"`,
-                  b.source.type === "text" ? b.source.data : { pdf: b.source.data },
-                );
       }
       // A system message follows a user turn; with nothing else to say, the note is that turn.
       if (note && !userBlocks.length) {
@@ -2172,12 +2056,8 @@ export class Thread {
     let commands = 0;
     let blocked = 0;
     let container: string | undefined;
-    // Incognito can't change anything, so there's nothing to screen for.
-    const screener = incognito ? null : this.screenerFor(episode.id);
-    const screen = (source: string, text: Readable) => screener?.add(source, text);
-    /** A change waits for what the reply read so far to be screened, then for you. */
+    /** A change that waits for you. */
     const checked = async <T>(run: () => Promise<T>): Promise<T> => {
-      await screener?.settled();
       const from = this.clock();
       try {
         return await run();
@@ -2282,7 +2162,6 @@ export class Thread {
         // Web pages are untrusted.
         const web = webReads(res.content);
         if (web.length) this.taint(episode.id, web[0] as string);
-        for (const page of webTexts(res.content)) screen(page.source, page.text);
 
         const toolUses = content.filter(
           (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
@@ -2393,7 +2272,7 @@ export class Thread {
                   isError: true,
                 };
               const r = await checked(() =>
-                this.gatedCall(episode.id, bot, t, input, signal, progress, out.id, screen),
+                this.gatedCall(episode.id, bot, t, input, signal, progress, out.id),
               );
               blocked = "blocked" in r ? blocked + 1 : 0;
               return r;
@@ -2405,15 +2284,8 @@ export class Thread {
               conversationId: this.conversationId,
               messageId: out.id,
               episodeId: episode.id,
-              tainted: () => this.trust(episode.id).tainted,
-              taint: (by: string, text?: string) => {
-                this.taint(episode.id, by);
-                if (text !== undefined) screen(by, text);
-              },
-              suspected: async () => {
-                await screener?.settled();
-                return this.trust(episode.id).suspected !== null;
-              },
+              tainted: () => this.tainted(episode.id),
+              taint: (by: string) => this.taint(episode.id, by),
               ownerSaid: () => this.ownerSaid(episode.id),
               answering: this.currentHandoff?.task,
               approve: ({ why, always, ...call }, signal) =>
@@ -2430,7 +2302,7 @@ export class Thread {
                   scheduleId: sc.id,
                   botId: bot.id,
                   // Its prompt was written after reading untrusted content.
-                  taintedBy: this.trust(episode.id).tainted,
+                  taintedBy: this.tainted(episode.id),
                 }),
             },
           });

@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { ask, askCareful, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -139,27 +139,6 @@ test("what you marked careful asks you whatever Safety allows", async () => {
   t.approvals.decide(asked.id, "deny", "web");
   await finished(t, id);
   expect(done).toEqual([]);
-});
-
-test("a suspected injection stops a change while the injection rule is on; off, the review answers", async () => {
-  const run = async (injection: boolean) => {
-    const { t, done, work } = await lab([call("lab_issue"), call("lab_restart"), finish]);
-    work.onCreate = (p) =>
-      p.system === SCREENING_PROMPT
-        ? '{"suspected": true, "excerpt": "the web service"}'
-        : reviewSaysSafe(p);
-    t.settings.update({ safety: { injection } });
-    const id = runTask(t);
-    if (injection) {
-      const asked = await waitFor(() => t.approvals.list(true)[0]);
-      t.approvals.decide(asked.id, "approve", "web");
-    }
-    await finished(t, id);
-    expect(done).toEqual(["lab_restart"]);
-    return reviewed(work);
-  };
-  expect(await run(true)).toBe(false);
-  expect(await run(false)).toBe(true);
 });
 
 test("the chat runs as many commands in a reply as Safety lets it", async () => {

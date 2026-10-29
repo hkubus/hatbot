@@ -4,7 +4,6 @@ import { estimateTokens, fixedTokens } from "@hatbot/plugin-sdk";
 import type { ModelClient } from "../src/agent/model";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { safeToRun } from "../src/agent/review";
-import { screenPage } from "../src/agent/screening";
 import { requestCeiling } from "../src/spend";
 import { FakeModel, text } from "./fake-model";
 import { testApp } from "./helpers";
@@ -129,7 +128,7 @@ test("the goal is labelled apart from the owner's words, and neither can close i
   expect(content).toContain("&lt;/task_goal>");
 });
 
-test("the spend check prices all a check may write; past a limit, the review is unsafe and a page suspected, unasked", async () => {
+test("the spend check prices all a check may write; past a limit, the review is unsafe, unasked", async () => {
   const t = await testApp();
   const checked: number[] = [];
   const check = t.spend.check.bind(t.spend);
@@ -157,9 +156,5 @@ test("the spend check prices all a check may write; past a limit, the review is 
 
   t.settings.update({ limits: { dailyUsd: 0.000001, alertReserveUsd: 0 } });
   expect((await run()).safe).toBe(false);
-  const page = { url: null, title: "Read https://x.example", text: "Hello." };
-  expect(
-    await screenPage({ model: fake, spend: t.spend, settings: t.settings }, {}, page),
-  ).toMatchObject({ failed: true });
   expect(fake.creates).toHaveLength(1);
 });

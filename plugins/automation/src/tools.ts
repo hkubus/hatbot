@@ -172,20 +172,10 @@ export function automationTools(p: Parts): PluginTool[] {
   const asked = async (call: CallContext, change: Change) =>
     call.tainted?.() && untrustedAsks() ? askOwner(call, change, "untrusted") : "";
 
-  /**
-   * A schedule or watcher made after something the conversation read was suspected of being a prompt
-   * injection waits for you: its runs would act on what that text wrote, and the review isn't asked.
-   */
-  const askedIfSuspected = async (call: CallContext, change: Change) =>
-    p.settings.get().safety.injection && (await call.suspected?.())
-      ? askOwner(call, change, "injection")
-      : "";
-
   /** A watcher for the chat: what it saw, from an untrusted source, is quoted and taints it. */
   function seenLine(call: CallContext, w: Watcher): string {
     const untrusted = watchers.sawUntrusted(w);
-    if (untrusted && w.lastValue !== null)
-      call.taint?.(`What the watcher "${w.name}" saw`, w.lastValue);
+    if (untrusted && w.lastValue !== null) call.taint?.(`What the watcher "${w.name}" saw`);
     return watcherLine(w, untrusted);
   }
 
@@ -234,18 +224,13 @@ export function automationTools(p: Parts): PluginTool[] {
       run: async ({ name, prompt, cron, at }, call) => {
         if (gone(call)) return BOT_GONE;
         if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
-        const note = await askedIfSuspected(call, {
-          name: "automation_schedule_create",
-          input: { name, prompt, cron, at },
-          what: `Create the schedule "${name}", ${cron ? describeCron(cron).toLowerCase() : `once at ${at}`}: ${cut(prompt)}`,
-        });
         const s = schedules.create(
           { name, prompt, cron, at, botId: call.bot?.id ?? HATBOT_ID },
           "chat",
           call.tainted?.() ?? null,
         );
         call.scheduleCard?.(s);
-        return `Created schedule ${scheduleLine(s)}${note}`;
+        return `Created schedule ${scheduleLine(s)}`;
       },
     }),
     tool({
@@ -336,11 +321,6 @@ export function automationTools(p: Parts): PluginTool[] {
         const condition = conditionOf(input);
         if (typeof condition === "string") return condition;
         const prompt = input.prompt?.trim() ?? "";
-        const note = await askedIfSuspected(call, {
-          name: "automation_watch_create",
-          input,
-          what: `Create the watcher "${input.name}" on ${input.url ?? input.tool}${prompt ? `: ${cut(prompt)}` : ""}`,
-        });
         const source: WatchSource = {
           kind: input.url ? "page" : "tool",
           ...(input.url
@@ -365,7 +345,7 @@ export function automationTools(p: Parts): PluginTool[] {
             "chat",
             call.tainted?.() ?? null,
           );
-          return `Created watcher ${seenLine(call, w)}${note}`;
+          return `Created watcher ${seenLine(call, w)}`;
         } catch (err) {
           if (err instanceof WatchError) return `Not created: ${err.message}`;
           throw err;

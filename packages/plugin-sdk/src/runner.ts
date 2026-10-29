@@ -2,7 +2,6 @@
 // rule, steering), and the runner shapes it with its prompt, its own tools and how it ends.
 import type { Bot, Task } from "@hatbot/shared";
 import type { CallContext, Place } from "./index";
-import type { Readable } from "./messages";
 import type { CreateParams, ModelMessageParam, ModelRole, ModelTool } from "./models";
 
 /** How hard the model thinks, as the API takes it. */
@@ -46,8 +45,8 @@ export type TaskRunner = {
 export type RunnerRun = {
   task: Task;
   signal: AbortSignal;
-  /** Marks the task as having read untrusted content; `text`, when given, is screened. */
-  taint: (source: string, text?: Readable) => void;
+  /** Marks the task as having read untrusted content. */
+  taint: (source: string) => void;
   /** Its conversation so far. */
   messages: readonly ModelMessageParam[];
   /** What its next request may cost: work it starts meanwhile leaves room for it. */

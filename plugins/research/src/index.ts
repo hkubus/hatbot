@@ -90,7 +90,6 @@ const researchTool = (d: Deps) =>
     run: async ({ title, question, previous }, call) => {
       if (previous && !(await d.memory.exists(previous)))
         return `There's no report at ${previous}. Check the path, or leave previous out.`;
-      const suspect = await call.suspected?.();
       const by = call.tainted?.();
       const task = d.tasks.createBackgroundTask({
         title,
@@ -105,7 +104,6 @@ const researchTool = (d: Deps) =>
         runner: "research",
       });
       if (!task) return "The research couldn't start.";
-      if (suspect) d.tasks.mark(task.id, "injection_suspected");
       return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
     },
   });

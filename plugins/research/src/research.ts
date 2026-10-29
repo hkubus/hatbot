@@ -16,7 +16,6 @@ import {
   modelErrorText,
   type PluginAttachments,
   pathOf,
-  type Readable,
   serverToolWaiting,
   slugWords,
   TRACKING,
@@ -24,7 +23,6 @@ import {
   toolParam,
   untrustedFields,
   webReads,
-  webTexts,
   webTools,
 } from "@hatbot/plugin-sdk";
 import type { Bot, Task } from "@hatbot/shared";
@@ -315,7 +313,7 @@ export type ResearchRun = {
   task: Task;
   signal: AbortSignal;
   /** Marks the task as having read untrusted content; `text`, when given, is screened. */
-  taint: (source: string, text?: Readable) => void;
+  taint: (source: string) => void;
   /** The lead's conversation so far: where the links a brief may name come from. */
   messages: readonly Anthropic.Beta.BetaMessageParam[];
   /** What the lead's next request may cost: the helpers leave room for it, to write the report. */
@@ -529,8 +527,6 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
       });
       run.taint(read);
     }
-    // Screened for prompt injection like what the lead reads.
-    for (const page of webTexts(res.content)) run.taint(page.source, page.text);
     paused = res.stop_reason === "pause_turn";
     if (paused) continue;
     if (res.stop_reason === "refusal") return stopped("The helper declined this part.");

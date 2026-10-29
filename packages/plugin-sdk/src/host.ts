@@ -122,7 +122,6 @@ export interface TasksHost {
   ): TaskStep;
   steps(id: number): TaskStep[];
   taint(id: number, by: string): void;
-  mark(id: number, flag: "injection_suspected"): void;
   /** Its tree's spend limit now, in USD. */
   budget(id: number): number;
   setReportPath(id: number, path: string): void;
