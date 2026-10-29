@@ -22,7 +22,6 @@ const Safety = z.object({
 
 export const Settings = z.object({
   limits: z.object({
-    taskUsd: z.number().positive(),
     /** A research task's lead and helpers cost more than most tasks. */
     researchUsd: z.number().positive(),
     dailyUsd: z.number().positive(),
@@ -76,7 +75,6 @@ export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export const DEFAULT_SETTINGS: Settings = {
   limits: {
-    taskUsd: 3,
     researchUsd: 5,
     dailyUsd: 10,
     monthlyUsd: 200,

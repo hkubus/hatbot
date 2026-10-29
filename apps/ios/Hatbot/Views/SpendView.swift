@@ -87,7 +87,6 @@ struct LimitsView: View {
           field("Per day", \.dailyUsd)
           field("Per month", \.monthlyUsd)
           DisclosureGroup("More limits") {
-            field("Per task", \.taskUsd)
             if limits?.researchUsd != nil {
               field("Per research task", optional: \.researchUsd)
             }
@@ -137,7 +136,7 @@ struct LimitsView: View {
   private var valid: Bool {
     guard let l = limits, unreadable.isEmpty else { return false }
     // Nothing kept for alerts is allowed, and boxes asking nothing; a limit of nothing isn't.
-    return l.taskUsd > 0 && (l.researchUsd ?? 1) > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0
+    return (l.researchUsd ?? 1) > 0 && l.dailyUsd > 0 && l.monthlyUsd > 0
       && (l.alertReserveUsd ?? 0) >= 0 && (l.boxesUsd ?? 0) >= 0
   }
 

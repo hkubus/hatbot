@@ -86,7 +86,6 @@ const LIMITS = [
   ["monthlyUsd", "Per month"],
 ] as const;
 const MORE_LIMITS = [
-  ["taskUsd", "Per task"],
   ["researchUsd", "Per research task"],
   ["boxesUsd", "Boxes per day"],
   ["alertReserveUsd", "Kept for alerts"],

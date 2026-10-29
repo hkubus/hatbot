@@ -602,7 +602,7 @@ struct MemoryCommit: Codable, Identifiable, Equatable, Hashable, Sendable {
 }
 
 struct Limits: Codable, Equatable, Sendable {
-  var taskUsd: Double
+  /// A research task's limit: other tasks have none of their own.
   var researchUsd: Double?
   var dailyUsd: Double
   var monthlyUsd: Double

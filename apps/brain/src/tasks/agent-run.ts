@@ -739,7 +739,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const overLimit =
         origin?.overLimit &&
         ((limit: "daily" | "monthly") => origin.overLimit?.(limit, task) ?? "");
-      if (!(await requests.hold(reserveUsd, askApproval, overLimit))) continue;
+      requests.hold(reserveUsd, overLimit);
       const res = await requests.stream(params);
       record("assistant", res.content);
       container = containerOf(res, container);

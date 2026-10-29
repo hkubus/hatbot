@@ -511,7 +511,7 @@ export class Tasks {
     const cols = {
       ...row,
       status: "queued",
-      budget_usd: row.budget_usd ?? this.d.settings.get().limits.taskUsd,
+      budget_usd: row.budget_usd ?? 0,
       created_at: this.now(),
     };
     const names = Object.keys(cols);
@@ -840,37 +840,12 @@ export class Tasks {
     }
   }
 
+  /** Its tree's limit: a runner's, as research's; other tasks have none. */
   budget(id: number): number {
-    return this.d.db
+    const usd = this.d.db
       .query<{ budget_usd: number }, [number]>("SELECT budget_usd FROM tasks WHERE id = ?")
-      .get(this.rootOf(id))?.budget_usd as number;
-  }
-
-  raiseBudget(id: number, byUsd: number) {
-    this.d.db
-      .query("UPDATE tasks SET budget_usd = budget_usd + ? WHERE id = ?")
-      .run(byUsd, this.rootOf(id));
-  }
-
-  /** What one raise of a task's limit adds: its tree's, so a research tree's is research's size. */
-  raiseStep(id: number): number {
-    const runner = this.get(this.rootOf(id))?.runner;
-    const budget = runner ? this.d.plugins.runner(runner)?.budgetUsd : undefined;
-    return budget ? budget() : this.d.settings.get().limits.taskUsd;
-  }
-
-  budgetAsk(id: number, extra: number): { summary: string; reason: string } {
-    const root = this.rootOf(id);
-    const title = (n: number) => `"${this.get(n)?.title ?? `Task #${n}`}"`;
-    return root === id
-      ? {
-          summary: `Let task #${id} spend $${extra} more`,
-          reason: `${title(id)} has used its $${this.budget(id)} limit.`,
-        }
-      : {
-          summary: `Let task #${root} and the tasks it started spend $${extra} more`,
-          reason: `${title(root)} and the tasks it started, ${title(id)} among them, have used its $${this.budget(id)} limit.`,
-        };
+      .get(this.rootOf(id))?.budget_usd;
+    return usd ? usd : Number.POSITIVE_INFINITY;
   }
 
   addStep(

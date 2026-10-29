@@ -21,7 +21,7 @@ async function tidy(t: TestApp, cookie: string): Promise<Proposal> {
 test("a tidy-up holds what it may cost while asked, can't reach skills, and is applied as you", async () => {
   const t = await testApp();
   const { cookie } = signIn(t);
-  t.settings.update({ limits: { taskUsd: 3, dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
+  t.settings.update({ limits: { dailyUsd: 1, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.memory.writeAll(
     [
       { path: "home.md", content: "# Home\nRouter: 192.168.1.1\n" },

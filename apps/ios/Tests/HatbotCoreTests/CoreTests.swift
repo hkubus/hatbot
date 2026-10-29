@@ -59,7 +59,7 @@ final class DecodingTests: XCTestCase {
     let settings = try decode(
       AppSettings.self,
       #"""
-      {"limits":{"taskUsd":3,"dailyUsd":10,"monthlyUsd":200},"chatEffort":"low",
+      {"limits":{"dailyUsd":10,"monthlyUsd":200},"chatEffort":"low",
        "owner":{"name":"You","email":"o@l"},"paused":false}
       """#)
     XCTAssertNil(settings.notificationsOpen)

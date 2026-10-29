@@ -356,19 +356,21 @@ test("an unanswered takeover leaves the screen to other tasks; Take over gives i
   expect(t.desktop.get().request).toBeNull();
 });
 
-test("hitting the task limit asks to raise it", async () => {
-  const work = new FakeModel([{ content: [computer("screenshot")] }, finish()]);
+test("a task has no spending limit of its own: only today's and the month's", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")], usage: { input_tokens: 1_000_000 } },
+    finish(),
+  ]);
   const t = await testApp(new FakeModel(), work);
   t.settings.update({
-    limits: { taskUsd: 0.2, dailyUsd: 10, monthlyUsd: 200 },
+    limits: { dailyUsd: 100, monthlyUsd: 200 },
     desktopModel: "claude-opus-5-5",
   });
   const task = startTask(t);
-  const raise = await pending(t);
-  expect(raise.kind).toBe("budget");
-  t.approvals.decide(raise.id, "approve", "web");
   await t.tasks.idle();
-  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done" });
+  expect(t.tasks.get(task.id)?.costUsd).toBeGreaterThan(3);
+  expect(t.approvals.list(false)).toEqual([]);
 });
 
 test("desktop_shell runs commands as text; the review blocks a destructive one you didn't ask for", async () => {
@@ -543,7 +545,7 @@ test("a Haiku desktop task out of steps carries on, once, on Opus; one its budge
   // Today's limit is spent: Opus would only spend more.
   const broke = new FakeModel([]);
   const t2 = await testApp(new FakeModel(), broke);
-  t2.settings.update({ limits: { taskUsd: 3, dailyUsd: 0.0001, monthlyUsd: 200 } });
+  t2.settings.update({ limits: { dailyUsd: 0.0001, monthlyUsd: 200 } });
   const b = startTask(t2);
   await t2.tasks.idle();
   expect(t2.tasks.get(b.id)).toMatchObject({ status: "failed", model: "claude-haiku-5-5" });

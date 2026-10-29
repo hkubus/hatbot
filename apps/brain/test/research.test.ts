@@ -531,7 +531,7 @@ test("a helper's request in flight counts for the chat and other tasks too", asy
   expect(() => t.spend.check(0.01)).not.toThrow();
 });
 
-test("research near its spending limit is told to finish, and a denied raise keeps the findings", async () => {
+test("research near its spending limit is told to finish, and stopping at it keeps the findings", async () => {
   const work = new FakeModel([
     INVESTIGATE,
     // About $2.06 of the $2.50, at Haiku's long-prompt price: past 80%.
@@ -547,10 +547,8 @@ test("research near its spending limit is told to finish, and a denied raise kee
     origin: "chat",
     runner: "research",
   });
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(approval.kind).toBe("budget");
-  t.approvals.decide(approval.id, "deny", "web");
   await t.tasks.idle();
+  expect(t.approvals.list(false)).toEqual([]);
   const leads = work.requests.filter((r) => !isHelper(r));
   expect(lastResult(leads[2])).toContain("This task is near its spending limit");
   const task = t.tasks.get(created?.id as number);
@@ -561,23 +559,21 @@ test("research near its spending limit is told to finish, and a denied raise kee
   expect(report).toContain("- The DS925+ costs 2,399 zł at x-kom.");
 });
 
-test("a research tree's raises are research's size, and its spend counts the tasks it started", async () => {
+test("a task research started shares research's limit, and its spend counts the tasks it started", async () => {
   const t = await testApp();
-  t.settings.update({ limits: { taskUsd: 3, researchUsd: 5 } });
-  const add = (parent: number | null, runner: string | null) =>
+  const add = (parent: number | null, budget: number) =>
     t.db
-      .query<{ id: number }, [number | null, string | null]>(
-        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id, runner)
-         VALUES ('Price', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', 5, '2026-10-09T12:00:00Z', ?, ?)
+      .query<{ id: number }, [number, number | null]>(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id)
+         VALUES ('Price', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', ?, '2026-10-09T12:00:00Z', ?)
          RETURNING id`,
       )
-      .get(parent, runner)?.id as number;
-  const root = add(null, "research");
-  const screen = add(root, null);
-  const plain = add(null, null);
-  // A desktop task research started asks for research's raise, on the research's limit.
-  expect(t.tasks.raiseStep(screen)).toBe(5);
-  expect(t.tasks.raiseStep(plain)).toBe(3);
+      .get(budget, parent)?.id as number;
+  const root = add(null, 5);
+  const screen = add(root, 0);
+  const plain = add(null, 0);
+  expect(t.tasks.budget(screen)).toBe(5);
+  expect(t.tasks.budget(plain)).toBe(Number.POSITIVE_INFINITY);
   const spent = (usd: number, taskId: number) =>
     t.spend.record({
       model: "claude-haiku-5-5",

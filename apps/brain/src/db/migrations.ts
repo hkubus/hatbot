@@ -1014,4 +1014,8 @@ export const migrations: string[] = [
   `
   ALTER TABLE approvals ADD COLUMN answers TEXT NOT NULL DEFAULT '[]';
   `,
+  // 65: only research has a spending limit of its own.
+  `
+  UPDATE tasks SET budget_usd = 0 WHERE runner IS NOT 'research';
+  `,
 ];

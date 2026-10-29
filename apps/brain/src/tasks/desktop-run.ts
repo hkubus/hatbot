@@ -1234,7 +1234,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (activeMs + (holding ? tasks.clock() - since : 0) > MAX_ACTIVE_MS)
         throw new Stop("failed", "Stopped: it ran for 30 minutes without finishing.", true, ASK);
       const params = request(messages);
-      if (!(await requests.hold(requests.ceiling(params), askApproval))) continue;
+      requests.hold(requests.ceiling(params));
 
       // The model doesn't need the screen to think: a task you took over for may have it meanwhile.
       if (yieldAsked && lane.waiting) giveWay();

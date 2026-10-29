@@ -60,26 +60,14 @@ export function requestsFor(tasks: Tasks, task: Task, signal: AbortSignal) {
     holdOnly: (usd: number) =>
       d.spend.hold(usd, { id, limitUsd: tasks.budget(id) }, { reserve: tasks.reserves(task) }),
 
-    /** At the task's limit it asks the owner for more and returns false, for the request to be retried. */
-    async hold(
-      usd: number,
-      ask: (input: { kind: "budget"; summary: string; reason: string }) => Promise<{
-        outcome: Outcome;
-      }>,
-      overLimit?: (limit: "daily" | "monthly") => string,
-    ): Promise<boolean> {
+    /** Only a runner's task, as research, has a limit of its own: it stops there. */
+    hold(usd: number, overLimit?: (limit: "daily" | "monthly") => string) {
       try {
         r.release = r.holdOnly(usd);
-        return true;
       } catch (err) {
         if (!(err instanceof BudgetError)) throw err;
-        if (err.limit !== "task")
-          throw new Stop("failed", overLimit?.(err.limit) ?? `Stopped: ${err.message}`);
-        const extra = tasks.raiseStep(id);
-        const { outcome } = await ask({ kind: "budget", ...tasks.budgetAsk(id, extra) });
-        if (outcome !== "approved") throw new Stop("failed", "Stopped at its spending limit.");
-        tasks.raiseBudget(id, extra);
-        return false;
+        if (err.limit === "task") throw new Stop("failed", "Stopped at its spending limit.");
+        throw new Stop("failed", overLimit?.(err.limit) ?? `Stopped: ${err.message}`);
       }
     },
 
