@@ -10,13 +10,22 @@ This file lists only what's still to do and what's left out on purpose. What's b
 Hatbot is a core plus plugins in `plugins/<id>`, on `@hatbot/plugin-sdk`. The design as decided is in `git show 43ae48ac:PLAN.md`. Built: the SDK; the connectors, Scout, Own code and T3 Code as packages; providers as plugins (Anthropic, OpenAI-compatible) with five roles; automation, research, boxes and desktop (connection, take over, live view, Teach) as plugins; installs from `plugins.json` or a git URL at a commit, uninstall, and deleting a plugin's data; the web hiding a plugin's views while it's off; the desktop's and boxes guest's scripts in their plugins' `infra/`, each guest optional on Proxmox and over SSH.
 
 Not as decided:
-- **Desktop tasks and marketplace stay in the core**, switched off with their plugins rather than moved: `run_desktop_task`, its prompt lines and routes come only with the Desktop plugin, and negotiation and listing tools only with Scout. Moving them would put the core loop's insides (approvals, screening, steering, the desktop's gates) into the SDK.
+- **Desktop tasks and marketplace stay in the core**, switched off with their plugins rather than moved: `run_desktop_task`, its prompt lines and routes come only with the Desktop plugin, and negotiation and listing tools only with Scout. Moving them would put the core loop's insides (approvals, the review, steering, the desktop's gates) into the SDK.
 - **An installed plugin restarts the brain** (exit 75; systemd starts it again), since routes can't be added to a running server. Under `bun run dev` the brain just stops: start it again.
 
 Left:
 - An installed plugin's own settings form: the web app is built with the first-party ones, so an installed plugin's page has its switch, its environment and secrets, and its tools.
 - iOS: the web view for installed plugins' pages, and choosing a model provider on first run. The iOS app still assumes the desktop and boxes are there.
 - Trying an install from a real forge, and a plugin with its own npm packages, on the brain guest (`bun install` under `ProtectSystem=strict`).
+
+## 0.1 Fewer approvals (decided and built 2026-10-29)
+Only money (purchases, payments, mandates, offers outside one), account security, home access (locks, the alarm, garage doors and gates), your careful marks and "Always ask" tools, and Haggler's holds ask you. Everything else goes to the safety review, which blocks what it finds unsafe instead of asking. A blocked step offers Run anyway or Always, and a task stops after 3 blocks in a row or 20 in all. A suspected prompt injection changes nothing, and the screener is gone. A task has no spending limit of its own; the daily and monthly ones stay. "Ready to list" in Scout is the listing's approval. Memory files, schedules and watchers change without proposals; after untrusted content the review checks them. A desktop task's message to a person waits 30 s for you to stop it, unless you approved it yourself. A task's summary ends with what it changed outside Hatbot. Locks and doors a schedule's run asks about can be allowed for that schedule. A notification's Approve, for what it can't approve itself, opens the iOS app, which approves behind Face ID.
+
+The plugin SDK changed with it: `suspected` and `mark` are gone, and `taint(by)` takes one argument. Installed plugins built on the old SDK need updating.
+
+Left:
+- Only a desktop task's sends wait 30 s. A plugin's writes that reach people (forge comments, MCP tools) go at once, after the review.
+- Face ID approval only works with Settings → Notifications → "Tapping one opens" set to the iOS app; with the web app, Approve just shows the approval. Not tried on a device: the iOS views compile only in CI.
 
 ## 1. Deploy and try live
 Built, but not yet deployed or tried live:
@@ -44,7 +53,7 @@ Built 2026-10-26, not tried live: `negotiate_inspect` (a listing's live page and
 - **N1, finish**: once Haggler has its own marketplace account, show it one negotiation per site (teach-by-showing) for its playbook skill. Done when one OLX negotiation runs end to end.
 - **N3, waking**: Scout's inbox tools. A poller without the model reads `scout_inbox` every 10 minutes while any negotiation is open, taking over `negotiate_check`'s routine reads. A new seller message is stored and screened (the scam check on recorded messages is built), then starts a short background task for that negotiation with its record; nothing waits in a long task for days. When the follow-up time passes without a reply, a task starts to nudge the seller or give up. Approving a scam hold should wake Haggler too. Done when a seller's reply gets an answer within 15 minutes, with nobody in the chat.
 - **N5, selling**: answering buyers on your listings. The floor comes from Scout's flips: the buy price, fees and a margin.
-- **N6, listing** (planned 2026-10-22): you mark a flip "Ready to list" in Scout, approve it with one tap, and Haggler posts it on the marketplaces you picked. See 3.3.
+- **N6, listing** (planned 2026-10-22): you mark a flip "Ready to list" in Scout, and Haggler posts it on the marketplaces you picked without asking again. See 3.3.
 - **Maybe later**: `scout_send_message`, if sending from the desktop turns out too slow.
 
 ### 3.2 Scout's part
@@ -67,7 +76,7 @@ For N6, Scout's handoff is `../scout/docs/hatbot-listing-plan.md`. In short:
 - No word for selling in their descriptions: the MCP plugin's money words would make them purchases, and the brain couldn't read them.
 
 ### 3.3 N6, listing
-You mark a flip ready in Scout and pick channels; Hatbot asks once; Haggler posts it on each channel and Scout gets the URLs back. Haggler only, since it holds the marketplace logins. Blocked live on the same thing as N1: Haggler's own accounts.
+You mark a flip ready in Scout and pick channels, which is the approval; Haggler posts it on each channel and Scout gets the URLs back. Haggler only, since it holds the marketplace logins. Blocked live on the same thing as N1: Haggler's own accounts.
 
 **L1, Scout** (in Scout's repo, from its handoff; started in Scout's own T3 thread on 2026-10-24): the ready state, the four tools above, the button on the web and iOS, and delivery details (Vinted's parcel size, OLX and Allegro Lokalnie delivery and pickup) in the listing draft.
 
@@ -75,7 +84,7 @@ L2 (photo uploads on the add-listing pages) and L3 (the lister, `apps/brain/src/
 
 Scout is connected with a button: Settings → Plugins → Scout (2026-10-25). Scout's side, the sign-in (MCP's OAuth with PKCE) and Connected apps, is being built on its `feat/hatbot-listing` branch.
 
-**L4, live.** Once L1 and the sign-in are in Scout, connect it. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after the tap.
+**L4, live.** Once L1 and the sign-in are in Scout, connect it. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after marking it.
 
 **Not in N6:** answering buyers (N5), taking a sold flip off its other channels (Scout already has the checklist), editing or relisting a live listing, and paid promotion.
 
