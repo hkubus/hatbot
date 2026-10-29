@@ -19,14 +19,14 @@ import {
   useStore,
 } from "./store";
 import { taskLine } from "./tasks";
-import { LinkRow } from "./ui";
+import { LinkRow, Seg } from "./ui";
 
 type Conn = "connecting" | "live" | "offline";
 
 type Viewer = { canvas: React.RefObject<HTMLCanvasElement | null>; setConn: (c: Conn) => void };
 
-/** One socket per tab however many screens show it. */
-const feed = (() => {
+/** One socket per screen and tab however many views show it. */
+const makeFeed = (path: string) => {
   const viewers = new Set<Viewer>();
   let socket: WebSocket | null = null;
   let conn: Conn = "connecting";
@@ -72,7 +72,7 @@ const feed = (() => {
   };
 
   const open = () => {
-    const ws = openSocket("/desktop/live");
+    const ws = openSocket(path);
     ws.binaryType = "blob";
     socket = ws;
     ws.onopen = () => {
@@ -140,20 +140,32 @@ const feed = (() => {
     },
     release,
   };
-})();
+};
 
-function useFrames(canvas: React.RefObject<HTMLCanvasElement | null>) {
+type Feed = ReturnType<typeof makeFeed>;
+const feeds = new Map<string, Feed>();
+const feedOf = (screen: string | null) => {
+  const path = screen ? `/computer/live/${encodeURIComponent(screen)}` : "/desktop/live";
+  let f = feeds.get(path);
+  if (!f) {
+    f = makeFeed(path);
+    feeds.set(path, f);
+  }
+  return f;
+};
+
+function useFrames(canvas: React.RefObject<HTMLCanvasElement | null>, feed: Feed) {
   const [conn, setConn] = useState<Conn>("connecting");
-  useEffect(() => feed.join({ canvas, setConn }), [canvas]);
+  useEffect(() => feed.join({ canvas, setConn }), [canvas, feed]);
   return { conn, send: feed.send };
 }
 
 const BUTTONS: Record<number, 1 | 2 | 3> = { 0: 1, 1: 2, 2: 3 };
 
-function Screen({ control }: { control: boolean }) {
+function Screen({ control, feed, name }: { control: boolean; feed: Feed; name: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const keyboard = useRef<HTMLInputElement>(null);
-  const { conn, send } = useFrames(canvas);
+  const { conn, send } = useFrames(canvas, feed);
   const lastMove = useRef(0);
   // Keys and buttons held when the view loses them (another window, a hidden tab, Hand back, leaving the
   // page) are let go of, or they'd stay held on the desktop.
@@ -164,7 +176,7 @@ function Screen({ control }: { control: boolean }) {
       window.removeEventListener("blur", feed.release);
       feed.release();
     };
-  }, [control]);
+  }, [control, feed]);
   // Wheel events come by the dozen; they're added up and sent every 100 ms.
   const wheel = useRef<{ dx: number; dy: number; x: number; y: number } | null>(null);
 
@@ -238,12 +250,12 @@ function Screen({ control }: { control: boolean }) {
           width={1280}
           height={800}
           tabIndex={control ? 0 : -1}
-          aria-label="The desktop"
+          aria-label={name}
           {...handlers}
         />
         {conn !== "live" && (
           <div className="screen-note">
-            {conn === "connecting" ? "Connecting…" : "The desktop isn't answering."}
+            {conn === "connecting" ? "Connecting…" : `${name} isn't answering.`}
           </div>
         )}
       </div>
@@ -252,7 +264,7 @@ function Screen({ control }: { control: boolean }) {
         <input
           ref={keyboard}
           className="live-keys"
-          aria-label="Type on the desktop"
+          aria-label={`Type on ${name}`}
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
@@ -303,17 +315,32 @@ export function StepIcon({ kind, name }: { kind: TaskStep["kind"]; name?: string
 
 export function LiveView({ taskId }: { taskId?: number }) {
   const desktop = useStore((s) => s.desktop);
-  const activeId = taskId ?? desktop?.activeTaskId ?? desktop?.request?.taskId ?? null;
+  const computers = useStore((s) => s.computers);
+  const given = useStore((s) => (taskId ? s.tasks[taskId] : undefined));
+  const teach = useStore(recording);
+  const [picked, setPicked] = useState<string | null>(null);
+  // A task's view shows its own screen; otherwise you pick one.
+  const screen = taskId
+    ? (given?.screen ?? null)
+    : !teach && computers.some((c) => c.id === picked)
+      ? picked
+      : null;
+  const machine = screen ? computers.find((c) => c.id === screen) : undefined;
+  const on = screen ? machine : desktop;
+  const name = machine?.name ?? "The desktop";
+  const feed = feedOf(screen);
+  const activeId = taskId ?? on?.activeTaskId ?? on?.request?.taskId ?? null;
   const task = useStore((s) => (activeId ? s.tasks[activeId] : undefined));
   const steps = useStore((s) => (activeId ? s.steps[activeId] : undefined));
   const progress = useStore((s) => (activeId ? s.taskProgress[activeId] : undefined));
-  const teach = useStore(recording);
   const [error, setError] = useState("");
   useEffect(() => {
     if (activeId) ensureSteps(activeId);
   }, [activeId]);
 
-  const control = desktop?.control === "owner";
+  const control = on?.control === "owner";
+  // Not a computer you're not using: only during a task.
+  const canTakeOver = !machine || machine.activeTaskId !== null;
   const run = (fn: () => Promise<void>) => {
     setError("");
     fn().catch((err) => setError(errorText(err)));
@@ -355,36 +382,55 @@ export function LiveView({ taskId }: { taskId?: number }) {
           <Icon name="hand" />
           You're in control. Hatbot is paused.
           <span className="spacer" />
-          <button type="button" className="btn sm accent" onClick={() => giveBack(handback)}>
+          <button
+            type="button"
+            className="btn sm accent"
+            onClick={() => giveBack(() => handback(screen))}
+          >
             Hand back
           </button>
         </div>
-      ) : desktop?.request ? (
+      ) : on?.request ? (
         <div className="banner attn">
           <Icon name="hand" />
           <div>
-            <b>Hatbot needs you:</b> {desktop.request.reason}
+            <b>Hatbot needs you:</b> {on.request.reason}
           </div>
           <span className="spacer" />
-          <button type="button" className="btn sm primary" onClick={() => run(takeover)}>
+          <button
+            type="button"
+            className="btn sm primary"
+            onClick={() => run(() => takeover(screen))}
+          >
             Take over
           </button>
         </div>
       ) : null}
-      {desktop && !desktop.online ? (
+      {!taskId && !teach && computers.length > 0 && (
+        <Seg
+          value={screen ?? ""}
+          options={[["", "Desktop"], ...computers.map((c) => [c.id, c.name] as const)]}
+          onChange={(v) => setPicked(v || null)}
+        />
+      )}
+      {on && !on.online ? (
         <div className="screen">
-          <div className="screen-note">The desktop isn't answering.</div>
+          <div className="screen-note">{name} isn't answering.</div>
         </div>
       ) : (
-        <Screen control={control} />
+        <Screen key={screen ?? ""} control={control} feed={feed} name={name} />
       )}
-      {!control && !desktop?.request && desktop?.online && (
+      {!control && !on?.request && on?.online && canTakeOver && (
         <div className="live-controls">
-          <button type="button" className="btn tint-attn" onClick={() => run(takeover)}>
+          <button
+            type="button"
+            className="btn tint-attn"
+            onClick={() => run(() => takeover(screen))}
+          >
             <Icon name="hand" />
             Take over
           </button>
-          {!task && (
+          {!task && !machine && (
             <button type="button" className="btn" onClick={() => run(() => startTeach())}>
               <Icon name="teach" />
               Teach a skill

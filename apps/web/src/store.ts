@@ -5,6 +5,7 @@ import {
   type Attachment,
   type Bot,
   type Box,
+  type ComputerInfo,
   type Conversation,
   type DesktopState,
   type Episode,
@@ -66,6 +67,8 @@ type State = {
   approvals: Record<number, Approval>;
   questions: Record<number, Question>;
   desktop: DesktopState | null;
+  /** Your own computers, as the Your computers plugin knows them. */
+  computers: ComputerInfo[];
   /** null: deleted, or never existed. */
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
@@ -127,6 +130,7 @@ let state: State = {
   approvals: {},
   questions: {},
   desktop: null,
+  computers: [],
   schedules: {},
   triggers: {},
   watchers: {},
@@ -713,20 +717,21 @@ export async function saveSchedule(id: number, patch: Partial<Schedule> & { at?:
 /** What a brain from before the stream's snapshot is asked for instead. */
 async function askLive() {
   void loadBots().catch(() => {});
-  const [approvals, questions, desktop, unread] = await Promise.all([
+  const [approvals, questions, desktop, unread, computers] = await Promise.all([
     api<Approval[]>("/approvals?pending=1"),
     api<Question[]>("/questions").catch(() => null),
     api<DesktopState>("/desktop/status").catch(() => null),
     api<number[]>("/thread/unread").catch(() => null),
+    api<ComputerInfo[]>("/computers").catch(() => []),
   ]);
-  return { approvals, questions, desktop, unread };
+  return { approvals, questions, desktop, unread, computers };
 }
 
 /** What's live as the stream opens: its first event, the snapshot, says, or we ask. */
 async function loadLive(snapshot: Snapshot | null) {
   if (snapshot) takeBots(snapshot.bots, snapshot.conversations);
   const [live] = await Promise.all([snapshot ?? askLive(), loadNegotiations().catch(() => null)]);
-  const { approvals: pending, questions: asked, desktop, unread } = live;
+  const { approvals: pending, questions: asked, desktop, unread, computers = [] } = live;
   if (unread) set({ unread });
   const approvals = { ...state.approvals };
   // Anything we thought pending but the server doesn't list was decided while we were away.
@@ -737,7 +742,7 @@ async function loadLive(snapshot: Snapshot | null) {
   for (const a of pending) approvals[a.id] = a;
   // Questions answered or dropped while we were away aren't listed.
   if (asked) set({ questions: Object.fromEntries(asked.map((q) => [q.id, q])) });
-  set({ approvals, desktop });
+  set({ approvals, desktop, computers });
   for (const t of Object.values(state.tasks))
     if (state.steps[t.id] && t.finishedAt === null)
       void loadTask(t.id, { since: true }).catch(() => {});
@@ -763,10 +768,18 @@ export async function cancelTask(id: number) {
   await api(`/tasks/${id}/cancel`, { body: {} });
 }
 
-export async function takeover() {
+const putComputer = (c: ComputerInfo) =>
+  set({ computers: state.computers.map((x) => (x.id === c.id ? c : x)) });
+
+/** `screen`: one of your computers; the desktop by default. */
+export async function takeover(screen: string | null = null) {
+  if (screen)
+    return putComputer(await api<ComputerInfo>(`/computers/${screen}/takeover`, { body: {} }));
   set({ desktop: await api<DesktopState>("/desktop/takeover", { body: {} }) });
 }
-export async function handback() {
+export async function handback(screen: string | null = null) {
+  if (screen)
+    return putComputer(await api<ComputerInfo>(`/computers/${screen}/handback`, { body: {} }));
   set({ desktop: await api<DesktopState>("/desktop/handback", { body: {} }) });
 }
 
@@ -827,7 +840,8 @@ export const threadNeedsYou = (s: State, t: Conversation | undefined) =>
 export const needsYou = (s: State) =>
   Object.values(s.approvals).filter((a) => a.status === "pending").length +
   Object.values(s.questions).filter((q) => q.status === "pending").length +
-  (s.desktop?.request ? 1 : 0);
+  (s.desktop?.request ? 1 : 0) +
+  s.computers.filter((c) => c.request).length;
 
 let toast: Toast = () => {};
 export const onToast = (fn: Toast) => {
@@ -1031,6 +1045,8 @@ function apply(e: HatbotEvent) {
       return put("questions", e.question.id, e.question);
     case "desktop.state":
       return set({ desktop: e.state });
+    case "computers":
+      return set({ computers: e.computers });
     case "schedule.updated":
       return putSchedule(e.schedule);
     case "schedule.deleted":
