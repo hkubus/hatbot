@@ -50,6 +50,7 @@ export const automationPlugin = definePlugin({
     "Schedules, webhooks, Uptime Kuma alerts and watchers that start tasks on their own, the heartbeat, and the weekly report.",
   config: z.object({}),
   defaultOn: true,
+  allBots: true,
   needs: NEEDS,
   provides: ["schedules", "triggers", "watchers", "heartbeat", "report"],
   routes: ["/schedules", "/triggers", "/watchers", "/heartbeat", "/report"],

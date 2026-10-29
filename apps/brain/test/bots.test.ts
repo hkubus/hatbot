@@ -383,6 +383,8 @@ test("Hatbot hands the others their work: a plugin another bot has is its alone,
   expect(systemOf(hatbot()[0])).toContain("Ops (ops), with Lab");
   await waitFor(() => hatbot().length === 3);
   expect(toolNames(model.requests.find(isOps))).toContain("lab_status");
+  // What ships on, as research, every bot gets, even one limited to some plugins.
+  expect(toolNames(model.requests.find(isOps))).toContain("research");
   // The second hand-off, shown on its own card, reaches Hatbot too, and Ops' suspected read with it.
   later.resolve();
   await t.tasks.idle();

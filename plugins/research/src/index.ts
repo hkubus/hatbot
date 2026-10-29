@@ -62,6 +62,7 @@ export const researchPlugin = definePlugin({
     "Research tasks: many searches and pages at once, the numbers checked against their sources, and a cited report saved in memory.",
   config: z.object({}),
   defaultOn: true,
+  allBots: true,
   needs: ["tasks", "spend", "model", "memory", "settings"],
   start: (ctx) => {
     const d: Deps = {
