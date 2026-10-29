@@ -236,6 +236,37 @@ test("two plugins that use each other's services start each other again once, no
   expect(starts).toBe(2);
 });
 
+test("when a provider starts again, what uses it starts after what it also uses from it", async () => {
+  const seen: unknown[] = [];
+  const t = await app([
+    plain({
+      id: "base",
+      provides: ["sb"],
+      defaultOn: true,
+      start: () => ready([], { services: { sb: {} } }),
+    }),
+    plain({
+      id: "middle",
+      provides: ["sched"],
+      uses: ["sb"],
+      defaultOn: true,
+      start: () => ready([], { services: { sched: {} } }),
+    }),
+    plain({
+      id: "top",
+      uses: ["sb", "sched"],
+      defaultOn: true,
+      start: ({ optional }) => {
+        seen.push(optional("sched"));
+        return ready([]);
+      },
+    }),
+  ]);
+  seen.length = 0;
+  await t.plugins.update("base", { config: {} });
+  expect(seen).toEqual([{}]);
+});
+
 test("what a plugin emits reaches whoever listens, under its id", async () => {
   let emit: (event: string) => void = () => {};
   const t = await app([

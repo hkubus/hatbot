@@ -127,25 +127,25 @@ export class Plugins {
     this.listeners.set(event, [...(this.listeners.get(event) ?? []), fn]);
   }
 
-  /** Providers first, so what needs them finds them started. */
   async startAll() {
     this.stopping = false;
-    const todo = [...this.slots.values()].filter((s) => s.enabled);
-    const started = new Set<string>();
-    while (todo.length) {
+    await this.inOrder([...this.slots.values()].filter((s) => s.enabled));
+  }
+
+  /** Providers first, so what needs them finds them started. */
+  private async inOrder(slots: Slot[]) {
+    const todo = [...slots];
+    while (todo.length && !this.stopping) {
       const now = todo.filter((s) =>
         wants(s.plugin).every((n) => {
           const by = this.providers.get(n);
-          return !by || started.has(by) || !todo.some((t) => t.plugin.id === by);
+          return !todo.some((t) => t !== s && t.plugin.id === by);
         }),
       );
       // A loop of needs: start them anyway, and each says what it's missing.
       const batch = now.length ? now : todo.slice();
-      await Promise.all(batch.map((s) => this.restart(s, null)));
-      for (const s of batch) {
-        started.add(s.plugin.id);
-        todo.splice(todo.indexOf(s), 1);
-      }
+      await Promise.all(batch.map((s) => this.restart(s, false)));
+      for (const s of batch) todo.splice(todo.indexOf(s), 1);
     }
   }
 
@@ -465,8 +465,8 @@ export class Plugins {
     };
   }
 
-  /** `cascade`: what needs its services starts again too, but not what has already. */
-  private async restart(s: Slot, cascade: Set<string> | null = new Set()) {
+  /** `cascade`: what needs its services, and what needs theirs, starts again too. */
+  private async restart(s: Slot, cascade = true) {
     await this.stop(s, false);
     const generation = ++s.generation;
     s.state = "starting";
@@ -544,7 +544,7 @@ export class Plugins {
     this.emit(s);
     this.later(s);
     this.time(s);
-    if (cascade) await this.dependents(s, cascade);
+    if (cascade) await this.dependents(s);
   }
 
   /** What it needs that no ready plugin provides, in words; null when nothing. */
@@ -564,15 +564,24 @@ export class Plugins {
   }
 
   /** Starts again what needs or uses `s`'s services, so each gets them as they are now. */
-  private async dependents(s: Slot, done: Set<string>) {
+  private async dependents(s: Slot) {
     if (this.stopping) return;
-    done.add(s.plugin.id);
-    const gives = s.plugin.provides ?? [];
-    const users = [...this.slots.values()].filter(
-      (x) => x.enabled && !done.has(x.plugin.id) && wants(x.plugin).some((n) => gives.includes(n)),
-    );
-    for (const x of users) done.add(x.plugin.id);
-    await Promise.all(users.map((x) => this.restart(x, done)));
+    const found = new Set<Slot>();
+    const queue = [s];
+    for (let p = queue.shift(); p; p = queue.shift()) {
+      const gives = p.plugin.provides ?? [];
+      for (const x of this.slots.values())
+        if (
+          x !== s &&
+          x.enabled &&
+          !found.has(x) &&
+          wants(x.plugin).some((n) => gives.includes(n))
+        ) {
+          found.add(x);
+          queue.push(x);
+        }
+    }
+    await this.inOrder([...found]);
   }
 
   private time(s: Slot) {
@@ -660,7 +669,7 @@ export class Plugins {
     } catch (err) {
       console.error(`plugin ${s.plugin.id} failed to stop`, err);
     }
-    if (cascade && was !== "off") await this.dependents(s, new Set());
+    if (cascade && was !== "off") await this.dependents(s);
   }
 
   private checkTools(plugin: Plugin, tools: PluginTool[]) {
