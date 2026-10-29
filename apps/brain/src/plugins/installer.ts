@@ -269,7 +269,7 @@ export class Installer {
       throw new PluginError(
         `It's made for version ${plugin.sdk} of Hatbot's plugin API; this Hatbot has ${SDK_VERSION}.`,
       );
-    const why = problemWith(plugin, this.d.builtIn(), this.d.coreServices);
+    const why = problemWith(plugin, this.d.builtIn(), this.d.coreServices, true);
     if (why) throw new PluginError(`${why[0]?.toUpperCase()}${why.slice(1)}.`);
     return plugin;
   }

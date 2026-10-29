@@ -93,7 +93,7 @@ export class Plugins {
     const added: Plugin[] = [];
     for (let plugin of plugins) {
       try {
-        const why = problemWith(plugin, added, core);
+        const why = problemWith(plugin, added, core, Boolean(d.sourceOf?.(plugin.id)));
         if (why) throw new Error(why);
         // One for another version of the API stays off, and says so when switched on.
         if ((plugin.sdk ?? SDK_VERSION) === SDK_VERSION) migrate(d.db, plugin);
@@ -858,9 +858,16 @@ const pathsOf = (p: Plugin) => [
 ];
 
 /** Why `plugin` can't run beside `others` and the core's services, or null. */
-export function problemWith(plugin: Plugin, others: Plugin[], core: string[]): string | null {
+export function problemWith(
+  plugin: Plugin,
+  others: Plugin[],
+  core: string[],
+  installed: boolean,
+): string | null {
   if (!/^[a-z][a-z0-9]{1,20}$/.test(plugin.id) || TAKEN_IDS.includes(plugin.id))
     return `its id, "${plugin.id}", can't be used`;
+  // Internal ones are always on, out of Settings, and may name their tools as the core's are.
+  if (installed && plugin.internal) return "it says it's part of Hatbot";
   for (const o of others) {
     if (o.id === plugin.id) return `there's a plugin called "${plugin.id}" already`;
     const service = plugin.provides?.find((n) => o.provides?.includes(n));

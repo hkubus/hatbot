@@ -128,6 +128,9 @@ test("installing refuses what isn't a plugin for this Hatbot", async () => {
   expect(await refused(helloRepo("hello", 1, `provides: ["tasks"],`))).toBe(
     `Hatbot provides "tasks" itself.`,
   );
+  expect(await refused(helloRepo("hello", 1, "internal: true,"))).toBe(
+    "It says it's part of Hatbot.",
+  );
   expect(await refused(repo({ "package.json": "{}", "src/index.ts": "export const x = 1;" }))).toBe(
     "It doesn't export a plugin.",
   );
