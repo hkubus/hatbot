@@ -7,16 +7,15 @@ import { ownerNote } from "../approvals";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
 
-export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
+/** A change a task's tool asks for: the review checks it, or you're asked, as a write's change is. */
+export function taskApprove(tasks: Tasks, task: Task): JobRun["approve"] {
   const { d } = tasks;
-  const task = tasks.get(id) as Task;
-  tasks.setStatus(id, "running");
-
+  const id = task.id;
   const tainted = () => {
     const t = tasks.get(id);
     return t?.tainted ? t.taintedBy || "What started it" : null;
   };
-  const approve: JobRun["approve"] = async ({ why, always, ...call }, sig) => {
+  return async ({ why, always, ...call }, sig) => {
     const verdict = { action: "ask" as const, why, tainted: true, always };
     const by = tainted();
     const sources = by ? [by] : [];
@@ -73,6 +72,16 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
       ? { content: note && `\n\n${note.trim()}`, isError: false }
       : { content: `Not done: the owner said no.${note}`, isError: true };
   };
+}
+
+export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
+  const { d } = tasks;
+  const task = tasks.get(id) as Task;
+  tasks.setStatus(id, "running");
+  const tainted = () => {
+    const t = tasks.get(id);
+    return t?.tainted ? t.taintedBy || "What started it" : null;
+  };
 
   try {
     const job = task.runner ? d.plugins.job(task.runner) : null;
@@ -84,7 +93,7 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
       signal,
       tainted,
       taint: (by) => tasks.taint(id, by),
-      approve,
+      approve: taskApprove(tasks, task),
       progress: tasks.progress(id),
       reply: () => replyOf(tasks, id),
     });

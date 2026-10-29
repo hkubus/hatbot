@@ -373,7 +373,7 @@ test("a plugin's own policy refuses a call, or, with the review off, asks first,
   expect(t.tasks.steps(task.id).some((s) => s.name === "Refused")).toBe(true);
 });
 
-test("a tainted chat's schedules run tainted until you save them; it can't rewrite a trigger", async () => {
+test("a tainted chat's schedules run tainted until you save them; the review blocks rewriting a trigger", async () => {
   const chat = new FakeModel([
     use("lab_issue", { n: 3 }),
     {

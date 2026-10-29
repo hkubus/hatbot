@@ -226,10 +226,7 @@ export class PluginError extends Error {
 export const BOT_GONE = "Not made: the owner deleted you.";
 
 const ASKED = {
-  untrusted: [
-    "after reading untrusted content",
-    "This conversation has read untrusted content, so changes need your approval.",
-  ],
+  untrusted: ["after reading untrusted content", "This conversation has read untrusted content."],
 } as const;
 
 /** Waits for the owner to approve a change; a refusal, or nowhere to ask, is the tool's error. */

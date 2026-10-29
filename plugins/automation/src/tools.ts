@@ -166,8 +166,8 @@ export function automationTools(p: Parts): PluginTool[] {
     botId !== (bot?.id ?? HATBOT_ID) ? `\n  Runs as: ${bots.nameOf(botId)}` : "";
 
   /**
-   * After reading untrusted content, deleting or switching off a schedule, watcher or trigger waits
-   * for approval: injected text mustn't quietly stop what looks after the homelab.
+   * After reading untrusted content, the review checks deleting or switching off a schedule, watcher
+   * or trigger: injected text mustn't quietly stop what looks after the homelab.
    */
   const asked = async (call: CallContext, change: Change) =>
     call.tainted?.() && untrustedAsks() ? askOwner(call, change, "untrusted") : "";
@@ -490,10 +490,17 @@ export function automationTools(p: Parts): PluginTool[] {
         "Change what a trigger's runs do, rename it, turn it on or off, or how many more failed checks an Uptime Kuma alert waits for. Only the fields you give change.",
       schema: UpdateTrigger,
       run: async ({ id, ...patch }, call) => {
-        // A trigger's runs trust its instructions; untrusted content mustn't get to write them.
-        if (patch.prompt !== undefined && call.tainted?.())
-          return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Automations.";
-        const note = await stoppingTrigger(call, id, patch);
+        const current = triggers.get(id);
+        // A trigger's runs trust its instructions, so the review checks a rewrite after untrusted content.
+        const rewrite =
+          current && patch.prompt !== undefined && patch.prompt !== current.prompt
+            ? await asked(call, {
+                name: "automation_trigger_update",
+                input: { id, ...patch },
+                what: `Change what the trigger #${id} "${current.name}" does: ${cut(patch.prompt)}`,
+              })
+            : "";
+        const note = rewrite + (await stoppingTrigger(call, id, patch));
         const t = triggers.update(id, patch);
         return t ? `Updated trigger #${t.id} "${t.name}".${note}` : `No trigger #${id}.`;
       },

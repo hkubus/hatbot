@@ -135,7 +135,6 @@ export async function createServices(o: Outside) {
       schedules: () => plugins.service<SchedulesService>("schedules"),
       attachments,
       desktop: desktop()?.agent,
-      proposals,
       settings,
     })),
   ];
@@ -285,9 +284,7 @@ export async function createServices(o: Outside) {
     approvals,
     attachments,
     negotiations,
-    proposals,
   });
-  tasks.attach({ proposals });
 
   const updates = new Updates(config, clock);
   const ping = new DeadManPing({ db, url: o.pingUrl, clock });

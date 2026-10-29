@@ -43,6 +43,7 @@ import {
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
+import { taskApprove } from "./job-run";
 import {
   addNotes,
   askOwner,
@@ -474,6 +475,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
         : undefined,
       waitForTask: (childId) => waitForChild(childId),
+      approve: taskApprove(tasks, task),
       progress: shown,
       away: (fn) => withoutSlot(fn),
     };

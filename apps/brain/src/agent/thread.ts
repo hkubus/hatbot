@@ -43,7 +43,6 @@ import { type Bots, botIndex, promptFor } from "../bots";
 import { brokenChartsOf, chartProblemOf } from "../chart-data";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
-import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import { hasFallbacks, modelName, progressNotes } from "../models-known";
 import type { Negotiations } from "../negotiate/service";
@@ -204,7 +203,6 @@ export type ThreadDeps = {
   tasks?: Tasks;
   approvals?: Approvals;
   negotiations?: Negotiations;
-  proposals?: Proposals;
   attachments?: Attachments;
   db: Db;
   memory: MemoryStore;

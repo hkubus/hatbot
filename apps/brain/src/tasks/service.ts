@@ -21,7 +21,6 @@ import type { Config } from "../config";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { Listings } from "../listings/service";
-import type { Proposals } from "../memory/proposals";
 import type { Skills } from "../memory/skills";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Logins } from "../negotiate/logins";
@@ -56,7 +55,6 @@ export type TasksDeps = {
   plugins: Plugins;
   skills: Skills;
   /** Set once it exists; it needs the tasks too. */
-  proposals?: Proposals;
   clock?: () => number;
 };
 
@@ -699,11 +697,6 @@ export class Tasks {
     });
   }
 
-  /** Called once the services that need the tasks exist. */
-  attach(parts: Pick<TasksDeps, "proposals">) {
-    Object.assign(this.d, parts);
-  }
-
   /** What a background task's tools need; their requests to the desktop end once `signal` aborts. */
   toolContext(task: Task, signal: AbortSignal): ToolContext {
     const agent = this.d.desktop()?.agent;
@@ -717,7 +710,6 @@ export class Tasks {
       tasks: this,
       attachments: this.d.attachments,
       desktop: agent?.withSignal?.(signal) ?? agent,
-      proposals: this.d.proposals,
       settings: this.d.settings,
       // The run marks `task` as it reads untrusted content.
       tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),
