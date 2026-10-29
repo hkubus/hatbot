@@ -33,6 +33,7 @@ import {
   useStore,
 } from "./store";
 import { TOAST_ICON, type Toast, type ToastKind } from "./toast";
+import { Empty } from "./ui";
 
 // Pages you open now and then load when first opened; chat and tasks come with the app.
 const BoxesPage = lazy(() => import("./pages/Boxes").then((m) => ({ default: m.BoxesPage })));
@@ -221,10 +222,14 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
   const openedFrom = useRef<View>(VIEWS[0]);
   const view = reading && !params.get("path") ? openedFrom.current : viewOf(path);
   if (!reading) openedFrom.current = view;
-  const page = reading ? "" : view.path;
+  const plugins = useStore((s) => s.plugins);
+  const offId = PLUGIN_OF[view.path];
+  const off = !reading && offId && !pluginOn(plugins, offId) ? plugins[offId]?.name : undefined;
+  // A plugin's page waits for the list, so one that's off doesn't start loading first.
+  const unknown = offId !== undefined && !Object.keys(plugins).length;
+  const page = reading || off || unknown ? "" : view.path;
   const section = sectionOf(view);
   const tab = TAB_OF[section.title] ?? section.title;
-  const plugins = useStore((s) => s.plugins);
   const viewsOf = (s: Section): readonly string[] =>
     s.views.filter((v) => {
       const id = PLUGIN_OF[v];
@@ -504,6 +509,15 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
           {chatId > 0 && <Chat key={chatId} id={chatId} />}
           {botPage && <BotPage key={botPage} id={botPage} toast={toast} />}
           {groupPage && <GroupPage key={groupPage} id={groupPage} toast={toast} />}
+          {off && (
+            <section className="view">
+              <div className="page">
+                <Empty>
+                  {off} is off. Switch it on in <Link to="/settings/plugins">Plugins</Link>.
+                </Empty>
+              </div>
+            </section>
+          )}
           {page === "/tasks" &&
             !negotiationId &&
             (taskId ? (

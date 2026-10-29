@@ -645,11 +645,7 @@ async function askLive() {
 /** What's live as the stream opens: its first event, the snapshot, says, or we ask. */
 async function loadLive(snapshot: Snapshot | null) {
   if (snapshot) takeBots(snapshot.bots, snapshot.conversations);
-  const [live, teach] = await Promise.all([
-    snapshot ?? askLive(),
-    api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach").catch(() => null),
-    loadNegotiations().catch(() => null),
-  ]);
+  const [live] = await Promise.all([snapshot ?? askLive(), loadNegotiations().catch(() => null)]);
   const { approvals: pending, questions: asked, desktop, unread } = live;
   if (unread) set({ unread });
   const approvals = { ...state.approvals };
@@ -662,15 +658,6 @@ async function loadLive(snapshot: Snapshot | null) {
   // Questions answered or dropped while we were away aren't listed.
   if (asked) set({ questions: Object.fromEntries(asked.map((q) => [q.id, q])) });
   set({ approvals, desktop });
-  if (teach) {
-    // A recording that ended while we were away isn't listed any more.
-    const sessions = Object.fromEntries(
-      Object.entries(state.teach).filter(([, s]) => s.status !== "recording"),
-    );
-    for (const s of [...teach.drafts, ...(teach.recording ? [teach.recording] : [])])
-      sessions[s.id] = s;
-    set({ teach: sessions });
-  }
   for (const t of Object.values(state.tasks))
     if (state.steps[t.id] && t.finishedAt === null)
       void loadTask(t.id, { since: true }).catch(() => {});
@@ -704,6 +691,19 @@ export async function handback() {
 }
 
 const putTeach = (s: TeachSession) => put("teach", s.id, s);
+
+/** Teach is the Desktop plugin's. */
+async function loadTeachSessions() {
+  if (!pluginOn(state.plugins, "desktop")) return;
+  const teach = await api<{ recording: TeachSession | null; drafts: TeachSession[] }>("/teach");
+  // A recording that ended while we were away isn't listed any more.
+  const sessions = Object.fromEntries(
+    Object.entries(state.teach).filter(([, s]) => s.status !== "recording"),
+  );
+  for (const s of [...teach.drafts, ...(teach.recording ? [teach.recording] : [])])
+    sessions[s.id] = s;
+  set({ teach: sessions });
+}
 
 /** `replaces`: a skill to record again; the draft keeps its name. */
 export async function startTeach(replaces?: string) {
@@ -1048,7 +1048,9 @@ async function refreshEarlier(from: number, before: number, since: string) {
  */
 async function catchUp(reconnected: boolean) {
   // Which views show: those of plugins that are off don't.
-  void loadPlugins().catch(() => {});
+  void loadPlugins()
+    .then(loadTeachSessions)
+    .catch(() => {});
   // The chats come with loadLive's bots.
   if (reconnected || threadShown) void refreshThread().catch(() => {});
   void api<SpendSummary>("/spend/summary").then(
