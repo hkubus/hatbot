@@ -12,7 +12,7 @@ import {
 } from "@hatbot/plugin-sdk";
 import { z } from "zod";
 import { UserError } from "../errors";
-import { NotChanged, TOOLS, type ToolContext } from "./tools";
+import { TOOLS, type ToolContext } from "./tools";
 
 /** What the core's tools reach, besides what each call brings. */
 export type CoreServices = Omit<
@@ -118,7 +118,7 @@ function coreTool(def: (typeof TOOLS)[number], services: () => CoreServices): Pl
         const out = await def.run(input as any, fromCall(services(), call), call.signal);
         return typeof out === "string" ? out : { text: out.text, images: [out.image] };
       } catch (err) {
-        if (err instanceof UserError || err instanceof NotChanged || err instanceof SandboxError)
+        if (err instanceof UserError || err instanceof SandboxError)
           throw new PluginError((err as Error).message);
         throw err;
       }

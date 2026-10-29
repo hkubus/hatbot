@@ -1,7 +1,13 @@
 // Scout's tools are called by name through the MCP plugin, as watchers call plugin tools.
 
 import type { DesktopService } from "@hatbot/plugin-desktop";
-import { botFolder, type CallContext, PluginError, type PluginTool } from "@hatbot/plugin-sdk";
+import {
+  botFolder,
+  type CallContext,
+  clip,
+  PluginError,
+  type PluginTool,
+} from "@hatbot/plugin-sdk";
 import {
   type Appraisal,
   type Approval,
@@ -125,7 +131,6 @@ const mandateOf = (json: string): Mandate => {
 };
 
 const keyOf = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
-const clip = (text: string) => (text.length > 500 ? `${text.slice(0, 499)}…` : text);
 
 type Hold = "scam" | "stalled" | "bot";
 const HOLD_KINDS: Approval["kind"][] = ["injection_warning", "other"];
@@ -832,7 +837,7 @@ export class Negotiations {
   }
 
   private hold(n: Negotiation, text: string, signals: string[]) {
-    const quoted = clip(text);
+    const quoted = clip(text, 500);
     const approval = this.d.approvals.create({
       taskId: null,
       botId: n.botId,
@@ -869,7 +874,7 @@ export class Negotiations {
       conversationId: n.conversationId ?? undefined,
       kind: "other",
       summary: `Keep negotiating for ${quotedTitle(n.title)}?`,
-      reason: `The seller asked whether they're writing to a bot: “${clip(text)}”\nThat's yours to answer: reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself, and ${bot} reads what you wrote. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on, or deny to end the negotiation.`,
+      reason: `The seller asked whether they're writing to a bot: “${clip(text, 500)}”\nThat's yours to answer: reply to them on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"} yourself, and ${bot} reads what you wrote. Nothing more goes to them from ${bot} until you decide. Approve to let ${bot} carry on, or deny to end the negotiation.`,
     });
     const before = this.held(n) ? n.approvalId : null;
     this.update(n.id, { approval_id: approval.id, hold: "bot" });
@@ -905,7 +910,7 @@ export class Negotiations {
   /** The bot doesn't answer after a deal, so the owner hears what the seller wrote. */
   private afterDeal(n: Negotiation, texts: string[]) {
     const price = n.agreedPrice !== null ? ` at ${zl(n.agreedPrice, n.mandate.currency)}` : "";
-    const quoted = texts.map((t) => `“${clip(t)}”`).join("\n");
+    const quoted = texts.map((t) => `“${clip(t, 500)}”`).join("\n");
     const bot = this.d.bots.nameOf(n.botId);
     const yours = texts.some(disputed)
       ? `It reads like a dispute. ${bot} doesn't answer sellers after a deal, so it's yours to sort out, through the marketplace's dispute process if it comes to that.`

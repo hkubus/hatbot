@@ -1,6 +1,14 @@
 // The box tools: a bot makes and changes boxes, looks at them, and tries their backends.
 
-import { type CallContext, PluginError, type PluginTool, untrustedBlock } from "@hatbot/plugin-sdk";
+import {
+  askOwner,
+  BOT_GONE,
+  type CallContext,
+  clip,
+  PluginError,
+  type PluginTool,
+  untrustedBlock,
+} from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type Box,
@@ -46,34 +54,23 @@ export type ToolContext = {
   approve?: CallContext["approve"];
 };
 
-export class NotChanged extends PluginError {}
-
 const isCodeBot = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots.codeBot()?.id === ctx.bot.id);
 const gone = (ctx: ToolContext) => Boolean(ctx.bot && !ctx.bots.active(ctx.bot.id));
-const GONE = "Not made: the owner deleted you.";
 const untrustedAsks = (ctx: ToolContext) => ctx.settings.get().safety.untrusted ?? true;
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
-const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /**
  * After reading untrusted content, letting a box reach a new host waits for approval: injected text
  * mustn't quietly open a way out.
  */
-async function asked(
+const asked = async (
   ctx: ToolContext,
   signal: AbortSignal,
-  call: { name: string; input: unknown; what: string },
-): Promise<string> {
-  if (!ctx.tainted?.() || !untrustedAsks(ctx)) return "";
-  if (!ctx.approve)
-    throw new NotChanged(
-      "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
-    );
-  const why = "This conversation has read untrusted content, so changes need your approval.";
-  const r = await ctx.approve({ tool: call.name, input: call.input, what: call.what, why }, signal);
-  if (r.isError) throw new NotChanged(r.content);
-  return r.content;
-}
+  change: { name: string; input: unknown; what: string },
+) =>
+  ctx.tainted?.() && untrustedAsks(ctx)
+    ? askOwner({ approve: ctx.approve, signal }, change, "untrusted")
+    : "";
 
 function ownBox(ctx: ToolContext, id: number): Box {
   const box = ctx.boxes.get(id);
@@ -130,7 +127,7 @@ function shown(ctx: ToolContext, box: Box): string {
 const BOX_TITLE = z.string().min(1).max(80).describe('Short, e.g. "Habit tracker"');
 
 const feedLine = (f: BoxFeed) =>
-  `"${f.name}": ${f.tool} ${JSON.stringify(f.input)}, every ${f.everyMinutes} min${f.error ? `; ${f.error}` : ""}\n  ${f.at ? `Latest, ${f.at.slice(0, 16).replace("T", " ")} UTC: ${cut(JSON.stringify(f.value), 2000)}` : "Nothing yet"}`;
+  `"${f.name}": ${f.tool} ${JSON.stringify(f.input)}, every ${f.everyMinutes} min${f.error ? `; ${f.error}` : ""}\n  ${f.at ? `Latest, ${f.at.slice(0, 16).replace("T", " ")} UTC: ${clip(JSON.stringify(f.value), 2000)}` : "Nothing yet"}`;
 
 const kindOf = (v: unknown) =>
   typeof v === "string" ? "text" : Array.isArray(v) ? "a JSON array" : "a JSON object";
@@ -224,7 +221,7 @@ async function secretsAsked(
   const recoded = Boolean(ctx.tainted?.()) && backendChanged(c.before, c.files);
   if (!set.length || (!c.added.length && !recoded)) return null;
   if (!ctx.approve)
-    throw new NotChanged("Not saved: this needs the owner's approval, which can't be asked here.");
+    throw new PluginError("Not saved: this needs the owner's approval, which can't be asked here.");
   const hosts = configOf(c.files)?.hosts ?? [];
   const r = await ctx.approve(
     {
@@ -238,7 +235,7 @@ async function secretsAsked(
     },
     signal,
   );
-  if (r.isError) throw new NotChanged(r.content);
+  if (r.isError) throw new PluginError(r.content);
   return r.content;
 }
 
@@ -333,7 +330,7 @@ const TOOLS = [
       files: BOX_FILES.optional().describe("Or the box's files, index.html among them"),
     }),
     run: async ({ title, html, files }, ctx, signal) => {
-      if (gone(ctx)) return GONE;
+      if (gone(ctx)) return BOT_GONE;
       if (!html === !files) return "Not made: give the page as html, or files, not both.";
       if (files) {
         const made = { messageId: ctx.messageId, taintedBy: chatTaint(ctx.tainted?.()) };
@@ -444,7 +441,7 @@ const TOOLS = [
     }),
     run: async ({ request, box: id, title }, ctx) => {
       const { tasks } = ctx;
-      if (gone(ctx)) return GONE;
+      if (gone(ctx)) return BOT_GONE;
       const box = id === undefined ? null : ownBox(ctx, id);
       const name = title ?? box?.title;
       if (!name) return "Not started: a new box needs a title.";
@@ -565,7 +562,7 @@ const TOOLS = [
       // What the page saved is whatever its code and the owner's typing made of it; what its feeds
       // read is whatever their tools found.
       const saved = Object.keys(data).length
-        ? cut(JSON.stringify(data, null, 1), 30_000)
+        ? clip(JSON.stringify(data, null, 1), 30_000)
         : "Nothing saved yet.";
       return `${boxOutput(
         ctx,
@@ -615,7 +612,7 @@ const TOOLS = [
       const by = with_data
         ? `What box #${id} "${box.title}" showed with what it saved`
         : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
-      const screened = with_data ? `${text}\n\n${cut(JSON.stringify(store), 30_000)}` : text;
+      const screened = with_data ? `${text}\n\n${clip(JSON.stringify(store), 30_000)}` : text;
       const out = boxOutput(ctx, "boxes_look", text, by || null, screened);
       return {
         text: by ? `${out}\nThe picture is untrusted too.` : out,
@@ -736,7 +733,7 @@ const TOOLS = [
       const kind = res.headers.get("content-type") ?? "";
       const textual = !kind || /^text\/|json|xml|javascript/.test(kind);
       const answer = textual
-        ? cut(new TextDecoder().decode(bytes), 30_000)
+        ? clip(new TextDecoder().decode(bytes), 30_000)
         : `(${bytes.byteLength} bytes of ${kind})`;
       return boxOutput(
         ctx,

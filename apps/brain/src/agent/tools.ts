@@ -3,6 +3,7 @@ import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
 import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   botFolder,
+  clip,
   containerOf,
   invalidInput,
   serverToolWaiting,
@@ -159,12 +160,6 @@ const dayStart = (date: string) => {
   return Number.isNaN(d.getTime()) ? date : d.toISOString();
 };
 
-const _isCodeBot = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots?.codeBot()?.id === ctx.bot.id);
-
-/** The bot was deleted while it wrote this reply: what it makes now would run as nobody's. */
-const _gone = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots && !ctx.bots.active(ctx.bot.id));
-const _GONE = "Not made: the owner deleted you.";
-
 function authorOf(ctx: ToolContext, path: string) {
   const id = ctx.bot?.id ?? HATBOT_ID;
   // The path as it lands, so "notes/../bots/x/…" counts as bots/x.
@@ -214,30 +209,6 @@ const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted
 
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
 
-export class NotChanged extends Error {}
-
-/**
- * After reading untrusted content, deleting or switching off a schedule, watcher or trigger waits for
- * approval: injected text mustn't quietly stop what looks after the homelab.
- */
-async function _asked(
-  ctx: ToolContext,
-  signal: AbortSignal,
-  call: { name: string; input: unknown; what: string },
-): Promise<string> {
-  if (!ctx.tainted?.() || !untrustedAsks(ctx)) return "";
-  if (!ctx.approve)
-    throw new NotChanged(
-      "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
-    );
-  const why = "This conversation has read untrusted content, so changes need your approval.";
-  const r = await ctx.approve({ tool: call.name, input: call.input, what: call.what, why }, signal);
-  if (r.isError) throw new NotChanged(r.content);
-  return r.content;
-}
-
-const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-
 export type { ToolImage };
 
 export const imageBlocks = (images: ToolImage[]) =>
@@ -283,7 +254,7 @@ export async function tickTodo(
   let ticked = "";
   const proposed = await changeTodos(
     ctx,
-    `Done: ${cut(item, 60)}`,
+    `Done: ${clip(item, 60)}`,
     (md) => {
       const t = pick(md);
       if (typeof t === "string") throw new MemoryError(t);
@@ -406,7 +377,7 @@ export const TOOLS = [
     }),
     run: async ({ item, due }, ctx) => {
       const line = due ? `${item} ${dueInput(due)}` : item;
-      const proposed = await changeTodos(ctx, `To-do: ${cut(item, 60)}`, (md) =>
+      const proposed = await changeTodos(ctx, `To-do: ${clip(item, 60)}`, (md) =>
         withTodo(md, line),
       );
       return proposed ?? `Added to the to-do list: ${line}`;
@@ -584,7 +555,7 @@ export const TOOLS = [
       if (typeof t === "string") return t;
       const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
-        title: cut(t.text, 80),
+        title: clip(t.text, 80),
         goal: details ? `${t.text}\n\n${details}` : t.text,
         todo: t.text,
         origin: "chat",
@@ -725,7 +696,7 @@ export async function runCoreTool(
     if (typeof out === "string") return { content: out, isError: false };
     return { content: out.text, images: [out.image], isError: false };
   } catch (err) {
-    if (err instanceof UserError || err instanceof DesktopError || err instanceof NotChanged)
+    if (err instanceof UserError || err instanceof DesktopError)
       return { content: err.message, isError: true };
     console.error(`tool ${name} failed`, err);
     return { content: "The tool failed with an internal error.", isError: true };

@@ -1,7 +1,9 @@
 import {
+  askOwner,
+  BOT_GONE,
   type CallContext,
+  clip,
   type Place,
-  PluginError,
   type PluginTool,
   tool,
 } from "@hatbot/plugin-sdk";
@@ -27,15 +29,12 @@ type Parts = { schedules: Schedules; triggers: Triggers; watchers: Watchers } & 
   "bots" | "settings"
 >;
 
-/** Shown to the model as the tool's error. */
-class NotChanged extends PluginError {}
-
 const CHAT: Place[] = ["chat"];
-const GONE = "Not made: the owner deleted you.";
+type Change = { name: string; input: unknown; what: string };
 
 const local = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "–";
-const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const cut = (s: string) => clip(s, 300);
 
 const scheduleLine = (s: Schedule) =>
   `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
@@ -170,46 +169,17 @@ export function automationTools(p: Parts): PluginTool[] {
    * After reading untrusted content, deleting or switching off a schedule, watcher or trigger waits
    * for approval: injected text mustn't quietly stop what looks after the homelab.
    */
-  async function asked(
-    call: CallContext,
-    change: { name: string; input: unknown; what: string },
-  ): Promise<string> {
-    if (!call.tainted?.() || !untrustedAsks()) return "";
-    if (!call.approve)
-      throw new NotChanged(
-        "Not changed: after reading untrusted content this needs the owner's approval, which can't be asked here.",
-      );
-    const why = "This conversation has read untrusted content, so changes need your approval.";
-    const r = await call.approve(
-      { tool: change.name, input: change.input, what: change.what, why },
-      call.signal,
-    );
-    if (r.isError) throw new NotChanged(r.content);
-    return r.content;
-  }
+  const asked = async (call: CallContext, change: Change) =>
+    call.tainted?.() && untrustedAsks() ? askOwner(call, change, "untrusted") : "";
 
   /**
    * A schedule or watcher made after something the conversation read was suspected of being a prompt
    * injection waits for you: its runs would act on what that text wrote, and the review isn't asked.
    */
-  async function askedIfSuspected(
-    call: CallContext,
-    change: { name: string; input: unknown; what: string },
-  ): Promise<string> {
-    if (!p.settings.get().safety.injection || !(await call.suspected?.())) return "";
-    if (!call.approve)
-      throw new NotChanged(
-        "Not changed: after a suspected prompt injection this needs the owner's approval, which can't be asked here.",
-      );
-    const why =
-      "Something this conversation read may be instructions aimed at a bot, so this needs your approval.";
-    const r = await call.approve(
-      { tool: change.name, input: change.input, what: change.what, why },
-      call.signal,
-    );
-    if (r.isError) throw new NotChanged(r.content);
-    return r.content;
-  }
+  const askedIfSuspected = async (call: CallContext, change: Change) =>
+    p.settings.get().safety.injection && (await call.suspected?.())
+      ? askOwner(call, change, "injection")
+      : "";
 
   /** A watcher for the chat: what it saw, from an untrusted source, is quoted and taints it. */
   function seenLine(call: CallContext, w: Watcher): string {
@@ -262,7 +232,7 @@ export function automationTools(p: Parts): PluginTool[] {
         "Schedule a background task that runs on its own, repeating (cron) or once (at). Each run gets your memory and tools, can use the desktop, and reports back in this thread, with a notification when there's something to tell. Write `prompt` as complete instructions for that future run: it can't see this conversation. If the owner's timing is vague, ask before creating it. The owner sees it in Schedules, where they can change or turn it off.",
       schema: CreateSchedule,
       run: async ({ name, prompt, cron, at }, call) => {
-        if (gone(call)) return GONE;
+        if (gone(call)) return BOT_GONE;
         if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
         const note = await askedIfSuspected(call, {
           name: "automation_schedule_create",
@@ -361,7 +331,7 @@ export function automationTools(p: Parts): PluginTool[] {
         "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched from the desktop as plain HTML without running their scripts; set render for a page that fills in with JavaScript. Neither gets past bot protection (a challenge page, a captcha). Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
       schema: CreateWatch,
       run: async (input, call) => {
-        if (gone(call)) return GONE;
+        if (gone(call)) return BOT_GONE;
         if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
         const condition = conditionOf(input);
         if (typeof condition === "string") return condition;

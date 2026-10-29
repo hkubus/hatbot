@@ -224,6 +224,39 @@ export class PluginError extends Error {
   }
 }
 
+/** For a bot deleted while it wrote the reply: what it made would run as nobody's. */
+export const BOT_GONE = "Not made: the owner deleted you.";
+
+const ASKED = {
+  untrusted: [
+    "after reading untrusted content",
+    "This conversation has read untrusted content, so changes need your approval.",
+  ],
+  injection: [
+    "after a suspected prompt injection",
+    "Something this conversation read may be instructions aimed at a bot, so this needs your approval.",
+  ],
+} as const;
+
+/** Waits for the owner to approve a change; a refusal, or nowhere to ask, is the tool's error. */
+export async function askOwner(
+  call: Pick<CallContext, "approve" | "signal">,
+  change: { name: string; input: unknown; what: string },
+  reason: keyof typeof ASKED,
+): Promise<string> {
+  const [after, why] = ASKED[reason];
+  if (!call.approve)
+    throw new PluginError(
+      `Not changed: ${after} this needs the owner's approval, which can't be asked here.`,
+    );
+  const r = await call.approve(
+    { tool: change.name, input: change.input, what: change.what, why },
+    call.signal,
+  );
+  if (r.isError) throw new PluginError(r.content);
+  return r.content;
+}
+
 type ScheduleFields = {
   name?: string;
   prompt?: string;
