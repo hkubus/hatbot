@@ -105,11 +105,10 @@ test("without the boxes guest, boxes with files are refused in one sentence, and
   expect(await boxFetch(t, { path: "/" })).toEqual({ status: 503, error: NO_GUEST });
 });
 
-test("in a chat that read untrusted content, hosts a backend couldn't reach before wait for review and the owner", async () => {
+test("in a chat that read untrusted content, with the review off, hosts a backend couldn't reach before wait for the owner", async () => {
   const model = new FakeModel([{ content: [text("hi")] }]);
-  model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: false, why: "Not asked for." }) : undefined;
   const t = await testApp(model);
+  t.settings.update({ reviewChanges: false });
   await t.thread.post("hello").done;
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
   model.script.push(

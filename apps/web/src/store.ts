@@ -653,7 +653,8 @@ async function loadLive(snapshot: Snapshot | null) {
   for (const a of Object.values(approvals))
     if (a.status === "pending") requested.delete(`a${a.id}`);
   for (const a of Object.values(approvals))
-    if (a.status === "pending" && !pending.some((p) => p.id === a.id)) delete approvals[a.id];
+    if ((a.status === "pending" || a.status === "blocked") && !pending.some((p) => p.id === a.id))
+      delete approvals[a.id];
   for (const a of pending) approvals[a.id] = a;
   // Questions answered or dropped while we were away aren't listed.
   if (asked) set({ questions: Object.fromEntries(asked.map((q) => [q.id, q])) });
@@ -673,6 +674,18 @@ export async function decideApproval(
     body: { decision, ...(note.trim() ? { note: note.trim() } : {}), ...(scope ? { scope } : {}) },
   });
   put("approvals", a.id, a);
+}
+
+/** Runs what the safety review blocked: once, or always for this exact call. */
+export async function runAnyway(id: number, always = false) {
+  const a = await api<Approval>(`/approvals/${id}/anyway`, { body: always ? { always } : {} });
+  put("approvals", a.id, a);
+}
+
+export async function dismissBlocked(id: number) {
+  await api(`/approvals/${id}/dismiss`, { body: {} });
+  const a = state.approvals[id];
+  if (a) put("approvals", id, { ...a, status: "cancelled" });
 }
 
 export async function answerQuestion(id: number, answer: string) {

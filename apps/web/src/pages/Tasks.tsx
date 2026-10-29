@@ -317,7 +317,9 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const active = isActive(task);
   // A chat's card until the whole task comes: its details and goal only then.
   const full = isFullTask(task) ? task : null;
-  const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
+  const pending = Object.values(approvals).filter(
+    (a) => a.taskId === id && (a.status === "pending" || a.status === "blocked"),
+  );
   const asked = Object.values(questions).filter((q) => q.taskId === id && q.status === "pending");
   const screen = task.lane === "screen";
   const showLive = screen && active && (watch || request?.taskId === id);

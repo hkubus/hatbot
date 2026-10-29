@@ -17,10 +17,12 @@ import { Link } from "./link";
 import {
   answerQuestion,
   decideApproval,
+  dismissBlocked,
   ensureApproval,
   ensureSchedule,
   ensureTask,
   ensureWatcher,
+  runAnyway,
   trustConversation,
   trustSchedule,
   trustWatcher,
@@ -164,7 +166,7 @@ export const MANDATE_NOTE = "Change the numbers, or tell it how to go about it";
 /** Approvals whose answer can carry a note to the task: the task carries on afterwards. */
 export const takesNote = (a: Approval) => a.kind !== "budget" && a.kind !== "injection_warning";
 
-const RESOLVED: Record<Exclude<Approval["status"], "pending">, [string, string]> = {
+const RESOLVED: Record<Exclude<Approval["status"], "pending" | "blocked">, [string, string]> = {
   approved: ["ok", "Approved"],
   denied: ["bad", "Denied"],
   expired: ["", "Expired"],
@@ -181,6 +183,13 @@ export function ApprovalCard({
   const a = useStore((s) => s.approvals[approvalId]);
   useEffect(() => ensureApproval(approvalId), [approvalId]);
   if (!a) return null;
+
+  if (a.status === "blocked")
+    return (
+      <div className="card">
+        <BlockedApproval a={a} />
+      </div>
+    );
 
   if (a.status !== "pending") {
     const [cls, label] = RESOLVED[a.status];
@@ -349,17 +358,6 @@ export function PendingApproval({
             Always
           </button>
         )}
-        {a.scopes.includes("session") && (
-          <button
-            type="button"
-            className="btn"
-            disabled={busy}
-            title={`Approve ${a.taskId ? "this task's" : "this conversation's"} calls like this on the same thing`}
-            onClick={() => decide("approve", "session")}
-          >
-            {a.taskId ? "For this task" : "For this chat"}
-          </button>
-        )}
         <button
           type="button"
           className="btn primary"
@@ -369,6 +367,87 @@ export function PendingApproval({
           <Icon name="check" />
           Approve
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What the safety review blocked: nothing waits on it. Run anyway lets it go once, for a task still
+ * running or the chat's next reply; Always lets this exact call skip the review from now on.
+ */
+export function BlockedApproval({
+  a,
+  links,
+  onRan,
+}: {
+  a: Approval;
+  links?: React.ReactNode;
+  onRan?: () => Promise<void>;
+}) {
+  const task = useStore((s) => (a.taskId ? s.tasks[a.taskId] : undefined));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const live = !a.taskId || (task !== undefined && isActive(task));
+  const act = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="approval">
+      <div className="approval-text">
+        <p className="approval-what">Blocked: {a.summary}</p>
+        {a.reason && <p>{a.reason}</p>}
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="approval-actions">
+        {links}
+        <span className="spacer" />
+        <button
+          type="button"
+          className="btn tonal"
+          disabled={busy}
+          onClick={() => act(() => dismissBlocked(a.id))}
+        >
+          Dismiss
+        </button>
+        {a.scopes.includes("always") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title="Let this exact action skip the safety review from now on"
+            onClick={() =>
+              act(async () => {
+                await runAnyway(a.id, true);
+                if (live) await onRan?.();
+              })
+            }
+          >
+            Always
+          </button>
+        )}
+        {live && (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy}
+            onClick={() =>
+              act(async () => {
+                await runAnyway(a.id);
+                await onRan?.();
+              })
+            }
+          >
+            Run anyway
+          </button>
+        )}
       </div>
     </div>
   );

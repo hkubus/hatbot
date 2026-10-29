@@ -19,7 +19,7 @@ import {
 } from "@hatbot/shared/desktop";
 import { z } from "zod";
 import { DESKTOP_PROMPT } from "../agent/prompt";
-import { levelOf, safeToRun } from "../agent/review";
+import { Blocks, blockedText, levelOf, safeToRun } from "../agent/review";
 import { type Screening, screenPage } from "../agent/screening";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
@@ -481,6 +481,33 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   };
 
   const notes: string[] = [];
+  const blocks = new Blocks();
+  let gaveUp: string | null = null;
+  /** What the review blocked: the bot hears why, and you may run it anyway from the task. */
+  const blocked = (
+    check: { why: string; by?: string },
+    what: string,
+    kind: ApprovalKind,
+    call: { tool: string; input: unknown; target: string | null },
+  ) => {
+    d.approvals.block({
+      taskId: id,
+      botId: task.botId,
+      kind,
+      summary: what,
+      reason: `${check.by}: ${check.why}`,
+      sources: [...sources],
+      call,
+    });
+    tasks.addStep(id, {
+      kind: "approval",
+      name: `Blocked: ${check.by} found it unsafe`,
+      detail: `${what}. ${check.why}`,
+      url: lastUrl,
+    });
+    gaveUp ??= blocks.blocked();
+    return blockedText(check.why);
+  };
   const askApproval = async (input: {
     kind: ApprovalKind;
     summary: string;
@@ -854,6 +881,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     why: string,
     kind: ApprovalKind,
     url: string | null,
+    grant: { tool: string; input: unknown },
   ): Promise<{ safe: boolean; why: string; by?: string } | null> => {
     await screened();
     const level = levelOf(
@@ -871,6 +899,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       return { safe: true, why: "" };
     }
     if (level !== "review") return null;
+    // Only where the review would look: running it anyway never stands in for asking you.
+    const anyway = d.approvals.granted({ botId: task.botId, ...grant, target: null, taskId: id });
+    if (anyway) {
+      blocks.ran();
+      tasks.addStep(id, {
+        kind: "approval",
+        name: "Not asking: you allowed it",
+        detail: what,
+        url,
+      });
+      return { safe: true, why: anyway };
+    }
     const request = tasks.requestOf(id);
     const check = await safeToRun(
       d,
@@ -885,13 +925,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       { tool, input, what, why },
       { reserve: tasks.reserves(task) },
     );
-    if (check.safe)
+    if (check.safe) {
+      blocks.ran();
       tasks.addStep(id, {
         kind: "approval",
         name: `Not asking: ${check.by} found it safe`,
         detail: check.why ? `${what}. ${check.why}` : what,
         url,
       });
+    }
     return check;
   };
 
@@ -971,13 +1013,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       held?.hold,
     );
     const pressed = input.control ? `(It will press "${input.control}".)` : "";
-    let reason = held
+    const reason = held
       ? `${input.reason ? `${input.reason} ` : ""}(Hatbot held: ${held.what}.)`
       : [input.reason, pressed].filter(Boolean).join(" ") || undefined;
     const arm = (hold: Hold | null) => {
       armed = { page, kind, summary: input.summary, control: input.control, hold };
     };
     const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
+    // Run anyway lets the task's next step on this page go.
+    const grant = { tool: "confirm_intent", input: { page } };
     const check = await reviewed(
       "confirm_intent",
       { ...input, kind, page, held: held?.what ?? null },
@@ -985,12 +1029,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       why,
       kind,
       page,
+      grant,
     );
     if (check?.safe) {
       arm(held?.hold ?? null);
       return textResult(call, "Approved. Go ahead with exactly this action.");
     }
-    if (check?.why) reason = [reason, `${check.by}: ${check.why}`].filter(Boolean).join(" ");
+    if (check)
+      return textResult(
+        call,
+        blocked(check, input.summary, kind, { ...grant, target: page }),
+        true,
+      );
     const { outcome, note } = await askApproval({
       ...input,
       ...(reason ? { reason } : {}),
@@ -1034,13 +1084,16 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (danger) {
       const summary = `On the desktop: ${command}`;
       const why = `This command ${danger.why}.`;
-      const check = await reviewed("desktop_shell", input, summary, why, danger.kind, null);
-      if (!check?.safe) {
-        const answer = await askApproval({
-          kind: danger.kind,
-          summary,
-          reason: check?.why ? `${why} ${check.by}: ${check.why}` : why,
-        });
+      const grant = { tool: "desktop_shell", input: { command } };
+      const check = await reviewed("desktop_shell", input, summary, why, danger.kind, null, grant);
+      if (check && !check.safe)
+        return textResult(
+          call,
+          blocked(check, summary, danger.kind, { ...grant, target: null }),
+          true,
+        );
+      if (!check) {
+        const answer = await askApproval({ kind: danger.kind, summary, reason: why });
         note = answer.note;
         if (answer.outcome !== "approved")
           return textResult(
@@ -1307,6 +1360,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           results.push(textResult(call, `Unknown tool "${call.name}".`, true));
         }
       }
+      const stopped = gaveUp as string | null;
+      if (stopped && !finished)
+        throw new Stop(
+          "failed",
+          `Stopped: ${stopped}. Its steps say what, and you can run any of them anyway.`,
+        );
       if (finished) {
         const prefix = finished.outcome === "blocked" ? "Blocked: " : "";
         // Blocked is a login or captcha: the expert model can't get past it either.

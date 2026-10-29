@@ -109,8 +109,6 @@ export type Granted = {
   target: string | null;
   taskId?: number;
   episodeId?: number;
-  /** Only the untrusted-content rule asks: what a scope over the rest of the work covers. */
-  taintOnly: boolean;
 };
 
 export class Approvals {
@@ -143,10 +141,10 @@ export class Approvals {
     return r ? toApproval(r) : null;
   }
 
-  /** Newest first, 100 at a time; `before`: the next page, older than that id. */
+  /** Newest first, 100 at a time; `before`: the next page, older than that id. `pendingOnly` keeps what's blocked too. */
   list(pendingOnly: boolean, before?: number): Approval[] {
     const where = [
-      ...(pendingOnly ? ["a.status = 'pending'"] : []),
+      ...(pendingOnly ? ["a.status IN ('pending', 'blocked')"] : []),
       ...(before !== undefined ? ["a.id < ?"] : []),
     ];
     return this.db
@@ -211,7 +209,8 @@ export class Approvals {
 
   wait(id: number, signal: AbortSignal): Promise<Outcome> {
     const current = this.get(id);
-    if (current && current.status !== "pending") return Promise.resolve(current.status);
+    if (current && current.status !== "pending")
+      return Promise.resolve(current.status === "blocked" ? "denied" : current.status);
     return new Promise((resolve, reject) => {
       const abort = () => {
         this.waiters.delete(id);
@@ -271,9 +270,8 @@ export class Approvals {
   }
 
   /**
-   * Why a call that would ask goes ahead on what you approved before, or null: this exact call is
-   * one you always allow, or, where only untrusted content asks, you allowed the tool on the same
-   * thing for the rest of this task or conversation.
+   * Why a call that would ask or be reviewed goes ahead on what you said before, or null: this exact
+   * call is one you always allow, or one the review blocked that you ran anyway, which goes once.
    */
   granted(q: Granted): string | null {
     const input = canonical(q.input);
@@ -283,15 +281,78 @@ export class Approvals {
       )
       .get(q.botId, q.tool, input);
     if (rule) return "You always allow this.";
-    if (!q.taintOnly || (q.taskId === undefined && q.episodeId === undefined)) return null;
-    const session = this.db
-      .query<{ id: number }, [string, string, string, number, number]>(
-        `SELECT id FROM approvals WHERE status = 'approved' AND scope = 'session' AND bot_id = ?
-         AND tool = ? AND target = ? AND (task_id = ? OR (task_id IS NULL AND episode_id = ?)) LIMIT 1`,
+    const anyway = this.db
+      .query<{ id: number }, [string, string, string, string]>(
+        `UPDATE approvals SET used_at = ?1 WHERE id = (SELECT id FROM approvals WHERE blocked = 1
+         AND status = 'approved' AND used_at IS NULL AND bot_id = ?2 AND tool = ?3 AND input = ?4
+         ORDER BY id LIMIT 1) RETURNING id`,
       )
-      .get(q.botId, q.tool, q.target ?? "", q.taskId ?? -1, q.episodeId ?? -1);
-    if (!session) return null;
-    return `You allowed ${q.tool}${q.target ? ` on ${q.target}` : ""} for the rest of this ${q.taskId !== undefined ? "task" : "conversation"}.`;
+      .get(this.now(), q.botId, q.tool, input);
+    return anyway ? "You chose to run it anyway." : null;
+  }
+
+  /** What the safety review blocked: nothing waits on it, and you may run it anyway for a day. */
+  block(input: NewApproval): Approval {
+    const row = this.db
+      .query<
+        { id: number },
+        [string, number | null, number | null, string, string, string, string, string, string]
+      >(
+        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, status, blocked, created_at, decided_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'blocked', 1, ?8, ?8, ?9) RETURNING id`,
+      )
+      .get(
+        input.botId ?? HATBOT_ID,
+        input.taskId,
+        input.conversationId ?? null,
+        input.kind,
+        input.summary,
+        input.reason ?? "",
+        JSON.stringify(input.sources ?? []),
+        this.now(),
+        new Date(this.clock() + TTL_MS).toISOString(),
+      );
+    if (row && input.call)
+      this.db
+        .query(
+          "UPDATE approvals SET tool = ?, input = ?, target = ?, episode_id = ?, scopes = ? WHERE id = ?",
+        )
+        .run(
+          input.call.tool,
+          canonical(input.call.input),
+          input.call.target ?? "",
+          input.episodeId ?? null,
+          JSON.stringify(input.scopes ?? []),
+          row.id,
+        );
+    const approval = this.get(row?.id ?? -1);
+    if (!approval) throw new Error("approval insert failed");
+    this.events.emit({ type: "approval.created", approval });
+    return approval;
+  }
+
+  /** Lets what the review blocked run once, or always as a rule; null if it's no longer blocked. */
+  runAnyway(id: number, always: boolean): Approval | null {
+    const a = this.get(id);
+    if (a?.status !== "blocked") return null;
+    const scope = always && a.scopes.includes("always") ? "always" : null;
+    if (scope)
+      this.db
+        .query(
+          `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at)
+           SELECT bot_id, tool, input, summary, ? FROM approvals WHERE id = ? AND tool IS NOT NULL
+           ON CONFLICT (bot_id, tool, input) DO NOTHING`,
+        )
+        .run(this.now(), id);
+    const changed = this.db
+      .query(
+        "UPDATE approvals SET status = 'approved', decided_via = 'web', decided_at = ?, scope = ? WHERE id = ? AND status = 'blocked'",
+      )
+      .run(this.now(), scope, id);
+    if (!changed.changes) return null;
+    const approval = this.get(id);
+    if (approval) this.events.emit({ type: "approval.resolved", approval });
+    return approval;
   }
 
   rules(): ApprovalRule[] {
@@ -311,6 +372,18 @@ export class Approvals {
 
   removeRule(id: number): boolean {
     return this.db.query("DELETE FROM approval_rules WHERE id = ?").run(id).changes > 0;
+  }
+
+  /** Leaves what the review blocked as it is; false if it isn't blocked any more. */
+  dismiss(id: number): boolean {
+    const a = this.db
+      .query<{ id: number }, [string, number]>(
+        "UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE id = ? AND status = 'blocked' RETURNING id",
+      )
+      .get(this.now(), id);
+    const approval = a && this.get(a.id);
+    if (approval) this.events.emit({ type: "approval.resolved", approval });
+    return Boolean(approval);
   }
 
   cancel(id: number) {
@@ -333,6 +406,15 @@ export class Approvals {
       )
       .all(this.now());
     for (const { id } of due) this.resolve(id, "expired");
+    const blocked = this.db
+      .query<{ id: number }, [string]>(
+        "UPDATE approvals SET status = 'expired' WHERE status = 'blocked' AND expires_at <= ? RETURNING id",
+      )
+      .all(this.now());
+    for (const { id } of blocked) {
+      const approval = this.get(id);
+      if (approval) this.events.emit({ type: "approval.resolved", approval });
+    }
   }
 
   sign(id: number, decision: "approve" | "deny", exp: number): string {

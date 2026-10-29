@@ -2,7 +2,7 @@
 
 import { type JobRun, JobStop, PluginError } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
-import { levelOf, safeToRun } from "../agent/review";
+import { blockedText, levelOf, safeToRun } from "../agent/review";
 import { ownerNote } from "../approvals";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
@@ -24,6 +24,8 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
     const level = levelOf(d.settings.get(), verdict, suspected);
     if (level === "allow") return { content: "", isError: false };
     if (level === "review") {
+      if (d.approvals.granted({ botId: task.botId, ...call, target: null, taskId: id }))
+        return { content: "", isError: false };
       const check = await safeToRun(
         d,
         { taskId: id },
@@ -33,12 +35,28 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
       if (check.safe) {
         tasks.addStep(id, {
           kind: "approval",
-          name: "Not asking: Haiku found it safe",
+          name: `Not asking: ${check.by} found it safe`,
           detail: check.why ? `${call.what}. ${check.why}` : call.what,
           url: null,
         });
         return { content: "", isError: false };
       }
+      d.approvals.block({
+        taskId: id,
+        botId: task.botId,
+        kind: "other",
+        summary: call.what,
+        reason: `${check.by}: ${check.why}`,
+        sources,
+        call: { tool: call.tool, input: call.input, target: null },
+      });
+      tasks.addStep(id, {
+        kind: "approval",
+        name: `Blocked: ${check.by} found it unsafe`,
+        detail: `${call.what}. ${check.why}`,
+        url: null,
+      });
+      return { content: blockedText(check.why), isError: true };
     }
     const answer = await askOwner(
       tasks,

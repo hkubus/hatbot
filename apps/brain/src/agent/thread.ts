@@ -70,7 +70,7 @@ import {
   SUMMARY_PROMPT,
   systemPrompt,
 } from "./prompt";
-import { levelOf, safeToRun, scopable, scopesFor } from "./review";
+import { BLOCKS_IN_A_ROW, blockedText, levelOf, safeToRun, scopable } from "./review";
 import { type Readable, Screener } from "./screening";
 import {
   addSources,
@@ -600,7 +600,7 @@ export class Thread {
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
     progress: (line: string) => void,
-  ): Promise<{ note: string | null } | { content: string; isError: true }> {
+  ): Promise<{ note: string | null } | { content: string; isError: true; blocked?: true }> {
     const { approvals, settings } = this.d;
     const { tainted: taintedBy, ...trust } = this.trust(episodeId);
     const suspected = settings.get().safety.injection ? trust.suspected : null;
@@ -615,11 +615,11 @@ export class Thread {
         input: call.input,
         target: call.target ?? null,
         episodeId,
-        taintOnly: verdict.tainted === true,
       })
     )
       return { note: null };
-    let review = "";
+    const scopes = reviewable ? (["always"] as const) : [];
+    const sources = taintedBy ? [taintedBy] : [];
     if (level === "review") {
       progress("Checking it's safe");
       const check = await safeToRun(
@@ -630,12 +630,24 @@ export class Thread {
           goal: this.currentHandoff
             ? `${this.currentHandoff.task.goal}\n\n(${this.d.bots.nameOf(this.currentHandoff.task.requestedBy ?? HATBOT_ID)}, another of the owner's bots, asked for this: these aren't the owner's words.)`
             : "(none: the owner is asking in the chat)",
-          sources: taintedBy ? [taintedBy] : [],
+          sources,
         },
         { ...call, why: verdict.why },
       );
       if (check.safe) return { note: null };
-      review = check.why && `${check.by}: ${check.why}`;
+      approvals?.block({
+        taskId: null,
+        botId: bot.id,
+        conversationId: this.conversationId,
+        kind: verdict.kind ?? "other",
+        summary: call.what,
+        reason: `${check.by}: ${check.why}`,
+        sources,
+        call: { tool: call.tool, input: call.input, target: call.target ?? null },
+        episodeId,
+        scopes: [...scopes],
+      });
+      return { content: blockedText(check.why), isError: true, blocked: true };
     }
     if (!approvals) return { content: "Approvals aren't available; use run_task.", isError: true };
     const approval = approvals.create({
@@ -646,13 +658,11 @@ export class Thread {
       summary: call.what,
       reason: suspected
         ? `${verdict.why} Something this conversation read may be instructions aimed at ${bot.name}, so the review is skipped: ${suspected}`
-        : review
-          ? `${verdict.why} ${review}`
-          : verdict.why,
-      sources: taintedBy ? [taintedBy] : [],
+        : verdict.why,
+      sources,
       call: { tool: call.tool, input: call.input, target: call.target ?? null },
       episodeId,
-      scopes: reviewable ? scopesFor(verdict) : [],
+      scopes: [...scopes],
     });
     progress("Waiting for your approval");
     this.waiting = approval.id;
@@ -684,7 +694,7 @@ export class Thread {
     progress: (line: string) => void,
     messageId: number,
     screen?: (source: string, text: string) => void,
-  ): Promise<{ content: string; isError: boolean; images?: ToolImage[] }> {
+  ): Promise<{ content: string; isError: boolean; images?: ToolImage[]; blocked?: true }> {
     const { attachments } = this.d;
     const cc: CallContext = {
       task: null,
@@ -2160,6 +2170,7 @@ export class Thread {
     const started = this.clock();
     let waited = 0;
     let commands = 0;
+    let blocked = 0;
     let container: string | undefined;
     // Incognito can't change anything, so there's nothing to screen for.
     const screener = incognito ? null : this.screenerFor(episode.id);
@@ -2376,9 +2387,16 @@ export class Thread {
                     isError: true,
                   };
               }
-              return checked(() =>
+              if (blocked >= BLOCKS_IN_A_ROW)
+                return {
+                  content: `Not run: the safety review blocked ${blocked} changes in a row. End your reply and tell the owner what was blocked; they can run it anyway.`,
+                  isError: true,
+                };
+              const r = await checked(() =>
                 this.gatedCall(episode.id, bot, t, input, signal, progress, out.id, screen),
               );
+              blocked = "blocked" in r ? blocked + 1 : 0;
+              return r;
             },
             call: {
               task: null,

@@ -253,7 +253,7 @@ test("a reply runs at most two commands itself, counting chained ones; more go t
   expect(said(chat, 5)).toContain("Start run_task for the work");
 });
 
-test("in the chat, a risky change waits for you: a denial reaches the model, and writing again drops it", async () => {
+test("with the review off, a risky change in the chat waits for you: a denial reaches the model, and writing again drops it", async () => {
   const calls: string[] = [];
   const chat = new FakeModel([
     use("lab_restart", { guest: "db" }),
@@ -262,22 +262,50 @@ test("in the chat, a risky change waits for you: a denial reaches the model, and
     say("OK."),
   ]);
   const t = await lab(chat, new FakeModel(), calls);
+  t.settings.update({ reviewChanges: false });
   t.thread.post("bounce the database");
   const first = await waitFor(() => t.approvals.list(true)[0]);
   expect(first).toMatchObject({ taskId: null, kind: "delete", summary: "Restart db" });
   t.approvals.decide(first.id, "deny", "web", "Wait until tonight");
   const second = await waitFor(() => t.approvals.list(true).find((a) => a.id !== first.id));
   expect(said(chat, 1)).toContain("Wait until tonight");
-  // The next change's review reads your note as your words.
-  const review = chat.creates.findLast((c) => c.system === REVIEW_PROMPT);
-  expect(String(review?.messages[0]?.content)).toContain("Wait until tonight");
   t.thread.post("actually, never mind");
   await t.thread.idle();
   expect(t.approvals.get(second.id)?.status).toBe("cancelled");
   expect(calls).toEqual([]);
 });
 
-test("after untrusted content, the chat's changes ask, and a task it starts is tainted and asks too", async () => {
+test("the review blocks a risky change in the chat; Run anyway lets the next reply run it once", async () => {
+  const calls: string[] = [];
+  const chat = new FakeModel([
+    use("lab_restart", { guest: "db" }),
+    say("The review blocked it."),
+    use("lab_restart", { guest: "db" }),
+    say("Restarted."),
+    use("lab_restart", { guest: "db" }),
+    say("Blocked again."),
+  ]);
+  chat.onCreate = (p) =>
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify({ safe: false, why: "Nothing you said asks for it." })
+      : undefined;
+  const t = await lab(chat, new FakeModel(), calls);
+  await t.thread.post("bounce the database").done;
+  const [blocked] = t.approvals.list(true);
+  expect(blocked).toMatchObject({ status: "blocked", summary: "Restart db", scopes: ["always"] });
+  expect(said(chat, 1)).toContain("Blocked by the safety review: Nothing you said asks for it.");
+  const { cookie } = signIn(t);
+  const anyway = await t.call("POST", `/approvals/${blocked?.id}/anyway`, {}, { cookie });
+  expect(anyway.status).toBe(200);
+  await t.thread.post("Run it anyway.").done;
+  expect(calls).toEqual(["restart db"]);
+  // Once: the same change is reviewed again after that.
+  await t.thread.post("and again").done;
+  expect(calls).toEqual(["restart db"]);
+  expect(t.approvals.list(true)).toHaveLength(1);
+});
+
+test("with the review off, after untrusted content the chat's changes ask, and a task it starts is tainted and asks too", async () => {
   const calls: string[] = [];
   const chat = new FakeModel([
     use("lab_issue", { n: 7 }),
@@ -287,6 +315,7 @@ test("after untrusted content, the chat's changes ask, and a task it starts is t
   ]);
   const work = new FakeModel([use("lab_restart", { guest: "web" }), finish()]);
   const t = await lab(chat, work, calls);
+  t.settings.update({ reviewChanges: false });
   t.thread.post("look at issue 7 and do it");
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval).toMatchObject({ taskId: null, sources: ['lab_issue {"n":7}'] });
@@ -304,7 +333,7 @@ test("after untrusted content, the chat's changes ask, and a task it starts is t
   expect(calls).toEqual(["restart web"]);
 });
 
-test("a task's change runs until it reads untrusted output; then its changes ask", async () => {
+test("a task's change runs until it reads untrusted output; then, with the review off, its changes ask", async () => {
   const calls: string[] = [];
   const work = new FakeModel([
     use("lab_restart", { guest: "web" }),
@@ -313,6 +342,7 @@ test("a task's change runs until it reads untrusted output; then its changes ask
     finish(),
   ]);
   const t = await lab(new FakeModel(), work, calls);
+  t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(calls).toEqual(["restart web"]);
@@ -324,7 +354,7 @@ test("a task's change runs until it reads untrusted output; then its changes ask
   expect(calls).toEqual(["restart web", "restart web"]);
 });
 
-test("a plugin's own policy refuses a call, or asks first, even untainted", async () => {
+test("a plugin's own policy refuses a call, or, with the review off, asks first, even untainted", async () => {
   const calls: string[] = [];
   const work = new FakeModel([
     use("lab_restart", { guest: "host" }),
@@ -332,6 +362,7 @@ test("a plugin's own policy refuses a call, or asks first, even untainted", asyn
     finish(),
   ]);
   const t = await lab(new FakeModel(), work, calls);
+  t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval).toMatchObject({ kind: "delete", reason: "The database has open connections." });

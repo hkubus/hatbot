@@ -317,6 +317,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
 const ANSWER: Record<Approval["status"], string> = {
   pending: "Waiting for your answer",
+  blocked: "Blocked",
   approved: "Approved",
   denied: "Denied",
   expired: "Expired",

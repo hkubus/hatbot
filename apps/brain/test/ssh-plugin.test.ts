@@ -471,8 +471,7 @@ test("the brain's and the desktop's containers are refused, and none is reached 
   expect(onHost("uptime").action).toBe("allow");
 });
 
-test("the review: a change the rules ask about is reviewed, and your note on a denial counts as your words; a careful host skips it", async () => {
-  const note = "Not the server; stop its scan timer instead.";
+test("the review: a change the rules ask about is reviewed with your words, and blocked without asking; a careful host skips it", async () => {
   const reviews: string[] = [];
   const work = new FakeModel([
     exec("nas", "systemctl stop jellyfin"),
@@ -484,21 +483,20 @@ test("the review: a change the rules ask about is reviewed, and your note on a d
     const shown = JSON.stringify(p.messages);
     reviews.push(shown);
     return JSON.stringify(
-      shown.includes(note)
-        ? { safe: true, why: "You said to stop the timer." }
+      shown.includes("scan.timer")
+        ? { safe: true, why: "Stopping the scan is what you asked about." }
         : { safe: false, why: "Nothing you said asks for this." },
     );
   };
   const t = await ssh({ work });
   const task = chatTask(t, "jellyfin keeps scanning, look into it");
-  const approval = await waitFor(() => t.approvals.list(true)[0]);
-  expect(approval.reason).toContain("Nothing you said asks for this.");
+  expect((await ended(t, task.id)).status).toBe("done");
+  const [blocked] = t.approvals.list(false);
+  expect(blocked).toMatchObject({ status: "blocked", summary: "On nas: systemctl stop jellyfin" });
+  expect(blocked?.reason).toContain("Nothing you said asks for this.");
   expect(reviews[0]).toContain("jellyfin keeps scanning, look into it");
   expect(reviews[0]).toContain("<untrusted_sources>\\n[]");
-  t.approvals.decide(approval.id, "deny", "web", note);
-  expect((await ended(t, task.id)).status).toBe("done");
-  // The model read the note with the denial, and the review let the timer's stop through.
-  expect(JSON.stringify(work.requests[1]?.messages)).toContain("<owner_note>");
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("Blocked by the safety review");
   expect(t.approvals.list(false)).toHaveLength(1);
   expect(lastArgs()).toContain("systemctl stop jellyfin-scan.timer");
 

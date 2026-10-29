@@ -1,13 +1,12 @@
-// The review of a change that would otherwise ask you to approve it: if it isn't destructive or
-// dangerous, and nothing untrusted could have put it there, it goes ahead. The small model looks first,
-// and the expert model looks again before a no reaches you.
+// The review of a change a tool or untrusted content flags: if it isn't destructive or dangerous, and
+// nothing untrusted could have put it there, it goes ahead; otherwise it's blocked, and the bot finds
+// another way. The small model looks first, and the expert model looks again before a block.
 
 import type { Verdict } from "@hatbot/plugin-sdk";
 import { tagJson } from "@hatbot/plugin-sdk";
 import {
   type ApprovalKind,
   type ApprovalLevel,
-  type ApprovalScope,
   SAFETY_KINDS,
   type SafetyKind,
 } from "@hatbot/shared";
@@ -54,9 +53,32 @@ export function levelOf(
   return level === "review" && (verdict.always || !settings.reviewChanges) ? "ask" : level;
 }
 
-/** Where only untrusted content asks, you may also approve the tool for the rest of the work. */
-export const scopesFor = (verdict: Extract<Verdict, { action: "ask" }>): ApprovalScope[] =>
-  verdict.tainted ? ["session", "always"] : ["always"];
+/** What the bot is told when the review blocks a change. */
+export const blockedText = (why: string) =>
+  `Blocked by the safety review${why ? `: ${why.replace(/\.$/, "")}` : ""}. Don't try the same thing again. Find another way, or finish and say what was blocked: the owner can run it anyway.`;
+
+/** Blocks a run takes before it stops: so many in a row, or so many in all. */
+export const BLOCKS_IN_A_ROW = 3;
+export const BLOCKS_IN_ALL = 20;
+
+/** A run's blocks so far; `blocked()` says why it stops once there are too many. */
+export class Blocks {
+  private row = 0;
+  private all = 0;
+
+  blocked(): string | null {
+    this.row++;
+    this.all++;
+    if (this.row >= BLOCKS_IN_A_ROW)
+      return `the safety review blocked ${this.row} changes in a row`;
+    if (this.all >= BLOCKS_IN_ALL) return `the safety review blocked ${this.all} changes`;
+    return null;
+  }
+
+  ran() {
+    this.row = 0;
+  }
+}
 
 /** `by`: the reviewing model's name. */
 export type Review = { safe: boolean; why: string; by: string };
@@ -82,7 +104,8 @@ export async function safeToRun(
   ].join("\n\n");
   const { smallModel, expertModel } = d.settings.get();
   const models = [...new Set([smallModel, expertModel])];
-  let review: Review = { safe: false, why: "", by: modelName(smallModel) };
+  // A review that couldn't run blocks.
+  let review: Review = { safe: false, why: "it couldn't be checked", by: modelName(smallModel) };
   for (const model of models) {
     const by = modelName(model);
     try {

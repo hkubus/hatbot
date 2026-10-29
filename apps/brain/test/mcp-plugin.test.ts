@@ -79,6 +79,7 @@ test("a task's MCP call asks first, then runs, its output marked untrusted", asy
     "mcp_fix_secret",
     "mcp_fix_broken",
   ]);
+  t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval.summary).toBe('fix: echo {"text":"from a task"}');

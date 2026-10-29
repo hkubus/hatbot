@@ -314,7 +314,8 @@ struct Question: Codable, Identifiable, Equatable, Sendable {
 
 struct Approval: Codable, Identifiable, Equatable, Sendable {
   enum Status: String, LenientEnum {
-    case pending, approved, denied, expired, cancelled
+    /// Blocked: the safety review stopped it; the web app can run it anyway.
+    case pending, blocked, approved, denied, expired, cancelled
     static let fallback = Status.cancelled
   }
 
@@ -334,8 +335,8 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var decidedAt: String?
   var note: String?
   var botId: String?
-  /// How far approving it may go besides this once: "session" (the rest of the task or chat) and
-  /// "always" (this exact action). A String, so a scope this app doesn't know is left out.
+  /// How far approving it may go besides this once: "always" (this exact action). A String, so a
+  /// scope this app doesn't know is left out.
   var scopes: [String]?
   /// The chat waiting for it, and the conversation in it, when no task is.
   var conversationId: Int?

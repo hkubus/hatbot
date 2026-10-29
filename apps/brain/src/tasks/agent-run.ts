@@ -14,7 +14,7 @@ import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { agentPrompt, CHART_GUESS } from "../agent/prompt";
-import { levelOf, safeToRun, scopable, scopesFor } from "../agent/review";
+import { Blocks, blockedText, levelOf, safeToRun, scopable } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { memoryIndex } from "../agent/thread";
 import {
@@ -430,6 +430,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ? `${words ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
       : words;
 
+  const blocks = new Blocks();
+  /** Why the run stops, once the review has blocked too much. */
+  let gaveUp: string | null = null;
+
   /** As Settings → Safety says; by default never for money, accounts, what's careful, or suspected injection. */
   const reviewed = async (
     t: PluginTool,
@@ -459,7 +463,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         input: call.input,
         target: t.target?.(call.input as never) ?? null,
         taskId: id,
-        taintOnly: verdict.tainted === true,
       });
     if (granted) {
       tasks.addStep(id, {
@@ -527,17 +530,35 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
     if (verdict.action === "ask") {
       const check = await reviewed(t, call, what, verdict);
+      const target = t.target?.(call.input as never) ?? null;
+      // Never for money, accounts, doors, what you said to always ask about, or a suspicion.
+      const scopes = scopable(verdict, check.suspected) ? (["always"] as const) : [];
+      if (!check.safe && check.by) {
+        d.approvals.block({
+          taskId: id,
+          botId: bot.id,
+          kind: verdict.kind ?? "other",
+          summary: what,
+          reason: `${check.by}: ${check.why}`,
+          sources: [...sources],
+          call: { tool: t.name, input: call.input, target },
+          scopes: [...scopes],
+        });
+        tasks.addStep(id, {
+          kind: "approval",
+          name: `Blocked: ${check.by} found it unsafe`,
+          detail: `${what}. ${check.why}`,
+          url: null,
+        });
+        gaveUp ??= blocks.blocked();
+        return result(call, blockedText(check.why), true);
+      }
       if (!check.safe) {
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
-          call: {
-            tool: t.name,
-            input: call.input,
-            target: t.target?.(call.input as never) ?? null,
-          },
-          // Never for money, accounts, doors, what you said to always ask about, or a suspicion.
-          scopes: scopable(verdict, check.suspected) ? scopesFor(verdict) : [],
+          call: { tool: t.name, input: call.input, target },
+          scopes: [...scopes],
           reason: check.suspected
             ? `${verdict.why} ${SUSPECTED}`
             : check.why
@@ -574,6 +595,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         url: null,
       });
     const r = await runPluginTool(t, call.input, cc);
+    if (t.access === "write") blocks.ran();
     if (r.untrusted) taint(what, r.text);
     if (t.name === "send_file" && !r.isError)
       tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
@@ -859,6 +881,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // Set inside the calls above, which TypeScript can't see.
       const ended = finished as z.infer<typeof FinishTask> | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
+      const stopped = gaveUp as string | null;
+      if (stopped)
+        throw new Stop(
+          "failed",
+          `Stopped: ${stopped}. Its steps say what, and you can run any of them anyway.`,
+        );
       // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger,
       // apart from an event's untrusted part. Not while the web tools' code is still running: then only tool
       // results may follow.

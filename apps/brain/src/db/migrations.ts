@@ -970,4 +970,39 @@ export const migrations: string[] = [
     installed_at TEXT NOT NULL
   );
   `,
+  // 62: what the safety review blocked, which you may run anyway once; old session scopes end.
+  `${REBUILD}
+  CREATE TABLE approvals_new (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER REFERENCES tasks(id),
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    sources TEXT NOT NULL DEFAULT '[]',
+    screenshot_step_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'blocked', 'approved', 'denied', 'expired', 'cancelled')),
+    decided_via TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    note TEXT,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    conversation_id INTEGER REFERENCES conversations(id),
+    tool TEXT,
+    input TEXT,
+    target TEXT,
+    episode_id INTEGER,
+    scopes TEXT NOT NULL DEFAULT '[]',
+    scope TEXT,
+    blocked INTEGER NOT NULL DEFAULT 0,
+    used_at TEXT
+  );
+  INSERT INTO approvals_new (id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id, scopes, scope)
+  SELECT id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id,
+    replace(replace(scopes, '"session",', ''), '"session"', ''), CASE WHEN scope = 'session' THEN NULL ELSE scope END
+  FROM approvals;
+  DROP TABLE approvals;
+  ALTER TABLE approvals_new RENAME TO approvals;
+  CREATE INDEX approvals_status ON approvals (status);
+  `,
 ];

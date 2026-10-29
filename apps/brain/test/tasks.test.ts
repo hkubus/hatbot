@@ -171,6 +171,7 @@ test("notification buttons carry signed, single-use tokens that do only their ow
     { content: [toolUse("request_takeover", { reason: "2FA" })] },
   ]);
   const t = await testApp(new FakeModel(), work);
+  t.settings.update({ reviewChanges: false });
   const task = startTask(t);
   const approval = await pending(t);
   const [approve, , pause] = (t.notifier.sent.at(-1)?.actions ?? []) as {
@@ -256,6 +257,7 @@ test("an approval asked before trying covers only the step it names, once, on it
     finish(),
   ]);
   const t = await testApp(new FakeModel(), work);
+  t.settings.update({ reviewChanges: false });
   t.agent.page = { url, title: "Ann", text: "" };
   t.agent.inspect = async (_x?: number, y?: number) => step(y === 100 ? "Delete account" : "Send");
   t.agent.afterAction = (name, input) => {
@@ -286,6 +288,7 @@ test("a lock-screen approval for a message doesn't buy, and asking again needs t
     finish(),
   ]);
   const t = await testApp(new FakeModel(), work);
+  t.settings.update({ reviewChanges: false });
   t.agent.page = { url, title: "Rower", text: "Rower. 500 zł. Kup teraz." };
   t.agent.element = {
     tag: "button",
@@ -436,7 +439,7 @@ test("hitting the task limit asks to raise it", async () => {
   expect(t.tasks.get(task.id)?.status).toBe("done");
 });
 
-test("desktop_shell runs commands as text; destructive ones go to the review, then the owner", async () => {
+test("desktop_shell runs commands as text; the review blocks a destructive one you didn't ask for", async () => {
   const work = new FakeModel([
     { content: [toolUse("desktop_shell", { command: "python3 -c 'print(6*7)'" })] },
     { content: [toolUse("desktop_shell", { command: "rm -rf ~/build" })] },
@@ -458,19 +461,18 @@ test("desktop_shell runs commands as text; destructive ones go to the review, th
         )
       : undefined;
   const task = startTask(t, "Compute");
-  const approval = await pending(t);
-  expect(approval).toMatchObject({
+  await t.tasks.idle();
+  const [blocked] = t.approvals.list(false);
+  expect(blocked).toMatchObject({
+    status: "blocked",
     kind: "delete",
     summary: "On the desktop: rm -rf ~/experiments",
   });
-  expect(approval.reason).toContain("Opus 5.5: Nothing else has these files.");
-  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'", "rm -rf ~/build"]);
-  t.approvals.decide(approval.id, "deny", "web");
-  await t.tasks.idle();
+  expect(blocked?.reason).toContain("Opus 5.5: Nothing else has these files.");
   expect(t.tasks.get(task.id)?.status).toBe("done");
-  expect(t.agent.commands).toHaveLength(2);
+  expect(t.agent.commands).toEqual(["python3 -c 'print(6*7)'", "rm -rf ~/build"]);
   expect(lastText(work.requests[1])).toContain("Exit code 0\\n42");
-  expect(lastText(work.requests[3])).toContain("The owner denied this.");
+  expect(lastText(work.requests[3])).toContain("Blocked by the safety review");
   expect(t.approvals.list(false)).toHaveLength(1);
 });
 

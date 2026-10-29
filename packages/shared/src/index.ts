@@ -296,12 +296,8 @@ export type ListingStatus =
   | "declined"
   | "cancelled";
 
-/**
- * How far an approval goes besides this once: `session`, the same tool on the same
- * thing for the rest of the task or conversation, where only untrusted content asks; `always`, this
- * exact call for this bot from now on.
- */
-export type ApprovalScope = "session" | "always";
+/** How far an approval goes besides this once: `always`, this exact call for this bot from now on. */
+export type ApprovalScope = "always";
 
 /** The kinds Safety settings choose for; budget, mandates and injection warnings have their own. */
 export const SAFETY_KINDS = [
@@ -347,7 +343,8 @@ export type Approval = {
   sources: string[];
   /** The step whose screenshot shows what's being approved. */
   screenshotStepId: number | null;
-  status: "pending" | "approved" | "denied" | "expired" | "cancelled";
+  /** `blocked`: the safety review stopped it, and you may still run it anyway. */
+  status: "pending" | "blocked" | "approved" | "denied" | "expired" | "cancelled";
   decidedVia: "web" | "ntfy" | null;
   costUsd: number;
   createdAt: string;
@@ -363,8 +360,10 @@ export type Approval = {
 export const DecideApproval = z.object({
   decision: z.enum(["approve", "deny"]),
   note: z.string().trim().max(4000).optional(),
-  scope: z.enum(["session", "always"]).optional(),
+  scope: z.enum(["always"]).optional(),
 });
+/** Running what the safety review blocked: once, or `always` for this exact call. */
+export const RunAnyway = z.object({ always: z.boolean().optional() });
 
 /** An exact call you always allow (Settings → Safety). */
 export type ApprovalRule = {

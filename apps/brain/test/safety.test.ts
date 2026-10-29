@@ -176,3 +176,57 @@ test("the chat runs as many commands in a reply as Safety lets it", async () => 
   await t.thread.post("again").done;
   expect(done).toHaveLength(5);
 });
+
+const reviewSaysUnsafe = (p: { system?: unknown }) =>
+  p.system === REVIEW_PROMPT
+    ? '{"safe": false, "why": "Nothing you said asks for it."}'
+    : undefined;
+
+test("the review blocks a task's change without asking; Run anyway lets the running task do it once", async () => {
+  const { t, done, work } = await lab([
+    call("lab_wipe"),
+    call("wait", { minutes: 5, for: "the owner" }),
+    call("lab_wipe"),
+    finish,
+  ]);
+  work.onCreate = reviewSaysUnsafe;
+  const id = runTask(t);
+  const blocked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(blocked).toMatchObject({ status: "blocked", taskId: id, scopes: ["always"] });
+  expect(t.tasks.get(id)?.status).toBe("running");
+  const { cookie } = signIn(t);
+  expect((await t.call("POST", `/approvals/${blocked.id}/anyway`, {}, { cookie })).status).toBe(
+    200,
+  );
+  await finished(t, id);
+  expect(done).toEqual(["lab_wipe"]);
+  expect(t.tasks.get(id)?.status).toBe("done");
+});
+
+test("a task stops after the review blocks three changes in a row, and a review that fails blocks", async () => {
+  const { t, done, work } = await lab([
+    call("lab_wipe"),
+    call("lab_wipe"),
+    call("lab_wipe"),
+    finish,
+  ]);
+  work.onCreate = (p) => (p.system === REVIEW_PROMPT ? "not json" : undefined);
+  const id = runTask(t);
+  await finished(t, id);
+  expect(done).toEqual([]);
+  expect(t.tasks.get(id)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(id)?.summary).toContain("blocked 3 changes in a row");
+  expect(t.approvals.list(true).map((a) => a.status)).toEqual(["blocked", "blocked", "blocked"]);
+  expect(t.approvals.list(true)[0]?.reason).toContain("it couldn't be checked");
+});
+
+test("Always on a blocked change lets that exact call skip the review from then on", async () => {
+  const { t, done, work } = await lab([call("lab_wipe"), finish, call("lab_wipe"), finish]);
+  work.onCreate = reviewSaysUnsafe;
+  await finished(t, runTask(t));
+  const [blocked] = t.approvals.list(true);
+  t.approvals.runAnyway(blocked?.id ?? 0, true);
+  expect(t.approvals.rules()).toHaveLength(1);
+  await finished(t, runTask(t));
+  expect(done).toEqual(["lab_wipe"]);
+});

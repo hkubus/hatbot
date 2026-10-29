@@ -620,41 +620,34 @@ test("an attached or shared file is untrusted and screened, and the review reads
   expect(restarted).toEqual(["nas"]);
 });
 
-test("an approval for the rest of a task covers what only untrusted content asks about; one for always, that exact call", async () => {
+test("an approval for always covers that exact call in every task after", async () => {
   const restarted: string[] = [];
   const restart = (service: string) => ({ content: [toolUse("lab_restart", { service })] });
   const read = { content: [toolUse("lab_issue", {})] };
   const work = new FakeModel([
     read,
     restart("jellyfin"),
-    restart("immich"),
     finish("1"),
     read,
     restart("jellyfin"),
-    finish("2"),
-    read,
-    restart("jellyfin"),
     restart("immich"),
-    finish("3"),
+    finish("2"),
   ]);
   const t = await testApp(new FakeModel(), work, {}, [labPlugin(() => "Issue", restarted)]);
   await t.plugins.update("lab", { enabled: true });
   t.settings.update({ reviewChanges: false });
-  const run = async (scope?: "session" | "always", deny = false) => {
+  const run = async (scope?: "always", deny = false) => {
     const task = t.tasks.createBackgroundTask({ title: "Fix", goal: "Fix it", origin: "chat" });
     const asked = await waitFor(() => t.approvals.list(true)[0]);
-    expect(asked.scopes).toEqual(["session", "always"]);
+    expect(asked.scopes).toEqual(["always"]);
     t.approvals.decide(asked.id, deny ? "deny" : "approve", "web", undefined, scope);
     await waitFor(() => t.tasks.get(task?.id ?? 0)?.finishedAt);
     return t.tasks.steps(task?.id ?? 0).filter((s) => s.name === "Not asking: you allowed it");
   };
-  // For the rest of the task: the same tool, here on anything, while only untrusted content asks.
-  expect(await run("session")).toHaveLength(1);
-  expect(restarted).toEqual(["jellyfin", "immich"]);
-  // Not in the next task; always allowing covers that exact call, in every task after.
   expect(await run("always")).toHaveLength(0);
+  // The next task's same call goes ahead; another one asks.
   expect(await run(undefined, true)).toHaveLength(1);
-  expect(restarted).toEqual(["jellyfin", "immich", "jellyfin", "jellyfin"]);
+  expect(restarted).toEqual(["jellyfin", "jellyfin"]);
   expect(t.approvals.rules().map((r) => r.summary)).toEqual(['lab_restart {"service":"jellyfin"}']);
 
   // A scope it doesn't offer is refused, as is one on what always asks.

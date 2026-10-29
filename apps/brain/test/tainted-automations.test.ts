@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import type { Watcher } from "@hatbot/shared";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 
@@ -30,11 +29,10 @@ async function automations(t: TestApp) {
 const taint = (t: TestApp) =>
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
 
-test("after reading untrusted content, changing, switching off or deleting an automation asks first, and says all of it", async () => {
+test("after reading untrusted content, with the review off, changing, switching off or deleting an automation asks first, and says all of it", async () => {
   const model = new FakeModel([{ content: [text("hi")] }]);
-  model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: false, why: "Not asked for." }) : undefined;
   const t = await testApp(model);
+  t.settings.update({ reviewChanges: false });
   const { schedule, trigger } = await automations(t);
   await t.thread.post("hello").done;
   taint(t);
@@ -56,7 +54,6 @@ test("after reading untrusted content, changing, switching off or deleting an au
 
   const change = await waitFor(() => t.approvals.list(true)[0]);
   expect(change.summary).toContain("make it do: Say all disks are fine.");
-  expect(change.reason).toContain("Not asked for.");
   expect(change.sources).toEqual(["https://evil.example"]);
   t.approvals.decide(change.id, "deny", "web");
   const off = await waitFor(() => t.approvals.list(true)[0]);

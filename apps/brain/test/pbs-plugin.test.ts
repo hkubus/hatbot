@@ -46,7 +46,7 @@ const env = {
 };
 const names = (t: TestApp) => pluginTools(t).map((x) => x.name);
 
-test("a task verifies right away; deleting a backup waits for approval and names the snapshot", async () => {
+test("a task verifies right away; deleting a backup, with the review off, waits for approval and names the snapshot", async () => {
   const work = new FakeModel([
     { content: [toolUse("pbs_verify", { store: "main", type: "vm", id: "105" })] },
     {
@@ -57,6 +57,7 @@ test("a task verifies right away; deleting a backup waits for approval and names
     finish(),
   ]);
   const t = await pluginApp(pbsPlugin, env, { work });
+  t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval.kind).toBe("delete");
