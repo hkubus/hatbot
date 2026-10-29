@@ -10,7 +10,14 @@ import {
   type StreamParams,
   withRetries,
 } from "@hatbot/plugin-sdk";
-import { type ChatChunk, type ChatResponse, ChatStream, fromChat, toChat } from "./translate";
+import {
+  type ChatChunk,
+  type ChatResponse,
+  ChatStream,
+  type Dialect,
+  fromChat,
+  toChat,
+} from "./translate";
 
 export const OPENROUTER = "https://openrouter.ai/api/v1";
 
@@ -37,7 +44,11 @@ async function apiError(res: Response): Promise<ApiError> {
   );
 }
 
+/** A stream that ended before its answer did. */
+class CutOff extends ModelError {}
+
 export function retryable(err: unknown): boolean {
+  if (err instanceof CutOff) return true;
   if (err instanceof ModelError && err.status !== undefined)
     return err.status >= 500 || err.status === 429 || err.status === 408;
   return networkFailure(err);
@@ -70,13 +81,17 @@ async function* events(body: ReadableStream<Uint8Array>): AsyncGenerator<ChatChu
   }
 }
 
+/** A model as listed, and whether it takes a reasoning effort. */
+export type Listing = ModelInfo & { reasoning: boolean };
+
+const openRouter = (baseUrl: string) => new URL(baseUrl).host === "openrouter.ai";
+
 export class OpenAIModelClient implements ModelProvider {
   constructor(
     private o: {
       baseUrl: string;
       key: string;
-      models: ModelInfo[];
-      webSearch: boolean;
+      models: Listing[];
       fetch: Fetch;
     },
   ) {}
@@ -112,12 +127,23 @@ export class OpenAIModelClient implements ModelProvider {
       }
       answer.add(chunk, { text: handlers.onText, thinking: handlers.onThinking });
     }
+    if (!answer.finished) throw new CutOff("the API stopped before it finished");
     return answer.message(params.model);
+  }
+
+  private dialect(model: string): Dialect {
+    const m = this.o.models.find((x) => x.id === model);
+    return {
+      openRouter: openRouter(this.o.baseUrl),
+      images: m?.capabilities.images ?? false,
+      pdfs: m?.capabilities.pdfs ?? false,
+      reasoning: m?.reasoning ?? false,
+    };
   }
 
   private async post(params: Omit<CreateParams, "stream">, stream: boolean, signal?: AbortSignal) {
     const body = {
-      ...toChat(params, { webSearch: this.o.webSearch }),
+      ...toChat(params, this.dialect(params.model)),
       ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
     const res = await this.o.fetch(`${this.o.baseUrl}/chat/completions`, {
@@ -147,9 +173,9 @@ const perMillion = (usd: string | undefined) => {
 
 /** The models it lists: those given, or, with none given, every one that takes tools. */
 export async function catalogue(
-  o: { baseUrl: string; key: string; fetch: Fetch; webSearch: boolean },
+  o: { baseUrl: string; key: string; fetch: Fetch },
   only: string[],
-): Promise<ModelInfo[]> {
+): Promise<Listing[]> {
   const res = await o.fetch(`${o.baseUrl}/models`, {
     headers: { authorization: `Bearer ${o.key}` },
     signal: AbortSignal.timeout(15_000),
@@ -169,11 +195,8 @@ export async function catalogue(
       ...(input !== null && output !== null
         ? { price: { input, output, cacheRead: perMillion(m.pricing?.input_cache_read) ?? input } }
         : {}),
-      capabilities: {
-        webSearch: o.webSearch,
-        images: inputs.includes("image"),
-        pdfs: inputs.includes("file"),
-      },
+      capabilities: { images: inputs.includes("image"), pdfs: inputs.includes("file") },
+      reasoning: m.supported_parameters?.includes("reasoning") ?? false,
     };
   });
 }

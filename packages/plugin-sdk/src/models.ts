@@ -31,8 +31,6 @@ export type ModelPrice = {
 export type ModelCapabilities = {
   /** The desktop needs it. */
   computerUse?: boolean;
-  webSearch?: boolean;
-  webFetch?: boolean;
   images?: boolean;
   pdfs?: boolean;
   /** Notes between tools as it works, shown while a reply or task runs. */
@@ -69,8 +67,7 @@ export class ModelError extends Error {
 }
 
 /** The roles a model plays; Settings picks one for each. */
-export const MODEL_ROLES = ["chat", "task", "desktop", "small", "expert"] as const;
-export type ModelRole = (typeof MODEL_ROLES)[number];
+export type ModelRole = "chat" | "task" | "desktop" | "small" | "expert";
 
 export const retryDelays = { ms: [1000, 4000] };
 const MAX_RETRY_AFTER_MS = 60_000;

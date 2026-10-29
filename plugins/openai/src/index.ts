@@ -3,8 +3,6 @@ import { definePlugin, needsSetup, PluginError, ready } from "@hatbot/plugin-sdk
 import { z } from "zod";
 import { catalogue, OPENROUTER, OpenAIModelClient } from "./client";
 
-export { OpenAIModelClient } from "./client";
-
 const ModelId = z.string().trim().min(1).max(200);
 
 export const openaiPlugin = definePlugin({
@@ -23,8 +21,7 @@ export const openaiPlugin = definePlugin({
     const key = env.OPENAI_API_KEY;
     if (!key) return needsSetup("Add an API key below: OpenRouter's, or your API's.");
     const baseUrl = (env.OPENAI_BASE_URL || OPENROUTER).replace(/\/+$/, "");
-    // OpenRouter searches the web for a model given its "web" plugin.
-    const api = { baseUrl, key, fetch, webSearch: new URL(baseUrl).host === "openrouter.ai" };
+    const api = { baseUrl, key, fetch };
     const list = () =>
       catalogue(api, config.models).catch((err) => {
         throw new PluginError(

@@ -1,12 +1,6 @@
 import type { ModelCapabilities, ModelInfo } from "@hatbot/plugin-sdk";
 
-const ALL: ModelCapabilities = {
-  computerUse: true,
-  webSearch: true,
-  webFetch: true,
-  images: true,
-  pdfs: true,
-};
+const ALL: ModelCapabilities = { computerUse: true, images: true, pdfs: true };
 
 /** USD per million tokens. */
 export const MODELS: ModelInfo[] = [

@@ -18,6 +18,7 @@ const LISTING = {
       architecture: { input_modalities: ["text", "image", "file"] },
     },
     { id: "acme/plain", name: "Acme: Plain", supported_parameters: ["temperature"] },
+    { id: "acme/text", name: "Acme: Text", supported_parameters: ["tools"] },
   ],
 };
 
@@ -28,22 +29,25 @@ const sse = (chunks: object[]) =>
   );
 
 /** OpenRouter as the plugin sees it: what each request asked, and scripted answers. */
-async function openRouter(answers: Response[]) {
+async function openRouter(answers: Response[], base = "https://openrouter.ai/api/v1") {
   const asked: { url: string; body: Record<string, unknown> | null; key: string | null }[] = [];
   const t = track(
-    await testApp(undefined, undefined, {}, [openaiPlugin], { OPENAI_API_KEY: "sk-or-test" }),
+    await testApp(undefined, undefined, {}, [openaiPlugin], {
+      OPENAI_API_KEY: "sk-or-test",
+      OPENAI_BASE_URL: base,
+    }),
   );
   t.outside.fetch = async (url, init) => {
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
     asked.push({ url, body, key: new Headers(init?.headers).get("authorization") });
-    if (url === "https://openrouter.ai/api/v1/models") return Response.json(LISTING);
+    if (url === `${base}/models`) return Response.json(LISTING);
     return answers.shift() ?? new Response(null, { status: 500 });
   };
   await t.plugins.update("openai", { enabled: true });
   return { t, asked, models: new Models(t.plugins) };
 }
 
-test("an OpenAI-compatible API answers in the Messages API's shape, streamed, with its tools, web search, prices and usage", async () => {
+test("an OpenAI-compatible API answers in the Messages API's shape, streamed, with its tools, prices and usage", async () => {
   const { t, asked, models } = await openRouter([
     sse([
       { id: "gen-1", choices: [{ delta: { reasoning: "Checking the disks." } }] },
@@ -83,6 +87,7 @@ test("an OpenAI-compatible API answers in the Messages API's shape, streamed, wi
   const { cookie } = signIn(t);
   expect(await (await t.call("GET", "/models", undefined, { cookie })).json()).toEqual([
     { id: "acme/smart", name: "Acme: Smart", provider: "openai", computerUse: false },
+    { id: "acme/text", name: "Acme: Text", provider: "openai", computerUse: false },
   ]);
   expect(priceOf("acme/smart")).toEqual({ input: 2, output: 10, cacheRead: 0.5 });
 
@@ -146,7 +151,6 @@ test("an OpenAI-compatible API answers in the Messages API's shape, streamed, wi
     max_tokens: 1000,
     stream: true,
     reasoning: { effort: "high" },
-    plugins: [{ id: "web" }],
     tools: [{ type: "function", function: { name: "proxmox_list", description: "Lists guests" } }],
     messages: [
       { role: "system", content: "Be brief." },
@@ -165,7 +169,9 @@ test("an OpenAI-compatible API answers in the Messages API's shape, streamed, wi
       },
     ],
   });
+  // Its web search is left out: OpenRouter's would be billed and its pages not marked untrusted.
   expect(sent?.body?.tools).toHaveLength(1);
+  expect(sent?.body?.plugins).toBeUndefined();
 
   expect(said).toEqual(["Hel", "lo"]);
   expect(thought).toEqual(["Checking the disks."]);
@@ -212,4 +218,95 @@ test("an OpenAI-compatible API's passing failures are tried again, and its refus
   } finally {
     retryDelays.ms = saved;
   }
+});
+
+const ask = (models: Models, model = "acme/smart") =>
+  models.stream(
+    {
+      model,
+      max_tokens: 10,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "high" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Look" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+            {
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: "AAAA" },
+            },
+          ],
+        },
+      ],
+    },
+    { onFailedUsage: () => {} },
+  );
+
+test("a call cut off at the token limit isn't run", async () => {
+  const { models } = await openRouter([
+    sse([
+      {
+        choices: [
+          {
+            delta: { tool_calls: [{ index: 0, function: { name: "x_run", arguments: '{"a' } }] },
+            finish_reason: "length",
+          },
+        ],
+      },
+    ]),
+  ]);
+  const res = await ask(models);
+  expect(res.stop_reason).toBe("max_tokens");
+  // Streamed without an id, it still gets one to answer.
+  expect((res.content[0] as { id: string }).id).toStartWith("call_");
+});
+
+test("a stream that ends before its answer is tried again", async () => {
+  const saved = retryDelays.ms;
+  retryDelays.ms = [0, 0];
+  try {
+    const { asked, models } = await openRouter([
+      sse([{ choices: [{ delta: { content: "Hel" } }] }]),
+      sse([{ choices: [{ delta: { content: "Hel" }, finish_reason: "error" }] }]),
+      sse([{ choices: [{ delta: { content: "Hello" }, finish_reason: "stop" }] }]),
+    ]);
+    const res = await ask(models);
+    expect(res.content).toEqual([
+      { type: "text", text: "Hello", citations: null },
+    ] as typeof res.content);
+    expect(asked.filter((a) => a.url.endsWith("/chat/completions"))).toHaveLength(3);
+  } finally {
+    retryDelays.ms = saved;
+  }
+});
+
+test("a model is sent only what it takes", async () => {
+  const done = sse([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }]);
+  const { asked, models } = await openRouter([done]);
+  await ask(models, "acme/text");
+  expect(asked.at(-1)?.body).toMatchObject({
+    max_tokens: 10,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Look" },
+          { type: "text", text: "(An image this model can't see.)" },
+          { type: "text", text: "(A PDF this model can't read.)" },
+        ],
+      },
+    ],
+  });
+  expect(asked.at(-1)?.body?.reasoning).toBeUndefined();
+
+  // OpenAI's own API names the limit differently.
+  const other = await openRouter(
+    [sse([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }])],
+    "https://api.example.com/v1",
+  );
+  await ask(other.models);
+  expect(other.asked.at(-1)?.body).toMatchObject({ max_completion_tokens: 10 });
+  expect(other.asked.at(-1)?.body?.max_tokens).toBeUndefined();
 });

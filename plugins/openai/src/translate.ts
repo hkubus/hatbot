@@ -24,7 +24,8 @@ export type ChatMessage =
 
 export type ChatRequest = {
   model: string;
-  max_tokens: number;
+  max_tokens?: number;
+  max_completion_tokens?: number;
   messages: ChatMessage[];
   tools?: {
     type: "function";
@@ -32,10 +33,9 @@ export type ChatRequest = {
   }[];
   tool_choice?: "auto" | "required" | "none" | { type: "function"; function: { name: string } };
   temperature?: number;
-  reasoning?: { effort: "low" | "medium" | "high" };
+  reasoning?: { effort: Effort };
+  reasoning_effort?: Effort;
   response_format?: { type: "json_schema"; json_schema: { name: string; schema: unknown } };
-  /** OpenRouter's web search. */
-  plugins?: { id: "web" }[];
   stream?: boolean;
   stream_options?: { include_usage: boolean };
 };
@@ -55,6 +55,7 @@ export type ChatResponse = {
   usage?: ChatUsage;
 };
 
+type Effort = "low" | "medium" | "high";
 const EFFORT = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
 
 const textOf = (blocks: string | { type: string; text?: string }[] | undefined | null) =>
@@ -62,9 +63,13 @@ const textOf = (blocks: string | { type: string; text?: string }[] | undefined |
     ? blocks
     : (blocks ?? []).flatMap((b) => (b.type === "text" && b.text ? [b.text] : [])).join("\n\n");
 
-function part(b: Block): Part | null {
+/** What the API and the model take beyond text. */
+export type Dialect = { openRouter: boolean; images: boolean; pdfs: boolean; reasoning: boolean };
+
+function part(b: Block, d: Dialect): Part | null {
   if (b.type === "text") return { type: "text", text: b.text };
   if (b.type === "image") {
+    if (!d.images) return { type: "text", text: "(An image this model can't see.)" };
     const s = b.source;
     if (s.type === "base64")
       return { type: "image_url", image_url: { url: `data:${s.media_type};base64,${s.data}` } };
@@ -73,6 +78,8 @@ function part(b: Block): Part | null {
   }
   if (b.type === "document") {
     const s = b.source;
+    if (s.type === "base64" && !d.pdfs)
+      return { type: "text", text: "(A PDF this model can't read.)" };
     if (s.type === "base64")
       return {
         type: "file",
@@ -88,7 +95,7 @@ function part(b: Block): Part | null {
   return null;
 }
 
-function userMessages(content: ModelMessageParam["content"]): ChatMessage[] {
+function userMessages(content: ModelMessageParam["content"], d: Dialect): ChatMessage[] {
   if (typeof content === "string")
     return [{ role: "user", content: [{ type: "text", text: content }] }];
   const out: ChatMessage[] = [];
@@ -107,12 +114,12 @@ function userMessages(content: ModelMessageParam["content"]): ChatMessage[] {
       });
       // A tool message takes only text: its images follow, in the user message after the results.
       for (const x of blocks) {
-        const p = x.type === "text" ? null : part(x as Block);
+        const p = x.type === "text" ? null : part(x as Block, d);
         if (p) parts.push(p);
       }
       continue;
     }
-    const p = part(b);
+    const p = part(b, d);
     if (p) parts.push(p);
   }
   if (parts.length) out.push({ role: "user", content: parts });
@@ -144,12 +151,14 @@ function assistantMessage(content: ModelMessageParam["content"]): ChatMessage | 
 const isFunction = (t: ModelTool): t is Extract<ModelTool, { input_schema: unknown }> =>
   "input_schema" in t && (!("type" in t) || t.type === undefined || t.type === "custom");
 
-export function toChat(p: Params, opts: { webSearch: boolean }): ChatRequest {
+// OpenRouter takes the older max_tokens and its own reasoning object; OpenAI's own API wants these
+// instead, and only reasoning models take an effort.
+export function toChat(p: Params, d: Dialect): ChatRequest {
   const messages: ChatMessage[] = [];
   const system = textOf(p.system as string | { type: string; text?: string }[] | undefined);
   if (system) messages.push({ role: "system", content: system });
   for (const m of p.messages) {
-    if (m.role === "user") messages.push(...userMessages(m.content));
+    if (m.role === "user") messages.push(...userMessages(m.content, d));
     else {
       const a = assistantMessage(m.content);
       if (a) messages.push(a);
@@ -163,15 +172,15 @@ export function toChat(p: Params, opts: { webSearch: boolean }): ChatRequest {
       parameters: t.input_schema,
     },
   }));
-  const search =
-    opts.webSearch &&
-    (p.tools ?? []).some((t) => "name" in t && t.name === "web_search" && !isFunction(t));
   const choice = p.tool_choice;
-  const effort = p.output_config?.effort;
+  const effort =
+    d.reasoning && p.thinking && p.thinking.type !== "disabled" && p.output_config?.effort
+      ? EFFORT[p.output_config.effort]
+      : undefined;
   const format = p.output_config?.format;
   return {
     model: p.model,
-    max_tokens: p.max_tokens,
+    ...(d.openRouter ? { max_tokens: p.max_tokens } : { max_completion_tokens: p.max_tokens }),
     messages,
     ...(tools.length ? { tools } : {}),
     ...(tools.length && choice
@@ -187,9 +196,7 @@ export function toChat(p: Params, opts: { webSearch: boolean }): ChatRequest {
         }
       : {}),
     ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
-    ...(p.thinking && p.thinking.type !== "disabled" && effort
-      ? { reasoning: { effort: EFFORT[effort] } }
-      : {}),
+    ...(effort ? (d.openRouter ? { reasoning: { effort } } : { reasoning_effort: effort }) : {}),
     ...(format?.type === "json_schema"
       ? {
           response_format: {
@@ -198,7 +205,6 @@ export function toChat(p: Params, opts: { webSearch: boolean }): ChatRequest {
           },
         }
       : {}),
-    ...(search ? { plugins: [{ id: "web" as const }] } : {}),
   };
 }
 
@@ -241,7 +247,10 @@ export function fromChat(res: ChatResponse, model: string): ModelMessage {
       input: input(c.function.arguments),
     })),
   ];
-  const stop = calls.length ? "tool_use" : (STOP[choice?.finish_reason ?? "stop"] ?? "end_turn");
+  const finish = STOP[choice?.finish_reason ?? "stop"];
+  // Cut off at the limit, a call's input is likely cut short too: it mustn't be run.
+  const stop =
+    finish === "max_tokens" ? finish : calls.length ? "tool_use" : (finish ?? "end_turn");
   return {
     id: res.id ?? "",
     type: "message",
@@ -288,7 +297,7 @@ export class ChatStream {
       if (d.reasoning) on.thinking?.(d.reasoning);
       for (const t of d.tool_calls ?? []) {
         const call = this.calls.get(t.index) ?? {
-          id: "",
+          id: `call_${crypto.randomUUID()}`,
           type: "function",
           function: { name: "", arguments: "" },
         };
@@ -299,6 +308,11 @@ export class ChatStream {
       }
       if (c.finish_reason) this.finish = c.finish_reason;
     }
+  }
+
+  /** Whether it got to its end; an API may close the stream before then, or end it with "error". */
+  get finished() {
+    return this.finish !== null && this.finish !== "error";
   }
 
   message(model: string): ModelMessage {
