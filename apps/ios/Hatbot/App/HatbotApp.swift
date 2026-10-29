@@ -129,11 +129,12 @@ struct MainView: View {
         Task {
           if store.incognito { await store.setIncognito(false) }
           // One that didn't load says so; the message isn't looked for in what was kept.
-          if store.conversations.contains(where: { $0.id == conversationId }),
-            !(await store.openConversation(conversationId))
-          {
-            return
-          }
+          // One the chat list doesn't have is a thread.
+          let opened =
+            store.conversations.contains(where: { $0.id == conversationId })
+            ? await store.openConversation(conversationId)
+            : conversationId == store.conversationId || (await store.openThread(conversationId))
+          if !opened { return }
           focus = messageId
         }
       }
@@ -185,6 +186,13 @@ struct MainView: View {
     case .newMessage:
       tab = .chat
       chatPath = []
+    case let .thread(id):
+      tab = .chat
+      chatPath = []
+      Task {
+        if store.incognito { await store.setIncognito(false) }
+        await store.openThread(id)
+      }
     case .live:
       tab = .live
     case .tasks:

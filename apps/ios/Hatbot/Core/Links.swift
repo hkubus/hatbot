@@ -6,6 +6,7 @@ enum AppLink: Equatable, Sendable {
   case schedule(Int)
   case trigger(Int)
   case box(Int)
+  case thread(Int)
   case newMessage
   case live
   case tasks
@@ -27,6 +28,7 @@ enum AppLink: Equatable, Sendable {
       case "schedules": self = .schedule(id)
       case "triggers": self = .trigger(id)
       case "boxes": self = .box(id)
+      case "threads": self = .thread(id)
       default: return nil
       }
     default: return nil
@@ -46,6 +48,7 @@ enum AppLink: Equatable, Sendable {
       case let .schedule(id): "schedules/\(id)"
       case let .trigger(id): "triggers/\(id)"
       case let .box(id): "boxes/\(id)"
+      case let .thread(id): "threads/\(id)"
       case .newMessage: "new"
       case .live: "live"
       case .tasks: "tasks"
