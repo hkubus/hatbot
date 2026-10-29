@@ -2,9 +2,14 @@ import type { Approval, Conversation, Question } from "@hatbot/shared";
 
 type Waiting = Approval | Question;
 
-/** One asked in a chat waits there; one from a task, in the chats of the bot asking. */
+/** One asked in a chat waits there; one from a task, in the bot's chats but not its threads. */
 export const waitsIn = (a: Waiting, chat: Conversation) =>
-  a.conversationId !== null ? a.conversationId === chat.id : chat.botIds.includes(a.botId);
+  a.conversationId !== null
+    ? a.conversationId === chat.id
+    : chat.kind !== "thread" && chat.botIds.includes(a.botId);
+
+export const needsYouIn = (thread: Conversation, waiting: Waiting[]) =>
+  thread.needsYou || waiting.some((a) => a.status === "pending" && waitsIn(a, thread));
 
 export const chatOf = (a: Waiting, chats: Conversation[]) =>
   a.conversationId !== null

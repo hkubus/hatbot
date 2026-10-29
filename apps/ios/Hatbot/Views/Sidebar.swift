@@ -69,7 +69,7 @@ private struct SidebarButton: ViewModifier {
   }
 }
 
-private struct Count: View {
+struct Count: View {
   let n: Int
 
   var body: some View {
@@ -162,7 +162,7 @@ struct Sidebar<Content: View>: View {
             let bot = c.kind == .direct ? c.botIds.first.flatMap { store.bots[$0] } : nil
             row(
               store.chatName(c), icon: bot?.icon.symbol ?? (c.kind == .group ? "person.3" : "bubble.left"),
-              tint: bot?.color.color, selected: tab == .chat && c.id == store.conversationId, count: c.unread
+              tint: bot?.color.color, selected: tab == .chat && c.id == store.listedChatId, count: c.unread
             ) {
               tab = .chat
               Task { await store.openConversation(c.id) }

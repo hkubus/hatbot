@@ -10,6 +10,7 @@ import type {
   WeeklyReport,
 } from "@hatbot/plugin-automation";
 import type { Boxes } from "@hatbot/plugin-boxes";
+import type { ComputersService } from "@hatbot/plugin-computer";
 import type { DesktopService, Teach } from "@hatbot/plugin-desktop";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Notification, Notifier, Plugin } from "@hatbot/plugin-sdk";
@@ -183,6 +184,9 @@ export async function testApp(
     },
     get boxes() {
       return service<Boxes>("boxes");
+    },
+    get computers() {
+      return service<ComputersService>("computers");
     },
     /** Who has the desktop. */
     get desktop() {

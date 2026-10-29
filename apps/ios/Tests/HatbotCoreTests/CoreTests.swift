@@ -155,6 +155,7 @@ final class SafetyTests: XCTestCase {
     XCTAssertEqual(link("HATBOT://tasks/12"), .task(12))
     XCTAssertEqual(link("hatbot://new"), .newMessage)
     XCTAssertEqual(link("hatbot://boxes/7"), .box(7))
+    XCTAssertEqual(link("hatbot://threads/9"), .thread(9))
     XCTAssertNil(link("hatbot://tasks/1/2"))
     XCTAssertNil(link("https://tasks/1"))
     let memory = AppLink.memory("notes/my servers.md")
@@ -856,7 +857,8 @@ final class NetworkTests: XCTestCase {
     SlowBrain.routes["/tasks?ids=7&view=card"] =
       #"[{"id":7,"title":"t","origin":"chat","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"createdAt":"2026-10-15T08:00:00Z","finishedAt":"2026-10-15T09:00:00Z"}]"#
     let approval = #"{"id":3,"kind":"send","summary":"s","reason":"r","sources":[],"status":"pending","costUsd":0,"createdAt":"2026-10-15T08:00:00Z","expiresAt":"2026-10-15T09:00:00Z"}"#
-    let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"unread":[5]}"#
+    let computer = #"{"id":"m1","name":"laptop","online":true,"enabled":true,"paused":false,"locked":false,"ownerActive":false,"careful":false,"control":"hatbot","request":{"taskId":9,"reason":"Log in"},"activeTaskId":9,"lastSeenAt":null}"#
+    let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"computers":[\#(computer)],"unread":[5]}"#
     await MainActor.run {
       store.streamOpened(reconnected: false)
       store.streamed(try? decode(HatbotEvent.self, snapshot))
@@ -868,6 +870,9 @@ final class NetworkTests: XCTestCase {
       XCTAssertEqual(store.pendingApprovals.map(\.id), [3])
       XCTAssertEqual(store.bots["hatbot"]?.brief, true)
       XCTAssertEqual(store.conversations.first?.unread, 1)
+      // The approval, and the computer's task asking for you.
+      XCTAssertEqual(store.computers.map(\.name), ["laptop"])
+      XCTAssertEqual(store.needsYou, 2)
     }
     XCTAssertEqual(SlowBrain.requested.filter { !$0.contains("/messages") }, ["GET /tasks?ids=7&view=card"])
 
@@ -1141,6 +1146,54 @@ final class NetworkTests: XCTestCase {
       let chats = await MainActor.run { store.conversations.map(\.id) }
       XCTAssertEqual(chats, [1])
     }
+  }
+
+  /// A thread opens like a chat but stays out of the chat list, which shows its own chat as the open one.
+  /// Its chat deleted, it goes too.
+  func testAThreadOpensAsItsChatsAndGoesWithIt() async throws {
+    let store = await MainActor.run { Self.store() }
+    let thread = Conversation(
+      id: 12, kind: .thread, title: "Backups", botIds: ["chef"], unread: 0, parentId: 3, latest: "Two failed.")
+    let json = String(decoding: try JSONEncoder().encode(thread), as: UTF8.self)
+    SlowBrain.routes["/conversations/12"] = json
+    SlowBrain.routes["/conversations/12/messages?limit=50"] = "[\(Self.message(80, in: 12))]"
+    SlowBrain.routes["/conversations/1/messages?limit=50"] = "[\(Self.message(60, in: 1))]"
+    await MainActor.run {
+      store.conversations = [
+        Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0),
+        Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0),
+      ]
+      store.botIds = ["hatbot", "chef"]
+    }
+    let opened = await store.openThread(12)
+    XCTAssertTrue(opened)
+    await MainActor.run {
+      XCTAssertEqual(store.messages.map(\.id), [80])
+      XCTAssertEqual(store.chatName(store.currentChat), "Backups")
+      XCTAssertEqual(store.listedChatId, 3)
+      // It needs you while a question waits in it, or its bot says so.
+      var asked = Question(
+        id: 4, botId: "chef", taskId: 9, conversationId: 12, question: "Retry?", choices: [], status: .pending,
+        createdAt: "", expiresAt: "")
+      XCTAssertFalse(store.threadNeedsYou(thread))
+      store.apply(.questionCreated(asked))
+      XCTAssertTrue(store.threadNeedsYou(thread))
+      asked.status = .answered
+      store.apply(.questionResolved(asked))
+      XCTAssertFalse(store.threadNeedsYou(thread))
+      var marked = thread
+      marked.needsYou = true
+      XCTAssertTrue(store.threadNeedsYou(marked))
+      var resolved = thread
+      resolved.resolvedAt = "2026-10-25T08:00:00Z"
+      resolved.outcome = "Retried"
+      store.apply(.conversationUpdated(resolved))
+      XCTAssertEqual(store.currentChat?.outcome, "Retried")
+      XCTAssertEqual(store.conversations.map(\.id), [1, 3])
+      store.apply(.conversationDeleted(id: 3))
+      XCTAssertNil(store.threads[12])
+    }
+    await waitUntil { store.conversationId == 1 && store.messages.map(\.id) == [60] }
   }
 
   func testDeletingAGroupForgetsItsPage() async throws {

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Approval } from "@hatbot/shared";
-import { splitWaiting } from "../src/waiting";
+import { needsYouIn, splitWaiting } from "../src/waiting";
 import { chat } from "./fixtures";
 
 const approval = (id: number, botId: string, conversationId: number | null = null) =>
@@ -16,7 +16,8 @@ const hatbot = chat(1, "direct", ["hatbot"]);
 const haggler = chat(2, "direct", ["haggler"]);
 const coder = chat(3, "direct", ["coder"]);
 const group = chat(4, "group", ["coder", "hatbot"]);
-const chats = [hatbot, haggler, coder, group];
+const thread = { ...chat(5, "thread", ["haggler"]), parentId: 2 };
+const chats = [hatbot, haggler, coder, group, thread];
 
 test("a chat shows only its own approvals, with one line for the rest", () => {
   const mandate = approval(1, "haggler", 2);
@@ -41,6 +42,17 @@ test("a chat shows only its own approvals, with one line for the rest", () => {
     rest: 2,
     elsewhere: haggler,
   });
+  // A thread shows what was asked in it, and not its bot's tasks.
+  const counter = approval(5, "haggler", 5);
+  expect(splitWaiting([payment, counter], thread, chats).here).toEqual([counter]);
   // Before the chats have loaded, nothing is shown as this chat's.
   expect(splitWaiting(pending, undefined, [])).toEqual({ here: [], rest: 4, elsewhere: null });
+});
+
+test("a thread needs you while its bot says so, or while something waits in it", () => {
+  const counter = approval(5, "haggler", 5);
+  expect(needsYouIn(thread, [approval(2, "haggler"), approval(1, "haggler", 2)])).toBe(false);
+  expect(needsYouIn(thread, [counter])).toBe(true);
+  expect(needsYouIn(thread, [{ ...counter, status: "approved" } as Approval])).toBe(false);
+  expect(needsYouIn({ ...thread, needsYou: true }, [])).toBe(true);
 });

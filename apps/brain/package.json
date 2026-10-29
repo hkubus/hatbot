@@ -12,6 +12,7 @@
     "@hatbot/plugin-automation": "workspace:*",
     "@hatbot/plugin-boxes": "workspace:*",
     "@hatbot/plugin-code": "workspace:*",
+    "@hatbot/plugin-computer": "workspace:*",
     "@hatbot/plugin-desktop": "workspace:*",
     "@hatbot/plugin-forgejo": "workspace:*",
     "@hatbot/plugin-github": "workspace:*",

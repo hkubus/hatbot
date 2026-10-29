@@ -23,4 +23,4 @@ export const chat = (
   kind: Conversation["kind"],
   botIds: string[],
   title: string | null = null,
-) => ({ id, kind, title, botIds, unread: 0, lastMessageAt: null }) as Conversation;
+) => ({ id, kind, title, botIds, unread: 0, lastMessageAt: null, needsYou: false }) as Conversation;

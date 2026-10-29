@@ -30,7 +30,7 @@ export const desktopRoutes = new Hono<AppEnv>()
     if (!desktop) return c.json({ error: "The Desktop plugin is off." }, 503);
     const { lane, control } = desktop;
     if (lane.holderId === ROLLBACK) return c.json({ error: "Already rolling back." }, 409);
-    if (tasks.list({ status: "active" }).some((t) => t.lane === "screen"))
+    if (tasks.list({ status: "active" }).some((t) => t.lane === "screen" && t.screen === null))
       return c.json({ error: "A task is using the desktop. Cancel it first." }, 409);
     if (control.get().control === "owner")
       return c.json({ error: "Hand the desktop back first." }, 409);

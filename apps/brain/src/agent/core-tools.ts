@@ -44,7 +44,10 @@ const CHAT: Place[] = ["chat"];
 const WORK: Place[] = ["chat", "task"];
 const ALL: Place[] = ["chat", "task", "research"];
 const withOthers = (o: Offer) => o.others.length > 0;
+const mainChat = (o: Offer) => o.chat === "direct";
+const inThread = (o: Offer) => o.chat === "thread";
 const desktop = (_: Offer, s: CoreServices) => Boolean(s.desktop?.configured);
+const screen = (_: Offer, s: CoreServices) => Boolean(s.tasks?.hasScreen());
 const META: Record<string, Meta> = {
   memory_list: { plugin: "memory", label: "Looking through memory", access: "read", places: ALL },
   memory_read: { plugin: "memory", label: "Reading memory", access: "read", places: ALL },
@@ -67,18 +70,34 @@ const META: Record<string, Meta> = {
     label: "Starting a desktop task",
     places: CHAT,
     deferred: true,
-    when: desktop,
+    when: screen,
   },
   run_task: { plugin: "tasks", label: "Starting a task", places: CHAT },
   todo_work: { plugin: "tasks", label: "Starting a task on a to-do", places: CHAT },
   ask_bot: { plugin: "tasks", label: "Asking another bot", places: CHAT, when: withOthers },
   get_task: { plugin: "tasks", label: "Checking on a task", places: CHAT },
   steer_task: { plugin: "tasks", label: "Steering a task", places: CHAT },
+  thread_open: { plugin: "threads", label: "Opening a thread", places: CHAT, when: mainChat },
+  thread_read: {
+    plugin: "threads",
+    label: "Reading a thread",
+    access: "read",
+    places: CHAT,
+    incognito: false,
+    when: mainChat,
+  },
+  thread_resolve: {
+    plugin: "threads",
+    label: "Resolving the thread",
+    places: CHAT,
+    when: inThread,
+  },
 };
 
 const NAMES: Record<string, string> = {
   memory: "Memory",
   tasks: "Tasks",
+  threads: "Threads",
 };
 
 /** A call's own part of what a core tool sees; its requests to the desktop end with the call. */

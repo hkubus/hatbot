@@ -1,0 +1,38 @@
+# Hatbot's Linux app: the tray app and the agent that lets Hatbot use this computer.
+pkgname=hatbot
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Hatbot on your Linux computer"
+arch=('x86_64' 'aarch64')
+url="https://git.gaycats.ovh/kubus/hatbot"
+license=('MIT')
+depends=('libxkbcommon' 'gcc-libs' 'glibc')
+optdepends=('at-spi2-core: lets Hatbot read what is on screen in apps that support it')
+makedepends=('cargo' 'git')
+install=hatbot.install
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+prepare() {
+  cd hatbot/apps/linux
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd hatbot/apps/linux
+  cargo build --frozen --release -p hatbot
+}
+
+check() {
+  cd hatbot/apps/linux
+  cargo test --frozen -p hatbot-agent
+}
+
+package() {
+  cd hatbot
+  install -Dm755 apps/linux/target/release/hatbot "$pkgdir/usr/bin/hatbot"
+  install -Dm644 apps/linux/packaging/hatbot.service "$pkgdir/usr/lib/systemd/user/hatbot.service"
+  install -Dm644 apps/linux/packaging/70-hatbot-uinput.rules "$pkgdir/usr/lib/udev/rules.d/70-hatbot-uinput.rules"
+  install -Dm644 apps/linux/packaging/hatbot-uinput.conf "$pkgdir/usr/lib/modules-load.d/hatbot-uinput.conf"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

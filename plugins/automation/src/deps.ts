@@ -4,6 +4,7 @@ import { HATBOT_ID } from "@hatbot/shared";
 export const NEEDS = [
   "tasks",
   "chats",
+  "threads",
   "bots",
   "notifier",
   "events",

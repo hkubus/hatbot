@@ -38,8 +38,9 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   /// "task"/"schedule": shows what it points at, `text` a fallback. "box": a note from box `boxId`, neither
   /// yours nor the bot's. "handoff": another bot (`botId`) handing this bot work; `taskId` is the hand-off.
+  /// "thread": a thread's card, `link` its first message.
   enum Kind: String, LenientEnum {
-    case text, task, schedule, command, box, handoff
+    case text, task, schedule, command, box, handoff, thread
     static let fallback = Kind.text
   }
 
@@ -235,6 +236,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var reportPath: String?
   /// The to-do item it works on, ticked off when it ends done.
   var todo: String?
+  /// A desktop task's screen: one of your computers' ids, or nil for the desktop.
+  var screen: String?
 
   var isActive: Bool { finishedAt == nil }
   var isFull: Bool { goal != nil }
@@ -367,6 +370,28 @@ struct DesktopState: Codable, Equatable, Sendable {
   var botId: String?
 }
 
+/// One of your own computers, through the Linux app (ComputerInfo in packages/shared).
+struct ComputerInfo: Codable, Identifiable, Equatable, Sendable {
+  let id: String
+  var name: String
+  var online: Bool
+  var enabled: Bool
+  var paused: Bool
+  var locked: Bool
+  var ownerActive: Bool
+  var careful: Bool
+  var control: DesktopState.Control
+  var request: DesktopState.Request?
+  var activeTaskId: Int?
+  var botId: String?
+  var lastSeenAt: String?
+
+  /// What Live needs of it, as of the desktop.
+  var screen: DesktopState {
+    DesktopState(online: online, control: control, request: request, activeTaskId: activeTaskId, botId: botId)
+  }
+}
+
 struct Schedule: Codable, Identifiable, Equatable, Sendable {
   let id: Int
   var name: String
@@ -494,18 +519,29 @@ enum Mention {
 }
 
 struct Conversation: Codable, Identifiable, Equatable, Sendable {
+  /// "thread": a side conversation in a bot's own chat (`parentId`), on one topic.
   enum Kind: String, LenientEnum {
-    case direct, group
+    case direct, group, thread
     static let fallback = Kind.direct
   }
 
   let id: Int
   var kind: Kind
-  /// A group's name; nil for a bot's own chat, which goes by the bot's.
+  /// A group's or a thread's name; nil for a bot's own chat, which goes by the bot's.
   var title: String?
   var botIds: [String]
   var unread: Int
   var lastMessageAt: String?
+  var parentId: Int?
+  var resolvedAt: String?
+  /// What a resolved thread came to, in a line.
+  var outcome: String?
+  /// A thread's latest message, cut short.
+  var latest: String?
+  /// A thread its bot marked as needing your answer, until you write in it or it's resolved.
+  var needsYou: Bool?
+
+  var isThread: Bool { kind == .thread && parentId != nil }
 }
 
 /// A trigger with its secret: only right after it's made or the secret is replaced.
@@ -738,6 +774,8 @@ struct Snapshot: Decodable, Sendable {
   var approvals: [Approval]
   var questions: [Question]
   var desktop: DesktopState?
+  /// Missing from a brain without the Your computers plugin.
+  var computers: [ComputerInfo]?
   /// Each chat's newest unread.
   var unread: [Int]
 }
@@ -773,6 +811,7 @@ enum HatbotEvent: Decodable, Sendable {
   case questionCreated(Question)
   case questionResolved(Question)
   case desktopState(DesktopState)
+  case computers([ComputerInfo])
   case scheduleUpdated(Schedule)
   case scheduleDeleted(id: Int)
   case triggerUpdated(Trigger)
@@ -795,7 +834,7 @@ enum HatbotEvent: Decodable, Sendable {
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
-    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link
+    case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link, computers
   }
 
   init(from decoder: Decoder) throws {
@@ -831,6 +870,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "question.created": self = try .questionCreated(v(.question))
     case "question.resolved": self = try .questionResolved(v(.question))
     case "desktop.state": self = try .desktopState(v(.state))
+    case "computers": self = try .computers(v(.computers))
     case "schedule.updated": self = try .scheduleUpdated(v(.schedule))
     case "schedule.deleted": self = try .scheduleDeleted(id: v(.id))
     case "trigger.updated": self = try .triggerUpdated(v(.trigger))

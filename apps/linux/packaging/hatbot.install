@@ -1,0 +1,10 @@
+post_install() {
+  modprobe uinput 2>/dev/null || true
+  udevadm control --reload 2>/dev/null || true
+  udevadm trigger --name-match=uinput 2>/dev/null || true
+  echo "Start Hatbot with: systemctl --user enable --now hatbot"
+}
+
+post_upgrade() {
+  post_install
+}

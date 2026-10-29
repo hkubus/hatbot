@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@hatbot/plugin-computer": "workspace:*",
     "@hatbot/plugin-homeassistant": "workspace:*",
     "@hatbot/plugin-mcp": "workspace:*",
     "@hatbot/plugin-openai": "workspace:*",

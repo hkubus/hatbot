@@ -102,9 +102,10 @@ export type ThreadMessage = {
    * you typed, or what came of it (one with a task shows the task like a reply does). "box": a note the
    * box `boxId` sent (hatbox.send, or its backend's scheduled() as a notification), shown as from the
    * box: neither yours nor the bot's words. "handoff": another bot (`botId`) handing this chat's bot
-   * work (ask_bot); its text is the request, and `taskId` the hand-off.
+   * work (ask_bot); its text is the request, and `taskId` the hand-off. "thread": a thread's card in
+   * its chat, linking to the thread's first message; its text is the title.
    */
-  kind: "text" | "task" | "schedule" | "command" | "box" | "handoff";
+  kind: "text" | "task" | "schedule" | "command" | "box" | "handoff" | "thread";
   text: string;
   status: "streaming" | "done" | "error";
   createdAt: string;
@@ -219,6 +220,8 @@ export type Task = {
   model: string;
   /** Desktop tasks: the skill (skills/<name>.md) it follows. */
   skill: string | null;
+  /** Desktop tasks: the computer it runs on, by its id; null on the desktop. */
+  screen: string | null;
   /** Background tasks: null runs at the chat's effort. */
   effort: "low" | "medium" | "high" | null;
   /** It ends in a report, attached, as research does. */
@@ -284,6 +287,8 @@ export type ApprovalKind =
   | "mandate"
   /** Posting a flip Scout marked ready on the marketplaces picked for it. */
   | "listing"
+  /** A task using one of your own computers: asked once per task, naming it. */
+  | "computer"
   | "other";
 
 /** Where one channel of a flip Scout marked ready to list is. */
@@ -313,6 +318,7 @@ export const SAFETY_KINDS = [
   "payment",
   "account_security",
   "access",
+  "computer",
 ] as const satisfies readonly ApprovalKind[];
 export type SafetyKind = (typeof SAFETY_KINDS)[number];
 /** Ask you; let the safety review answer first; or go ahead. */
@@ -421,6 +427,28 @@ export type DesktopState = {
   botId: string | null;
 };
 
+/** One of your own computers, as the Computer plugin knows it. Its id is the machine's. */
+export type ComputerInfo = {
+  id: string;
+  /** Its host name, until you rename it. */
+  name: string;
+  online: boolean;
+  /** "Let Hatbot use this computer", switched only at the computer. */
+  enabled: boolean;
+  paused: boolean;
+  locked: boolean;
+  /** You used its mouse or keyboard a moment ago. */
+  ownerActive: boolean;
+  /** Every command and file outside Downloads/Hatbot waits for you. */
+  careful: boolean;
+  /** "owner": you have control from Live during a task. */
+  control: "hatbot" | "owner";
+  request: { taskId: number; reason: string } | null;
+  activeTaskId: number | null;
+  botId: string | null;
+  lastSeenAt: string | null;
+};
+
 /**
  * What's live when the stream opens, sent as its first event: an app needn't ask for each of these.
  * Brains from before it send only `paused`.
@@ -435,6 +463,8 @@ export type Snapshot = {
   /** The pending ones. */
   questions: Question[];
   desktop: DesktopState;
+  /** Without the Computer plugin, none. Brains from before it leave it out. */
+  computers?: ComputerInfo[];
   /** Each chat's newest UNREAD_PER_CHAT unread messages; `Conversation.unread` counts them all. */
   unread: number[];
 };
@@ -481,6 +511,8 @@ export type HatbotEvent =
   | { type: "question.created"; question: Question }
   | { type: "question.resolved"; question: Question }
   | { type: "desktop.state"; state: DesktopState }
+  /** Your computers, all of them, whenever one changes. */
+  | { type: "computers"; computers: ComputerInfo[] }
   | { type: "schedule.updated"; schedule: Schedule }
   | { type: "schedule.deleted"; id: number }
   | { type: "trigger.updated"; trigger: Trigger }
@@ -584,13 +616,27 @@ export const MAX_GROUP_BOTS = 6;
 
 export type Conversation = {
   id: number;
-  kind: "direct" | "group";
-  /** A group's name; null for a bot's own chat, which goes by the bot's. */
+  /** "thread": a side conversation in a bot's own chat (`parentId`), on one topic. */
+  kind: "direct" | "group" | "thread";
+  /** A group's or a thread's name; null for a bot's own chat, which goes by the bot's. */
   title: string | null;
   botIds: string[];
   unread: number;
   lastMessageAt: string | null;
+  parentId: number | null;
+  resolvedAt: string | null;
+  /** What a resolved thread came to, in a line. */
+  outcome: string | null;
+  /** A thread's latest message, cut short; null for other chats. */
+  latest: string | null;
+  /** A thread its bot marked as needing your answer, until you write in it or it's resolved. */
+  needsYou: boolean;
 };
+/** You open a thread on one of a bot's messages in its chat. */
+export const ReplyInThread = z.object({ messageId: z.number().int() });
+
+/** Most open threads a bot may have. */
+export const MAX_OPEN_THREADS = 12;
 export const CreateGroup = z.object({
   title: z.string().trim().max(80).optional(),
   botIds: z.array(z.string().regex(BOT_ID)).min(2).max(MAX_GROUP_BOTS),

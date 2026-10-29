@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./bot-id": "./src/bot-id.ts",
+    "./computer": "./src/computer.ts",
     "./desktop": "./src/desktop.ts",
     "./hatbox": "./src/hatbox.ts",
     "./keys": "./src/keys.ts",

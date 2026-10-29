@@ -26,9 +26,13 @@ Built, but not yet deployed or tried live:
 - **Logins from Scout** (2026-10-26): a marketplace login you share in Scout (Settings → Marketplace accounts → Share with connected apps, which needs Scout's sign-in on) goes in Haggler's browser as its task gets the screen. Not tried against a real marketplace: whether a login captured on another computer, with another address and browser, still works there or asks to verify.
 - **Listings blocks** (2026-10-26): things for sale as a row of cards in a reply, their photos fetched by the brain from OLX's, Allegro's and Vinted's image servers only. Not tried: whether those servers answer the brain, and whether the model passes Scout's `image` through as the photo.
 - **More chart kinds** (2026-10-26): reference lines on line and bar charts, and meter, calendar, treemap, compare, offers and gallery blocks, on the web and iOS. Not tried: whether the model picks them when it should. The iOS views haven't been compiled outside CI.
+- **Threads** (built 2026-10-25 and 26 on `t3/bot-threads`, brought into the core 2026-10-29; the design is §4 of `git show 803634ad:PLAN.md`): side conversations in a bot's own chat, opened by the bot, a task, a negotiation, the heartbeat or a watcher, or by you with Reply in thread. Not tried: whether the model opens one when it should and keeps quick answers in the chat, and the iOS views outside CI.
 - **T3 Code** in place of Claude Code (2026-10-22): connecting it, `t3_code` in a real project, and a box made through `boxes_t3`. Not tried against a real T3 Code: what `t3_thread_launch` answers, and whether item positions in `t3_thread_read` start at 0 or 1.
 
+- **Your computers** (2026-10-29): the `computer` plugin, for the owner's own Linux computers through the Linux app (`apps/linux`, Rust and iced, on niri). The app dials in with a device token; only the computer turns its use on, while the web and iOS can pause it or turn it off. Commands, files and desktop tasks run on it as the owner: `run_desktop_task` takes a computer by name, using it is asked once a task (Safety's "Using your computers"), and the task waits while the computer is offline, locked, paused or in the owner's hands. Each screen has its own lane, so the desktop and every computer run a task at once. Live picks the screen to watch on the web and iOS. Not tried: the brain against the real Linux app, AT-SPI's answers in real apps, and how often a zoomed screenshot is enough to judge a click nothing can name.
+
 ## 2. Small gaps
+- Your computers: no settings page for them in the iOS app, and Teach works only on the desktop.
 - Check everything has no line for the boxes guest; only `verify.sh` checks it, from the host.
 - Box secrets can only be set in the web app: the iOS app ignores `BoxDetail.secrets`.
 - The iOS app decodes negotiation events but doesn't show negotiations.
@@ -94,6 +98,7 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - Research has no page reader that runs JavaScript (it could send out what the task has read; such pages go to `run_desktop_task`), and isn't started from schedules.
 - Settings → Plugins, Approvals and guardrails, and teach mode stay web-only; the iOS app has only the safety review's switch.
 - To-do items aren't handed to other bots with `@name`; ask the bot in the chat instead.
+- Your computers: what's on their screens isn't read or screened for prompt injection, only window titles are noted; the task is tainted by the first screenshot, so its consequential steps ask anyway. `computer_get_file` refuses private keys and password stores rather than asking.
 - T3 Code: its sign-in lasts 30 days with no refresh, so it has to be connected again; threads to carry on are kept in memory, which a restart forgets; a box's files over 100 KB can't be handed to it in one message.
 
 **Not planned:**
@@ -101,7 +106,6 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - Email and calendar, until after v1. Proton Bridge needs a paid Proton plan.
 - Open-ended goals, and more than one user.
 - Boxes shared by public link, WebSockets from box backends, and box languages other than TypeScript.
-- A Linux app (one was built and dropped, 2026-10-26): the web app is enough.
 
 ## 5. Maybe later
 - Teams.

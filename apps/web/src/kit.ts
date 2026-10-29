@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 
 export { useAction } from "./action";
 export { errorText } from "./api";
-export { ask, useLeaveGuard } from "./confirm";
+export { ask, askText, useLeaveGuard } from "./confirm";
 export { Copyable } from "./copy";
 export { IdListSettings } from "./plugin-kit/id-list";
 export { useSignInReturn } from "./plugin-kit/sign-in";

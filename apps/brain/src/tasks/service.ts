@@ -1,8 +1,10 @@
+import type { ComputersService } from "@hatbot/plugin-computer";
 import type { DesktopService } from "@hatbot/plugin-desktop";
 import { clip, head, type Notifier, RESTARTED } from "@hatbot/plugin-sdk";
 import {
   ACTIVE_TASK_STATUSES as ACTIVE,
   type Bot,
+  type Conversation,
   HATBOT_ID,
   type Task,
   type TaskCard,
@@ -19,6 +21,7 @@ import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
 import type { Config } from "../config";
 import type { Db } from "../db";
+import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Listings } from "../listings/service";
 import type { Proposals } from "../memory/proposals";
@@ -44,6 +47,8 @@ export type TasksDeps = {
   model: ModelClient;
   /** Null while the Desktop plugin is off. */
   desktop: () => DesktopService | null;
+  /** Null while the Your computers plugin is off. */
+  computers: () => ComputersService | null;
   approvals: Approvals;
   questions: Questions;
   notifier: Notifier;
@@ -85,6 +90,7 @@ type Row = {
   payload: string | null;
   model: string;
   skill: string | null;
+  screen: string | null;
   effort: Task["effort"];
   research: number;
   runner: string | null;
@@ -131,6 +137,7 @@ const toTask = (r: Row): Task => ({
   payload: r.payload,
   model: r.model,
   skill: r.skill,
+  screen: r.screen,
   effort: r.effort,
   research: Boolean(r.research),
   runner: r.runner,
@@ -349,6 +356,8 @@ export class Tasks {
     taintedBy?: string | null;
     /** Your own recent chat messages, when you started it from the chat. */
     request?: string;
+    /** One of your computers, by id; the desktop by default. */
+    screen?: string | null;
   }): Task {
     const p = input.parent;
     const taintedBy =
@@ -375,6 +384,7 @@ export class Tasks {
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
+      screen: input.screen ?? null,
     });
     if (!p && !(input.message && this.d.chats.attachTask(input.message, id)))
       this.d.chats.addCard(conversationId, botId, "task", `Task #${id}: ${input.title}`, {
@@ -384,6 +394,34 @@ export class Tasks {
     this.emit(id);
     this.start(id);
     return this.get(id) as Task;
+  }
+
+  /** Whether a desktop task has a screen to run on. */
+  hasScreen(): boolean {
+    return (
+      Boolean(this.d.desktop()?.agent.configured) || Boolean(this.d.computers()?.list().length)
+    );
+  }
+
+  /** A desktop task's screen: one of your computers by name, or the desktop. */
+  screenFor(name: string | undefined): { screen: string | null } | { error: string } {
+    const computers = this.d.computers();
+    const names = computers?.list().map((c) => c.name) ?? [];
+    if (!name) {
+      if (this.d.desktop()?.agent.configured) return { screen: null };
+      return {
+        error: names.length
+          ? `There's no desktop: pass screen with one of the owner's computers (${names.join(", ")}).`
+          : "Desktop tasks aren't available.",
+      };
+    }
+    const c = computers?.find(name);
+    if (c) return { screen: c.id };
+    return {
+      error: names.length
+        ? `There's no computer called "${name}". The owner's: ${names.join(", ")}.`
+        : "None of the owner's computers has connected. Leave screen out to use your desktop.",
+    };
   }
 
   private home(botId: string): number {
@@ -974,6 +1012,78 @@ export class Tasks {
       priority: 4,
       click: `${this.d.config.publicUrl}/tasks/${id}`,
     });
+  }
+
+  /**
+   * A task opens a thread with the owner in its bot's chat, notifying them: it needs them. A
+   * background task reports and asks there from then on.
+   */
+  openThread(
+    id: number,
+    input: { title: string; message: string; key?: string; needs_you?: boolean },
+  ) {
+    const task = this.get(id) as Task;
+    const r = this.d.chats.openThread({
+      botId: task.botId,
+      title: input.title,
+      message: input.message,
+      key: input.key,
+      needsYou: input.needs_you,
+      taintedBy: this.readBy(task),
+      taskId: id,
+    });
+    this.moveTo(task, r.conversation.id);
+    if (r.opened || input.needs_you) this.notifyThread(task, r.conversation, input.message);
+    return r;
+  }
+
+  /** A task writes in one of its bot's threads, by id or by key. */
+  postInThread(
+    id: number,
+    input: { id?: number; key?: string; message: string; needs_you?: boolean },
+  ): number {
+    const task = this.get(id) as Task;
+    const thread = this.d.chats.findThread(task.botId, input);
+    if (thread === null)
+      throw new UserError(
+        input.id !== undefined
+          ? `No thread #${input.id} in your chat.`
+          : `No open thread with the key "${input.key}". Open one with thread_open.`,
+      );
+    this.d.chats.postInThread(
+      thread,
+      task.botId,
+      input.message,
+      this.readBy(task),
+      input.needs_you,
+    );
+    this.moveTo(task, thread);
+    const c = this.d.chats.get(thread);
+    if (input.needs_you && c) this.notifyThread(task, c, input.message);
+    return thread;
+  }
+
+  /** A thread a task opened, or one it needs you in. */
+  private notifyThread(task: Task, c: Conversation, message: string) {
+    void this.d.notifier.send({
+      title: this.titled(task, c.title ?? task.title),
+      message: clipBytes(message, NOTIFY_BYTES),
+      priority: 4,
+      click: `${this.d.config.publicUrl}/chat/${c.parentId}?thread=${c.id}`,
+    });
+  }
+
+  /** What a tainted task's words carry where they go. */
+  readBy(task: Task): string | null {
+    return task.tainted
+      ? `Task #${task.id}, which had read: ${task.taintedBy ?? "untrusted content"}`
+      : null;
+  }
+
+  /** One started from a chat stays under its reply there; a background task follows its thread. */
+  private moveTo(task: Task, threadId: number) {
+    if (task.origin === "chat" || task.parentId || task.requestedBy) return;
+    this.d.db.query("UPDATE tasks SET conversation_id = ? WHERE id = ?").run(threadId, task.id);
   }
 
   takeInbox(id: number): InboxItem[] {

@@ -970,4 +970,33 @@ export const migrations: string[] = [
     installed_at TEXT NOT NULL
   );
   `,
+  // 62: threads, side conversations in a bot's own chat.
+  `
+  ${REBUILD}
+  CREATE TABLE conversations_new (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('direct', 'group', 'thread')),
+    title TEXT,
+    summary TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    deleted_at TEXT,
+    parent_id INTEGER REFERENCES conversations(id),
+    -- One open thread per subject, e.g. negotiation:12.
+    thread_key TEXT,
+    opened_by_task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    resolved_at TEXT,
+    outcome TEXT
+  );
+  INSERT INTO conversations_new (id, kind, title, summary, created_at, deleted_at)
+    SELECT id, kind, title, summary, created_at, deleted_at FROM conversations;
+  DROP TABLE conversations;
+  ALTER TABLE conversations_new RENAME TO conversations;
+  CREATE INDEX conversations_parent ON conversations (parent_id, resolved_at);
+  CREATE UNIQUE INDEX conversations_thread_key ON conversations (parent_id, thread_key)
+    WHERE thread_key IS NOT NULL AND resolved_at IS NULL AND deleted_at IS NULL;
+  `,
+  // 63: a thread a bot marked as needing you, until you write in it or it's resolved.
+  `ALTER TABLE conversations ADD COLUMN needs_you_at TEXT;`,
+  // 64: the computer a desktop task runs on; null for the desktop.
+  `ALTER TABLE tasks ADD COLUMN screen TEXT;`,
 ];

@@ -22,10 +22,12 @@ import {
   cancelTask,
   chatName,
   chatPath,
+  loadConversation,
   loadNegotiations,
   loadTask,
   loadTasks,
   negotiationOf,
+  pathOf,
   useStore,
 } from "../store";
 import {
@@ -175,12 +177,24 @@ export function Tasks() {
 }
 
 export function From({ task }: { task: TaskCard }) {
-  // The chat it was started in, while it's still one of yours.
-  const chat = useStore((s) => {
-    const c = s.conversations.find((c) => c.id === task.conversationId);
-    if (!c) return null;
-    return c.kind === "group" ? chatName(s, c) : `Chat with ${botName(s, c.botIds[0])}`;
-  });
+  // The chat or thread it was started in, while it's still one of yours.
+  const chat = useStore(
+    (s) =>
+      s.conversations.find((c) => c.id === task.conversationId) ??
+      s.threads[task.conversationId ?? 0],
+  );
+  const label = useStore((s) =>
+    !chat
+      ? null
+      : chat.kind === "direct"
+        ? `Chat with ${botName(s, chat.botIds[0])}`
+        : chatName(s, chat),
+  );
+  const known = useStore((s) => s.conversations.length > 0);
+  useEffect(() => {
+    if (task.origin === "chat" && task.conversationId && known && !chat)
+      void loadConversation(task.conversationId).catch(() => {});
+  }, [task.origin, task.conversationId, known, chat]);
   const go = (to: string, label: string) => (
     <Link className="text-link" to={to}>
       {label}
@@ -189,7 +203,7 @@ export function From({ task }: { task: TaskCard }) {
   if (task.parentId) return go(`/tasks/${task.parentId}`, `Task #${task.parentId}`);
   if (task.origin === "chat") {
     const id = task.conversationId;
-    return chat && id ? go(chatPath(id), chat) : <>Chat</>;
+    return chat && label && id ? go(pathOf(chat), label) : <>Chat</>;
   }
   const name = task.source ?? "";
   if (task.origin === "schedule")

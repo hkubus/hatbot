@@ -18,6 +18,7 @@
         "@hatbot/plugin-automation": "workspace:*",
         "@hatbot/plugin-boxes": "workspace:*",
         "@hatbot/plugin-code": "workspace:*",
+        "@hatbot/plugin-computer": "workspace:*",
         "@hatbot/plugin-desktop": "workspace:*",
         "@hatbot/plugin-forgejo": "workspace:*",
         "@hatbot/plugin-github": "workspace:*",
@@ -57,6 +58,7 @@
     "apps/web": {
       "name": "@hatbot/web",
       "dependencies": {
+        "@hatbot/plugin-computer": "workspace:*",
         "@hatbot/plugin-homeassistant": "workspace:*",
         "@hatbot/plugin-mcp": "workspace:*",
         "@hatbot/plugin-openai": "workspace:*",
@@ -136,6 +138,21 @@
       "dependencies": {
         "@hatbot/plugin-sdk": "workspace:*",
         "zod": "^4.6.5",
+      },
+    },
+    "plugins/computer": {
+      "name": "@hatbot/plugin-computer",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/shared": "workspace:*",
+        "@hatbot/web": "workspace:*",
+        "hono": "^4.13.13",
+        "react": "^19.3.0",
+        "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
       },
     },
     "plugins/desktop": {
@@ -339,6 +356,8 @@
     "@hatbot/plugin-boxes": ["@hatbot/plugin-boxes@workspace:plugins/boxes"],
 
     "@hatbot/plugin-code": ["@hatbot/plugin-code@workspace:plugins/code"],
+
+    "@hatbot/plugin-computer": ["@hatbot/plugin-computer@workspace:plugins/computer"],
 
     "@hatbot/plugin-desktop": ["@hatbot/plugin-desktop@workspace:plugins/desktop"],
 
