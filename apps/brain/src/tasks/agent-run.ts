@@ -26,6 +26,7 @@ import {
   invalidInput,
   liveTool,
   missingSkill,
+  NeedsYou,
   serverToolWaiting,
   ThreadOpenInput,
   type ToolImage,
@@ -113,6 +114,7 @@ const ThreadPost = z
     id: z.number().int().optional().describe("The thread's number"),
     key: z.string().trim().min(1).max(80).optional().describe("Or the open thread's key"),
     message: z.string().min(1).max(8000).describe("What to tell the owner there"),
+    needs_you: NeedsYou,
   })
   .refine((v) => (v.id === undefined) !== (v.key === undefined), "Give either id or key.");
 
@@ -161,7 +163,7 @@ const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "thread_post",
     description:
-      "Write in one of your open threads with the owner, by its number or key, to add to a topic already there rather than open another. Unless the owner started this task from a chat, your result and questions go there too.",
+      "Write in one of your open threads with the owner, by its number or key, to add to a topic already there rather than open another. With needs_you, the owner is notified. Unless the owner started this task from a chat, your result and questions go there too.",
     schema: ThreadPost,
   }),
   toolParam({

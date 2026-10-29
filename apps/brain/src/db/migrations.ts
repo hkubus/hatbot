@@ -995,4 +995,6 @@ export const migrations: string[] = [
   CREATE UNIQUE INDEX conversations_thread_key ON conversations (parent_id, thread_key)
     WHERE thread_key IS NOT NULL AND resolved_at IS NULL AND deleted_at IS NULL;
   `,
+  // 63: a thread a bot marked as needing you, until you write in it or it's resolved.
+  `ALTER TABLE conversations ADD COLUMN needs_you_at TEXT;`,
 ];

@@ -67,6 +67,7 @@ import {
   resolveThread,
   retryReply,
   sendMessage,
+  threadNeedsYou,
   threadPath,
   trustSchedule,
   useStore,
@@ -731,9 +732,13 @@ export const Message = memo(function Message({
 /** A thread's card in its chat: its title, and its latest message or what it came to. */
 function ThreadCard({ m, id }: { m: ThreadMessage; id: number }) {
   const t = useStore((s) => s.threads[id]);
+  const attn = useStore((s) => threadNeedsYou(s, t));
   return (
     <>
-      <Link className="thread-card" to={threadPath({ id, parentId: m.conversationId })}>
+      <Link
+        className={`thread-card ${attn ? "attn" : ""}`}
+        to={threadPath({ id, parentId: m.conversationId })}
+      >
         <ThreadLine t={t} title={m.text} />
       </Link>
       <Meta m={m} />
@@ -759,6 +764,14 @@ function ThreadLine({ t, title }: { t: Conversation | undefined; title: string }
 function ThreadPanel({ parent, threadId }: { parent: number; threadId: number }) {
   const thread = useStore((s) => (threadId ? s.threads[threadId] : undefined));
   const all = useStore((s) => s.threads);
+  // A string, so the snapshot stays the same while nothing changes.
+  const attnIds = useStore((s) =>
+    Object.values(s.threads)
+      .filter((t) => t.parentId === parent && threadNeedsYou(s, t))
+      .map((t) => t.id)
+      .join(),
+  );
+  const attn = useMemo(() => new Set(attnIds ? attnIds.split(",").map(Number) : []), [attnIds]);
   const list = useMemo(
     () =>
       Object.values(all)
@@ -766,9 +779,10 @@ function ThreadPanel({ parent, threadId }: { parent: number; threadId: number })
         .sort(
           (a, b) =>
             Number(!!a.resolvedAt) - Number(!!b.resolvedAt) ||
+            Number(attn.has(b.id)) - Number(attn.has(a.id)) ||
             (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? ""),
         ),
-    [all, parent],
+    [all, parent, attn],
   );
   const [error, setError] = useState("");
   const close = chatPath(parent);
@@ -816,7 +830,11 @@ function ThreadPanel({ parent, threadId }: { parent: number; threadId: number })
         <section className="view thread-list">
           {list.length ? (
             list.map((t) => (
-              <Link key={t.id} className="thread-card row-link" to={pathOf(t)}>
+              <Link
+                key={t.id}
+                className={`thread-card row-link ${attn.has(t.id) ? "attn" : ""}`}
+                to={pathOf(t)}
+              >
                 <ThreadLine t={t} title="" />
               </Link>
             ))

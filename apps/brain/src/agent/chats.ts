@@ -33,6 +33,7 @@ type Row = {
   resolved_at: string | null;
   outcome: string | null;
   latest: string | null;
+  needs_you: number;
 };
 
 const LATEST_CHARS = 200;
@@ -109,7 +110,7 @@ export class Chats {
   threads(parentId: number): Conversation[] {
     return this.rows(
       `${LISTED_CHAT} AND c.parent_id = ?1`,
-      "c.resolved_at IS NOT NULL, coalesce(last_message_at, c.created_at) DESC",
+      "c.resolved_at IS NOT NULL, c.needs_you_at IS NULL, coalesce(last_message_at, c.created_at) DESC",
       parentId,
     );
   }
@@ -117,7 +118,7 @@ export class Chats {
   private rows(where: string, order: string, ...args: number[]): Conversation[] {
     return this.d.db
       .query<Row, number[]>(
-        `SELECT c.id, c.kind, c.title, c.parent_id, c.resolved_at, c.outcome,
+        `SELECT c.id, c.kind, c.title, c.parent_id, c.resolved_at, c.outcome, c.needs_you_at IS NOT NULL AS needs_you,
            CASE WHEN c.kind = 'thread' THEN substr((SELECT text FROM messages WHERE id = (SELECT max(id) FROM messages m
              WHERE m.conversation_id = c.id AND m.status != 'streaming')), 1, ${LATEST_CHARS}) END AS latest,
            (SELECT json_group_array(bot_id) FROM
@@ -167,16 +168,14 @@ export class Chats {
       resolvedAt: r.resolved_at,
       outcome: r.outcome,
       latest: r.latest,
+      needsYou: r.needs_you === 1,
     };
   }
 
   /**
-   * A thread in `botId`'s own chat, opened with the bot's first message in it; its card goes in that
-   * chat. `taintedBy`: the message was written after reading untrusted content.
-   */
-  /**
-   * A bot opens one in its own chat. With a `key`, one open thread per subject: if it's open already,
-   * the message goes there (`opened` false).
+   * A bot opens one in its own chat, its card in the chat. With a `key`, one open thread per subject:
+   * if it's open already, the message goes there (`opened` false). `taintedBy`: the message was
+   * written after reading untrusted content.
    */
   openThread(o: {
     botId: string;
@@ -185,11 +184,12 @@ export class Chats {
     taintedBy?: string | null;
     key?: string;
     taskId?: number;
+    needsYou?: boolean;
   }): { conversation: Conversation; message: ThreadMessage; opened: boolean } {
     const parent = this.direct(o.botId);
     const keyed = o.key ? this.findThread(o.botId, { key: o.key }) : null;
     if (keyed !== null) {
-      const message = this.postInThread(keyed, o.botId, o.message, o.taintedBy);
+      const message = this.postInThread(keyed, o.botId, o.message, o.taintedBy, o.needsYou);
       return { conversation: this.get(keyed) as Conversation, message, opened: false };
     }
     const open = this.d.db
@@ -203,11 +203,21 @@ export class Chats {
       );
     const id = this.d.db.transaction(() => {
       const row = this.d.db
-        .query<{ id: number }, [string, number, string | null, number | null, string]>(
-          `INSERT INTO conversations (kind, title, parent_id, thread_key, opened_by_task_id, created_at)
-           VALUES ('thread', ?, ?, ?, ?, ?) RETURNING id`,
+        .query<
+          { id: number },
+          [string, number, string | null, number | null, string, string | null]
+        >(
+          `INSERT INTO conversations (kind, title, parent_id, thread_key, opened_by_task_id, created_at, needs_you_at)
+           VALUES ('thread', ?, ?, ?, ?, ?, ?) RETURNING id`,
         )
-        .get(o.title, parent.conversationId, o.key ?? null, o.taskId ?? null, this.now());
+        .get(
+          o.title,
+          parent.conversationId,
+          o.key ?? null,
+          o.taskId ?? null,
+          this.now(),
+          o.needsYou ? this.now() : null,
+        );
       if (!row) throw new Error("conversation insert failed");
       this.setBots(row.id, [o.botId]);
       return row.id;
@@ -265,9 +275,17 @@ export class Chats {
   }
 
   /** The bot writes in its thread, which opens it again if it was resolved. */
-  postInThread(id: number, botId: string, text: string, taintedBy: string | null = null) {
+  postInThread(
+    id: number,
+    botId: string,
+    text: string,
+    taintedBy: string | null = null,
+    needsYou = false,
+  ) {
     this.reopenThread(id);
     const message = (this.thread(id) as Thread).add({ text, botId, taintedBy });
+    if (needsYou)
+      this.d.db.query("UPDATE conversations SET needs_you_at = ? WHERE id = ?").run(this.now(), id);
     this.changed(id);
     return message;
   }
@@ -297,7 +315,7 @@ export class Chats {
   resolveThread(id: number, outcome: string | null): Conversation | null {
     const done = this.d.db
       .query(
-        "UPDATE conversations SET resolved_at = ?, outcome = ? WHERE id = ? AND kind = 'thread' AND resolved_at IS NULL",
+        "UPDATE conversations SET resolved_at = ?, outcome = ?, needs_you_at = NULL WHERE id = ? AND kind = 'thread' AND resolved_at IS NULL",
       )
       .run(this.now(), outcome, id).changes;
     if (done) this.changed(id);
@@ -328,6 +346,16 @@ export class Chats {
     const done = this.d.db
       .query(
         "UPDATE conversations SET resolved_at = NULL, outcome = NULL WHERE id = ? AND kind = 'thread' AND resolved_at IS NOT NULL",
+      )
+      .run(id).changes;
+    if (done) this.changed(id);
+  }
+
+  /** You wrote in a thread: it's open again, and no longer needs you. */
+  ownerWrote(id: number) {
+    const done = this.d.db
+      .query(
+        "UPDATE conversations SET resolved_at = NULL, outcome = NULL, needs_you_at = NULL WHERE id = ? AND kind = 'thread' AND (resolved_at IS NOT NULL OR needs_you_at IS NOT NULL)",
       )
       .run(id).changes;
     if (done) this.changed(id);

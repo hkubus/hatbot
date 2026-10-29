@@ -3,6 +3,7 @@ import { clip, head, type Notifier, RESTARTED } from "@hatbot/plugin-sdk";
 import {
   ACTIVE_TASK_STATUSES as ACTIVE,
   type Bot,
+  type Conversation,
   HATBOT_ID,
   type Task,
   type TaskCard,
@@ -981,27 +982,30 @@ export class Tasks {
    * A task opens a thread with the owner in its bot's chat, notifying them: it needs them. A
    * background task reports and asks there from then on.
    */
-  openThread(id: number, input: { title: string; message: string; key?: string }) {
+  openThread(
+    id: number,
+    input: { title: string; message: string; key?: string; needs_you?: boolean },
+  ) {
     const task = this.get(id) as Task;
     const r = this.d.chats.openThread({
       botId: task.botId,
-      ...input,
+      title: input.title,
+      message: input.message,
+      key: input.key,
+      needsYou: input.needs_you,
       taintedBy: this.readBy(task),
       taskId: id,
     });
     this.moveTo(task, r.conversation.id);
-    if (r.opened)
-      void this.d.notifier.send({
-        title: this.titled(task, input.title),
-        message: clipBytes(input.message, NOTIFY_BYTES),
-        priority: 4,
-        click: `${this.d.config.publicUrl}/chat/${r.conversation.parentId}?thread=${r.conversation.id}`,
-      });
+    if (r.opened || input.needs_you) this.notifyThread(task, r.conversation, input.message);
     return r;
   }
 
   /** A task writes in one of its bot's threads, by id or by key. */
-  postInThread(id: number, input: { id?: number; key?: string; message: string }): number {
+  postInThread(
+    id: number,
+    input: { id?: number; key?: string; message: string; needs_you?: boolean },
+  ): number {
     const task = this.get(id) as Task;
     const thread = this.d.chats.findThread(task.botId, input);
     if (thread === null)
@@ -1010,9 +1014,27 @@ export class Tasks {
           ? `No thread #${input.id} in your chat.`
           : `No open thread with the key "${input.key}". Open one with thread_open.`,
       );
-    this.d.chats.postInThread(thread, task.botId, input.message, this.readBy(task));
+    this.d.chats.postInThread(
+      thread,
+      task.botId,
+      input.message,
+      this.readBy(task),
+      input.needs_you,
+    );
     this.moveTo(task, thread);
+    const c = this.d.chats.get(thread);
+    if (input.needs_you && c) this.notifyThread(task, c, input.message);
     return thread;
+  }
+
+  /** A thread a task opened, or one it needs you in. */
+  private notifyThread(task: Task, c: Conversation, message: string) {
+    void this.d.notifier.send({
+      title: this.titled(task, c.title ?? task.title),
+      message: clipBytes(message, NOTIFY_BYTES),
+      priority: 4,
+      click: `${this.d.config.publicUrl}/chat/${c.parentId}?thread=${c.id}`,
+    });
   }
 
   /** What a tainted task's words carry where they go. */

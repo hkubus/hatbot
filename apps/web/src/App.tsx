@@ -30,6 +30,7 @@ import {
   reconnectNow,
   setIncognito,
   setPaused,
+  threadNeedsYou,
   threadPath,
   unreadCount,
   useStore,
@@ -195,6 +196,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
     (s) =>
       Object.values(s.threads).filter((t) => t.parentId === s.conversationId && !t.resolvedAt)
         .length,
+  );
+  const threadsNeedYou = useStore((s) =>
+    Object.values(s.threads).some((t) => t.parentId === s.conversationId && threadNeedsYou(s, t)),
   );
   const [chatMenu, setChatMenu] = useState(false);
   const [newMenu, setNewMenu] = useState(false);
@@ -500,7 +504,9 @@ function Shell({ onSignOut }: { onSignOut: () => void }) {
                 title="Threads"
               >
                 <Icon name="forum" />
-                {openThreads > 0 && <span className="tnum">{openThreads}</span>}
+                {openThreads > 0 && (
+                  <span className={`tnum ${threadsNeedYou ? "attn" : ""}`}>{openThreads}</span>
+                )}
               </Link>
             )}
             {chatId > 0 && chat?.kind !== "group" && (

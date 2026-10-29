@@ -1167,6 +1167,19 @@ final class NetworkTests: XCTestCase {
       XCTAssertEqual(store.messages.map(\.id), [80])
       XCTAssertEqual(store.chatName(store.currentChat), "Backups")
       XCTAssertEqual(store.listedChatId, 3)
+      // It needs you while a question waits in it, or its bot says so.
+      var asked = Question(
+        id: 4, botId: "chef", taskId: 9, conversationId: 12, question: "Retry?", choices: [], status: .pending,
+        createdAt: "", expiresAt: "")
+      XCTAssertFalse(store.threadNeedsYou(thread))
+      store.apply(.questionCreated(asked))
+      XCTAssertTrue(store.threadNeedsYou(thread))
+      asked.status = .answered
+      store.apply(.questionResolved(asked))
+      XCTAssertFalse(store.threadNeedsYou(thread))
+      var marked = thread
+      marked.needsYou = true
+      XCTAssertTrue(store.threadNeedsYou(marked))
       var resolved = thread
       resolved.resolvedAt = "2026-10-25T08:00:00Z"
       resolved.outcome = "Retried"

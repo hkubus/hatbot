@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Approval } from "@hatbot/shared";
-import { splitWaiting } from "../src/waiting";
+import { needsYouIn, splitWaiting } from "../src/waiting";
 import { chat } from "./fixtures";
 
 const approval = (id: number, botId: string, conversationId: number | null = null) =>
@@ -47,4 +47,12 @@ test("a chat shows only its own approvals, with one line for the rest", () => {
   expect(splitWaiting([payment, counter], thread, chats).here).toEqual([counter]);
   // Before the chats have loaded, nothing is shown as this chat's.
   expect(splitWaiting(pending, undefined, [])).toEqual({ here: [], rest: 4, elsewhere: null });
+});
+
+test("a thread needs you while its bot says so, or while something waits in it", () => {
+  const counter = approval(5, "haggler", 5);
+  expect(needsYouIn(thread, [approval(2, "haggler"), approval(1, "haggler", 2)])).toBe(false);
+  expect(needsYouIn(thread, [counter])).toBe(true);
+  expect(needsYouIn(thread, [{ ...counter, status: "approved" } as Approval])).toBe(false);
+  expect(needsYouIn({ ...thread, needsYou: true }, [])).toBe(true);
 });

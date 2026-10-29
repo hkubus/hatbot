@@ -8,6 +8,9 @@ export const waitsIn = (a: Waiting, chat: Conversation) =>
     ? a.conversationId === chat.id
     : chat.kind !== "thread" && chat.botIds.includes(a.botId);
 
+export const needsYouIn = (thread: Conversation, waiting: Waiting[]) =>
+  thread.needsYou || waiting.some((a) => a.status === "pending" && waitsIn(a, thread));
+
 export const chatOf = (a: Waiting, chats: Conversation[]) =>
   a.conversationId !== null
     ? chats.find((c) => c.id === a.conversationId)

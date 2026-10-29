@@ -6,9 +6,11 @@ struct ThreadsView: View {
   @Environment(AppStore.self) private var store
 
   private var list: [Conversation] {
-    store.threads.values.filter { $0.parentId == parentId }.sorted {
-      ($0.resolvedAt == nil) != ($1.resolvedAt == nil)
-        ? $0.resolvedAt == nil : ($0.lastMessageAt ?? "") > ($1.lastMessageAt ?? "")
+    store.threads.values.filter { $0.parentId == parentId }.sorted { a, b in
+      if (a.resolvedAt == nil) != (b.resolvedAt == nil) { return a.resolvedAt == nil }
+      let (x, y) = (store.threadNeedsYou(a), store.threadNeedsYou(b))
+      if x != y { return x }
+      return (a.lastMessageAt ?? "") > (b.lastMessageAt ?? "")
     }
   }
 
@@ -20,6 +22,7 @@ struct ThreadsView: View {
         ThreadLine(t: t, title: "")
       }
       .foregroundStyle(.primary)
+      .listRowBackground(store.threadNeedsYou(t) ? Color.attention.opacity(0.18) : nil)
     }
     .overlay {
       if list.isEmpty {
@@ -43,9 +46,12 @@ struct ThreadCard: View {
     Button {
       Task { await store.openThread(id) }
     } label: {
+      let needsYou = store.threads[id].map(store.threadNeedsYou) ?? false
       ThreadLine(t: store.threads[id], title: title)
         .padding(12)
-        .background(.fill.tertiary, in: .rect(cornerRadius: 14))
+        .background(
+          needsYou ? AnyShapeStyle(Color.attention.opacity(0.18)) : AnyShapeStyle(.fill.tertiary),
+          in: .rect(cornerRadius: 14))
     }
     .buttonStyle(.plain)
   }

@@ -598,6 +598,8 @@ export type Conversation = {
   outcome: string | null;
   /** A thread's latest message, cut short; null for other chats. */
   latest: string | null;
+  /** A thread its bot marked as needing your answer, until you write in it or it's resolved. */
+  needsYou: boolean;
 };
 /** You open a thread on one of a bot's messages in its chat. */
 export const ReplyInThread = z.object({ messageId: z.number().int() });

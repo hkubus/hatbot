@@ -270,12 +270,15 @@ struct ChatView: View {
               }
               .accessibilityLabel("About \(name)")
             }
-            if c.kind == .direct, !store.incognito, store.threads.values.contains(where: { $0.parentId == c.id }) {
+            let threads = store.threads.values.filter { $0.parentId == c.id }
+            if c.kind == .direct, !store.incognito, !threads.isEmpty {
+              let needsYou = threads.contains(where: store.threadNeedsYou)
               ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: Route.threads(c.id)) {
                   Image(systemName: "bubble.left.and.text.bubble.right")
+                    .foregroundStyle(needsYou ? Color.attention : Color.primary)
                 }
-                .accessibilityLabel("Threads")
+                .accessibilityLabel(needsYou ? "Threads, some need you" : "Threads")
               }
             }
           }
