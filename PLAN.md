@@ -6,6 +6,23 @@ This file lists only what's still to do and what's left out on purpose. What's b
 
 ---
 
+## 0. Modular split (decided 2026-10-29, in progress)
+Hatbot becomes a bare core plus plugins, for other people and for the owner alike.
+
+- **Core**: login, chat with episodes, the tool loop, tasks, approvals and questions, the untrusted-content rule, spend, settings, attachments, events, memory (with to-dos, proposals and search_history), bots, chart blocks, the plugin registry and installer, and the model-provider interface. The core's own tools sit on the plugin API as internal plugins.
+- **Plugins**: one workspace package each in `plugins/<id>` (`@hatbot/plugin-<id>`), with a brain entry and a web entry, built on the versioned `@hatbot/plugin-sdk` (a plugin for another major stays off). They depend on each other through named services: desktop provides `sandbox` and `screen`, t3 `t3`, proxmox `snapshots`, scout marketplace data. Groups: the connectors as now; automation (schedules, triggers, watchers, heartbeat, weekly report); research; boxes; desktop (sandbox, screen, take over, live view, teach); marketplace (negotiation, listings, Scout logins, the Haggler template).
+- **Providers** are plugins: Anthropic, and OpenAI-compatible Chat Completions (tested on OpenRouter). Five roles, each any provider's model: chat, task, desktop, small, expert. History stays as each provider sent it; switching provider starts a new episode. Providers declare capabilities; desktop tasks need computer use. No separate search plugin yet.
+- **Install**: a curated `plugins.json` in the repo plus git URLs, pinned to a commit; full trust with a plain warning; only the owner installs. Uninstall keeps the data, with a separate delete. iOS keeps native views for first-party plugins and opens third-party pages in a web view. Each plugin owns its infra; setup asks which guests to make.
+
+Steps, each a run of commits that leaves Hatbot working:
+1. The SDK, and the richer API (services, migrations, routes, ticks, checks, prompt pieces, task runners, web entries), with the core's tools on it.
+2. The connectors move to `plugins/<id>`, with their web forms.
+3. The provider interface, roles and the Anthropic plugin; then the OpenAI-compatible one.
+4. Automation and research move out.
+5. Boxes move out.
+6. Desktop moves out, then marketplace.
+7. The installer (index, git installs, install and uninstall), and infra per plugin.
+
 ## 1. Deploy and try live
 Built, but not yet deployed or tried live:
 - **Boxes** (2026-10-18 and 2026-10-19). Not tried yet: a real `hatbot-boxes` guest under systemd (the units, polkit, DynamicUser, the firewall, and the runner reading its secrets inside `hatbox@`'s sandbox); `box_look` drawn by `hatbot-render` under systemd; boxes in the iOS app on a device; `hatbox.ask` and `hatbox.feed` against a brain; and the model making a box, a server box, or one that uses ask, send, feed, notifications or secrets.
