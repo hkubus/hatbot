@@ -24,6 +24,7 @@
         "@hatbot/plugin-openai": "workspace:*",
         "@hatbot/plugin-pbs": "workspace:*",
         "@hatbot/plugin-proxmox": "workspace:*",
+        "@hatbot/plugin-research": "workspace:*",
         "@hatbot/plugin-scout": "workspace:*",
         "@hatbot/plugin-sdk": "workspace:*",
         "@hatbot/plugin-self": "workspace:*",
@@ -201,6 +202,16 @@
         "@types/react": "^19.3.0",
       },
     },
+    "plugins/research": {
+      "name": "@hatbot/plugin-research",
+      "version": "1.0.0",
+      "dependencies": {
+        "@anthropic-ai/sdk": "^0.133.0",
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/shared": "workspace:*",
+        "zod": "^4.6.5",
+      },
+    },
     "plugins/scout": {
       "name": "@hatbot/plugin-scout",
       "version": "1.0.0",
@@ -315,6 +326,8 @@
     "@hatbot/plugin-pbs": ["@hatbot/plugin-pbs@workspace:plugins/pbs"],
 
     "@hatbot/plugin-proxmox": ["@hatbot/plugin-proxmox@workspace:plugins/proxmox"],
+
+    "@hatbot/plugin-research": ["@hatbot/plugin-research@workspace:plugins/research"],
 
     "@hatbot/plugin-scout": ["@hatbot/plugin-scout@workspace:plugins/scout"],
 

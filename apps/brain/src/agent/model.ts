@@ -1,27 +1,16 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   type CreateParams,
-  ModelError,
+  cutOff,
   type ModelMessage,
+  modelErrorText,
   type StreamHandlers,
   type StreamParams,
 } from "@hatbot/plugin-sdk";
 import { estimateTokens, fixedTokens, requestCeiling, type Spend } from "../spend";
 
 export type { CreateParams, StreamHandlers, StreamParams };
-
-/** An API's error object, as Anthropic's and OpenAI's SDKs give it. */
-type ApiFailure = Error & { status?: number; error?: { error?: { message?: string } } };
-
-export function modelErrorText(err: unknown): string {
-  if (err instanceof ModelError) return err.message.slice(0, 300);
-  const api = err as ApiFailure;
-  if (err instanceof Error && typeof api.status === "number") {
-    const detail = api.error?.error?.message;
-    return `the API said ${api.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
-  }
-  return err instanceof Error ? err.message.slice(0, 300) : "unknown error";
-}
+export { cutOff, modelErrorText };
 
 export interface ModelClient {
   stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers): Promise<ModelMessage>;
@@ -55,9 +44,6 @@ export async function oneShot(
     release();
   }
 }
-
-export const cutOff = (res: Pick<Anthropic.Beta.BetaMessage, "stop_reason">) =>
-  res.stop_reason === "max_tokens" || res.stop_reason === "model_context_window_exceeded";
 
 /**
  * Before the last fallback block only text, and server tool calls with their results, stay: the

@@ -14,9 +14,13 @@ import { HTTPException } from "hono/http-exception";
 import type { z } from "zod";
 import type { PluginCheck, SearchRoutine, TaskOrigin } from "./host";
 import type { ModelProvider } from "./models";
+import type { TaskRunner } from "./runner";
 
+export * from "./charts";
 export * from "./host";
+export * from "./messages";
 export * from "./models";
+export * from "./runner";
 
 /** The API's major version. A plugin built for another one isn't started. */
 export const SDK_VERSION = 1;
@@ -48,6 +52,14 @@ export interface Sandbox {
 export interface PluginAttachments {
   get(id: number): Attachment | null;
   bytes(id: number): Promise<Uint8Array | null>;
+  /** A file Hatbot hands the owner, under a task. */
+  save(input: {
+    bytes: Uint8Array;
+    name: string;
+    mediaType: string;
+    from: "hatbot";
+    taskId: number;
+  }): Promise<Attachment>;
 }
 
 /** The core takes the strictest of this and the untrusted-content rule. */
@@ -314,6 +326,8 @@ export type PluginInstance = {
   checks?: PluginCheck[];
   /** The kinds of background task it starts, by `origin`. */
   origins?: Record<string, TaskOrigin>;
+  /** Kinds of background task whose loop it shapes, by name: a task started with `runner` set. */
+  runners?: Record<string, TaskRunner>;
   /** Its own things whose names or instructions have `query` in them, for Search. */
   search?: (query: string) => SearchRoutine[];
 };
@@ -361,10 +375,6 @@ export async function bodyOf<S extends z.ZodType>(
   const field = issue?.path.map(String).join(".");
   throw bad(issue?.message ?? "Something in that request isn't right.", field || undefined);
 }
-
-/** JSON to put in a prompt: `<` can't close a tag around it. */
-export const tagJson = (value: unknown): string =>
-  (JSON.stringify(value) ?? "null").replace(/</g, "\\u003c");
 
 /** Whether a call's output is untrusted; without `output`, whether it may be. */
 export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>

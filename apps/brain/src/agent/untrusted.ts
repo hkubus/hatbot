@@ -3,9 +3,9 @@
 
 // Escaping every `<` keeps it valid JSON that can't close its tag. `>` and `&` stay, so commands like
 // `cmd 2>&1` read plainly in a review.
-import { tagJson } from "@hatbot/plugin-sdk";
+import { tagJson, untrustedFields } from "@hatbot/plugin-sdk";
 
-export { tagJson };
+export { tagJson, untrustedFields };
 
 export function untrustedBlock(
   tag: string,
@@ -13,18 +13,6 @@ export function untrustedBlock(
   attrs: Record<string, string> = {},
 ): string {
   return untrustedFields(tag, tagJson(text), attrs);
-}
-
-/** Each value in `body` must be in tagJson already, so none can close the block or open another. */
-export function untrustedFields(
-  tag: string,
-  body: string,
-  attrs: Record<string, string> = {},
-): string {
-  const named = Object.entries(attrs)
-    .map(([k, v]) => ` ${k}=${tagJson(v)}`)
-    .join("");
-  return `<${tag}${named} trusted="false">\n${body}\n</${tag}>`;
 }
 
 /**

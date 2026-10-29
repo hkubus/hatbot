@@ -221,8 +221,10 @@ export type Task = {
   skill: string | null;
   /** Background tasks: null runs at the chat's effort. */
   effort: "low" | "medium" | "high" | null;
-  /** A research task: Opus with helpers, ending in a report. */
+  /** It ends in a report, attached, as research does. */
   research: boolean;
+  /** The plugin task runner it runs on, e.g. "research"; null for a task's own loop. */
+  runner: string | null;
   reportPath: string | null;
   /** The to-do item it works on, ticked off when it ends done. */
   todo: string | null;

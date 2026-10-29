@@ -1,10 +1,13 @@
 // The small model screens untrusted text for prompt injection, as defence in depth.
 import { createHash } from "node:crypto";
+import type { Readable } from "@hatbot/plugin-sdk";
 import type { SettingsStore } from "../settings";
 import { BudgetError, type Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
 import { SCREENING_PROMPT } from "./prompt";
 import { tagJson } from "./untrusted";
+
+export type { Readable };
 
 /**
  * `failed`: the model gave no verdict, twice. The text isn't suspected for it: the timeline says it
@@ -20,8 +23,6 @@ const VERDICT = {
 };
 
 const MAX_SCREENED_CHARS = 150_000;
-
-export type Readable = string | { pdf: string };
 
 type ScreenDeps = { model: ModelClient; spend: Spend; settings: SettingsStore };
 

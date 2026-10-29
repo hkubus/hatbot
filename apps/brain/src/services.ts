@@ -4,13 +4,16 @@ import { join } from "node:path";
 import { automationPlugin } from "@hatbot/plugin-automation";
 import { codePlugin } from "@hatbot/plugin-code";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
+import { researchPlugin } from "@hatbot/plugin-research";
 import { scoutPlugin } from "@hatbot/plugin-scout";
 import type {
   HOST_SERVICES,
+  MemoryHost,
   ModelHost,
   Plugin,
   PluginsHost,
   SchedulesService,
+  SpendHost,
 } from "@hatbot/plugin-sdk";
 import { selfPlugin } from "@hatbot/plugin-self";
 import { t3Plugin } from "@hatbot/plugin-t3";
@@ -41,7 +44,7 @@ import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
 import { ListingPhotos } from "./listing-photos";
 import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
-import { MemoryStore } from "./memory/store";
+import { MemoryConflict, MemoryStore } from "./memory/store";
 import { modelName } from "./models-known";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
@@ -50,7 +53,7 @@ import { Plugins } from "./plugins/registry";
 import { Questions } from "./questions";
 import { Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
-import { Spend } from "./spend";
+import { requestCeiling, Spend } from "./spend";
 import { Storage, storageLine } from "./storage";
 import { Tasks } from "./tasks/service";
 import { Teach } from "./teach/service";
@@ -109,6 +112,7 @@ export async function createServices(o: Outside) {
       scoutPlugin,
       selfPlugin,
       automationPlugin,
+      researchPlugin,
       ...corePlugins(() => ({
         db,
         clock,
@@ -145,10 +149,31 @@ export async function createServices(o: Outside) {
         settings: () => settings,
         model: (): ModelHost => ({
           ask: (params, ledger, opts) => oneShot({ model: taskModel, spend }, params, ledger, opts),
+          stream: (params, handlers) => taskModel.stream(params, handlers),
           name: modelName,
         }),
-        spend: () => spend,
-        memory: () => memory,
+        spend: (): SpendHost => ({
+          summary: () => spend.summary(),
+          check: (usd, task) => spend.check(usd, task),
+          hold: (usd, task) => spend.hold(usd, task),
+          record: (entry) => spend.recordResponse(entry),
+          treeSpend: (taskId) => spend.treeSpend(taskId),
+          ceiling: requestCeiling,
+        }),
+        memory: (): MemoryHost => ({
+          readOrNull: (path) => memory.readOrNull(path),
+          log: (limit) => memory.log(limit),
+          exists: (path) => memory.exists(path),
+          create: async (path, content, botId, message) => {
+            try {
+              await memory.writeIf(path, content, "", bots.author(botId), message);
+              return true;
+            } catch (err) {
+              if (err instanceof MemoryConflict) return false;
+              throw err;
+            }
+          },
+        }),
         storage: () => ({ line: async () => storageLine(await storage.measure()) }),
         plugins: (): PluginsHost => ({
           list: () => plugins.list(),

@@ -947,4 +947,9 @@ export const migrations: string[] = [
     PRIMARY KEY (plugin, version)
   );
   `,
+  // 58: the plugin task runner a background task runs on; research is the Research plugin's.
+  `
+  ALTER TABLE tasks ADD COLUMN runner TEXT;
+  UPDATE tasks SET runner = 'research' WHERE research = 1;
+  `,
 ];

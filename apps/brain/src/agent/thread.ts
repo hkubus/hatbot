@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
+import { escapeRe, localStamp } from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type ChatCommand,
@@ -96,6 +97,8 @@ import {
   webTexts,
 } from "./tools";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
+
+export { escapeRe, localStamp };
 
 const EPISODE_IDLE_MS = 30 * 60_000;
 /** A chat's cache entries last five minutes from the request that last wrote or read them. */
@@ -2449,8 +2452,6 @@ export class Thread {
   }
 }
 
-export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 export function mentionsIn(text: string, bots: Bot[]): Bot[] {
   return bots
     .map((b) => ({
@@ -2608,12 +2609,6 @@ export function activity(label: string, input: unknown): string {
 }
 
 /** "Thu 2026-10-09 18:04", in the brain's local time. */
-export function localStamp(d: Date): string {
-  const day = d.toLocaleDateString("en-GB", { weekday: "short" });
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${day} ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 export async function memoryIndex(memory: MemoryStore, botId: string): Promise<string> {
   const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);

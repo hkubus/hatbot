@@ -230,6 +230,8 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   /// The bot that handed it over with ask_bot.
   var requestedBy: String?
   var research: Bool?
+  /// The plugin runner that runs it, e.g. "research".
+  var runner: String?
   var reportPath: String?
   /// The to-do item it works on, ticked off when it ends done.
   var todo: String?

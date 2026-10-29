@@ -1,6 +1,10 @@
 // Spots consequential clicks and Enter presses on the desktop.
+
+import { pathOf, TRACKING } from "@hatbot/plugin-sdk";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
+
+export { pathOf, TRACKING };
 
 /**
  * Folds case, accents, ł, look-alike letters ("Ｐａｙ") and invisible format characters (a zero-width
@@ -232,11 +236,6 @@ export function hostOf(url: string | null | undefined): string | null {
 
 export const onHost = (host: string, domain: string) =>
   host === domain || host.endsWith(`.${domain}`);
-
-export const pathOf = (path: string) => path.replace(/\/+$/, "") || "/";
-
-export const TRACKING =
-  /^(?:utm_\w*|fbclid|gclid|gbraid|wbraid|dclid|msclkid|yclid|mc_[ce]id|_ga|igshid)$/i;
 
 export function samePage(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;

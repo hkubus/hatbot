@@ -1,17 +1,18 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
-import { z } from "zod";
 import {
+  plain as plainRead,
+  quoteFound,
   RESEARCH_CHECK_PROMPT,
   RESEARCH_WORKER_PROMPT,
-  SCREENING_PROMPT,
-} from "../src/agent/prompt";
+} from "@hatbot/plugin-research";
+import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
+import { z } from "zod";
+import { SCREENING_PROMPT } from "../src/agent/prompt";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { BudgetError } from "../src/spend";
-import { plain as plainRead, quoteFound } from "../src/tasks/research";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 
@@ -134,7 +135,7 @@ async function startResearch(t: TestApp, goal = "Which quiet four-bay NAS, under
     title: "Quiet NAS for four drives",
     goal,
     origin: "chat",
-    research: true,
+    runner: "research",
   });
   await t.tasks.idle();
   return t.tasks.get(task?.id as number) as NonNullable<typeof task>;
@@ -340,7 +341,7 @@ test("research can ask you, and the question says what it had read", async () =>
     title: "Quiet NAS for four drives",
     goal: "Which quiet four-bay NAS, under 3,000 zł?",
     origin: "chat",
-    research: true,
+    runner: "research",
   });
   const asked = await waitFor(() => t.questions.pending()[0]);
   expect(asked.sources.join()).toContain(PRICE.url);
@@ -543,7 +544,7 @@ test("a helper's request in flight counts for the chat and other tasks too", asy
     title: "Price",
     goal: "The DS925+ price.",
     origin: "chat",
-    research: true,
+    runner: "research",
   });
   await waitFor(() => work.requests.some(isHelper));
   // All of the day but a cent is spent: with the helper's request held, nothing else fits.
@@ -569,7 +570,7 @@ test("research near its spending limit is told to finish, and a denied raise kee
     title: "Quiet NAS for four drives",
     goal: "Which quiet four-bay NAS?",
     origin: "chat",
-    research: true,
+    runner: "research",
   });
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval.kind).toBe("budget");
@@ -588,17 +589,17 @@ test("research near its spending limit is told to finish, and a denied raise kee
 test("a research tree's raises are research's size, and its spend counts the tasks it started", async () => {
   const t = await testApp();
   t.settings.update({ limits: { taskUsd: 3, researchUsd: 5 } });
-  const add = (parent: number | null, research: number) =>
+  const add = (parent: number | null, runner: string | null) =>
     t.db
-      .query<{ id: number }, [number | null, number]>(
-        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id, research)
+      .query<{ id: number }, [number | null, string | null]>(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, parent_id, runner)
          VALUES ('Price', 'g', '', 'chat', 'background', 'claude-opus-5-5', 'running', 5, '2026-10-09T12:00:00Z', ?, ?)
          RETURNING id`,
       )
-      .get(parent, research)?.id as number;
-  const root = add(null, 1);
-  const screen = add(root, 0);
-  const plain = add(null, 0);
+      .get(parent, runner)?.id as number;
+  const root = add(null, "research");
+  const screen = add(root, null);
+  const plain = add(null, null);
   // A desktop task research started asks for research's raise, on the research's limit.
   expect(t.tasks.raiseStep(screen)).toBe(5);
   expect(t.tasks.raiseStep(plain)).toBe(3);

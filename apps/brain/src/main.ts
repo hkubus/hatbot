@@ -34,7 +34,6 @@ const pluginsStarted = plugins
   .startAll()
   .catch((err) => console.error("plugins failed to start", err));
 await chats.endIncognito();
-tasks.recover();
 await desktop.setPaused(settings.get().paused);
 await desktop.refresh();
 // The last line of defence: a failure nothing waited for is logged, rather than restarting the brain
@@ -57,7 +56,9 @@ setInterval(() => safely("negotiations", () => negotiations.due()), 60_000);
 setInterval(() => safely("chat sweep", () => chats.sweep()), 60_000);
 setInterval(() => safely("to-do reminders", () => brain.todoReminders.tick()), 60_000);
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
+// So are the tasks a restart stopped: a plugin's runner may keep what one had.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
+  tasks.recover();
   plugins.startTimers();
   safely("listings", () => brain.listings.tick());
   setInterval(() => safely("listings", () => brain.listings.tick()), 5 * 60_000);

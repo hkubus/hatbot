@@ -37,8 +37,6 @@ import { type BoxJob, runBoxTask } from "./box-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
 import { Pool, ScreenLane } from "./lane";
-import { keepAfterRestart } from "./research";
-import { earlierReport, refreshing } from "./research-goal";
 
 export type TasksDeps = {
   db: Db;
@@ -91,6 +89,7 @@ type Row = {
   skill: string | null;
   effort: Task["effort"];
   research: number;
+  runner: string | null;
   report_path: string | null;
   todo: string | null;
   status: TaskStatus;
@@ -136,6 +135,7 @@ const toTask = (r: Row): Task => ({
   skill: r.skill,
   effort: r.effort,
   research: Boolean(r.research),
+  runner: r.runner,
   reportPath: r.report_path,
   todo: r.todo,
   status: r.status,
@@ -222,13 +222,15 @@ export class Tasks {
   recover() {
     const stopped = this.interrupted.flatMap((id) => this.get(id) ?? []);
     this.interrupted = [];
-    // Research keeps what it had, read back from its turns, which takes a moment.
-    for (const t of stopped)
-      if (t.research && !t.reportPath)
-        void keepAfterRestart(this, t, t.summary ?? RESTARTED).then((summary) =>
+    // A runner may keep what its task had, read back from its turns, which takes a moment.
+    for (const t of stopped) {
+      const restarted = t.runner ? this.d.plugins.runner(t.runner)?.restarted : undefined;
+      if (restarted)
+        void restarted(t, t.summary ?? RESTARTED).then((summary) =>
           this.finish(t.id, "failed", summary, true, { ntfy: false }),
         );
       else this.finish(t.id, "failed", t.summary ?? RESTARTED, true, { ntfy: false });
+    }
     const shown = stopped.filter((t) => !t.parentId);
     if (!shown.length) return;
     const list = shown.map((t) => `#${t.id} ${t.title}`).join("\n");
@@ -441,7 +443,8 @@ export class Tasks {
     parent?: Task;
     /** The hand-off whose answer asked for it, so hand-offs through chats count towards the cap. */
     askedIn?: Task;
-    research?: boolean;
+    /** A plugin's task runner, which shapes its loop; null back while no plugin gives it. */
+    runner?: string;
     /** The to-do item it works on, ticked off when it ends done; one task on an item at a time. */
     todo?: string;
     /** A box for T3 Code to make or change (box_t3): T3 Code runs it, not the model. */
@@ -449,6 +452,9 @@ export class Tasks {
   }): Task | null {
     const runKey = input.runKey ?? (input.todo ? `todo:${input.todo}` : undefined);
     if (runKey && this.activeFor(runKey)) return null;
+    const runner = input.runner ? this.d.plugins.runner(input.runner) : null;
+    if (input.runner && !runner) return null;
+    const settings = this.d.settings.get();
     const taintedBy =
       input.taintedBy ||
       (input.payload !== undefined && !input.trusted
@@ -469,10 +475,11 @@ export class Tasks {
       origin: input.origin,
       lane: "background",
       // Fixed for the task, like a desktop task's.
-      model: input.research ? this.d.settings.get().smallModel : this.d.settings.get().taskModel,
-      // Research runs at RESEARCH_EFFORT, which the column can't hold.
-      effort: input.research ? null : (input.effort ?? null),
-      research: input.research ? 1 : 0,
+      model: settings[`${runner?.role ?? "task"}Model`],
+      // A runner's effort is its own, which the column may not hold.
+      effort: runner ? null : (input.effort ?? null),
+      research: runner?.reports ? 1 : 0,
+      runner: input.runner ?? null,
       source: input.source ?? null,
       schedule_id: input.scheduleId ?? null,
       trigger_id: input.triggerId ?? null,
@@ -484,7 +491,7 @@ export class Tasks {
       request: input.request ?? null,
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
-      ...(input.research ? { budget_usd: this.d.settings.get().limits.researchUsd } : {}),
+      ...(runner?.budgetUsd ? { budget_usd: runner.budgetUsd() } : {}),
     });
     if (
       input.origin === "chat" &&
@@ -595,6 +602,7 @@ export class Tasks {
   rerun(id: number, goal?: string): Task | null {
     const t = this.get(id);
     if (!t || t.parentId || t.lane !== "background" || !t.finishedAt) return null;
+    const rerunGoal = t.runner ? this.d.plugins.runner(t.runner)?.rerunGoal : undefined;
     const r = this.d.db
       .query<
         {
@@ -609,10 +617,7 @@ export class Tasks {
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
-      // Research again says what changed since its last report, or the one it was refreshing.
-      goal: t.research
-        ? refreshing(goal?.trim() || t.goal, t.reportPath ?? earlierReport(t.goal))
-        : goal?.trim() || t.goal,
+      goal: rerunGoal ? rerunGoal(t, goal?.trim() || t.goal) : goal?.trim() || t.goal,
       origin: t.origin,
       source: t.source ?? undefined,
       scheduleId: t.scheduleId ?? undefined,
@@ -630,7 +635,7 @@ export class Tasks {
       // The bot that asked for it hears how this one ends too.
       requestedBy: t.requestedBy ?? undefined,
       askedIn: r?.asked_in ? (this.get(r.asked_in) ?? undefined) : undefined,
-      research: t.research,
+      runner: t.runner ?? undefined,
       todo: t.todo ?? undefined,
       boxJob: r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : undefined,
     });
@@ -858,8 +863,9 @@ export class Tasks {
 
   /** What one raise of a task's limit adds: its tree's, so a research tree's is research's size. */
   raiseStep(id: number): number {
-    const { limits } = this.d.settings.get();
-    return this.get(this.rootOf(id))?.research ? limits.researchUsd : limits.taskUsd;
+    const runner = this.get(this.rootOf(id))?.runner;
+    const budget = runner ? this.d.plugins.runner(runner)?.budgetUsd : undefined;
+    return budget ? budget() : this.d.settings.get().limits.taskUsd;
   }
 
   budgetAsk(id: number, extra: number): { summary: string; reason: string } {

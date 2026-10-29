@@ -4,7 +4,7 @@ import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { cutOff, type StreamParams } from "../agent/model";
-import { AGENT_PROMPT, CHART_GUESS, RESEARCH_ASK_BOT } from "../agent/prompt";
+import { AGENT_PROMPT, CHART_GUESS } from "../agent/prompt";
 import { levelOf, safeToRun, scopable, scopesFor } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
@@ -46,22 +46,6 @@ import {
   steerNote,
   thinkingFor,
 } from "./loop";
-import {
-  FinishResearch,
-  finishResearch,
-  investigate,
-  keepUnfinished,
-  LEAD_WEB_TOOLS,
-  MAX_RESEARCH_STEPS,
-  RESEARCH_BETA,
-  RESEARCH_LOOP_TOOLS,
-  RESEARCH_TOKENS,
-  RESEARCH_TOOLS,
-  ResearchState,
-  refusedLinks,
-  researchPrompt,
-} from "./research";
-import { RESEARCH_EFFORT } from "./research-goal";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
 
@@ -206,11 +190,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const shown = tasks.progress(id);
   // Fixed for the whole run: the tool list is part of the prompt cache.
   const own = d.plugins.tools(bot.plugins, d.bots.leftToOthers(bot));
-  // Research only reads and writes up, so it gets the plugins' lookups and no tool that changes
-  // anything.
-  const { research } = task;
+  // A plugin's runner shapes the loop: research gets the plugins' lookups only, its own tools, and
+  // ends in a report.
+  const runner = task.runner ? d.plugins.runner(task.runner) : null;
   const others = d.bots.list().filter((b) => b.id !== bot.id);
-  const offer = { place: research ? "research" : "task", bot, others, incognito: false } as const;
+  const offer = { place: runner?.place ?? "task", bot, others, incognito: false } as const;
   const negotiating = (from: PluginTool[]) => ({
     from,
     tools: tasks.negotiations?.tools(bot, from, { conversationId: null }) ?? [],
@@ -230,8 +214,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return liveTool(offered, [...mine, ...negotiation.tools], {
       bot: bot.name,
       since: "since this task started",
-      // Research gets lookups only: a tool that has come to change things since doesn't run in it.
-      onlyLooks: research ? "research only looks things up" : undefined,
+      // A tool that has come to change things since doesn't run where only lookups may.
+      onlyLooks: runner?.onlyLooks,
     });
   };
   const tools = [
@@ -240,18 +224,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       (t) =>
         (others.length || t.name !== "ask_bot") &&
         (ctx.desktop?.configured || t.name !== "run_desktop_task") &&
-        (!research || RESEARCH_LOOP_TOOLS.includes(t.name)),
+        (!runner?.loopTools || runner.loopTools.includes(t.name)),
     ),
-    ...(research ? RESEARCH_TOOLS : []),
-    ...(research ? LEAD_WEB_TOOLS : WEB_TOOLS),
+    ...(runner?.tools ?? []),
+    ...(runner?.webTools ?? WEB_TOOLS),
   ];
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
+  const runnerTools = new Set((runner?.tools ?? []).flatMap((t) => ("name" in t ? [t.name] : [])));
   /** Results never cleared: a research task's findings are what it cites. */
-  const keptTools = ["finish_task", "finish_research", "investigate"].filter((n) => sent.has(n));
+  const keptTools = ["finish_task", ...runnerTools].filter((n) => sent.has(n));
   const guidance = d.plugins.guidance(bot.plugins, d.bots.leftToOthers(bot));
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
-  const prompt = research
-    ? promptFor(researchPrompt(bot), bot, others, { plugins, handOver: RESEARCH_ASK_BOT })
+  const prompt = runner
+    ? promptFor(runner.prompt(bot), bot, others, { plugins, handOver: runner.handOver })
     : promptFor(AGENT_PROMPT, bot, others, { plugins });
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   const screener = new Screener(
@@ -317,14 +302,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const p = DesktopTaskInput.safeParse(call.input);
     if (!p.success) return result(call, invalidInput(p.error), true);
     const { title, goal, success_criteria } = p.data;
-    const refused =
-      research &&
-      refusedLinks(
-        run,
-        found.sources,
-        `${title}\n${goal}\n${success_criteria}`,
-        "the desktop task",
-      );
+    const refused = state?.refuse?.(`${title}\n${goal}\n${success_criteria}`, "the desktop task");
     if (refused) return result(call, refused, true);
     const missing = await missingSkill(d.memory, p.data.skill);
     if (missing) return result(call, missing, true);
@@ -350,7 +328,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const askBot = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
     const p = AskBotInput.safeParse(call.input);
     if (!p.success) return result(call, invalidInput(p.error), true);
-    const refused = research && refusedLinks(run, found.sources, p.data.request, "the bot");
+    const refused = state?.refuse?.(p.data.request, "the bot");
     if (refused) return result(call, refused, true);
     // What this task read is screened first: a suspicion goes with the request.
     await screener.settled();
@@ -651,14 +629,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return result(call, [...each, ...(answers.includes(null) ? [unanswered] : [])].join("\n\n"));
   };
 
-  const found = new ResearchState();
-  const run = { tasks, task, signal, taint, messages, reserveUsd: 0 };
+  /** What the next request may cost: work the runner starts meanwhile leaves room for it. */
+  let reserveUsd = 0;
+  const state = runner?.start({ task, signal, taint, messages, reserveUsd: () => reserveUsd });
 
   try {
     await tasks.pool.acquire(signal);
     slot = true;
     startedAt = tasks.clock();
     tasks.setStatus(id, "running");
+    if (task.runner && !runner)
+      throw new Stop("failed", `Stopped: the plugin that runs "${task.runner}" tasks is off.`);
     if (task.tainted) sources.add(task.taintedBy ?? "What started it");
     const foreign = untrustedDefinitions([...pluginTools.values()]);
     if (foreign) taint(foreign);
@@ -687,35 +668,38 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       },
     ]);
 
-    /** finish_task sends a summary whose charts don't draw back once, not every time. */
+    /** A summary whose charts don't draw goes back once, not every time. */
     let chartsChecked = false;
-    let toldToFinish = false;
+    const checkCharts = async (text: string) => {
+      if (chartsChecked) return "";
+      chartsChecked = true;
+      return chartsWrong(text, attachments);
+    };
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     let nudged = false;
-    /** Only finish_task (research: finish_research) ends a task: asked once, then it has failed. */
+    /** Only finish_task (or the runner's own) ends a task: asked once, then it has failed. */
     const nudge = () => {
-      if (nudged && research)
-        throw new Stop("failed", "Stopped: it ended without calling finish_research.");
+      if (nudged && runner) throw new Stop("failed", runner.nudge.stopped);
       if (nudged) return false;
       nudged = true;
       record("user", [
         {
           type: "text",
-          text: research
-            ? "End the research with finish_research, with the answer and the report."
+          text: runner
+            ? runner.nudge.text
             : "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on.)",
         },
       ]);
       return true;
     };
-    // Code work writes whole files into tool calls, research its report; the chat's high efforts think longer.
-    const effort = research ? RESEARCH_EFFORT : (task.effort ?? d.settings.get().chatEffort);
+    // Code work writes whole files into tool calls; the chat's high efforts think longer.
+    const effort = runner ? runner.effort : (task.effort ?? d.settings.get().chatEffort);
     const roomy = task.effort || (effort !== "low" && effort !== "medium");
-    const maxTokens = research ? 64000 : roomy ? 32000 : 16000;
+    const maxTokens = runner ? runner.maxTokens : roomy ? 32000 : 16000;
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
-      const maxSteps = research ? MAX_RESEARCH_STEPS : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
+      const maxSteps = runner ? runner.maxSteps : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
       if (step >= maxSteps)
         throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       if (ownMs() >= MAX_RUN_MS)
@@ -726,7 +710,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const params: Omit<StreamParams, "stream"> = {
         model: task.model,
         max_tokens: maxTokens,
-        betas: research ? [...BETAS, RESEARCH_BETA] : BETAS,
+        betas: runner?.betas ? [...BETAS, ...runner.betas] : BETAS,
         // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
         // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
         system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
@@ -736,8 +720,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         // The chat's dial unless the task asked for more: the same kind of work, without a screen.
         output_config: {
           effort,
-          // Research paces itself to this many tokens, its helpers' apart.
-          ...(research ? { task_budget: { type: "tokens" as const, total: RESEARCH_TOKENS } } : {}),
+          // It paces itself to this many tokens.
+          ...(runner?.taskBudget
+            ? { task_budget: { type: "tokens" as const, total: runner.taskBudget } }
+            : {}),
         },
         // Old tool results are cleared on the server once the prompt passes 70k, below the 100k
         // where Haiku 5.5 bills the whole request at 5x.
@@ -755,12 +741,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ...(container ? { container } : {}),
         messages,
       };
-      // Research's helpers leave room for its next request.
-      run.reserveUsd = requests.ceiling(params);
+      reserveUsd = requests.ceiling(params);
       const overLimit =
         origin?.overLimit &&
         ((limit: "daily" | "monthly") => origin.overLimit?.(limit, task) ?? "");
-      if (!(await requests.hold(run.reserveUsd, askApproval, overLimit))) continue;
+      if (!(await requests.hold(reserveUsd, askApproval, overLimit))) continue;
       const res = await requests.stream(params);
       record("assistant", res.content);
       container = containerOf(res, container);
@@ -774,8 +759,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!calls) continue;
 
       let finished: z.infer<typeof FinishTask> | null = null;
-      /** A second finish_research in one turn would skip the check the first one got. */
-      let researchFinishes = 0;
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
       const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
@@ -800,9 +783,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
-          const broken =
-            p.success && !chartsChecked ? await chartsWrong(p.data.summary, attachments) : "";
-          if (p.success) chartsChecked = true;
+          const broken = p.success ? await checkCharts(p.data.summary) : "";
           if (broken)
             return result(
               call,
@@ -812,29 +793,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           if (p.success) finished = p.data;
           return result(call, p.success ? "Finished." : invalidInput(p.error), !p.success);
         }
-        if (call.name === "finish_research") {
-          if (researchFinishes++)
-            return result(call, "Not run: call finish_research once a turn.", true);
-          const p = FinishResearch.safeParse(call.input);
-          if (!p.success) return result(call, invalidInput(p.error), true);
-          const broken = chartsChecked
-            ? ""
-            : await chartsWrong(`${p.data.answer}\n\n${p.data.report}`, attachments);
-          chartsChecked = true;
-          if (broken)
-            return result(
-              call,
-              `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
-              true,
-            );
-          const r = await finishResearch(run, found, p.data);
-          if ("retry" in r) return result(call, r.retry, true);
-          finished = { outcome: p.data.outcome, summary: r.summary, notify: p.data.notify };
+        if (state && runnerTools.has(call.name)) {
+          const r = await state.call(call.name, call.input, { checkCharts, step });
+          if (!("finish" in r)) return result(call, r.content, r.isError);
+          finished = r.finish;
           return result(call, "Finished.");
-        }
-        if (call.name === "investigate") {
-          const r = await investigate(run, found.sources, call.input);
-          return result(call, r.content, r.isError);
         }
         if (call.name === "run_desktop_task") return desktopTask(call);
         if (call.name === "ask_bot") return askBot(call);
@@ -895,32 +858,22 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               : `<event trusted="true">\n${tagText(event)}\n</event>`,
           });
         }
-      // Research near its step cap or its limit finishes with what it has, rather than stopping short.
-      if (research && !toldToFinish && !serverToolWaiting(res.content)) {
-        const left = maxSteps - step - 1;
-        // The limit is its tree's: the tasks it started count too.
-        const spent = d.spend.treeSpend(id);
-        const limit = tasks.budget(id);
-        // Room for two more requests at most: the report, and one more if the check sends it back.
-        if (left <= 2 || spent >= 0.8 * limit || limit - spent < 2 * run.reserveUsd) {
-          toldToFinish = true;
-          const near =
-            left <= 2
-              ? `its step limit (${left} steps left)`
-              : `its spending limit ($${spent.toFixed(2)} of $${limit})`;
-          results.push({
-            type: "text",
-            text: `This task is near ${near}. Call finish_research now with what you have, and say in the report what's left open.`,
-          });
-        }
-      }
+      const told =
+        !serverToolWaiting(res.content) &&
+        state?.after?.({
+          stepsLeft: maxSteps - step - 1,
+          // The limit is its tree's: the tasks it started count too.
+          spentUsd: d.spend.treeSpend(id),
+          limitUsd: tasks.budget(id),
+        });
+      if (told) results.push({ type: "text", text: told });
       record("user", results);
     }
   } catch (err) {
     const ended = endOf(err, id, signal);
-    // Research that stops short keeps what it had, unless you stopped it.
-    if (research && ended.status !== "done" && !signal.aborted)
-      ended.summary = await keepUnfinished(run, found, ended.summary);
+    // A runner's task that stops short may keep what it had, unless you stopped it.
+    if (state?.unfinished && ended.status !== "done" && !signal.aborted)
+      ended.summary = await state.unfinished(ended.summary);
     tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
     requests.release();

@@ -1,6 +1,17 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
+  containerOf,
+  invalidInput,
+  serverToolWaiting,
+  toolParam,
+  type WebCall,
+  webCalls,
+  webReads,
+  webTexts,
+  webTools,
+} from "@hatbot/plugin-sdk";
+import {
   type Bot,
   type Box,
   dueTag,
@@ -46,11 +57,21 @@ import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/st
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
-import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
-import type { Readable } from "./screening";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
+
+export {
+  containerOf,
+  invalidInput,
+  serverToolWaiting,
+  toolParam,
+  type WebCall,
+  webCalls,
+  webReads,
+  webTexts,
+  webTools,
+};
 
 export type ToolContext = {
   db: Db;
@@ -144,24 +165,6 @@ export const RunTaskInput = z.object({
     .optional()
     .describe(
       'Leave out for routine work. "medium" for writing or changing code, or a long search; "high" when the owner asks for it or an earlier attempt failed',
-    ),
-});
-
-export const ResearchInput = z.object({
-  title: z.string().min(1).max(80).describe('Short title, e.g. "Quiet NAS for four drives"'),
-  question: z
-    .string()
-    .min(1)
-    .max(4000)
-    .describe(
-      "What to find out, with everything from the conversation that bears on it: what it's for, the budget, where the owner is, must-haves, what they already know or ruled out, and what the answer should cover",
-    ),
-  previous: z
-    .string()
-    .max(300)
-    .optional()
-    .describe(
-      "To refresh an earlier report: its path in memory. The task checks it again and says what changed",
     ),
 });
 
@@ -1236,36 +1239,6 @@ export const TOOLS = [
     },
   }),
   def({
-    name: "research",
-    description:
-      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, the numbers it cites are checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
-    schema: ResearchInput,
-    run: async (
-      { title, question, previous },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
-    ) => {
-      if (!tasks) return "Tasks aren't available.";
-      if (previous && !(await memory.exists(previous)))
-        return `There's no report at ${previous}. Check the path, or leave previous out.`;
-      const suspect = await suspected?.();
-      const task = tasks.createBackgroundTask({
-        title,
-        goal: refreshing(question, previous ?? null),
-        origin: "chat",
-        botId: bot?.id,
-        conversationId,
-        message: messageId,
-        taintedBy: chatTaint(tainted?.()),
-        request: ownerSaid?.(),
-        askedIn: answering,
-        research: true,
-      });
-      if (!task) return "The research couldn't start.";
-      if (suspect) tasks.mark(task.id, "injection_suspected");
-      return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
-    },
-  }),
-  def({
     name: "todo_work",
     description:
       "Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It can't see this conversation, so put what it needs beyond the item in details.",
@@ -1375,21 +1348,6 @@ export const TOOLS = [
     },
   }),
 ];
-
-export const invalidInput = (error: z.ZodError) => `Invalid input: ${z.prettifyError(error)}`;
-
-export const toolParam = (t: {
-  name: string;
-  description: string;
-  schema: z.ZodType;
-  jsonSchema?: Record<string, unknown>;
-}): Anthropic.Beta.BetaTool => ({
-  name: t.name,
-  description: t.description,
-  input_schema: (t.jsonSchema ??
-    z.toJSONSchema(t.schema, { io: "input" })) as Anthropic.Beta.BetaTool.InputSchema,
-  eager_input_streaming: true,
-});
 
 /**
  * A call runs on the plugin's current instance and policy. A string says why not: it's gone, describes
@@ -1525,127 +1483,9 @@ export const CORE_TOOL_NAMES = [
   ...NEGOTIATE_TOOL_NAMES,
 ];
 
-// The text editor views and writes files in the same container as the code.
-const CODE_TOOLS = ["code_execution", "bash_code_execution", "text_editor_code_execution"];
-
-/**
- * The versions with dynamic filtering: a call made from code stays out of the response, with what it
- * read; the code's output is what the model sees. HATBOT_WEB_TOOLS=basic brings back the versions
- * without filtering, should the API refuse these.
- */
-export function webTools(opts: {
-  pageTokens: number;
-  uses?: number;
-  citations?: boolean;
-  timeZone?: string;
-  env?: Record<string, string | undefined>;
-}): Anthropic.Beta.BetaToolUnion[] {
-  const uses = opts.uses ?? 8;
-  const zone = opts.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const where =
-    zone && !/^(Etc\/)?(UTC|GMT|Universal|Zulu)$/.test(zone)
-      ? { user_location: { type: "approximate" as const, timezone: zone } }
-      : {};
-  const cite = opts.citations ? { citations: { enabled: true } } : {};
-  if ((opts.env ?? process.env).HATBOT_WEB_TOOLS === "basic")
-    return [
-      { type: "web_search_20250305", name: "web_search", max_uses: uses, ...where },
-      {
-        type: "web_fetch_20250910",
-        name: "web_fetch",
-        max_uses: uses,
-        max_content_tokens: opts.pageTokens,
-        ...cite,
-      },
-    ];
-  const filtered = () => ({
-    allowed_callers: ["direct" as const, "code_execution_20260120" as const],
-    response_inclusion: "excluded" as const,
-  });
-  return [
-    { type: "web_search_20260318", name: "web_search", max_uses: uses, ...filtered(), ...where },
-    {
-      type: "web_fetch_20260318",
-      name: "web_fetch",
-      max_uses: uses,
-      max_content_tokens: opts.pageTokens,
-      ...filtered(),
-      ...cite,
-    },
-  ];
-}
-
 /** A task reads more of a page than the chat, where a page stays for every later reply. */
 export const WEB_TOOLS = webTools({ pageTokens: 30000 });
 export const CHAT_WEB_TOOLS = webTools({ pageTokens: 10000, citations: true });
-
-/** A search ("" when the code doesn't say what for) or a page read ("" when it doesn't say which). */
-export type WebCall = { search: string } | { read: string };
-
-const STRING = String.raw`[fFrRuU]?(["'])((?:\\.|(?!\1).)*)\1`;
-const QUERY = new RegExp(String.raw`(?:["']query["']\s*:|\bquery\s*=)\s*${STRING}`, "g");
-const URL_IN_CODE = /https?:\/\/[^\s"'`\\<>)\]}]+/g;
-const MAX_CALLS = 10;
-
-/** For code the model ran, from the queries and URLs written in it. */
-export function webCalls(name: string, input: Record<string, unknown>): WebCall[] {
-  if (name === "web_search") return [{ search: String(input.query ?? "") }];
-  if (name === "web_fetch") return [{ read: String(input.url ?? "") }];
-  if (!CODE_TOOLS.includes(name)) return [];
-  const code = Object.values(input)
-    .filter((v): v is string => typeof v === "string")
-    .join("\n");
-  const calls: WebCall[] = [];
-  if (/\bweb_search\s*\(/.test(code)) {
-    const queries = [...code.matchAll(QUERY)].map((m) => (m[2] ?? "").replace(/\\(.)/g, "$1"));
-    const unique = [...new Set(queries.filter((q) => q.trim()))];
-    calls.push(...(unique.length ? unique.map((search) => ({ search })) : [{ search: "" }]));
-  }
-  if (/\bweb_fetch\s*\(/.test(code)) {
-    const urls = [...new Set(code.match(URL_IN_CODE) ?? [])];
-    calls.push(...(urls.length ? urls.map((read) => ({ read })) : [{ read: "" }]));
-  }
-  return calls.slice(0, MAX_CALLS);
-}
-
-const readLine = (c: WebCall) =>
-  "search" in c
-    ? c.search
-      ? `Searched the web for "${c.search}"`
-      : "Searched the web"
-    : `Read ${c.read || "a web page"}`;
-const CODE_READ = "Ran code that can search and read the web";
-
-/**
- * Code whose own calls came back with it (a paused turn's) is told by those. Code counts as a read even
- * when no call shows in it: a URL in a variable or a helper function hides one.
- */
-export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
-  const told = new Set(
-    content.flatMap((b) =>
-      b.type === "server_tool_use" && b.caller && "tool_id" in b.caller ? [b.caller.tool_id] : [],
-    ),
-  );
-  return content.flatMap((b) => {
-    if (b.type !== "server_tool_use" || told.has(b.id)) return [];
-    const calls = webCalls(b.name, b.input);
-    if (!calls.length && CODE_TOOLS.includes(b.name)) return [CODE_READ];
-    return calls.map(readLine);
-  });
-}
-
-/**
- * A server tool call that hasn't run: called alongside client tools, it runs once their results are
- * back, and until then the API takes nothing but those results.
- */
-export function serverToolWaiting(content: Anthropic.Beta.BetaContentBlock[]): boolean {
-  const done = new Set(
-    content.flatMap((b) =>
-      "tool_use_id" in b && b.type.endsWith("_tool_result") ? [b.tool_use_id] : [],
-    ),
-  );
-  return content.some((b) => b.type === "server_tool_use" && !done.has(b.id));
-}
 
 /** A fetched page's citations name its title, not its URL: `pages` maps the titles fetched so far. */
 export function addSources(
@@ -1670,40 +1510,3 @@ export function addSources(
     }
   }
 }
-
-/**
- * The untrusted text to screen: pages fetched (a PDF as it came), search results' titles (their text
- * comes encrypted), what the web tools' code printed, and files viewed in its container.
- */
-export function webTexts(
-  content: Anthropic.Beta.BetaContentBlock[],
-): { source: string; text: Readable }[] {
-  const out: { source: string; text: Readable }[] = [];
-  for (const b of content) {
-    if (b.type === "web_fetch_tool_result" && b.content.type === "web_fetch_result") {
-      const { source, title } = b.content.content;
-      out.push({
-        source: `Read ${b.content.url}`,
-        text: source.type === "text" ? `${title ?? ""}\n${source.data}` : { pdf: source.data },
-      });
-    } else if (
-      b.type === "text_editor_code_execution_tool_result" &&
-      b.content.type === "text_editor_code_execution_view_result"
-    ) {
-      out.push({ source: CODE_READ, text: b.content.content });
-    } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
-      const titles = b.content.map((r) => `${r.title} (${r.url})`).join("\n");
-      out.push({ source: "Web search results", text: titles });
-    } else if (
-      (b.type === "code_execution_tool_result" && b.content.type === "code_execution_result") ||
-      (b.type === "bash_code_execution_tool_result" &&
-        b.content.type === "bash_code_execution_result")
-    )
-      out.push({ source: CODE_READ, text: `${b.content.stdout}\n${b.content.stderr}` });
-  }
-  return out;
-}
-
-/** Sent with the next request of the same reply or task: code paused mid-run carries on in it. */
-export const containerOf = (res: Anthropic.Beta.BetaMessage, before?: string) =>
-  res.container?.id ?? before;

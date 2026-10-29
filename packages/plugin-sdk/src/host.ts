@@ -11,7 +11,13 @@ import type {
   Task,
   TaskStep,
 } from "@hatbot/shared";
-import type { CreateParams } from "./models";
+import type {
+  CreateParams,
+  ModelMessage,
+  ModelUsage,
+  StreamHandlers,
+  StreamParams,
+} from "./models";
 
 export const HOST_SERVICES = [
   "tasks",
@@ -73,6 +79,15 @@ export type BackgroundTask = {
   taintedBy?: string | null;
   /** The bot doing it; Hatbot by default. */
   botId?: string;
+  /** Started from the chat: where it reports, and the message it shows under. */
+  conversationId?: number;
+  message?: number;
+  /** The owner's recent words, when they started it from the chat: what the approval review reads. */
+  request?: string;
+  /** The hand-off whose answer started it, so hand-offs through chats count towards the cap. */
+  askedIn?: Task;
+  /** A plugin's task runner, by name, that runs it in place of a task's loop. */
+  runner?: string;
 };
 
 export interface TasksHost {
@@ -87,6 +102,10 @@ export interface TasksHost {
   ): TaskStep;
   steps(id: number): TaskStep[];
   taint(id: number, by: string): void;
+  mark(id: number, flag: "injection_suspected"): void;
+  /** Its tree's spend limit now, in USD. */
+  budget(id: number): number;
+  setReportPath(id: number, path: string): void;
 }
 
 export interface ChatsHost {
@@ -114,13 +133,18 @@ export interface SettingsHost {
   update(patch: Pick<Partial<AppSettings>, "heartbeat">): unknown;
 }
 
+/** A task's spend limit, which a request is held against with the daily and monthly ones. */
+export type TaskLimit = { id: number; limitUsd: number };
+
 export interface ModelHost {
   /** One request to `params.model`, charged to the spend limits; its text, or it throws. */
   ask(
     params: CreateParams,
-    ledger: { purpose: string; botId?: string },
-    opts?: { reserve?: boolean },
+    ledger: { purpose: string; botId?: string; taskId?: number },
+    opts?: { reserve?: boolean; task?: TaskLimit },
   ): Promise<string>;
+  /** A request as it is, not charged: charge it with `spend.record`, and failed attempts too. */
+  stream(params: Omit<StreamParams, "stream">, handlers: StreamHandlers): Promise<ModelMessage>;
   /** "Haiku 5.5" for its id. */
   name(id: string): string;
 }
@@ -131,10 +155,25 @@ export interface SpendHost {
     monthUsd: number;
     limits: { dailyUsd: number; monthlyUsd: number };
   };
+  /** Throws BudgetError if `usd` more would pass a limit. */
+  check(usd: number, task?: TaskLimit): void;
+  /** Holds `usd` against the limits while a request is out; call what it returns once it's recorded. */
+  hold(usd: number, task?: TaskLimit): () => void;
+  record(entry: { model: string; purpose: string; usage: ModelUsage; taskId?: number }): void;
+  /** What a task and the tasks it started have spent. */
+  treeSpend(taskId: number): number;
+  /** The most one request may cost. */
+  ceiling(
+    model: string,
+    r: { prompt: number; write?: "5m" | "1h"; maxTokens: number; webSearches?: number },
+  ): number;
 }
 
 export interface MemoryHost {
   readOrNull(path: string): Promise<string | null>;
+  exists(path: string): Promise<boolean>;
+  /** A new file, written as `botId`; false if one is there already. */
+  create(path: string, content: string, botId: string, message: string): Promise<boolean>;
   log(limit?: number): Promise<Commit[]>;
 }
 

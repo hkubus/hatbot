@@ -17,6 +17,7 @@ import {
   SDK_VERSION,
   type SearchRoutine,
   type TaskOrigin,
+  type TaskRunner,
   type ToolImage,
   textOf,
   untrustedOf,
@@ -192,6 +193,15 @@ export class Plugins {
     for (const s of this.readyOnes(null, [])) {
       const o = s.instance?.origins?.[origin];
       if (o) return o;
+    }
+    return null;
+  }
+
+  /** The runner for tasks started with `runner`; null while no ready plugin gives it. */
+  runner(name: string): TaskRunner | null {
+    for (const s of this.readyOnes(null, [])) {
+      const r = s.instance?.runners?.[name];
+      if (r) return r;
     }
     return null;
   }
@@ -579,7 +589,8 @@ export class Plugins {
   private checkTools(plugin: Plugin, tools: PluginTool[]) {
     const seen = new Set<string>();
     for (const t of tools) {
-      if ((!plugin.internal && !t.name.startsWith(`${plugin.id}_`)) || !TOOL_NAME.test(t.name))
+      const own = t.name === plugin.id || t.name.startsWith(`${plugin.id}_`);
+      if ((!plugin.internal && !own) || !TOOL_NAME.test(t.name))
         throw new Error(`plugin ${plugin.id}: tool "${t.name}" must be named ${plugin.id}_…`);
       if (seen.has(t.name) || (!plugin.internal && this.d.reserved.includes(t.name)))
         throw new Error(`plugin ${plugin.id}: tool name "${t.name}" is taken`);

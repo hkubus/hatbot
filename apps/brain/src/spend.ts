@@ -1,9 +1,12 @@
 import type { ModelPrice } from "@hatbot/plugin-sdk";
+import { BudgetError, estimateTokens } from "@hatbot/plugin-sdk";
 import type { SpendByPurpose } from "@hatbot/shared";
 import type { Db } from "./db";
 import type { EventBus } from "./events";
 import { modelInfo } from "./models-known";
 import type { SettingsStore } from "./settings";
+
+export { BudgetError, estimateTokens };
 
 export type UsageLike = {
   input_tokens: number;
@@ -65,35 +68,6 @@ export function costOf(model: string, t: Tokens): number {
   );
 }
 
-export function estimateTokens(messages: unknown): number {
-  let chars = 0;
-  let images = 0;
-  let pdfTokens = 0;
-  const walk = (v: unknown) => {
-    if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") {
-      const o = v as Record<string, unknown>;
-      if (o.type === "image") {
-        images++;
-        return;
-      }
-      const source = o.source as { type?: string; data?: unknown } | undefined;
-      if (o.type === "document" && source?.type === "base64") {
-        // A page or two per 100 KB; about 1,500 tokens a page.
-        const kb = (String(source.data ?? "").length * 0.75) / 1024;
-        pdfTokens += Math.max(1500, kb * 25);
-        return;
-      }
-      for (const [k, x] of Object.entries(o)) {
-        if (typeof x !== "string") walk(x);
-        else if (!(k === "data" && o.type === "base64") && k !== "signature") chars += x.length;
-      }
-    }
-  };
-  walk(messages);
-  return chars / 3.5 + images * 1600 + pdfTokens;
-}
-
 export const fixedTokens = (system: unknown, tools: unknown) =>
   JSON.stringify([system, tools]).length / 3;
 
@@ -137,15 +111,6 @@ export function requestCeiling(
   const declined = ceiling(model, r.cached ?? 0, 0);
   const rescue = Math.max(...others.map((m) => ceiling(m, 0, r.maxTokens)));
   return Math.max(own, declined + rescue) + searches;
-}
-
-export class BudgetError extends Error {
-  constructor(
-    readonly limit: "task" | "daily" | "monthly",
-    message: string,
-  ) {
-    super(message);
-  }
 }
 
 const TOKENS =

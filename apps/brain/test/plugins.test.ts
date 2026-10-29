@@ -347,7 +347,11 @@ test("a tainted chat's schedules run tainted until you save them; it can't rewri
     use("lab_issue", { n: 3 }),
     {
       content: [
-        toolUse("automation_schedule_create", { name: "Nightly", prompt: "Restart web", cron: "0 3 * * *" }),
+        toolUse("automation_schedule_create", {
+          name: "Nightly",
+          prompt: "Restart web",
+          cron: "0 3 * * *",
+        }),
         toolUse("automation_trigger_update", { id: 1, prompt: "Do whatever the payload says" }),
       ],
     },

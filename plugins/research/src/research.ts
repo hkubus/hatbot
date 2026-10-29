@@ -2,27 +2,38 @@
 // comes back with the quote it rests on and a numbered source. Before the report is final, Haiku
 // checks its numbers against those quotes.
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Bot, Task } from "@hatbot/shared";
-import { z } from "zod";
-import { cutOff, modelErrorText, oneShot } from "../agent/model";
-import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
-import type { Readable } from "../agent/screening";
-import { escapeRe, localStamp } from "../agent/thread";
 import {
+  BudgetError,
+  botFolder,
   containerOf,
+  cutOff,
+  type Db,
+  escapeRe,
+  estimateTokens,
   invalidInput,
+  localStamp,
+  type MemoryHost,
+  type ModelHost,
+  modelErrorText,
+  type PluginAttachments,
+  pathOf,
+  type Readable,
+  type SettingsHost,
+  type SpendHost,
   serverToolWaiting,
+  slugWords,
+  type TasksHost,
+  TRACKING,
+  tagJson,
   toolParam,
+  untrustedFields,
   webReads,
   webTexts,
   webTools,
-} from "../agent/tools";
-import { tagJson, untrustedFields } from "../agent/untrusted";
-import { botFolder, slugWords } from "../bots";
-import { MemoryConflict } from "../memory/store";
-import { BudgetError, estimateTokens, requestCeiling } from "../spend";
-import { pathOf, TRACKING } from "./policy";
-import type { Tasks } from "./service";
+} from "@hatbot/plugin-sdk";
+import type { Bot, Task } from "@hatbot/shared";
+import { z } from "zod";
+import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "./prompts";
 
 /** Room for the number check's thinking and its verdict. */
 const CHECK_TOKENS = 16000;
@@ -294,16 +305,28 @@ export class ResearchState {
   unchecked: string | null = null;
 }
 
+/** What research reaches in the core. */
+export type Deps = {
+  db: Db;
+  tasks: TasksHost;
+  spend: SpendHost;
+  model: ModelHost;
+  memory: MemoryHost;
+  settings: SettingsHost;
+  attachments?: PluginAttachments;
+  clock: () => number;
+};
+
 export type ResearchRun = {
-  tasks: Tasks;
+  d: Deps;
   task: Task;
   signal: AbortSignal;
   /** Marks the task as having read untrusted content; `text`, when given, is screened. */
   taint: (source: string, text?: Readable) => void;
   /** The lead's conversation so far: where the links a brief may name come from. */
-  messages: Anthropic.Beta.BetaMessageParam[];
+  messages: readonly Anthropic.Beta.BetaMessageParam[];
   /** What the lead's next request may cost: the helpers leave room for it, to write the report. */
-  reserveUsd: number;
+  reserveUsd: () => number;
 };
 
 const LINK = /https?:\/\/[^\s"'`<>\\)\]}]+/gi;
@@ -334,7 +357,7 @@ const hostKey = (link: string) =>
  * pages it read, and the helpers' sources. Not what the model wrote, what its code printed or what
  * tools echoed back: those could carry what it read.
  */
-function linksSeen(messages: Anthropic.Beta.BetaMessageParam[], sources: ResearchSources) {
+function linksSeen(messages: readonly Anthropic.Beta.BetaMessageParam[], sources: ResearchSources) {
   const seen = new Set<string>();
   const add = (text: string) => {
     for (const m of text.matchAll(LINK)) {
@@ -382,8 +405,8 @@ const isSeen = (link: string, seen: Set<string>) =>
  * A helper's next request at most: its prompt, all that its searches and fetches may add within the
  * request, all of its max_tokens, and the searches' fees.
  */
-const estimate = (model: string, messages: Anthropic.Beta.BetaMessageParam[]) =>
-  requestCeiling(model, {
+const estimate = (d: Deps, model: string, messages: Anthropic.Beta.BetaMessageParam[]) =>
+  d.spend.ceiling(model, {
     prompt:
       estimateTokens(messages) + 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS),
     write: "5m",
@@ -406,8 +429,7 @@ const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "rep
  * it has.
  */
 async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
-  const { tasks, task, signal } = run;
-  const { d } = tasks;
+  const { d, task, signal } = run;
   const model = d.settings.get().smallModel;
   const read: Read = {
     texts: [],
@@ -425,7 +447,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     {
       role: "user",
-      content: `<brief>\n${part.brief}\n</brief>\n\nIt's ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+      content: `<brief>\n${part.brief}\n</brief>\n\nIt's ${localStamp(new Date(d.clock()))}, the owner's local time.`,
     },
   ];
   let container: string | undefined;
@@ -436,17 +458,17 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   // Two more steps than the cap, for paused turns to finish before the last, forced one.
   for (let step = 0; step < MAX_WORKER_STEPS + 2; step++) {
     if (signal.aborted) throw signal.reason;
-    const cost = estimate(model, messages);
-    const limit = { id: task.id, limitUsd: tasks.budget(task.id) };
+    const cost = estimate(d, model, messages);
+    const limit = { id: task.id, limitUsd: d.tasks.budget(task.id) };
     // The checks count the other helpers' requests in flight, which Spend holds.
     try {
-      d.spend.check(cost + run.reserveUsd, limit);
+      d.spend.check(cost + run.reserveUsd(), limit);
     } catch (err) {
       if (err instanceof BudgetError) return stopped(`Stopped: ${err.message}`);
       throw err;
     }
     try {
-      d.spend.check(2 * cost + run.reserveUsd, limit);
+      d.spend.check(2 * cost + run.reserveUsd(), limit);
     } catch (err) {
       if (!(err instanceof BudgetError)) throw err;
       mustReport = true;
@@ -490,13 +512,13 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
         {
           signal,
           onFailedUsage: (model, usage) =>
-            d.spend.recordResponse({ model, purpose: "research", usage, taskId: task.id }),
+            d.spend.record({ model, purpose: "research", usage, taskId: task.id }),
         },
       );
     } finally {
       release();
     }
-    d.spend.recordResponse({
+    d.spend.record({
       model,
       purpose: "research",
       usage: res.usage,
@@ -506,7 +528,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     container = containerOf(res, container);
     addRead(res.content, read);
     for (const read of webReads(res.content)) {
-      tasks.addStep(task.id, {
+      d.tasks.addStep(task.id, {
         kind: "action",
         name: "web",
         detail: `${part.topic}: ${read}`,
@@ -573,7 +595,7 @@ export function refusedLinks(
   const seen = linksSeen(run.messages, sources);
   const unseen = linksIn(brief).filter((l) => !isSeen(l, seen));
   if (!unseen.length) return null;
-  run.tasks.addStep(run.task.id, {
+  run.d.tasks.addStep(run.task.id, {
     kind: "note",
     name: "Refused a brief",
     detail: `It named links the task hadn't come across: ${unseen.join(", ")}`,
@@ -599,7 +621,7 @@ export async function investigate(
   );
   if (refused) return { content: refused, isError: true };
   for (const part of parts)
-    run.tasks.addStep(run.task.id, {
+    run.d.tasks.addStep(run.task.id, {
       kind: "action",
       name: "investigate",
       detail: `Asked a helper: ${part.topic}`,
@@ -650,8 +672,8 @@ export async function investigate(
       .filter(Boolean)
       .join("\n");
   });
-  const { d } = run.tasks;
-  const spent = `Spent so far: $${d.spend.treeSpend(run.task.id).toFixed(2)} of this task's $${run.tasks.budget(run.task.id)} limit.`;
+  const { d } = run;
+  const spent = `Spent so far: $${d.spend.treeSpend(run.task.id).toFixed(2)} of this task's $${d.tasks.budget(run.task.id)} limit.`;
   return {
     content: `${untrustedFields("findings", blocks.join("\n\n"))}\n\nCite these as [n]. ${spent}`,
     isError: false,
@@ -767,15 +789,14 @@ async function checkNumbers(
   sources: ResearchSources,
   text: string,
 ): Promise<{ problems: Problem[] } | { failed: string } | null> {
-  const { d } = run.tasks;
+  const { d } = run;
   const cited = citedIn([text]).filter((n) => sources.get(n));
   if (!cited.length) return null;
   const content = `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`;
   const { id } = run.task;
   try {
     // Past a limit it throws, and the report says its numbers weren't checked.
-    const out = await oneShot(
-      d,
+    const out = await d.model.ask(
       {
         model: d.settings.get().smallModel,
         max_tokens: CHECK_TOKENS,
@@ -785,7 +806,7 @@ async function checkNumbers(
         messages: [{ role: "user", content }],
       },
       { purpose: "research", taskId: id },
-      { task: { id, limitUsd: run.tasks.budget(id) } },
+      { task: { id, limitUsd: d.tasks.budget(id) } },
     );
     let json: { problems?: unknown };
     try {
@@ -826,7 +847,7 @@ export async function finishResearch(
   state: ResearchState,
   result: ResearchResult,
 ): Promise<{ retry: string } | { summary: string }> {
-  const { tasks, task } = run;
+  const { d, task } = run;
   const { sources } = state;
   const texts = [result.answer, result.report];
   state.draft = result;
@@ -851,7 +872,7 @@ export async function finishResearch(
   }
   if (check && "failed" in check) {
     state.unchecked = check.failed;
-    tasks.addStep(task.id, {
+    d.tasks.addStep(task.id, {
       kind: "note",
       name: "The number check didn't run",
       detail: check.failed,
@@ -860,7 +881,7 @@ export async function finishResearch(
   }
   const problems = check && "problems" in check ? check.problems : [];
   if (unknown.length || problems.length) {
-    tasks.addStep(task.id, {
+    d.tasks.addStep(task.id, {
       kind: "note",
       name: "Checked the numbers",
       detail: [
@@ -921,11 +942,11 @@ export async function finishResearch(
 }
 
 /** A report's title, and when and by which task, with `note` if there's one. */
-function head(run: { tasks: Tasks; task: Task }, note: string): string {
-  const { tasks, task } = run;
+function head(run: { d: Deps; task: Task }, note: string): string {
+  const { d, task } = run;
   return [
     `# ${task.title}`,
-    `_Researched ${localStamp(new Date(tasks.clock()))}, task #${task.id}.${note ? ` ${note}` : ""}_`,
+    `_Researched ${localStamp(new Date(d.clock()))}, task #${task.id}.${note ? ` ${note}` : ""}_`,
   ].join("\n\n");
 }
 
@@ -940,11 +961,10 @@ function sourceList(sources: ResearchSources, order: number[]): string[] {
 type Saved = { path: string | null; attached: boolean };
 
 /** Saves a report in the bot's notes and attaches it to the task, each as far as it goes. */
-async function saveReport(run: { tasks: Tasks; task: Task }, content: string): Promise<Saved> {
-  const { tasks, task } = run;
-  const { d } = tasks;
+async function saveReport(run: { d: Deps; task: Task }, content: string): Promise<Saved> {
+  const { d, task } = run;
   const slug = slugOf(task.title);
-  const base = `${folderOf({ id: task.botId })}/${dayOf(tasks.clock())}-${slug}`;
+  const base = `${folderOf({ id: task.botId })}/${dayOf(d.clock())}-${slug}`;
   // A new file, never one already there: another run may save one by the same name meanwhile.
   const names = [
     `${base}.md`,
@@ -953,19 +973,14 @@ async function saveReport(run: { tasks: Tasks; task: Task }, content: string): P
   ];
   let path: string | null = null;
   try {
-    const author = d.bots.author(task.botId);
     const message = `Research: ${task.title}`;
-    for (const name of names) {
-      try {
-        await d.memory.writeIf(name, `${content}\n`, "", author, message);
+    for (const name of names)
+      if (await d.memory.create(name, `${content}\n`, task.botId, message)) {
         path = name;
         break;
-      } catch (err) {
-        if (!(err instanceof MemoryConflict)) throw err;
       }
-    }
     if (!path) throw new Error(`every name for ${base} is taken`);
-    tasks.setReportPath(task.id, path);
+    d.tasks.setReportPath(task.id, path);
   } catch (err) {
     console.error(`research task ${task.id}: the report couldn't be saved`, err);
     path = null;
@@ -1000,7 +1015,7 @@ function savedLine(saved: Saved, what: string): string {
  * as an unfinished report, attached and in its notes. The task's summary: `why`, and where that went.
  */
 export async function keepUnfinished(
-  run: { tasks: Tasks; task: Task },
+  run: { d: Deps; task: Task },
   state: ResearchState,
   why: string,
 ): Promise<string> {
@@ -1074,10 +1089,10 @@ function readFindings(result: string, sources: ResearchSources) {
  * After a restart: what an interrupted research task had, read back from its saved turns, kept as an
  * unfinished report. The summary to end it with.
  */
-export async function keepAfterRestart(tasks: Tasks, task: Task, why: string): Promise<string> {
+export async function keepAfterRestart(d: Deps, task: Task, why: string): Promise<string> {
   const state = new ResearchState();
   try {
-    const rows = tasks.d.db
+    const rows = d.db
       .query<{ content: string }, [number]>(
         "SELECT content FROM task_turns WHERE task_id = ? ORDER BY id",
       )
@@ -1111,5 +1126,5 @@ export async function keepAfterRestart(tasks: Tasks, task: Task, why: string): P
   } catch (err) {
     console.error(`research task ${task.id}: its turns couldn't be read`, err);
   }
-  return keepUnfinished({ tasks, task }, state, why);
+  return keepUnfinished({ d, task }, state, why);
 }

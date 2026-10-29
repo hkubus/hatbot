@@ -18,6 +18,7 @@
     "@hatbot/plugin-openai": "workspace:*",
     "@hatbot/plugin-pbs": "workspace:*",
     "@hatbot/plugin-proxmox": "workspace:*",
+    "@hatbot/plugin-research": "workspace:*",
     "@hatbot/plugin-scout": "workspace:*",
     "@hatbot/plugin-sdk": "workspace:*",
     "@hatbot/plugin-self": "workspace:*",

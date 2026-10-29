@@ -1,3 +1,4 @@
+import { botFolder, slugWords } from "@hatbot/plugin-sdk";
 import type { CreateBot, UpdateBot } from "@hatbot/shared";
 import { BOT_COLORS, type Bot, HATBOT_ID } from "@hatbot/shared";
 import type { z } from "zod";
@@ -5,6 +6,8 @@ import type { Db } from "./db";
 import { UserError } from "./errors";
 import type { EventBus } from "./events";
 import { type Author, HATBOT } from "./memory/store";
+
+export { botFolder, slugWords };
 
 type Row = {
   id: string;
@@ -31,29 +34,6 @@ const toBot = (r: Row): Bot => ({
 });
 
 export class BotError extends UserError {}
-
-/** Letters that don't decompose into a plain one and an accent. */
-const FOLDED: Record<string, string> = {
-  ł: "l",
-  đ: "d",
-  ð: "d",
-  ø: "o",
-  ß: "ss",
-  æ: "ae",
-  œ: "oe",
-  þ: "th",
-  ı: "i",
-};
-
-export function slugWords(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[łđðøßæœþı]/g, (c) => FOLDED[c] ?? c)
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 export function slugOf(name: string): string {
   const slug = slugWords(name).slice(0, 24).replace(/-+$/, "");
@@ -215,9 +195,6 @@ export class Bots {
     return bot;
   }
 }
-
-/** Hatbot's notes are the shared memory itself. */
-export const botFolder = (id: string) => (id === HATBOT_ID ? null : `bots/${id}`);
 
 export const botIndex = (id: string) => {
   const folder = botFolder(id);

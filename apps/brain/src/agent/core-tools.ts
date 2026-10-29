@@ -80,7 +80,6 @@ const META: Record<string, Meta> = {
     when: desktop,
   },
   run_task: { plugin: "tasks", label: "Starting a task", places: CHAT },
-  research: { plugin: "tasks", label: "Starting research", places: CHAT },
   todo_work: { plugin: "tasks", label: "Starting a task on a to-do", places: CHAT },
   ask_bot: { plugin: "tasks", label: "Asking another bot", places: CHAT, when: withOthers },
   get_task: { plugin: "tasks", label: "Checking on a task", places: CHAT },
