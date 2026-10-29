@@ -419,13 +419,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return { safe: true, why: "" };
     }
     const granted =
-      scopable(verdict) &&
+      (scopable(verdict) || forSchedule(verdict)) &&
       d.approvals.granted({
         botId: bot.id,
         tool: t.name,
         input: call.input,
         target: t.target?.(call.input as never) ?? null,
         taskId: id,
+        scheduleOnly: !scopable(verdict),
       });
     if (granted) {
       tasks.addStep(id, {
@@ -457,6 +458,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
     return check;
   };
+
+  /** A door or lock a schedule's run asks about, which you may allow for that schedule's runs. */
+  const forSchedule = (verdict: Extract<Verdict, { action: "ask" }>) =>
+    task.scheduleId !== null && verdict.kind === "access" && !verdict.careful;
 
   /** What its writes changed outside Hatbot, for its summary. */
   const changed: string[] = [];
@@ -497,8 +502,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     if (verdict.action === "ask") {
       const check = await reviewed(t, call, what, verdict);
       const target = t.target?.(call.input as never) ?? null;
-      // Never for money, accounts, doors or what you said to always ask about.
-      const scopes = scopable(verdict) ? (["always"] as const) : [];
+      // Never for money, accounts or what you said to always ask about; doors only in one schedule.
+      const scopes = scopable(verdict)
+        ? (["always"] as const)
+        : forSchedule(verdict)
+          ? (["schedule"] as const)
+          : [];
       if (!check.safe && check.by) {
         d.approvals.block({
           taskId: id,

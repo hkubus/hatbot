@@ -288,8 +288,11 @@ export type ApprovalKind =
 /** Where one channel of a flip Scout marked ready to list is. */
 export type ListingStatus = "queued" | "posting" | "listed" | "failed" | "declined" | "cancelled";
 
-/** How far an approval goes besides this once: `always`, this exact call for this bot from now on. */
-export type ApprovalScope = "always";
+/**
+ * How far an approval goes besides this once: `always`, this exact call for this bot from now on;
+ * `schedule`, this exact call in the asking task's schedule's runs from now on.
+ */
+export type ApprovalScope = "always" | "schedule";
 
 /** The kinds Safety settings choose for; budget, mandates and injection warnings have their own. */
 export const SAFETY_KINDS = [
@@ -355,7 +358,7 @@ export type Approval = {
 export const DecideApproval = z.object({
   decision: z.enum(["approve", "deny"]),
   note: z.string().trim().max(4000).optional(),
-  scope: z.enum(["always"]).optional(),
+  scope: z.enum(["always", "schedule"]).optional(),
 });
 /** Running what the safety review blocked: once, or `always` for this exact call. */
 export const RunAnyway = z.object({ always: z.boolean().optional() });
@@ -366,6 +369,8 @@ export type ApprovalRule = {
   botId: string;
   tool: string;
   summary: string;
+  /** The schedule whose runs it's for, by name; null for every run of the bot. */
+  schedule: string | null;
   createdAt: string;
 };
 export const TokenDecision = z.object({

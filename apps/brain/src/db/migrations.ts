@@ -1052,4 +1052,21 @@ export const migrations: string[] = [
   ALTER TABLE approvals_new RENAME TO approvals;
   CREATE INDEX approvals_status ON approvals (status);
   `,
+  // 67: a call you always allow in one schedule's runs, such as locking the door at night.
+  `${REBUILD}
+  CREATE TABLE approval_rules_new (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    schedule_id INTEGER REFERENCES schedules(id) ON DELETE CASCADE
+  );
+  INSERT INTO approval_rules_new (id, bot_id, tool, input, summary, created_at)
+  SELECT id, bot_id, tool, input, summary, created_at FROM approval_rules;
+  DROP TABLE approval_rules;
+  ALTER TABLE approval_rules_new RENAME TO approval_rules;
+  CREATE UNIQUE INDEX approval_rules_key ON approval_rules (bot_id, tool, input, coalesce(schedule_id, 0));
+  `,
 ];

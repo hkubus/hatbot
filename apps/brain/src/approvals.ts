@@ -114,6 +114,8 @@ export type Granted = {
   target: string | null;
   taskId?: number;
   episodeId?: number;
+  /** Only what you allowed for the task's schedule: for doors and locks, nothing wider stands in. */
+  scheduleOnly?: boolean;
 };
 
 export class Approvals {
@@ -264,12 +266,21 @@ export class Approvals {
       return null;
     if (scope && decision === "approve" && a?.status === "pending" && a.scopes.includes(scope)) {
       this.db.query("UPDATE approvals SET scope = ? WHERE id = ?").run(scope, id);
+      if (scope === "schedule")
+        this.db
+          .query(
+            `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at, schedule_id)
+             SELECT a.bot_id, a.tool, a.input, a.summary, ?, t.schedule_id FROM approvals a
+             JOIN tasks t ON t.id = a.task_id WHERE a.id = ? AND t.schedule_id IS NOT NULL
+             ON CONFLICT DO NOTHING`,
+          )
+          .run(this.now(), id);
       if (scope === "always")
         this.db
           .query(
             `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at)
              SELECT bot_id, tool, input, summary, ? FROM approvals WHERE id = ?
-             ON CONFLICT (bot_id, tool, input) DO NOTHING`,
+             ON CONFLICT DO NOTHING`,
           )
           .run(this.now(), id);
     }
@@ -283,11 +294,16 @@ export class Approvals {
   granted(q: Granted): string | null {
     const input = canonical(q.input);
     const rule = this.db
-      .query<{ id: number }, [string, string, string]>(
-        "SELECT id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?",
+      .query<{ schedule_id: number | null }, [string, string, string, number, number]>(
+        `SELECT schedule_id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?
+         AND ((schedule_id IS NULL AND NOT ?) OR schedule_id = (SELECT schedule_id FROM tasks WHERE id = ?))`,
       )
-      .get(q.botId, q.tool, input);
-    if (rule) return "You always allow this.";
+      .get(q.botId, q.tool, input, q.scheduleOnly ? 1 : 0, q.taskId ?? -1);
+    if (rule)
+      return rule.schedule_id
+        ? "You always allow this in this schedule."
+        : "You always allow this.";
+    if (q.scheduleOnly) return null;
     const anyway = this.db
       .query<{ id: number }, [string, string, string, string]>(
         `UPDATE approvals SET used_at = ?1 WHERE id = (SELECT id FROM approvals WHERE blocked = 1
@@ -369,7 +385,7 @@ export class Approvals {
         .query(
           `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at)
            SELECT bot_id, tool, input, summary, ? FROM approvals WHERE id = ? AND tool IS NOT NULL
-           ON CONFLICT (bot_id, tool, input) DO NOTHING`,
+           ON CONFLICT DO NOTHING`,
         )
         .run(this.now(), id);
     const changed = this.db
@@ -385,8 +401,19 @@ export class Approvals {
 
   rules(): ApprovalRule[] {
     return this.db
-      .query<{ id: number; bot_id: string; tool: string; summary: string; created_at: string }, []>(
-        "SELECT id, bot_id, tool, summary, created_at FROM approval_rules ORDER BY id DESC",
+      .query<
+        {
+          id: number;
+          bot_id: string;
+          tool: string;
+          summary: string;
+          created_at: string;
+          schedule: string | null;
+        },
+        []
+      >(
+        `SELECT r.id, r.bot_id, r.tool, r.summary, r.created_at, s.name AS schedule
+         FROM approval_rules r LEFT JOIN schedules s ON s.id = r.schedule_id ORDER BY r.id DESC`,
       )
       .all()
       .map((r) => ({
@@ -394,6 +421,7 @@ export class Approvals {
         botId: r.bot_id,
         tool: r.tool,
         summary: r.summary,
+        schedule: r.schedule,
         createdAt: r.created_at,
       }));
   }

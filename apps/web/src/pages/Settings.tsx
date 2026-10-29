@@ -395,6 +395,7 @@ function AllowedPage() {
             {rules.map((r) => (
               <Row key={r.id} label={<span className="mono">{r.summary}</span>}>
                 {r.botId !== "hatbot" && <span className="val">{bots[r.botId]?.name}</span>}
+                {r.schedule && <span className="val">In {r.schedule}</span>}
                 <button type="button" className="btn sm danger-text" onClick={() => remove(r)}>
                   Remove
                 </button>

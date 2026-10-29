@@ -367,6 +367,17 @@ export function PendingApproval({
             Always
           </button>
         )}
+        {a.scopes.includes("schedule") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title="Approve this exact action in this schedule's runs from now on"
+            onClick={() => decide("approve", "schedule")}
+          >
+            Always for this schedule
+          </button>
+        )}
         {a.answers.map((answer) => (
           <button
             key={answer}

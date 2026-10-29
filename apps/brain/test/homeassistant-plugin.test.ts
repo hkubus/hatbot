@@ -1,7 +1,9 @@
 import { beforeEach, expect, test } from "bun:test";
 import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
+import type { Task } from "@hatbot/shared";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
+import { waitFor } from "./helpers";
 import {
   call,
   ended,
@@ -107,6 +109,52 @@ test("a task calls a service with the token; strangers' text is read only as unt
   expect((await read("homeassistant_entity", { entity_id: "lock.front_door" })).untrusted).toBe(
     false,
   );
+});
+
+test("unlocking in a schedule's run may be allowed for that schedule: its next run goes ahead, other tasks still ask", async () => {
+  const unlock = {
+    content: [
+      toolUse("homeassistant_call_service", {
+        domain: "lock",
+        service: "unlock",
+        entity_id: "lock.front_door",
+      }),
+    ],
+  };
+  const work = new FakeModel([unlock, finish(), unlock, finish(), unlock, finish()]);
+  const t = await pluginApp(homeassistantPlugin, env, { work });
+  const morning = t.schedules.create(
+    { name: "Morning", prompt: "Unlock the front door", cron: "0 7 * * *" },
+    "owner",
+  );
+  const run = (scheduleId?: number) =>
+    t.tasks.createBackgroundTask({
+      title: "Unlock",
+      goal: "Unlock the front door",
+      origin: "schedule",
+      source: "Morning",
+      runKey: `s:${Math.random()}`,
+      scheduleId,
+    }) as Task;
+  const unlocks = () => api.seen.filter((s) => s.path === "/api/services/lock/unlock").length;
+
+  const first = run(morning.id);
+  const asked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(asked.scopes).toEqual(["schedule"]);
+  t.approvals.decide(asked.id, "approve", "web", undefined, "schedule");
+  await ended(t, first.id);
+  expect(unlocks()).toBe(1);
+
+  await ended(t, run(morning.id).id);
+  expect(unlocks()).toBe(2);
+  expect(t.approvals.list(true)).toEqual([]);
+
+  const other = run();
+  const again = await waitFor(() => t.approvals.list(true)[0]);
+  expect(again.scopes).toEqual([]);
+  t.approvals.decide(again.id, "deny", "web");
+  await ended(t, other.id);
+  expect(unlocks()).toBe(2);
 });
 
 test("everyday control and locking run; unlocking, opening, purges and anything else ask, as does a tainted task", async () => {

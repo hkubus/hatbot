@@ -1146,11 +1146,15 @@ struct ApprovalBody: View {
       }
     }
     let always = (a.scopes ?? []).contains("always")
+    let schedule = (a.scopes ?? []).contains("schedule")
     let answers = a.answers ?? []
-    if always || !answers.isEmpty {
+    if always || schedule || !answers.isEmpty {
       HStack(spacing: 16) {
         if always {
           Button("Always") { decide(.approve, scope: "always") }
+        }
+        if schedule {
+          Button("Always for this schedule") { decide(.approve, scope: "schedule") }
         }
         ForEach(answers, id: \.self) { answer in
           Button(answer) { decide(.approve, answer: answer) }

@@ -335,8 +335,8 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var decidedAt: String?
   var note: String?
   var botId: String?
-  /// How far approving it may go besides this once: "always" (this exact action). A String, so a
-  /// scope this app doesn't know is left out.
+  /// How far approving it may go besides this once: "always" (this exact action), or "schedule"
+  /// (this exact action in its schedule's runs). A String, so a scope this app doesn't know is left out.
   var scopes: [String]?
   /// The chat waiting for it, and the conversation in it, when no task is.
   var conversationId: Int?
