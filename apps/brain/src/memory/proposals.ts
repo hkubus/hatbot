@@ -236,22 +236,6 @@ export class Proposals {
     return this.store("skill", out.title, out.reason, changes, name);
   }
 
-  /**
-   * Every later chat and task trusts skills and INDEX.md files, so a write to one from work that read
-   * untrusted content (`by`) waits for you. Content null deletes the file.
-   */
-  async hold(path: string, content: string | null, what: string, by: string) {
-    const p = await this.store(
-      "write",
-      what,
-      `Written after reading untrusted content: ${by}. Skills and indexes are trusted from then on, so this waits for you.`,
-      [content === null ? { path, delete: true } : { path, content }],
-      null,
-    );
-    if (p) this.tell("A memory change is waiting", `${p.changes[0]?.path}: ${p.title}`, 2);
-    return p;
-  }
-
   /** A file changed since it was proposed makes it stale. */
   async apply(id: number): Promise<{ proposal: Proposal; sha: string | null }> {
     const p = this.get(id);

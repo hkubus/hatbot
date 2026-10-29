@@ -359,9 +359,6 @@ test("the spending check stops at a task tree's, today's and the month's limit, 
   const held = t.spend.hold(0.05, tree());
   expect(stop(0.06, tree())).toBe("task");
   held();
-  t.tasks.raiseBudget(child, 3);
-  expect(t.tasks.budget(root)).toBe(4);
-  expect(stop(0.2, tree())).toBeNull();
 
   // Today's, with what's in flight.
   spent(t, 1);

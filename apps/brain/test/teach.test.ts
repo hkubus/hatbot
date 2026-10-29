@@ -196,8 +196,7 @@ const live = (t: TestApp) => t.plugins.service<DesktopService>("desktop")?.live 
 async function teachApp() {
   const work = new FakeModel();
   const t = await testApp(new FakeModel(), work);
-  work.onCreate = (p) =>
-    p.system === TEACH_PROMPT ? SKILL : '{"suspected": false, "excerpt": ""}';
+  work.onCreate = (p) => (p.system === TEACH_PROMPT ? SKILL : undefined);
   const { cookie } = signIn(t);
   const call = (method: string, path: string, body?: unknown) =>
     t.call(method, path, body, { cookie });
@@ -254,7 +253,7 @@ test("record, draft and save a skill: the desktop is yours meanwhile, secrets st
   };
   let heldMeanwhile = false;
   work.onCreate = (p) => {
-    if (p.system !== TEACH_PROMPT) return '{"suspected": false, "excerpt": ""}';
+    if (p.system !== TEACH_PROMPT) return undefined;
     heldMeanwhile = holding();
     return SKILL;
   };

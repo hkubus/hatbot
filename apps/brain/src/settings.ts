@@ -16,14 +16,12 @@ const Safety = z.object({
     Object.fromEntries(SAFETY_KINDS.map((k) => [k, Level])) as Record<SafetyKind, typeof Level>,
   ),
   untrusted: z.boolean(),
-  injection: z.boolean(),
   tools: z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), z.enum(["ask", "allow"])),
   chatCommands: z.number().int().min(1).max(50),
 });
 
 export const Settings = z.object({
   limits: z.object({
-    taskUsd: z.number().positive(),
     /** A research task's lead and helpers cost more than most tasks. */
     researchUsd: z.number().positive(),
     dailyUsd: z.number().positive(),
@@ -48,7 +46,7 @@ export const Settings = z.object({
   desktopEscalate: z.boolean(),
   /** The model background tasks run on (SSH, Proxmox, code work: anything without a screen). */
   taskModel: ModelId,
-  /** Quick jobs: checks, screening pages, summaries, research helpers, approval reviews. */
+  /** Quick jobs: checks, summaries, research helpers, approval reviews. */
   smallModel: ModelId,
   /** Hard parts: what the chat asks for help with, memory proposals, teaching. */
   expertModel: ModelId,
@@ -77,7 +75,6 @@ export type SettingsPatch = z.infer<typeof SettingsPatch>;
 
 export const DEFAULT_SETTINGS: Settings = {
   limits: {
-    taskUsd: 3,
     researchUsd: 5,
     dailyUsd: 10,
     monthlyUsd: 200,
@@ -102,7 +99,6 @@ export const DEFAULT_SETTINGS: Settings = {
       computer: "ask",
     },
     untrusted: true,
-    injection: true,
     tools: {},
     chatCommands: 2,
   },

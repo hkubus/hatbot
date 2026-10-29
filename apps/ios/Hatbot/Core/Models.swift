@@ -220,7 +220,6 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var tainted: Bool
   /// The first untrusted thing it read, or what started it tainted.
   var taintedBy: String?
-  var injectionSuspected: Bool
   var summary: String?
   var costUsd: Double?
   var steps: Int?
@@ -317,7 +316,9 @@ struct Question: Codable, Identifiable, Equatable, Sendable {
 
 struct Approval: Codable, Identifiable, Equatable, Sendable {
   enum Status: String, LenientEnum {
-    case pending, approved, denied, expired, cancelled
+    /// Blocked: the safety review stopped it; the web app can run it anyway. Sending: a message to a
+    /// person that goes at expiresAt unless it's denied.
+    case pending, blocked, sending, approved, denied, expired, cancelled
     static let fallback = Status.cancelled
   }
 
@@ -337,12 +338,14 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var decidedAt: String?
   var note: String?
   var botId: String?
-  /// How far approving it may go besides this once: "session" (the rest of the task or chat) and
-  /// "always" (this exact action). A String, so a scope this app doesn't know is left out.
+  /// How far approving it may go besides this once: "always" (this exact action), or "schedule"
+  /// (this exact action in its schedule's runs). A String, so a scope this app doesn't know is left out.
   var scopes: [String]?
   /// The chat waiting for it, and the conversation in it, when no task is.
   var conversationId: Int?
   var episodeId: Int?
+  /// Ready answers: each approves it, with itself as the note.
+  var answers: [String]?
 
   /// Whether the answer can carry a note: the task carries on afterwards.
   var takesNote: Bool { kind != "budget" && kind != "injection_warning" }
@@ -636,7 +639,7 @@ struct MemoryCommit: Codable, Identifiable, Equatable, Hashable, Sendable {
 }
 
 struct Limits: Codable, Equatable, Sendable {
-  var taskUsd: Double
+  /// A research task's limit: other tasks have none of their own.
   var researchUsd: Double?
   var dailyUsd: Double
   var monthlyUsd: Double
@@ -701,7 +704,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var desktopEscalate: Bool?
   var taskModel: ModelID?
   var chatModel: ModelID?
-  /// Quick jobs: checks, screening pages, summaries, research helpers, approval reviews.
+  /// Quick jobs: checks, summaries, research helpers, approval reviews.
   var smallModel: ModelID?
   /// Hard parts: what the chat asks for help with, memory proposals, teaching.
   var expertModel: ModelID?

@@ -24,7 +24,6 @@ import type { Db } from "../db";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { Listings } from "../listings/service";
-import type { Proposals } from "../memory/proposals";
 import type { Skills } from "../memory/skills";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import type { Logins } from "../negotiate/logins";
@@ -61,7 +60,6 @@ export type TasksDeps = {
   plugins: Plugins;
   skills: Skills;
   /** Set once it exists; it needs the tasks too. */
-  proposals?: Proposals;
   clock?: () => number;
 };
 
@@ -146,7 +144,6 @@ const toTask = (r: Row): Task => ({
   status: r.status,
   tainted: Boolean(r.tainted),
   taintedBy: r.tainted_by,
-  injectionSuspected: Boolean(r.injection_suspected),
   summary: r.summary,
   costUsd: r.cost_usd ?? 0,
   steps: r.steps,
@@ -550,7 +547,7 @@ export class Tasks {
     const cols = {
       ...row,
       status: "queued",
-      budget_usd: row.budget_usd ?? this.d.settings.get().limits.taskUsd,
+      budget_usd: row.budget_usd ?? 0,
       created_at: this.now(),
     };
     const names = Object.keys(cols);
@@ -738,11 +735,6 @@ export class Tasks {
     });
   }
 
-  /** Called once the services that need the tasks exist. */
-  attach(parts: Pick<TasksDeps, "proposals">) {
-    Object.assign(this.d, parts);
-  }
-
   /** What a background task's tools need; their requests to the desktop end once `signal` aborts. */
   toolContext(task: Task, signal: AbortSignal): ToolContext {
     const agent = this.d.desktop()?.agent;
@@ -756,7 +748,6 @@ export class Tasks {
       tasks: this,
       attachments: this.d.attachments,
       desktop: agent?.withSignal?.(signal) ?? agent,
-      proposals: this.d.proposals,
       settings: this.d.settings,
       // The run marks `task` as it reads untrusted content.
       tainted: () => (task.tainted ? task.taintedBy || "What started it" : null),
@@ -849,11 +840,6 @@ export class Tasks {
     };
   }
 
-  mark(id: number, flag: "injection_suspected") {
-    this.d.db.query(`UPDATE tasks SET ${flag} = 1 WHERE id = ?`).run(id);
-    this.emit(id);
-  }
-
   /** It has read untrusted content; `by` is what, kept only the first time. */
   taint(id: number, by: string) {
     this.d.db
@@ -884,37 +870,12 @@ export class Tasks {
     }
   }
 
+  /** Its tree's limit: a runner's, as research's; other tasks have none. */
   budget(id: number): number {
-    return this.d.db
+    const usd = this.d.db
       .query<{ budget_usd: number }, [number]>("SELECT budget_usd FROM tasks WHERE id = ?")
-      .get(this.rootOf(id))?.budget_usd as number;
-  }
-
-  raiseBudget(id: number, byUsd: number) {
-    this.d.db
-      .query("UPDATE tasks SET budget_usd = budget_usd + ? WHERE id = ?")
-      .run(byUsd, this.rootOf(id));
-  }
-
-  /** What one raise of a task's limit adds: its tree's, so a research tree's is research's size. */
-  raiseStep(id: number): number {
-    const runner = this.get(this.rootOf(id))?.runner;
-    const budget = runner ? this.d.plugins.runner(runner)?.budgetUsd : undefined;
-    return budget ? budget() : this.d.settings.get().limits.taskUsd;
-  }
-
-  budgetAsk(id: number, extra: number): { summary: string; reason: string } {
-    const root = this.rootOf(id);
-    const title = (n: number) => `"${this.get(n)?.title ?? `Task #${n}`}"`;
-    return root === id
-      ? {
-          summary: `Let task #${id} spend $${extra} more`,
-          reason: `${title(id)} has used its $${this.budget(id)} limit.`,
-        }
-      : {
-          summary: `Let task #${root} and the tasks it started spend $${extra} more`,
-          reason: `${title(root)} and the tasks it started, ${title(id)} among them, have used its $${this.budget(id)} limit.`,
-        };
+      .get(this.rootOf(id))?.budget_usd;
+    return usd ? usd : Number.POSITIVE_INFINITY;
   }
 
   addStep(
@@ -957,7 +918,6 @@ export class Tasks {
       botId: string;
       note: string;
       taintedBy?: string | null;
-      suspected?: boolean;
       ownerSaid?: string;
     },
   ): string | null {
@@ -971,7 +931,6 @@ export class Tasks {
     if (job) return job.unsteerable(id);
     if (!this.running.has(id)) return `Task #${id} isn't running.`;
     if (input.taintedBy) this.taint(id, input.taintedBy);
-    if (input.suspected) this.mark(id, "injection_suspected");
     const was = this.requestOf(id);
     const said = input.ownerSaid;
     if (said && !was?.includes(said)) {

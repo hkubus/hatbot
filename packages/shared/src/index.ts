@@ -236,7 +236,6 @@ export type Task = {
   tainted: boolean;
   /** The first untrusted thing it read, or what started it tainted. Null before this was kept. */
   taintedBy: string | null;
-  injectionSuspected: boolean;
   summary: string | null;
   costUsd: number;
   steps: number;
@@ -292,21 +291,13 @@ export type ApprovalKind =
   | "other";
 
 /** Where one channel of a flip Scout marked ready to list is. */
-export type ListingStatus =
-  | "asking"
-  | "queued"
-  | "posting"
-  | "listed"
-  | "failed"
-  | "declined"
-  | "cancelled";
+export type ListingStatus = "queued" | "posting" | "listed" | "failed" | "declined" | "cancelled";
 
 /**
- * How far an approval goes besides this once: `session`, the same tool on the same
- * thing for the rest of the task or conversation, where only untrusted content asks; `always`, this
- * exact call for this bot from now on.
+ * How far an approval goes besides this once: `always`, this exact call for this bot from now on;
+ * `schedule`, this exact call in the asking task's schedule's runs from now on.
  */
-export type ApprovalScope = "session" | "always";
+export type ApprovalScope = "always" | "schedule";
 
 /** The kinds Safety settings choose for; budget, mandates and injection warnings have their own. */
 export const SAFETY_KINDS = [
@@ -330,8 +321,6 @@ export type SafetySettings = {
   kinds: Record<SafetyKind, ApprovalLevel>;
   /** After reading untrusted content, changes ask first. */
   untrusted: boolean;
-  /** Once something read looks like instructions aimed at a bot, every change asks you. */
-  injection: boolean;
   /** By write tool: always ask you, or never ask. Tools not here do as their plugin says. */
   tools: Record<string, "ask" | "allow">;
   /** Commands one chat reply runs itself before the work has to go to a task. */
@@ -353,7 +342,11 @@ export type Approval = {
   sources: string[];
   /** The step whose screenshot shows what's being approved. */
   screenshotStepId: number | null;
-  status: "pending" | "approved" | "denied" | "expired" | "cancelled";
+  /**
+   * `blocked`: the safety review stopped it, and you may still run it anyway. `sending`: a message to
+   * a person that goes at `expiresAt` unless you deny it.
+   */
+  status: "pending" | "blocked" | "sending" | "approved" | "denied" | "expired" | "cancelled";
   decidedVia: "web" | "ntfy" | null;
   costUsd: number;
   createdAt: string;
@@ -365,12 +358,16 @@ export type Approval = {
   scopes: ApprovalScope[];
   /** How far you approved it, if further than this once. */
   scope: ApprovalScope | null;
+  /** Ready answers: each approves it, with itself as the note. */
+  answers: string[];
 };
 export const DecideApproval = z.object({
   decision: z.enum(["approve", "deny"]),
   note: z.string().trim().max(4000).optional(),
-  scope: z.enum(["session", "always"]).optional(),
+  scope: z.enum(["always", "schedule"]).optional(),
 });
+/** Running what the safety review blocked: once, or `always` for this exact call. */
+export const RunAnyway = z.object({ always: z.boolean().optional() });
 
 /** An exact call you always allow (Settings → Safety). */
 export type ApprovalRule = {
@@ -378,6 +375,8 @@ export type ApprovalRule = {
   botId: string;
   tool: string;
   summary: string;
+  /** The schedule whose runs it's for, by name; null for every run of the bot. */
+  schedule: string | null;
   createdAt: string;
 };
 export const TokenDecision = z.object({
@@ -729,8 +728,7 @@ export type Commit = {
 };
 
 export type Limits = {
-  taskUsd: number;
-  /** A research task's starting limit, and what each raise adds. */
+  /** A research task's limit: other tasks have none of their own. */
   researchUsd: number;
   dailyUsd: number;
   monthlyUsd: number;
@@ -800,7 +798,7 @@ export type AppSettings = {
   desktopEscalate: boolean;
   /** The model background tasks (SSH, Proxmox, code work) run on. */
   taskModel: string;
-  /** Quick jobs: checks, screening pages, summaries, research helpers, approval reviews. */
+  /** Quick jobs: checks, summaries, research helpers, approval reviews. */
   smallModel: string;
   /** Hard parts: what the chat asks for help with, memory proposals, teaching. */
   expertModel: string;

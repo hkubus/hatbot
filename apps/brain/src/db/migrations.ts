@@ -999,4 +999,103 @@ export const migrations: string[] = [
   `ALTER TABLE conversations ADD COLUMN needs_you_at TEXT;`,
   // 64: the computer a desktop task runs on; null for the desktop.
   `ALTER TABLE tasks ADD COLUMN screen TEXT;`,
+  // 65: what the safety review blocked, which you may run anyway once; old session scopes end.
+  `${REBUILD}
+  CREATE TABLE approvals_new (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER REFERENCES tasks(id),
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    sources TEXT NOT NULL DEFAULT '[]',
+    screenshot_step_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'blocked', 'approved', 'denied', 'expired', 'cancelled')),
+    decided_via TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    note TEXT,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    conversation_id INTEGER REFERENCES conversations(id),
+    tool TEXT,
+    input TEXT,
+    target TEXT,
+    episode_id INTEGER,
+    scopes TEXT NOT NULL DEFAULT '[]',
+    scope TEXT,
+    blocked INTEGER NOT NULL DEFAULT 0,
+    used_at TEXT
+  );
+  INSERT INTO approvals_new (id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id, scopes, scope)
+  SELECT id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id,
+    replace(replace(scopes, '"session",', ''), '"session"', ''), CASE WHEN scope = 'session' THEN NULL ELSE scope END
+  FROM approvals;
+  DROP TABLE approvals;
+  ALTER TABLE approvals_new RENAME TO approvals;
+  CREATE INDEX approvals_status ON approvals (status);
+  `,
+  // 66: marking a flip ready to list is the approval.
+  `
+  UPDATE flip_listings SET status = 'queued', approval_id = NULL WHERE status = 'asking';
+  UPDATE approvals SET status = 'cancelled' WHERE kind = 'listing' AND status = 'pending';
+  `,
+  // 67: ready answers an approval offers, each approving it with itself as the note.
+  `
+  ALTER TABLE approvals ADD COLUMN answers TEXT NOT NULL DEFAULT '[]';
+  `,
+  // 68: only research has a spending limit of its own.
+  `
+  UPDATE tasks SET budget_usd = 0 WHERE runner IS NOT 'research';
+  `,
+  // 69: a message to a person waits a little before it goes, for you to stop it.
+  `${REBUILD}
+  CREATE TABLE approvals_new (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER REFERENCES tasks(id),
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    sources TEXT NOT NULL DEFAULT '[]',
+    screenshot_step_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'blocked', 'sending', 'approved', 'denied', 'expired', 'cancelled')),
+    decided_via TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    note TEXT,
+    bot_id TEXT NOT NULL DEFAULT 'hatbot',
+    conversation_id INTEGER REFERENCES conversations(id),
+    tool TEXT,
+    input TEXT,
+    target TEXT,
+    episode_id INTEGER,
+    scopes TEXT NOT NULL DEFAULT '[]',
+    scope TEXT,
+    blocked INTEGER NOT NULL DEFAULT 0,
+    used_at TEXT,
+    answers TEXT NOT NULL DEFAULT '[]'
+  );
+  INSERT INTO approvals_new (id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id, scopes, scope, blocked, used_at, answers)
+  SELECT id, task_id, kind, summary, reason, sources, screenshot_step_id, status, decided_via, created_at, expires_at, decided_at, note, bot_id, conversation_id, tool, input, target, episode_id, scopes, scope, blocked, used_at, answers FROM approvals;
+  DROP TABLE approvals;
+  ALTER TABLE approvals_new RENAME TO approvals;
+  CREATE INDEX approvals_status ON approvals (status);
+  `,
+  // 70: a call you always allow in one schedule's runs, such as locking the door at night.
+  `${REBUILD}
+  CREATE TABLE approval_rules_new (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    input TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    schedule_id INTEGER REFERENCES schedules(id) ON DELETE CASCADE
+  );
+  INSERT INTO approval_rules_new (id, bot_id, tool, input, summary, created_at)
+  SELECT id, bot_id, tool, input, summary, created_at FROM approval_rules;
+  DROP TABLE approval_rules;
+  ALTER TABLE approval_rules_new RENAME TO approval_rules;
+  CREATE UNIQUE INDEX approval_rules_key ON approval_rules (bot_id, tool, input, coalesce(schedule_id, 0));
+  `,
 ];

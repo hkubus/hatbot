@@ -48,6 +48,7 @@ async function changedMidTask(change: (t: TestApp) => Promise<unknown> | unknown
   ]);
   const t = await testApp(new FakeModel(), work, {}, [guests(calls)]);
   await t.plugins.update("guests", { enabled: true });
+  t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
   await waitFor(() => work.requests.length === 1);
   await change(t);

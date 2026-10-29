@@ -1,4 +1,5 @@
 import CoreSpotlight
+import LocalAuthentication
 import SwiftUI
 import UIKit
 import WidgetKit
@@ -156,6 +157,29 @@ struct MainView: View {
     }
   }
 
+  /// Opens the approval's task; `approving`, a notification's Approve, approves it once Face ID (or
+  /// the passcode) says it's you.
+  private func openApproval(_ id: Int, approving: Bool) {
+    tab = .tasks
+    tasksPath = []
+    Task {
+      let approval: Approval? = try? await store.api.get("/approvals/\(id)")
+      guard let a = approval else { return }
+      store.apply(.approvalCreated(a))
+      if let taskId = a.taskId { tasksPath = [.task(taskId)] }
+      guard approving, a.status == .pending else { return }
+      let context = LAContext()
+      guard (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Approve: \(a.summary)")) == true
+      else { return }
+      do {
+        try await store.decide(a.id, .approve)
+        store.toast = "Approved"
+      } catch {
+        store.toast = message(for: error)
+      }
+    }
+  }
+
   /// hatbot://tasks/12 opens a task, hatbot://approvals/5 the approval's task; schedules and triggers
   /// open under Settings, like on the web app on a phone, and hatbot://boxes/4 a box under Boxes.
   private func open(_ url: URL) {
@@ -165,15 +189,9 @@ struct MainView: View {
       tab = .tasks
       tasksPath = [.task(id)]
     case let .approval(id):
-      tab = .tasks
-      tasksPath = []
-      Task {
-        let approval: Approval? = try? await store.api.get("/approvals/\(id)")
-        if let a = approval {
-          store.apply(.approvalCreated(a))
-          if let taskId = a.taskId { tasksPath = [.task(taskId)] }
-        }
-      }
+      openApproval(id, approving: false)
+    case let .approve(id):
+      openApproval(id, approving: true)
     case let .schedule(id):
       tab = .settings
       settingsPath = [.schedules, .schedule(id)]

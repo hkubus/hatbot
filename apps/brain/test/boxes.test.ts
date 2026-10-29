@@ -6,7 +6,7 @@ import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
+import { bot, lastUserText, signIn, type TestApp, testApp, toolNames } from "./helpers";
 
 const PAGE = "<!doctype html><title>Habits</title><button>Walk</button>";
 const open = async (t: TestApp, id: number) => {
@@ -308,7 +308,7 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   expect(model.requests).toHaveLength(2);
 });
 
-test("after reading untrusted content, a feed for a box that reaches no host goes to the review; one that reaches a host waits for the owner", async () => {
+test("after reading untrusted content, a feed for a box goes to the review, which can block one that reaches a host", async () => {
   const feed = (box: number) =>
     toolUse("boxes_feed", { box, name: "load", tool: "lab_load", tool_input: { node: "pve" } });
   const model = new FakeModel([
@@ -318,7 +318,9 @@ test("after reading untrusted content, a feed for a box that reaches no host goe
     { content: [text("One added.")] },
   ]);
   model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: true, why: "" }) : undefined;
+    p.system === REVIEW_PROMPT
+      ? JSON.stringify({ safe: !JSON.stringify(p.messages).includes("x.test"), why: "" })
+      : undefined;
   const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);
   await t.plugins.update("lab", { enabled: true });
   t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
@@ -338,12 +340,10 @@ test("after reading untrusted content, a feed for a box that reaches no host goe
   expect(t.boxes.hosts(2)).toEqual(["x.test"]);
   await t.thread.post("hi").done;
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
-  const reply = t.thread.post("show the load in both boxes");
-  const asked = await waitFor(() => t.approvals.list(true)[0]);
-  expect(asked.summary).toContain("box #2");
-  t.approvals.decide(asked.id, "deny", "web");
-  await reply.done;
+  await t.thread.post("show the load in both boxes").done;
   expect(t.boxes.feeds?.list(1).map((f) => f.name)).toEqual(["load"]);
   expect(t.boxes.feeds?.list(2)).toEqual([]);
-  expect(t.approvals.list(false)).toHaveLength(1);
+  const [blocked] = t.approvals.list(false);
+  expect(blocked).toMatchObject({ status: "blocked" });
+  expect(blocked?.summary).toContain("box #2");
 });

@@ -1197,16 +1197,19 @@ struct ApprovalBody: View {
       case nil: nil
       }
     }
-    let scopes = a.scopes ?? []
-    if scopes.contains("session") || scopes.contains("always") {
+    let always = (a.scopes ?? []).contains("always")
+    let schedule = (a.scopes ?? []).contains("schedule")
+    let answers = a.answers ?? []
+    if always || schedule || !answers.isEmpty {
       HStack(spacing: 16) {
-        if scopes.contains("session") {
-          Button(a.taskId == nil ? "For this chat" : "For this task") {
-            decide(.approve, scope: "session")
-          }
-        }
-        if scopes.contains("always") {
+        if always {
           Button("Always") { decide(.approve, scope: "always") }
+        }
+        if schedule {
+          Button("Always for this schedule") { decide(.approve, scope: "schedule") }
+        }
+        ForEach(answers, id: \.self) { answer in
+          Button(answer) { decide(.approve, answer: answer) }
         }
       }
       .font(.subheadline)
@@ -1229,13 +1232,53 @@ struct ApprovalBody: View {
     }
   }
 
-  private func decide(_ decision: Decision, scope: String? = nil) {
+  private func decide(_ decision: Decision, scope: String? = nil, answer: String? = nil) {
     busy = true
     error = nil
     Task {
       do {
-        try await store.decide(approval.id, decision, note: note, scope: scope)
+        try await store.decide(approval.id, decision, note: answer ?? note, scope: scope)
         decided = decision
+      } catch {
+        self.error = message(for: error)
+        busy = false
+      }
+    }
+  }
+}
+
+/// A message to a person that goes once its time is up, unless it's stopped.
+struct SendingBody: View {
+  let approval: Approval
+  @Environment(AppStore.self) private var store
+  @State private var busy = false
+  @State private var error: String?
+
+  var body: some View {
+    let due = Format.date(approval.expiresAt) ?? .now
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let left = max(0, Int(due.timeIntervalSince(context.date).rounded(.up)))
+      VStack(alignment: .leading, spacing: 10) {
+        Text(approval.summary).textSelection(.enabled)
+        Text(left > 0 ? "Sending in \(left) s" : "Sending").foregroundStyle(.secondary)
+        if let error {
+          Text(error).font(.footnote).foregroundStyle(.red)
+        }
+        Button(role: .destructive) { stop() } label: { Text("Stop").frame(maxWidth: .infinity) }
+          .glassButton()
+          .controlSize(.large)
+          .disabled(busy || left == 0)
+      }
+      .padding(.vertical, 4)
+    }
+  }
+
+  private func stop() {
+    busy = true
+    error = nil
+    Task {
+      do {
+        try await store.decide(approval.id, .deny)
       } catch {
         self.error = message(for: error)
         busy = false

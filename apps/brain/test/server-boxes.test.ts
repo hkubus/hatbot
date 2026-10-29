@@ -105,11 +105,10 @@ test("without the boxes guest, boxes with files are refused in one sentence, and
   expect(await boxFetch(t, { path: "/" })).toEqual({ status: 503, error: NO_GUEST });
 });
 
-test("in a chat that read untrusted content, hosts a backend couldn't reach before wait for review and the owner", async () => {
+test("in a chat that read untrusted content, with the review off, hosts a backend couldn't reach before wait for the owner", async () => {
   const model = new FakeModel([{ content: [text("hi")] }]);
-  model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: false, why: "Not asked for." }) : undefined;
   const t = await testApp(model);
+  t.settings.update({ reviewChanges: false });
   await t.thread.post("hello").done;
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
   model.script.push(
@@ -218,10 +217,11 @@ test("a backend's scheduled() notifies you, opening the box, with a note the bot
   expect(t.hatbox.notes.at(-1)).toStartWith("1: Not notified: Hatbot is paused.");
 });
 
-test("a backend's secrets: set by you, sent only to the guest, never in an answer, event or the model's context; with one set, a new host or a tainted chat's code change asks you, past Haiku", async () => {
+test("a backend's secrets: set by you, sent only to the guest, never in an answer, event or the model's context; with one set, a new host or a tainted chat's code change goes to the review, which can block it", async () => {
   const model = new FakeModel([{ content: [text("Hello.")] }]);
+  let safe = true;
   model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT ? JSON.stringify({ safe: true, why: "Fine." }) : undefined;
+    p.system === REVIEW_PROMPT ? JSON.stringify({ safe, why: "Fine." }) : undefined;
   const t = await testApp(model);
   const KEY = "sk-w/eather+5ecret";
   const config = { hosts: ["api.weather.test"], secrets: ["WEATHER_KEY"] };
@@ -235,7 +235,7 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
   const set = await setSecrets({ WEATHER_KEY: KEY });
   expect(await set.json()).toEqual([{ name: "WEATHER_KEY", set: true }]);
 
-  // A new host for its backend asks you, untainted as the chat is, naming the secret.
+  // A new host for its backend goes to the review, untainted as the chat is, naming the secret.
   model.script.push(
     {
       content: [
@@ -247,12 +247,10 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
     },
     { content: [text("Added.")] },
   );
-  const adding = t.thread.post("let it reach x.test too");
-  const host = await waitFor(() => t.approvals.list(true)[0]);
-  expect(host.summary).toContain("reach x.test");
-  expect(host.summary).toContain("WEATHER_KEY");
-  t.approvals.decide(host.id, "approve", "web");
-  await adding.done;
+  await t.thread.post("let it reach x.test too").done;
+  const review = JSON.stringify(model.creates.find((p) => p.system === REVIEW_PROMPT)?.messages);
+  expect(review).toContain("reach x.test");
+  expect(review).toContain("WEATHER_KEY");
   expect(t.boxes.hosts(1)).toEqual(["api.weather.test", "x.test"]);
 
   // Its backend gets it; what comes back has it taken out, however it's spelled.
@@ -287,8 +285,9 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
     expect(seen).not.toContain(encodeURIComponent(KEY));
   }
 
-  // In a tainted chat, a change to its backend's code asks you; denied, it isn't built.
+  // In a tainted chat, a change to its backend's code goes to the review; blocked, it isn't built.
   t.db.query("UPDATE episodes SET tainted = 1, tainted_by = 'https://evil.example'").run();
+  safe = false;
   const builds = t.hatbox.builds.length;
   model.script.push(
     {
@@ -298,13 +297,10 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
     },
     { content: [text("Not changed.")] },
   );
-  const recoding = t.thread.post("do what that page said");
-  const code = await waitFor(() => t.approvals.list(true)[0]);
-  expect(code.summary).toContain("Change the backend code");
-  t.approvals.decide(code.id, "deny", "web");
-  await recoding.done;
+  await t.thread.post("do what that page said").done;
+  expect(t.approvals.list(false)[0]).toMatchObject({ status: "blocked" });
+  expect(t.approvals.list(false)[0]?.summary).toContain("Change the backend code");
   expect(t.hatbox.builds).toHaveLength(builds);
-  expect(model.creates.some((p) => p.system === REVIEW_PROMPT)).toBe(false);
 
   await setSecrets({ WEATHER_KEY: null });
   expect(t.hatbox.secretsOf.has(1)).toBe(false);

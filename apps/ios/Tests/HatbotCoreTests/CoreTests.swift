@@ -59,7 +59,7 @@ final class DecodingTests: XCTestCase {
     let settings = try decode(
       AppSettings.self,
       #"""
-      {"limits":{"taskUsd":3,"dailyUsd":10,"monthlyUsd":200},"chatEffort":"low",
+      {"limits":{"dailyUsd":10,"monthlyUsd":200},"chatEffort":"low",
        "owner":{"name":"You","email":"o@l"},"paused":false}
       """#)
     XCTAssertNil(settings.notificationsOpen)
@@ -156,6 +156,9 @@ final class SafetyTests: XCTestCase {
     XCTAssertEqual(link("hatbot://new"), .newMessage)
     XCTAssertEqual(link("hatbot://boxes/7"), .box(7))
     XCTAssertEqual(link("hatbot://threads/9"), .thread(9))
+    XCTAssertEqual(link("hatbot://approvals/5"), .approval(5))
+    XCTAssertEqual(link("hatbot://approvals/5?approve=1"), .approve(5))
+    XCTAssertEqual(AppLink(url: AppLink.approve(5).url), .approve(5))
     XCTAssertNil(link("hatbot://tasks/1/2"))
     XCTAssertNil(link("https://tasks/1"))
     let memory = AppLink.memory("notes/my servers.md")
@@ -804,7 +807,7 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
 
 final class NetworkTests: XCTestCase {
   private static func task(_ id: Int) -> String {
-    #"{"id":\#(id),"title":"t","goal":"g","successCriteria":"","origin":"chat","lane":"background","model":"m","status":"running","tainted":false,"injectionSuspected":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
+    #"{"id":\#(id),"title":"t","goal":"g","successCriteria":"","origin":"chat","lane":"background","model":"m","status":"running","tainted":false,"costUsd":0,"steps":0,"createdAt":"2026-10-15T08:00:00Z"}"#
   }
 
   @MainActor private static func store(cache: DiskCache? = nil) -> AppStore {
@@ -855,7 +858,7 @@ final class NetworkTests: XCTestCase {
     await MainActor.run { XCTAssertEqual(store.tasks[7]?.isActive, true) }
     // It ended while the app was away.
     SlowBrain.routes["/tasks?ids=7&view=card"] =
-      #"[{"id":7,"title":"t","origin":"chat","lane":"background","model":"m","status":"done","tainted":false,"injectionSuspected":false,"createdAt":"2026-10-15T08:00:00Z","finishedAt":"2026-10-15T09:00:00Z"}]"#
+      #"[{"id":7,"title":"t","origin":"chat","lane":"background","model":"m","status":"done","tainted":false,"createdAt":"2026-10-15T08:00:00Z","finishedAt":"2026-10-15T09:00:00Z"}]"#
     let approval = #"{"id":3,"kind":"send","summary":"s","reason":"r","sources":[],"status":"pending","costUsd":0,"createdAt":"2026-10-15T08:00:00Z","expiresAt":"2026-10-15T09:00:00Z"}"#
     let computer = #"{"id":"m1","name":"laptop","online":true,"enabled":true,"paused":false,"locked":false,"ownerActive":false,"careful":false,"control":"hatbot","request":{"taskId":9,"reason":"Log in"},"activeTaskId":9,"lastSeenAt":null}"#
     let snapshot = #"{"type":"snapshot","paused":true,"bots":[{"id":"hatbot","name":"Hatbot","instructions":"Looks after the homelab.","createdAt":"2026-10-15T08:00:00Z","brief":true}],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":1}],"approvals":[\#(approval)],"questions":[],"desktop":{"online":true,"control":"hatbot"},"computers":[\#(computer)],"unread":[5]}"#

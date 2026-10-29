@@ -1,5 +1,5 @@
 import { found, idParam } from "@hatbot/plugin-sdk";
-import { DecideApproval, TokenDecision } from "@hatbot/shared";
+import { DecideApproval, RunAnyway, TokenDecision } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
@@ -135,6 +135,22 @@ export const approvalRoutes = new Hono<AppEnv>()
     if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json(approval);
   })
+  .post("/approvals/:id/anyway", json(RunAnyway), (c) => {
+    const approval = c.var.approvals.runAnyway(idParam(c), c.req.valid("json").always ?? false);
+    if (!approval) return c.json({ error: "That isn't blocked any more." }, 409);
+    // A task still running hears at once; a chat's bot hears when you write.
+    if (approval.taskId && c.var.tasks.get(approval.taskId)?.finishedAt === null)
+      c.var.tasks.tell(
+        approval.taskId,
+        `The owner chose to run this anyway: ${approval.summary}. Do it again now, exactly as before.`,
+      );
+    return c.json(approval);
+  })
+  .post("/approvals/:id/dismiss", (c) =>
+    c.var.approvals.dismiss(idParam(c))
+      ? c.json({ ok: true })
+      : c.json({ error: "That isn't blocked any more." }, 409),
+  )
   .get("/approval-rules", (c) => c.json(c.var.approvals.rules()))
   .delete("/approval-rules/:id", (c) =>
     c.var.approvals.removeRule(idParam(c))

@@ -91,16 +91,9 @@ function edited(
   }, html);
 }
 
-/** `screened`: what the screening reads, when it's more than the text. */
-function boxOutput(
-  ctx: ToolContext,
-  tool: string,
-  text: string,
-  by: string | null,
-  screened = text,
-): string {
+function boxOutput(ctx: ToolContext, tool: string, text: string, by: string | null): string {
   if (!by) return text;
-  ctx.taint?.(by, screened);
+  ctx.taint?.(by);
   return untrustedBlock("tool_output", text, { tool });
 }
 
@@ -220,9 +213,8 @@ async function secretsAsked(
       input: c.input,
       what: `${c.added.length ? `Let box #${c.id} "${c.title}" reach ${c.added.join(", ")}` : `Change the backend code of box #${c.id} "${c.title}"`}. Its backend has the secrets ${set.join(", ")}${hosts.length ? `, and could send them to ${hosts.join(", ")}` : ""}.`,
       why: c.added.length
-        ? "This box has secrets you set, so a new host for its backend needs your approval."
-        : "This conversation has read untrusted content, and changed code could send this box's secrets to a host it already reaches, so it needs your approval.",
-      always: true,
+        ? "This box has secrets you set, so a new host for its backend is checked first."
+        : "This conversation has read untrusted content, and changed code could send this box's secrets to a host it already reaches, so it is checked first.",
     },
     signal,
   );
@@ -441,7 +433,6 @@ const TOOLS = [
       const box = id === undefined ? null : ownBox(ctx, id);
       const name = title ?? box?.title;
       if (!name) return "Not started: a new box needs a title.";
-      const suspect = await ctx.suspected?.();
       const task = tasks.createBackgroundTask({
         title: (box ? `Change box #${box.id}: ${name}` : `Make a box: ${name}`).slice(0, 80),
         goal: request,
@@ -458,7 +449,6 @@ const TOOLS = [
         job: { request, ...(box ? { box: box.id } : {}), ...(title ? { title } : {}) },
       });
       if (!task) return `Not started: T3 Code is already working on box #${id}.`;
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id}: T3 Code ${box ? `changes box #${box.id}` : "makes the box"} in the background, and the owner sees its progress under this reply. Don't wait for it.`;
     },
   }),
@@ -614,8 +604,7 @@ const TOOLS = [
       const by = with_data
         ? `What box #${id} "${box.title}" showed with what it saved`
         : tainted && `Box #${id} "${box.title}", written after reading: ${tainted}`;
-      const screened = with_data ? `${text}\n\n${clip(JSON.stringify(store), 30_000)}` : text;
-      const out = boxOutput(ctx, "boxes_look", text, by || null, screened);
+      const out = boxOutput(ctx, "boxes_look", text, by || null);
       return {
         text: by ? `${out}\nThe picture is untrusted too.` : out,
         images: [{ data: look.png, mediaType: "image/png" }],
@@ -676,9 +665,8 @@ const TOOLS = [
                 : "The box can't reach any host, so what it reads stays in Hatbot."
             }`,
             why: chat
-              ? "This conversation has read untrusted content, so giving a box your data needs your approval."
-              : "This box's page was written after reading untrusted content, so giving it your data needs your approval.",
-            always: hosts.length > 0,
+              ? "This conversation has read untrusted content, so giving a box your data is checked first."
+              : "This box's page was written after reading untrusted content, so giving it your data is checked first.",
           },
           signal,
         );

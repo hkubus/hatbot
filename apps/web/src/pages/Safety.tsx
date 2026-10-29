@@ -70,19 +70,16 @@ export function SafetyPage({ toast }: { toast: Toast }) {
       return;
     await update({ kinds: { [kind]: level } });
   };
-  const setRule = async (key: "untrusted" | "injection", on: boolean) => {
+  const setUntrusted = async (on: boolean) => {
     if (
       !on &&
       !(await ask({
-        text:
-          key === "untrusted"
-            ? "Changes will go ahead after reading pages, messages and output strangers wrote, which may hold instructions aimed at Hatbot."
-            : "Work will carry on after reading something that looks like instructions aimed at Hatbot.",
+        text: "Changes will go ahead after reading pages, messages and output strangers wrote, which may hold instructions aimed at Hatbot.",
         ok: "Turn off",
       }))
     )
       return;
-    await update({ [key]: on });
+    await update({ untrusted: on });
   };
   const tools = Object.entries(safety.tools).sort(([a], [b]) => a.localeCompare(b));
 
@@ -112,10 +109,7 @@ export function SafetyPage({ toast }: { toast: Toast }) {
             />
           </Row>
           <Row label="Ask before changes after reading untrusted content">
-            <Switch on={safety.untrusted} onChange={(on) => setRule("untrusted", on)} />
-          </Row>
-          <Row label="Ask about every change once something read looks like instructions aimed at Hatbot">
-            <Switch on={safety.injection} onChange={(on) => setRule("injection", on)} />
+            <Switch on={safety.untrusted} onChange={setUntrusted} />
           </Row>
           <SavedRow<number>
             label="Commands one chat reply may run"

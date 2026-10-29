@@ -24,7 +24,6 @@ export type CoreServices = Omit<
   | "taskId"
   | "tainted"
   | "taint"
-  | "suspected"
   | "ownerSaid"
   | "answering"
   | "approve"
@@ -111,7 +110,6 @@ const fromCall = (s: CoreServices, call: CallContext): ToolContext => ({
   taskId: call.task?.id,
   tainted: call.tainted,
   taint: call.taint,
-  suspected: call.suspected,
   ownerSaid: call.ownerSaid,
   answering: call.answering,
   approve: call.approve,

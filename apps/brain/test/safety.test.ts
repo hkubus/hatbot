@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { ask, askCareful, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -141,27 +141,6 @@ test("what you marked careful asks you whatever Safety allows", async () => {
   expect(done).toEqual([]);
 });
 
-test("a suspected injection stops a change while the injection rule is on; off, the review answers", async () => {
-  const run = async (injection: boolean) => {
-    const { t, done, work } = await lab([call("lab_issue"), call("lab_restart"), finish]);
-    work.onCreate = (p) =>
-      p.system === SCREENING_PROMPT
-        ? '{"suspected": true, "excerpt": "the web service"}'
-        : reviewSaysSafe(p);
-    t.settings.update({ safety: { injection } });
-    const id = runTask(t);
-    if (injection) {
-      const asked = await waitFor(() => t.approvals.list(true)[0]);
-      t.approvals.decide(asked.id, "approve", "web");
-    }
-    await finished(t, id);
-    expect(done).toEqual(["lab_restart"]);
-    return reviewed(work);
-  };
-  expect(await run(true)).toBe(false);
-  expect(await run(false)).toBe(true);
-});
-
 test("the chat runs as many commands in a reply as Safety lets it", async () => {
   const done: string[] = [];
   const restarts = { content: [1, 2, 3].map(() => toolUse("lab_restart", {})) };
@@ -175,4 +154,58 @@ test("the chat runs as many commands in a reply as Safety lets it", async () => 
   t.settings.update({ safety: { chatCommands: 3 } });
   await t.thread.post("again").done;
   expect(done).toHaveLength(5);
+});
+
+const reviewSaysUnsafe = (p: { system?: unknown }) =>
+  p.system === REVIEW_PROMPT
+    ? '{"safe": false, "why": "Nothing you said asks for it."}'
+    : undefined;
+
+test("the review blocks a task's change without asking; Run anyway lets the running task do it once", async () => {
+  const { t, done, work } = await lab([
+    call("lab_wipe"),
+    call("wait", { minutes: 5, for: "the owner" }),
+    call("lab_wipe"),
+    finish,
+  ]);
+  work.onCreate = reviewSaysUnsafe;
+  const id = runTask(t);
+  const blocked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(blocked).toMatchObject({ status: "blocked", taskId: id, scopes: ["always"] });
+  expect(t.tasks.get(id)?.status).toBe("running");
+  const { cookie } = signIn(t);
+  expect((await t.call("POST", `/approvals/${blocked.id}/anyway`, {}, { cookie })).status).toBe(
+    200,
+  );
+  await finished(t, id);
+  expect(done).toEqual(["lab_wipe"]);
+  expect(t.tasks.get(id)?.status).toBe("done");
+});
+
+test("a task stops after the review blocks three changes in a row, and a review that fails blocks", async () => {
+  const { t, done, work } = await lab([
+    call("lab_wipe"),
+    call("lab_wipe"),
+    call("lab_wipe"),
+    finish,
+  ]);
+  work.onCreate = (p) => (p.system === REVIEW_PROMPT ? "not json" : undefined);
+  const id = runTask(t);
+  await finished(t, id);
+  expect(done).toEqual([]);
+  expect(t.tasks.get(id)).toMatchObject({ status: "failed" });
+  expect(t.tasks.get(id)?.summary).toContain("blocked 3 changes in a row");
+  expect(t.approvals.list(true).map((a) => a.status)).toEqual(["blocked", "blocked", "blocked"]);
+  expect(t.approvals.list(true)[0]?.reason).toContain("it couldn't be checked");
+});
+
+test("Always on a blocked change lets that exact call skip the review from then on", async () => {
+  const { t, done, work } = await lab([call("lab_wipe"), finish, call("lab_wipe"), finish]);
+  work.onCreate = reviewSaysUnsafe;
+  await finished(t, runTask(t));
+  const [blocked] = t.approvals.list(true);
+  t.approvals.runAnyway(blocked?.id ?? 0, true);
+  expect(t.approvals.rules()).toHaveLength(1);
+  await finished(t, runTask(t));
+  expect(done).toEqual(["lab_wipe"]);
 });

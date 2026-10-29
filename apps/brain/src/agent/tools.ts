@@ -12,7 +12,6 @@ import {
   type WebCall,
   webCalls,
   webReads,
-  webTexts,
   webTools,
 } from "@hatbot/plugin-sdk";
 import {
@@ -38,7 +37,6 @@ import type { Bots } from "../bots";
 import type { Db } from "../db";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
-import type { Proposals } from "../memory/proposals";
 import { skillPath } from "../memory/skills";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
@@ -56,7 +54,6 @@ export {
   type WebCall,
   webCalls,
   webReads,
-  webTexts,
   webTools,
 };
 
@@ -76,17 +73,11 @@ export type ToolContext = {
   taskId?: number;
   attachments?: Attachments;
   desktop?: DesktopAgent;
-  proposals?: Proposals;
   /** For what Settings → Safety asks for; without it, everything asks as by default. */
   settings?: SettingsStore;
   /** What untrusted content was read first, or null; tasks it starts begin tainted. */
   tainted?: () => string | null;
-  taint?: (by: string, text?: string) => void;
-  /**
-   * Suspected prompt injection: work it starts is marked so, and Haiku's review doesn't let its
-   * changes through.
-   */
-  suspected?: () => Promise<boolean>;
+  taint?: (by: string) => void;
   ownerSaid?: () => string;
   /** The hand-off the reply answers, if it answers one: hand-offs it makes count from there. */
   answering?: Task;
@@ -215,31 +206,34 @@ const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
 
 function researchNotes(ctx: ToolContext, tool: string, path: string, text: string): string {
-  ctx.taint?.(`Research notes: ${path}`, text);
+  ctx.taint?.(`Research notes: ${path}`);
   return untrustedBlock("tool_output", text, { tool });
 }
 
 /**
- * After reading untrusted content, a write (or, content null, a delete) to a trusted file becomes a
- * proposal you apply, so injected text can't make itself trusted. Null to write it directly.
+ * After reading untrusted content, a change to a file every later chat and task trusts goes to the
+ * safety review. Null when it goes ahead, or why not.
  */
-async function held(
+async function reviewed(
   ctx: ToolContext,
+  call: { tool: string; input: unknown },
   path: string,
-  content: string | null,
   reason: string,
+  signal = new AbortController().signal,
 ): Promise<string | null> {
-  const by = ctx.tainted?.();
   const { rel } = ctx.memory.resolve(path);
-  if (!by || !TRUSTED_FILE.test(rel) || !untrustedAsks(ctx)) return null;
-  if (!ctx.proposals)
-    throw new MemoryError(`${rel} can't be changed after reading untrusted content.`);
-  const p = await ctx.proposals.hold(rel, content, reason, by);
-  if (!p)
-    return content === null
-      ? `Nothing to delete: ${rel} doesn't exist.`
-      : "No change: the file already had this content.";
-  return "Saved as a proposal; the owner applies it. After reading untrusted content, changes to skills, INDEX.md, homelab.md and todo.md wait for them.";
+  if (!ctx.tainted?.() || !TRUSTED_FILE.test(rel) || !untrustedAsks(ctx)) return null;
+  if (!ctx.approve)
+    throw new MemoryError(`${rel} can't be changed here after reading untrusted content.`);
+  const r = await ctx.approve(
+    {
+      ...call,
+      what: `Change ${rel}: ${reason}`,
+      why: "This conversation has read untrusted content, and every later chat and task trusts this file.",
+    },
+    signal,
+  );
+  return r.isError ? r.content : null;
 }
 
 const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted ?? true;
@@ -265,18 +259,17 @@ type ToolDef<S extends z.ZodType> = {
   ) => Promise<string | { text: string; image: ToolImage }>;
 };
 
-/** After reading untrusted content, a proposal, so a page can't put "pay this invoice" on the list. */
+/** After reading untrusted content, reviewed, so a page can't put "pay this invoice" on the list. */
 async function changeTodos(
   ctx: ToolContext,
   reason: string,
   change: (md: string) => string,
   author: Author = authorOf(ctx, TODO_FILE),
+  signal?: AbortSignal,
 ): Promise<string | null> {
-  if (ctx.tainted?.()) {
-    const md = (await ctx.memory.readOrNull(TODO_FILE)) ?? "";
-    const proposed = await held(ctx, TODO_FILE, change(md), reason);
-    if (proposed) return proposed;
-  }
+  const input = { file: TODO_FILE, change: reason };
+  const blocked = await reviewed(ctx, { tool: "todo", input }, TODO_FILE, reason, signal);
+  if (blocked) return blocked;
   await ctx.memory.update(TODO_FILE, (md) => change(md ?? ""), author, reason);
   return null;
 }
@@ -286,10 +279,11 @@ export async function tickTodo(
   item: string,
   pick: (md: string) => Todo | string,
   author?: Author,
+  signal?: AbortSignal,
 ): Promise<string> {
   const today = localDay(new Date((ctx.clock ?? Date.now)()));
   let ticked = "";
-  const proposed = await changeTodos(
+  const blocked = await changeTodos(
     ctx,
     `Done: ${clip(item, 60)}`,
     (md) => {
@@ -299,8 +293,9 @@ export async function tickTodo(
       return withDone(md, t, today);
     },
     author,
+    signal,
   );
-  return proposed ?? `Ticked off: ${ticked}`;
+  return blocked ?? `Ticked off: ${ticked}`;
 }
 
 const DUE = /^(\d{4}-\d{2}-\d{2})(?: (\d{2}:\d{2}))?$/;
@@ -345,10 +340,11 @@ export const TOOLS = [
       content: z.string().describe("The complete new file content"),
       reason: z.string().describe("Short commit message saying what changed and why"),
     }),
-    run: async ({ path, content, reason }, ctx) => {
+    run: async ({ path, content, reason }, ctx, signal) => {
       const author = authorOf(ctx, path);
-      const proposed = await held(ctx, path, content, reason);
-      if (proposed) return proposed;
+      const call = { tool: "memory_write", input: { path, content } };
+      const blocked = await reviewed(ctx, call, path, reason, signal);
+      if (blocked) return blocked;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
       return `Saved ${path} (commit ${sha.slice(0, 7)}).`;
@@ -358,10 +354,16 @@ export const TOOLS = [
     name: "memory_delete",
     description: "Delete a file from your memory repo. It stays in git history.",
     schema: z.object({ path: z.string(), reason: z.string().describe("Short commit message") }),
-    run: async ({ path, reason }, ctx) => {
+    run: async ({ path, reason }, ctx, signal) => {
       const author = authorOf(ctx, path);
-      const proposed = await held(ctx, path, null, reason);
-      if (proposed) return proposed;
+      const blocked = await reviewed(
+        ctx,
+        { tool: "memory_delete", input: { path } },
+        path,
+        reason,
+        signal,
+      );
+      if (blocked) return blocked;
       await ctx.memory.delete(path, author, reason);
       return `Deleted ${path}.`;
     },
@@ -412,12 +414,16 @@ export const TOOLS = [
         .optional()
         .describe('The owner\'s local date, "2026-10-25", or with a time, "2026-10-25 14:00"'),
     }),
-    run: async ({ item, due }, ctx) => {
+    run: async ({ item, due }, ctx, signal) => {
       const line = due ? `${item} ${dueInput(due)}` : item;
-      const proposed = await changeTodos(ctx, `To-do: ${clip(item, 60)}`, (md) =>
-        withTodo(md, line),
+      const blocked = await changeTodos(
+        ctx,
+        `To-do: ${clip(item, 60)}`,
+        (md) => withTodo(md, line),
+        undefined,
+        signal,
       );
-      return proposed ?? `Added to the to-do list: ${line}`;
+      return blocked ?? `Added to the to-do list: ${line}`;
     },
   }),
   def({
@@ -427,7 +433,8 @@ export const TOOLS = [
     schema: z.object({
       item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
     }),
-    run: ({ item }, ctx) => tickTodo(ctx, item, (md) => findTodo(md, item)),
+    run: ({ item }, ctx, signal) =>
+      tickTodo(ctx, item, (md) => findTodo(md, item), undefined, signal),
   }),
   def({
     name: "search_history",
@@ -553,10 +560,9 @@ export const TOOLS = [
     schema: RunTaskInput,
     run: async (
       { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
-      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title,
         goal,
@@ -570,7 +576,6 @@ export const TOOLS = [
         askedIn: answering,
       });
       if (!task) return "The task couldn't start.";
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
     },
   }),
@@ -588,12 +593,11 @@ export const TOOLS = [
     }),
     run: async (
       { item, details },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
+      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, answering },
     ) => {
       if (!tasks) return "Tasks aren't available.";
       const t = findTodo((await memory.readOrNull(TODO_FILE)) ?? "", item);
       if (typeof t === "string") return t;
-      const suspect = await suspected?.();
       const task = tasks.createBackgroundTask({
         title: clip(t.text, 80),
         goal: details ? `${t.text}\n\n${details}` : t.text,
@@ -607,7 +611,6 @@ export const TOOLS = [
         askedIn: answering,
       });
       if (!task) return `A task is already working on "${t.text}".`;
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Started task #${task.id} on "${t.text}". The owner sees its progress and result under this reply; the item is ticked off if it ends done. Don't wait for it.`;
     },
   }),
@@ -618,10 +621,9 @@ export const TOOLS = [
     schema: AskBotInput,
     run: async (
       { bot: to, request },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, suspected, answering },
+      { tasks, messageId, tainted, ownerSaid, bot, conversationId, answering },
     ) => {
       if (!tasks || !bot) return "Other bots aren't available.";
-      const suspect = await suspected?.();
       const task = tasks.askBot({
         from: bot,
         to,
@@ -633,7 +635,6 @@ export const TOOLS = [
         ownerSaid: ownerSaid?.(),
       });
       if (typeof task === "string") return task;
-      if (suspect) tasks.mark(task.id, "injection_suspected");
       return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
     },
   }),
@@ -678,7 +679,7 @@ export const TOOLS = [
       const { text, taintedBy } = thread.readOut();
       // What the thread read comes with it.
       const by = chats.threadTaint(c.id) ?? taintedBy;
-      if (by) taint?.(`Thread #${c.id}: ${by}`, text);
+      if (by) taint?.(`Thread #${c.id}: ${by}`);
       const head = `Thread #${c.id} "${tagText(c.title ?? "")}": ${c.resolvedAt ? `resolved, ${tagText(c.outcome ?? "by the owner")}` : "open"}.`;
       return `${head}\n${text || "(no messages)"}`;
     },
@@ -735,13 +736,12 @@ export const TOOLS = [
       id: z.number().int(),
       note: z.string().min(1).max(4000).describe("What the task should do now, in full"),
     }),
-    run: async ({ id, note }, { tasks, bot, tainted, suspected, ownerSaid }) => {
+    run: async ({ id, note }, { tasks, bot, tainted, ownerSaid }) => {
       if (!tasks) return "Tasks aren't available.";
       const refused = tasks.steer(id, {
         botId: bot?.id ?? HATBOT_ID,
         note,
         taintedBy: chatTaint(tainted?.()),
-        suspected: await suspected?.(),
         ownerSaid: ownerSaid?.(),
       });
       return refused ?? `Sent to task #${id}. It reads it after its current step.`;
@@ -835,7 +835,7 @@ export async function runOffered(
     return o.gated(tool, input, o.call.signal);
   }
   const r = await runPluginTool(tool, input, o.call);
-  if (r.untrusted) o.call.taint?.(describeCall(tool, input), r.text);
+  if (r.untrusted) o.call.taint?.(describeCall(tool, input));
   return r;
 }
 

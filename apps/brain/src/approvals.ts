@@ -13,7 +13,12 @@ import type { Db } from "./db";
 import type { EventBus } from "./events";
 
 const TTL_MS = 24 * 3600_000;
-/** Kinds a notification may approve from a locked phone; the rest are approved in the app. */
+/** How long a message to a person waits before it goes, for you to stop it. */
+export const SEND_WINDOW_MS = 30_000;
+/**
+ * Kinds a notification may approve from a locked phone; the rest are approved in the app, which the
+ * notification's Approve opens: the iOS app approves behind Face ID.
+ */
 const NOTIFY_APPROVES: ApprovalKind[] = [
   "send",
   "submit_personal_data",
@@ -49,6 +54,7 @@ type Row = {
   scopes: string;
   scope: ApprovalScope | null;
   episode_id: number | null;
+  answers: string;
 };
 
 const SELECT = `SELECT a.*, (SELECT sum(cost_usd) FROM spend_ledger s WHERE s.task_id = a.task_id) AS cost_usd
@@ -74,6 +80,7 @@ const toApproval = (r: Row): Approval => ({
   note: r.note,
   scopes: JSON.parse(r.scopes),
   scope: r.scope,
+  answers: JSON.parse(r.answers),
 });
 
 /** A call's input as one string, keys sorted, so the same call always reads the same. */
@@ -100,6 +107,7 @@ export type NewApproval = {
   /** The chat conversation asking, for a scope over the rest of it. */
   episodeId?: number | null;
   scopes?: ApprovalScope[];
+  answers?: string[];
 };
 
 export type Granted = {
@@ -109,8 +117,8 @@ export type Granted = {
   target: string | null;
   taskId?: number;
   episodeId?: number;
-  /** Only the untrusted-content rule asks: what a scope over the rest of the work covers. */
-  taintOnly: boolean;
+  /** Only what you allowed for the task's schedule: for doors and locks, nothing wider stands in. */
+  scheduleOnly?: boolean;
 };
 
 export class Approvals {
@@ -129,7 +137,7 @@ export class Approvals {
     // Nothing waits on approvals from before a restart: their tasks were stopped. A negotiation's
     // mandate or hold, or a listing, waits for no task: it takes the answer whenever it comes.
     db.query(
-      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status = 'pending' AND kind NOT IN ('mandate', 'listing')
+      `UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE status IN ('pending', 'sending') AND kind NOT IN ('mandate', 'listing')
        AND id NOT IN (SELECT approval_id FROM negotiations WHERE approval_id IS NOT NULL)`,
     ).run(this.now());
   }
@@ -143,10 +151,10 @@ export class Approvals {
     return r ? toApproval(r) : null;
   }
 
-  /** Newest first, 100 at a time; `before`: the next page, older than that id. */
+  /** Newest first, 100 at a time; `before`: the next page, older than that id. `pendingOnly` keeps what's blocked too. */
   list(pendingOnly: boolean, before?: number): Approval[] {
     const where = [
-      ...(pendingOnly ? ["a.status = 'pending'"] : []),
+      ...(pendingOnly ? ["a.status IN ('pending', 'blocked', 'sending')"] : []),
       ...(before !== undefined ? ["a.id < ?"] : []),
     ];
     return this.db
@@ -172,10 +180,11 @@ export class Approvals {
           number | null,
           string,
           string,
+          string,
         ]
       >(
-        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, screenshot_step_id, created_at, expires_at, answers)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.botId ?? HATBOT_ID,
@@ -188,6 +197,7 @@ export class Approvals {
         input.screenshotStepId ?? null,
         this.now(),
         new Date(this.clock() + TTL_MS).toISOString(),
+        JSON.stringify(input.answers ?? []),
       );
     if (row && input.call)
       this.db
@@ -211,7 +221,8 @@ export class Approvals {
 
   wait(id: number, signal: AbortSignal): Promise<Outcome> {
     const current = this.get(id);
-    if (current && current.status !== "pending") return Promise.resolve(current.status);
+    if (current && current.status !== "pending" && current.status !== "sending")
+      return Promise.resolve(current.status === "blocked" ? "denied" : current.status);
     return new Promise((resolve, reject) => {
       const abort = () => {
         this.waiters.delete(id);
@@ -234,7 +245,7 @@ export class Approvals {
   ): Approval | null {
     const changed = this.db
       .query(
-        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ?, note = ? WHERE id = ? AND status = 'pending'",
+        "UPDATE approvals SET status = ?, decided_via = ?, decided_at = ?, note = ? WHERE id = ? AND status IN ('pending', 'sending')",
       )
       .run(status, via, this.now(), note, id);
     if (!changed.changes) return null;
@@ -258,12 +269,21 @@ export class Approvals {
       return null;
     if (scope && decision === "approve" && a?.status === "pending" && a.scopes.includes(scope)) {
       this.db.query("UPDATE approvals SET scope = ? WHERE id = ?").run(scope, id);
+      if (scope === "schedule")
+        this.db
+          .query(
+            `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at, schedule_id)
+             SELECT a.bot_id, a.tool, a.input, a.summary, ?, t.schedule_id FROM approvals a
+             JOIN tasks t ON t.id = a.task_id WHERE a.id = ? AND t.schedule_id IS NOT NULL
+             ON CONFLICT DO NOTHING`,
+          )
+          .run(this.now(), id);
       if (scope === "always")
         this.db
           .query(
             `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at)
              SELECT bot_id, tool, input, summary, ? FROM approvals WHERE id = ?
-             ON CONFLICT (bot_id, tool, input) DO NOTHING`,
+             ON CONFLICT DO NOTHING`,
           )
           .run(this.now(), id);
     }
@@ -271,33 +291,132 @@ export class Approvals {
   }
 
   /**
-   * Why a call that would ask goes ahead on what you approved before, or null: this exact call is
-   * one you always allow, or, where only untrusted content asks, you allowed the tool on the same
-   * thing for the rest of this task or conversation.
+   * Why a call that would ask or be reviewed goes ahead on what you said before, or null: this exact
+   * call is one you always allow, or one the review blocked that you ran anyway, which goes once.
    */
   granted(q: Granted): string | null {
     const input = canonical(q.input);
     const rule = this.db
-      .query<{ id: number }, [string, string, string]>(
-        "SELECT id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?",
+      .query<{ schedule_id: number | null }, [string, string, string, number, number]>(
+        `SELECT schedule_id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?
+         AND ((schedule_id IS NULL AND NOT ?) OR schedule_id = (SELECT schedule_id FROM tasks WHERE id = ?))`,
       )
-      .get(q.botId, q.tool, input);
-    if (rule) return "You always allow this.";
-    if (!q.taintOnly || (q.taskId === undefined && q.episodeId === undefined)) return null;
-    const session = this.db
-      .query<{ id: number }, [string, string, string, number, number]>(
-        `SELECT id FROM approvals WHERE status = 'approved' AND scope = 'session' AND bot_id = ?
-         AND tool = ? AND target = ? AND (task_id = ? OR (task_id IS NULL AND episode_id = ?)) LIMIT 1`,
+      .get(q.botId, q.tool, input, q.scheduleOnly ? 1 : 0, q.taskId ?? -1);
+    if (rule)
+      return rule.schedule_id
+        ? "You always allow this in this schedule."
+        : "You always allow this.";
+    if (q.scheduleOnly) return null;
+    const anyway = this.db
+      .query<{ id: number }, [string, string, string, string]>(
+        `UPDATE approvals SET used_at = ?1 WHERE id = (SELECT id FROM approvals WHERE blocked = 1
+         AND status = 'approved' AND used_at IS NULL AND bot_id = ?2 AND tool = ?3 AND input = ?4
+         ORDER BY id LIMIT 1) RETURNING id`,
       )
-      .get(q.botId, q.tool, q.target ?? "", q.taskId ?? -1, q.episodeId ?? -1);
-    if (!session) return null;
-    return `You allowed ${q.tool}${q.target ? ` on ${q.target}` : ""} for the rest of this ${q.taskId !== undefined ? "task" : "conversation"}.`;
+      .get(this.now(), q.botId, q.tool, input);
+    return anyway ? "You chose to run it anyway." : null;
+  }
+
+  /** A message to a person that goes once SEND_WINDOW_MS passes, unless you deny (stop) it first. */
+  sending(input: NewApproval): Approval {
+    const row = this.db
+      .query<{ id: number }, [string, number | null, string, string, string, string]>(
+        `INSERT INTO approvals (bot_id, task_id, kind, summary, reason, sources, status, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, '', '[]', 'sending', ?5, ?6) RETURNING id`,
+      )
+      .get(
+        input.botId ?? HATBOT_ID,
+        input.taskId,
+        input.kind,
+        input.summary,
+        this.now(),
+        new Date(this.clock() + SEND_WINDOW_MS).toISOString(),
+      );
+    const approval = this.get(row?.id ?? -1);
+    if (!approval) throw new Error("approval insert failed");
+    this.events.emit({ type: "approval.created", approval });
+    return approval;
+  }
+
+  /** What the safety review blocked: nothing waits on it, and you may run it anyway for a day. */
+  block(input: NewApproval): Approval {
+    const row = this.db
+      .query<
+        { id: number },
+        [string, number | null, number | null, string, string, string, string, string, string]
+      >(
+        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, status, blocked, created_at, decided_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'blocked', 1, ?8, ?8, ?9) RETURNING id`,
+      )
+      .get(
+        input.botId ?? HATBOT_ID,
+        input.taskId,
+        input.conversationId ?? null,
+        input.kind,
+        input.summary,
+        input.reason ?? "",
+        JSON.stringify(input.sources ?? []),
+        this.now(),
+        new Date(this.clock() + TTL_MS).toISOString(),
+      );
+    if (row && input.call)
+      this.db
+        .query(
+          "UPDATE approvals SET tool = ?, input = ?, target = ?, episode_id = ?, scopes = ? WHERE id = ?",
+        )
+        .run(
+          input.call.tool,
+          canonical(input.call.input),
+          input.call.target ?? "",
+          input.episodeId ?? null,
+          JSON.stringify(input.scopes ?? []),
+          row.id,
+        );
+    const approval = this.get(row?.id ?? -1);
+    if (!approval) throw new Error("approval insert failed");
+    this.events.emit({ type: "approval.created", approval });
+    return approval;
+  }
+
+  /** Lets what the review blocked run once, or always as a rule; null if it's no longer blocked. */
+  runAnyway(id: number, always: boolean): Approval | null {
+    const a = this.get(id);
+    if (a?.status !== "blocked") return null;
+    const scope = always && a.scopes.includes("always") ? "always" : null;
+    if (scope)
+      this.db
+        .query(
+          `INSERT INTO approval_rules (bot_id, tool, input, summary, created_at)
+           SELECT bot_id, tool, input, summary, ? FROM approvals WHERE id = ? AND tool IS NOT NULL
+           ON CONFLICT DO NOTHING`,
+        )
+        .run(this.now(), id);
+    const changed = this.db
+      .query(
+        "UPDATE approvals SET status = 'approved', decided_via = 'web', decided_at = ?, scope = ? WHERE id = ? AND status = 'blocked'",
+      )
+      .run(this.now(), scope, id);
+    if (!changed.changes) return null;
+    const approval = this.get(id);
+    if (approval) this.events.emit({ type: "approval.resolved", approval });
+    return approval;
   }
 
   rules(): ApprovalRule[] {
     return this.db
-      .query<{ id: number; bot_id: string; tool: string; summary: string; created_at: string }, []>(
-        "SELECT id, bot_id, tool, summary, created_at FROM approval_rules ORDER BY id DESC",
+      .query<
+        {
+          id: number;
+          bot_id: string;
+          tool: string;
+          summary: string;
+          created_at: string;
+          schedule: string | null;
+        },
+        []
+      >(
+        `SELECT r.id, r.bot_id, r.tool, r.summary, r.created_at, s.name AS schedule
+         FROM approval_rules r LEFT JOIN schedules s ON s.id = r.schedule_id ORDER BY r.id DESC`,
       )
       .all()
       .map((r) => ({
@@ -305,12 +424,25 @@ export class Approvals {
         botId: r.bot_id,
         tool: r.tool,
         summary: r.summary,
+        schedule: r.schedule,
         createdAt: r.created_at,
       }));
   }
 
   removeRule(id: number): boolean {
     return this.db.query("DELETE FROM approval_rules WHERE id = ?").run(id).changes > 0;
+  }
+
+  /** Leaves what the review blocked as it is; false if it isn't blocked any more. */
+  dismiss(id: number): boolean {
+    const a = this.db
+      .query<{ id: number }, [string, number]>(
+        "UPDATE approvals SET status = 'cancelled', decided_at = ? WHERE id = ? AND status = 'blocked' RETURNING id",
+      )
+      .get(this.now(), id);
+    const approval = a && this.get(a.id);
+    if (approval) this.events.emit({ type: "approval.resolved", approval });
+    return Boolean(approval);
   }
 
   cancel(id: number) {
@@ -320,7 +452,7 @@ export class Approvals {
   cancelForTask(taskId: number) {
     const ids = this.db
       .query<{ id: number }, [number]>(
-        "SELECT id FROM approvals WHERE task_id = ? AND status = 'pending'",
+        "SELECT id FROM approvals WHERE task_id = ? AND status IN ('pending', 'sending')",
       )
       .all(taskId);
     for (const { id } of ids) this.resolve(id, "cancelled");
@@ -333,6 +465,21 @@ export class Approvals {
       )
       .all(this.now());
     for (const { id } of due) this.resolve(id, "expired");
+    const sent = this.db
+      .query<{ id: number }, [string]>(
+        "SELECT id FROM approvals WHERE status = 'sending' AND expires_at <= ?",
+      )
+      .all(this.now());
+    for (const { id } of sent) this.resolve(id, "approved");
+    const blocked = this.db
+      .query<{ id: number }, [string]>(
+        "UPDATE approvals SET status = 'expired' WHERE status = 'blocked' AND expires_at <= ? RETURNING id",
+      )
+      .all(this.now());
+    for (const { id } of blocked) {
+      const approval = this.get(id);
+      if (approval) this.events.emit({ type: "approval.resolved", approval });
+    }
   }
 
   sign(id: number, decision: "approve" | "deny", exp: number): string {
@@ -399,7 +546,7 @@ export class Approvals {
       click: open,
       actions: approvableFromNotification(a.kind)
         ? [button("approve"), button("deny"), pause]
-        : [{ action: "view", label: "Open in Hatbot", url: open }, button("deny"), pause],
+        : [{ action: "view", label: "Approve", url: `${open}&approve=1` }, button("deny"), pause],
     });
   }
 }

@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeComputer, withComputer } from "./fake-computer";
 import { FakeModel, toolUse } from "./fake-model";
@@ -118,22 +119,22 @@ test("files: into Downloads/Hatbot freely, anywhere else asks; reading keys is r
   expect(key.isError).toBe(true);
 });
 
-test("a task runs commands on the computer as the owner: using it is asked once, and after its output only the untrusted-content rule asks", async () => {
+test("a task runs commands on the computer as the owner: using it is asked once, and after its output the review looks at the next", async () => {
   const exec = (command: string) => ({
     content: [toolUse("computer_exec", { computer: "laptop", command })],
   });
   const work = new FakeModel([exec("uname -a"), exec("df -h"), finish()]);
+  work.onCreate = (p) =>
+    p.system === REVIEW_PROMPT ? '{"safe": true, "why": "Routine."}' : undefined;
   const t = await testApp(new FakeModel(), work);
   const { computer } = await connected(t);
   const task = scheduled(t, "Check the laptop's disk");
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval).toMatchObject({ kind: "computer", summary: "On laptop: uname -a" });
   t.approvals.decide(approval.id, "approve", "web");
-  const again = await waitFor(() => t.approvals.list(true)[0]);
-  expect(again.kind).not.toBe("computer");
-  expect(again.reason).toContain("untrusted");
-  t.approvals.decide(again.id, "approve", "web");
   const done = await ended(t, task.id);
+  expect(work.creates.some((c) => c.system === REVIEW_PROMPT)).toBe(true);
+  expect(t.approvals.list(true)).toHaveLength(0);
   expect(done).toMatchObject({ status: "done", tainted: true });
   expect(computer.requests.filter((r) => r.op === "exec")).toHaveLength(2);
 });

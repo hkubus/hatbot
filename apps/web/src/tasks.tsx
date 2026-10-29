@@ -17,10 +17,12 @@ import { Link } from "./link";
 import {
   answerQuestion,
   decideApproval,
+  dismissBlocked,
   ensureApproval,
   ensureSchedule,
   ensureTask,
   ensureWatcher,
+  runAnyway,
   trustConversation,
   trustSchedule,
   trustWatcher,
@@ -164,7 +166,10 @@ export const MANDATE_NOTE = "Change the numbers, or tell it how to go about it";
 /** Approvals whose answer can carry a note to the task: the task carries on afterwards. */
 export const takesNote = (a: Approval) => a.kind !== "budget" && a.kind !== "injection_warning";
 
-const RESOLVED: Record<Exclude<Approval["status"], "pending">, [string, string]> = {
+const RESOLVED: Record<
+  Exclude<Approval["status"], "pending" | "blocked" | "sending">,
+  [string, string]
+> = {
   approved: ["ok", "Approved"],
   denied: ["bad", "Denied"],
   expired: ["", "Expired"],
@@ -181,6 +186,19 @@ export function ApprovalCard({
   const a = useStore((s) => s.approvals[approvalId]);
   useEffect(() => ensureApproval(approvalId), [approvalId]);
   if (!a) return null;
+
+  if (a.status === "blocked")
+    return (
+      <div className="card">
+        <BlockedApproval a={a} />
+      </div>
+    );
+  if (a.status === "sending")
+    return (
+      <div className="card">
+        <SendingApproval a={a} />
+      </div>
+    );
 
   if (a.status !== "pending") {
     const [cls, label] = RESOLVED[a.status];
@@ -283,11 +301,11 @@ export function PendingApproval({
   const why = more || warns;
   const folds = compact && ((a.reason && !warns) || shot || takesNote(a));
 
-  const decide = async (decision: "approve" | "deny", scope?: ApprovalScope) => {
+  const decide = async (decision: "approve" | "deny", scope?: ApprovalScope, answer?: string) => {
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision, note, scope);
+      await decideApproval(a.id, decision, answer ?? note, scope);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -349,17 +367,28 @@ export function PendingApproval({
             Always
           </button>
         )}
-        {a.scopes.includes("session") && (
+        {a.scopes.includes("schedule") && (
           <button
             type="button"
             className="btn"
             disabled={busy}
-            title={`Approve ${a.taskId ? "this task's" : "this conversation's"} calls like this on the same thing`}
-            onClick={() => decide("approve", "session")}
+            title="Approve this exact action in this schedule's runs from now on"
+            onClick={() => decide("approve", "schedule")}
           >
-            {a.taskId ? "For this task" : "For this chat"}
+            Always for this schedule
           </button>
         )}
+        {a.answers.map((answer) => (
+          <button
+            key={answer}
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => decide("approve", undefined, answer)}
+          >
+            {answer}
+          </button>
+        ))}
         <button
           type="button"
           className="btn primary"
@@ -368,6 +397,126 @@ export function PendingApproval({
         >
           <Icon name="check" />
           Approve
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What the safety review blocked: nothing waits on it. Run anyway lets it go once, for a task still
+ * running or the chat's next reply; Always lets this exact call skip the review from now on.
+ */
+export function BlockedApproval({
+  a,
+  links,
+  onRan,
+}: {
+  a: Approval;
+  links?: React.ReactNode;
+  onRan?: () => Promise<void>;
+}) {
+  const task = useStore((s) => (a.taskId ? s.tasks[a.taskId] : undefined));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const live = !a.taskId || (task !== undefined && isActive(task));
+  const act = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="approval">
+      <div className="approval-text">
+        <p className="approval-what">Blocked: {a.summary}</p>
+        {a.reason && <p>{a.reason}</p>}
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="approval-actions">
+        {links}
+        <span className="spacer" />
+        <button
+          type="button"
+          className="btn tonal"
+          disabled={busy}
+          onClick={() => act(() => dismissBlocked(a.id))}
+        >
+          Dismiss
+        </button>
+        {a.scopes.includes("always") && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            title="Let this exact action skip the safety review from now on"
+            onClick={() =>
+              act(async () => {
+                await runAnyway(a.id, true);
+                if (live) await onRan?.();
+              })
+            }
+          >
+            Always
+          </button>
+        )}
+        {live && (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy}
+            onClick={() =>
+              act(async () => {
+                await runAnyway(a.id);
+                await onRan?.();
+              })
+            }
+          >
+            Run anyway
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** A message to a person that goes once its time is up, unless you stop it. */
+export function SendingApproval({ a, links }: { a: Approval; links?: React.ReactNode }) {
+  const [now, setNow] = useState(Date.now);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const left = Math.max(0, Math.ceil((Date.parse(a.expiresAt) - now) / 1000));
+  const stop = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await decideApproval(a.id, "deny");
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="approval">
+      <div className="approval-text">
+        <p className="approval-what">{a.summary}</p>
+        <p>{left ? `Sending in ${left} s` : "Sending"}</p>
+      </div>
+      {error && <div className="form-error">{error}</div>}
+      <div className="approval-actions">
+        {links}
+        <span className="spacer" />
+        <button type="button" className="btn danger" disabled={busy || !left} onClick={stop}>
+          <Icon name="x" />
+          Stop
         </button>
       </div>
     </div>

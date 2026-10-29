@@ -51,6 +51,7 @@ targets:
             UIApplicationShortcutItemIconSymbolName: checklist
         # Only https, on the LAN too (API.serverURL); a brain on the LAN still needs this to be reached.
         NSLocalNetworkUsageDescription: Hatbot connects to your brain on the local network.
+        NSFaceIDUsageDescription: Hatbot asks for Face ID before you approve a payment, a purchase, an account change or a door from a notification.
     # Shared with the share extension: the brain's address and the token (Hatbot/App/AppGroup.swift).
     entitlements:
       path: Hatbot/Hatbot.entitlements

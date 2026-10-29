@@ -48,6 +48,8 @@ test("a chat starts a task on the owner's computer: using it is asked once, nami
     { content: [computer("screenshot")] },
     finish(),
   ]);
+  work.onCreate = (p) =>
+    p.system === CLICK_CHECK_PROMPT ? '{"consequential": false, "label": ""}' : undefined;
   const t = await testApp(chat, work);
   const { computer: laptop } = await connected(t);
   let clicks = 0;

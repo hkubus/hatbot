@@ -122,10 +122,8 @@ export type CallContext = {
   episodeId?: number;
   /** What untrusted content was read first, or null: work the call starts begins tainted. */
   tainted?: () => string | null;
-  /** Marks the conversation or task as having read untrusted `text`, from `by`. */
-  taint?: (by: string, text?: string) => void;
-  /** Suspected prompt injection: work it starts is marked so, and the review won't let it through. */
-  suspected?: () => Promise<boolean>;
+  /** Marks the conversation or task as having read untrusted content, from `by`. */
+  taint?: (by: string) => void;
   /** What the owner said in this stretch of the chat. */
   ownerSaid?: () => string;
   /** The hand-off the reply answers, if it answers one. */
@@ -235,14 +233,7 @@ export class PluginError extends Error {
 export const BOT_GONE = "Not made: the owner deleted you.";
 
 const ASKED = {
-  untrusted: [
-    "after reading untrusted content",
-    "This conversation has read untrusted content, so changes need your approval.",
-  ],
-  injection: [
-    "after a suspected prompt injection",
-    "Something this conversation read may be instructions aimed at a bot, so this needs your approval.",
-  ],
+  untrusted: ["after reading untrusted content", "This conversation has read untrusted content."],
 } as const;
 
 /** Waits for the owner to approve a change; a refusal, or nowhere to ask, is the tool's error. */

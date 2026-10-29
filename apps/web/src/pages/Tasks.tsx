@@ -247,20 +247,11 @@ function Details({ task }: { task: Task }) {
       <dd>{modelName(task.model)}</dd>
       <dt>Trust</dt>
       <dd>
-        {task.injectionSuspected ? (
-          <span className="status bad">
-            <Icon name="alert" />
-            Possible prompt injection
-          </span>
-        ) : task.tainted ? (
-          task.lane === "screen" ? (
-            "Read web pages"
-          ) : (
-            "Read untrusted content"
-          )
-        ) : (
-          "Trusted sources only"
-        )}
+        {task.tainted
+          ? task.lane === "screen"
+            ? "Read web pages"
+            : "Read untrusted content"
+          : "Trusted sources only"}
       </dd>
       {task.taintedBy && (
         <>
@@ -331,7 +322,11 @@ export function TaskDetail({ id, live }: { id: number; live: boolean }) {
   const active = isActive(task);
   // A chat's card until the whole task comes: its details and goal only then.
   const full = isFullTask(task) ? task : null;
-  const pending = Object.values(approvals).filter((a) => a.taskId === id && a.status === "pending");
+  const pending = Object.values(approvals).filter(
+    (a) =>
+      a.taskId === id &&
+      (a.status === "pending" || a.status === "blocked" || a.status === "sending"),
+  );
   const asked = Object.values(questions).filter((q) => q.taskId === id && q.status === "pending");
   const screen = task.lane === "screen";
   const showLive = screen && active && (watch || request?.taskId === id);

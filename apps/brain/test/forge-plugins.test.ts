@@ -340,8 +340,9 @@ test("GitHub: a task finds the issue, reads CI's log without giving the link the
     { GITHUB_API_URL: `${gh.url}/`, GITHUB_TOKEN: "tok" },
     { work },
   );
+  t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
-  // What it read was strangers' text, so its changes ask.
+  // What it read was strangers' text, so with the review off its changes ask.
   expect(await approveUntilEnded(t, task.id)).toEqual([
     "Commit 3 files to hkubus/hatbot@hatbot/fix",
     expect.stringContaining("hatbot/fix"),

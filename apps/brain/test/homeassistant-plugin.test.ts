@@ -1,7 +1,9 @@
 import { beforeEach, expect, test } from "bun:test";
 import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
+import type { Task } from "@hatbot/shared";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
+import { waitFor } from "./helpers";
 import {
   call,
   ended,
@@ -109,6 +111,52 @@ test("a task calls a service with the token; strangers' text is read only as unt
   );
 });
 
+test("unlocking in a schedule's run may be allowed for that schedule: its next run goes ahead, other tasks still ask", async () => {
+  const unlock = {
+    content: [
+      toolUse("homeassistant_call_service", {
+        domain: "lock",
+        service: "unlock",
+        entity_id: "lock.front_door",
+      }),
+    ],
+  };
+  const work = new FakeModel([unlock, finish(), unlock, finish(), unlock, finish()]);
+  const t = await pluginApp(homeassistantPlugin, env, { work });
+  const morning = t.schedules.create(
+    { name: "Morning", prompt: "Unlock the front door", cron: "0 7 * * *" },
+    "owner",
+  );
+  const run = (scheduleId?: number) =>
+    t.tasks.createBackgroundTask({
+      title: "Unlock",
+      goal: "Unlock the front door",
+      origin: "schedule",
+      source: "Morning",
+      runKey: `s:${Math.random()}`,
+      scheduleId,
+    }) as Task;
+  const unlocks = () => api.seen.filter((s) => s.path === "/api/services/lock/unlock").length;
+
+  const first = run(morning.id);
+  const asked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(asked.scopes).toEqual(["schedule"]);
+  t.approvals.decide(asked.id, "approve", "web", undefined, "schedule");
+  await ended(t, first.id);
+  expect(unlocks()).toBe(1);
+
+  await ended(t, run(morning.id).id);
+  expect(unlocks()).toBe(2);
+  expect(t.approvals.list(true)).toEqual([]);
+
+  const other = run();
+  const again = await waitFor(() => t.approvals.list(true)[0]);
+  expect(again.scopes).toEqual([]);
+  t.approvals.decide(again.id, "deny", "web");
+  await ended(t, other.id);
+  expect(unlocks()).toBe(2);
+});
+
 test("everyday control and locking run; unlocking, opening, purges and anything else ask, as does a tainted task", async () => {
   const t = await pluginApp(homeassistantPlugin, env);
   const service = t.tool("homeassistant_call_service");
@@ -125,7 +173,9 @@ test("everyday control and locking run; unlocking, opening, purges and anything 
   // Who can get in always waits for the owner: the review can't let it through.
   const always = { action: "ask", kind: "access", always: true };
   expect(v("lock", "unlock", { entity_id: "lock.front_door" })).toMatchObject(always);
-  expect(v("cover", "open_cover", { entity_id: "cover.garage" })).toMatchObject(always);
+  // A cover that doesn't say it's a door or gate goes to the review.
+  expect(v("cover", "open_cover", { entity_id: "cover.garage" })).toMatchObject({ action: "ask" });
+  expect(v("cover", "open_cover", { entity_id: "cover.garage" })).not.toHaveProperty("always");
   // Keeping people out runs, but not on anything else slipped in beside it.
   expect(v("lock", "lock", { entity_id: "lock.front_door" }).action).toBe("allow");
   expect(v("alarm_control_panel", "alarm_arm_away", { data: { area_id: "house" } }).action).toBe(
@@ -150,7 +200,7 @@ test("everyday control and locking run; unlocking, opening, purges and anything 
   }
 });
 
-test("whatever can let someone in waits for the owner: marked entities, scenes, groups, areas, any spelling", async () => {
+test("whatever lets someone in waits for the owner, and what only might goes to the review: marked entities, scenes, groups, areas, any spelling", async () => {
   states.push(
     state("switch.gate", "off"),
     state("scene.movie", "2026-10-12T08:00:00+00:00", { entity_id: ["light.kitchen"] }),
@@ -159,7 +209,7 @@ test("whatever can let someone in waits for the owner: marked entities, scenes, 
     }),
     state("scene.tuya_open_garage", "2026-10-12T08:00:00+00:00", {}),
     state("switch.outdoor", "on", { entity_id: ["switch.gate", "switch.lamp"] }),
-    state("group.doors", "closed", { entity_id: ["cover.garage"] }),
+    state("group.doors", "closed", { entity_id: ["cover.garage_door"] }),
     state("group.outside", "on", { entity_id: ["group.doors", "light.hall"] }),
     state("light.downstairs", "on", { entity_id: ["light.hall", "light.kitchen"] }),
     state("cover.bedroom_blind", "open", { device_class: "blind" }),
@@ -179,30 +229,30 @@ test("whatever can let someone in waits for the owner: marked entities, scenes, 
     ["switch.turn_on", "switch.gate", "always"],
     ["switch.turn_on", { entity_id: "Switch.Gate" }, "always"],
     ["switch.turn_on", "switch.porch", "allow"],
-    ["homeassistant.toggle", { entity_id: " Cover.garage" }, "always"],
+    ["homeassistant.toggle", { entity_id: " Cover.Garage_Door" }, "always"],
     ["light.turn_on", { entity_id: "light.hall, lock.front_door" }, "always"],
-    ["light.turn_on", { entity_id: "light.kitchen\u0000" }, "always"],
+    ["light.turn_on", { entity_id: "light.kitchen\u0000" }, "ask"],
     ["light.turn_on", { entity_id: "Light.Kitchen" }, "allow"],
     ["scene.apply", { entities: { "Lock.Front_Door": "unlocked" } }, "always"],
     // Scenes and groups by what they set or hold, nested too; ones not seen yet could hold anything.
     ["scene.turn_on", "scene.leave", "always"],
     ["homeassistant.turn_on", "scene.leave", "always"],
     ["scene.turn_on", "scene.movie", "allow"],
-    ["scene.turn_on", "scene.new", "always"],
+    ["scene.turn_on", "scene.new", "ask"],
     ["scene.turn_on", "scene.tuya_open_garage", "ask"],
     ["switch.turn_on", "switch.outdoor", "always"],
     ["homeassistant.turn_on", "group.outside", "always"],
     ["light.turn_on", "light.downstairs", "allow"],
-    ["group.set", "group.new", "always"],
+    ["group.set", "group.new", "ask"],
     // Areas, devices and "all", where the service's domain could hold a door.
-    ["switch.turn_off", { area_id: "garage" }, "always"],
-    ["cover.open_cover", { target: { device_id: "abc" } }, "always"],
-    ["homeassistant.turn_off", { entity_id: "ALL" }, "always"],
+    ["switch.turn_off", { area_id: "garage" }, "ask"],
+    ["cover.open_cover", { target: { device_id: "abc" } }, "ask"],
+    ["homeassistant.turn_off", { entity_id: "ALL" }, "ask"],
     ["light.turn_off", { area_id: "garage" }, "allow"],
-    // Covers by their class: a blind shades a window, a garage door or a window lets someone in.
+    // Covers by their class: a blind shades a window, a garage door lets someone in, a window might.
     ["cover.open_cover", "cover.bedroom_blind", "allow"],
     ["cover.open_cover", "cover.garage_door", "always"],
-    ["cover.open_cover", "cover.loft", "always"],
+    ["cover.open_cover", "cover.loft", "ask"],
     ["cover.open_cover", { entity_id: "cover.bedroom_blind, cover.garage_door" }, "always"],
   ];
   for (const [name, target, want] of cases) {
@@ -210,7 +260,10 @@ test("whatever can let someone in waits for the owner: marked entities, scenes, 
     const label = `${name} ${JSON.stringify(target)}`;
     if (want === "always")
       expect(verdict, label).toMatchObject({ action: "ask", kind: "access", always: true });
-    else expect(verdict.action, label).toBe(want);
+    else {
+      expect(verdict.action, label).toBe(want);
+      expect(verdict, label).not.toHaveProperty("always");
+    }
   }
 
   // A scene or group changed since it was seen is looked at again before it runs.
@@ -226,6 +279,12 @@ test("whatever can let someone in waits for the owner: marked entities, scenes, 
   await expect(
     service.run({ domain: "light", service: "turn_on", entity_id: "light.downstairs" }, call),
   ).rejects.toThrow("so it waits for the owner");
+  // So is a cover that has become a garage door.
+  const loft = states.find((x) => x.entity_id === "cover.loft");
+  if (loft) loft.attributes = { device_class: "garage" };
+  await expect(
+    service.run({ domain: "cover", service: "open_cover", entity_id: "cover.loft" }, call),
+  ).rejects.toThrow("has changed since it was checked");
   expect(api.seen.some((s) => s.method === "POST")).toBe(false);
   expect(v("scene.turn_on", "scene.movie")).toMatchObject({ always: true });
 });

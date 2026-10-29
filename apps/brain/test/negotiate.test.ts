@@ -11,11 +11,11 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { askedIfBot } from "../src/negotiate/bot-question";
 import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
-import { replyPause } from "../src/negotiate/service";
+import { replyPause, SAY_HUMAN } from "../src/negotiate/service";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { computer, FakeModel, text, toolUse } from "./fake-model";
-import { type TestApp, tempDirs, testApp, toolNames, waitFor } from "./helpers";
+import { letSend, type TestApp, tempDirs, testApp, toolNames, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
 replyPause.minMs = 0;
@@ -25,7 +25,6 @@ replyPause.everyMs = 1;
 const LISTING_URL = "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001.html";
 const CHAT_URL = "https://www.olx.pl/myaccount/answers/555";
 const TEXT = "Dzień dobry, czy przyjmie Pan 1060 zł za kartę?";
-const NOT_SUSPECTED = '{"suspected": false, "excerpt": ""}';
 const call = (): CallContext => ({ task: null, signal: new AbortController().signal });
 
 const finish = (summary = "Sent it.") => ({
@@ -262,13 +261,18 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
 
   t.approvals.decide(approval.id, "approve", "web");
   await waitFor(() => t.negotiations.get(1)?.status === "open");
+  // The message waits for you to stop it, and then goes.
+  await letSend(t);
   await t.tasks.idle();
   await t.thread.idle();
 
   // The opening task sent through its desktop task, in the thread, and nothing else asked.
   expect(t.tasks.get(1)).toMatchObject({ status: "done", conversationId: thread?.id });
   expect(t.tasks.get(2)?.parentId).toBe(1);
-  expect(t.approvals.list(false).map((a) => a.kind)).toEqual(["mandate"]);
+  expect(t.approvals.list(false).map((a) => [a.kind, a.status])).toEqual([
+    ["send", "approved"],
+    ["mandate", "approved"],
+  ]);
   expect(clicks(t)).toBe(1);
   // The seller wrote the listing's title: it isn't in the desktop task's brief.
   expect(t.tasks.get(2)?.goal).toContain(`<message>${TEXT}</message>`);
@@ -508,7 +512,7 @@ test("a note on the mandate changes its numbers, held at what it may cost; one t
   };
   let heldMeanwhile = false;
   work.onCreate = (p) => {
-    if (p.system !== NOTE_PROMPT) return NOT_SUSPECTED;
+    if (p.system !== NOTE_PROMPT) return undefined;
     notes.push(String(p.messages[0]?.content));
     heldMeanwhile = holding();
     return noted({ limit: notes.length === 1 ? 1300 : 13000 });
@@ -551,7 +555,7 @@ test("a note that gives the mandate more room is asked about again, then reaches
   work.onCreate = (p) =>
     p.system === NOTE_PROMPT
       ? noted({ opening: 1060, target: 1300, limit: 1450, allow: ["phone"] })
-      : NOT_SUSPECTED;
+      : undefined;
   work.script.push(later);
   const t = await testApp(new FakeModel(), work);
   const n = openNegotiation(t);
@@ -573,7 +577,7 @@ test("a mandate approval with a note is applied once, however often it's seen", 
   const work = new FakeModel();
   let asked = 0;
   work.onCreate = (p) => {
-    if (p.system !== NOTE_PROMPT) return NOT_SUSPECTED;
+    if (p.system !== NOTE_PROMPT) return undefined;
     asked++;
     return noted({});
   };
@@ -598,7 +602,7 @@ test("a Stop while a mandate note is being applied stands", async () => {
     release = r;
   });
   let asked = false;
-  work.onCreate = (p) => (p.system === NOTE_PROMPT ? noted({}) : NOT_SUSPECTED);
+  work.onCreate = (p) => (p.system === NOTE_PROMPT ? noted({}) : undefined);
   const create = work.create.bind(work);
   work.create = async (p) => {
     if (p.system === NOTE_PROMPT) {
@@ -790,6 +794,7 @@ test("the send gate: exactly the approved text, once, after the conversation is 
     { text: ` ${TEXT}\n`, offer: 1060, agree: false, stated: null },
     call(),
   );
+  await letSend(t);
   await t.tasks.idle();
 
   // The click before record_conversation, the one with other text, and Return once it went never
@@ -803,8 +808,8 @@ test("the send gate: exactly the approved text, once, after the conversation is 
     "left_click",
     TEXT,
   ]);
-  // Nothing asked the owner: the message itself was approved.
-  expect(t.approvals.list(false)).toEqual([]);
+  // Nothing asked the owner: the message itself was approved. It only waited for them to stop it.
+  expect(t.approvals.list(false).map((a) => a.status)).toEqual(["approved"]);
   expect(t.negotiations.messages(n.id)[0]).toMatchObject({ status: "sent", text: TEXT });
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 });
@@ -817,7 +822,7 @@ test("a conversation opened from the listing page is the negotiation's, and one 
     { content: [computer("key", { text: "Return" })] },
     finish(),
   ];
-  const opened = async (from: string) => {
+  const opened = async (from: string, sends: boolean) => {
     const t = await testApp(new FakeModel(), new FakeModel(structuredClone(steps)));
     messageBox(t, from);
     // What's clicked first is the listing's link to write to the seller.
@@ -845,15 +850,16 @@ test("a conversation opened from the listing page is the negotiation's, and one 
     };
     const n = openNegotiation(t);
     await sendOffer(t, n);
+    if (sends) await letSend(t);
     await t.tasks.idle();
     return { t, n };
   };
 
-  const { t, n } = await opened(LISTING_URL);
+  const { t, n } = await opened(LISTING_URL, true);
   expect(t.negotiations.messages(n.id)[0]?.status).toBe("sent");
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 
-  const other = await opened("https://www.olx.pl/myaccount/answers/777");
+  const other = await opened("https://www.olx.pl/myaccount/answers/777", false);
   expect(other.t.negotiations.messages(other.n.id)[0]?.status).not.toBe("sent");
   expect(other.t.negotiations.get(other.n.id)?.conversationUrl).toBeNull();
 });
@@ -923,7 +929,8 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   const told = await waitFor(() =>
     t.notifier.sent.find((x) => x.click?.endsWith(`?approval=${hold.id}`)),
   );
-  expect(told.actions?.map((a) => a.label)).not.toContain("Approve");
+  // Its Approve only opens the app, which approves it.
+  expect(told.actions?.find((a) => a.label === "Approve")?.action).toBe("view");
   // Meanwhile the bot can neither send nor close it.
   const tools = negotiateTools(t);
   const send = named(tools, "negotiate_send");
@@ -1027,6 +1034,24 @@ test("a seller asking whether it's a bot holds the negotiation for you to answer
   const again = await waitFor(() => pending()[0]);
   t.approvals.decide(again.id, "deny", "web");
   await waitFor(() => t.negotiations.get(n.id)?.status === "abandoned");
+});
+
+test("Say I'm human lets the bot tell the seller it's a person, and asking again holds nothing", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  await readSeller(t, n, "Czy rozmawiam z botem?");
+  const hold = await waitFor(() => t.approvals.list(true)[0]);
+  expect(hold.answers).toEqual([SAY_HUMAN]);
+  t.approvals.decide(hold.id, "approve", "web", SAY_HUMAN);
+  const got = await runPluginTool(
+    named(negotiateTools(t), "negotiate_get"),
+    { negotiation: n.id },
+    call(),
+  );
+  expect(got.text).toContain("you may tell the seller you're a person");
+  await readSeller(t, n, "Na pewno nie bot?");
+  expect(t.approvals.list(true)).toEqual([]);
 });
 
 test("what you write to the seller yourself is recorded as yours, once, and the bot reads it", async () => {

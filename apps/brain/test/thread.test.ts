@@ -322,7 +322,7 @@ test("the chat stops at the spending limit: before a reply that could pass it, a
   expect(t.spend.summary().todayUsd).toBeCloseTo((1000 * 0.1 + 200 * 0.5) / 1e6, 9);
 
   // Room for Haiku's reply, not for asking Opus.
-  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 0.1, monthlyUsd: 200, alertReserveUsd: 0 } });
+  t.settings.update({ limits: { dailyUsd: 0.1, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.thread.post("a hard one").done;
   expect(model.requests).toHaveLength(2);
   expect(t.thread.list().at(-1)).toMatchObject({

@@ -86,7 +86,6 @@ const LIMITS = [
   ["monthlyUsd", "Per month"],
 ] as const;
 const MORE_LIMITS = [
-  ["taskUsd", "Per task"],
   ["researchUsd", "Per research task"],
   ["boxesUsd", "Boxes per day"],
   ["alertReserveUsd", "Kept for alerts"],
@@ -317,6 +316,8 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
 
 const ANSWER: Record<Approval["status"], string> = {
   pending: "Waiting for your answer",
+  blocked: "Blocked",
+  sending: "Sending",
   approved: "Approved",
   denied: "Denied",
   expired: "Expired",
@@ -394,6 +395,7 @@ function AllowedPage() {
             {rules.map((r) => (
               <Row key={r.id} label={<span className="mono">{r.summary}</span>}>
                 {r.botId !== "hatbot" && <span className="val">{bots[r.botId]?.name}</span>}
+                {r.schedule && <span className="val">In {r.schedule}</span>}
                 <button type="button" className="btn sm danger-text" onClick={() => remove(r)}>
                   Remove
                 </button>

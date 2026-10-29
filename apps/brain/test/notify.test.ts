@@ -17,4 +17,13 @@ test("an approval's notification keeps its whole summary, opens the iOS app when
   expect(n.message).toContain(command);
   expect(n.click).toBe(`hatbot://approvals/${a.id}`);
   expect(n.actions?.[0]?.url).toBe(`${ORIGIN}/api/v1/approvals/${a.id}/token-decision`);
+
+  // Paying is approved in the app, behind Face ID: the notification's Approve opens it to do so.
+  const pay = t.approvals.create({ taskId: null, kind: "payment", summary: "Pay 40 zł" });
+  const asked = await waitFor(() => t.notifier.sent.find((x) => x.title === "Approve: Pay 40 zł"));
+  expect(asked.actions?.[0]).toMatchObject({
+    action: "view",
+    label: "Approve",
+    url: `hatbot://approvals/${pay.id}?approve=1`,
+  });
 });

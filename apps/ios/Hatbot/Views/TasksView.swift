@@ -25,6 +25,14 @@ struct TasksView: View {
             }
           }
         }
+        ForEach(store.sendingApprovals) { a in
+          Section {
+            SendingBody(approval: a)
+            if let taskId = a.taskId {
+              NavigationLink("Task", value: Route.task(taskId))
+            }
+          }
+        }
         ForEach(store.pendingApprovals) { a in
           Section {
             VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a) }
@@ -164,6 +172,9 @@ struct TaskDetailView: View {
       if let error {
         Text(error).foregroundStyle(.red)
       }
+      ForEach(store.sendingApprovals.filter { $0.taskId == taskId }) { a in
+        Section { SendingBody(approval: a) }
+      }
       ForEach(pending) { a in
         Section {
           VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a, linksTask: false) }
@@ -273,15 +284,10 @@ private struct TaskDetails: View {
     }
     LabeledContent("Started", value: task.startedAt?.stampText ?? "–")
     LabeledContent("Model", value: Format.modelName(task.model))
-    LabeledContent("Trust") {
-      if task.injectionSuspected {
-        Label("Possible prompt injection", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-      } else {
-        Text(
-          task.tainted
-            ? (task.lane == .screen ? "Read web pages" : "Read untrusted content") : "Trusted sources only")
-      }
-    }
+    LabeledContent(
+      "Trust",
+      value: task.tainted
+        ? (task.lane == .screen ? "Read web pages" : "Read untrusted content") : "Trusted sources only")
     if let taintedBy = task.taintedBy {
       LabeledContent("Tainted by") { Text(taintedBy).multilineTextAlignment(.trailing) }
     }

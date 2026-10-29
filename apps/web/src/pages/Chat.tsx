@@ -74,10 +74,12 @@ import {
 } from "../store";
 import {
   Activity,
+  BlockedApproval,
   isActive,
   PendingApproval,
   PendingQuestion,
   progressLines,
+  SendingApproval,
   taskLine,
   taskLines,
   whenText,
@@ -465,6 +467,13 @@ function ReplyMessage({
 }
 
 function TrayApproval({ a }: { a: Approval }) {
+  if (a.status === "blocked")
+    return <BlockedApproval a={a} onRan={() => sendMessage("Run it anyway.", [], randomId())} />;
+  if (a.status === "sending") return <SendingApproval a={a} />;
+  return <TrayPending a={a} />;
+}
+
+function TrayPending({ a }: { a: Approval }) {
   const negotiation = useStore((s) => (a.kind === "mandate" ? negotiationOf(s, a.id) : undefined));
   return (
     <PendingApproval
@@ -995,7 +1004,13 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
     () =>
       splitWaiting(
         [
-          ...Object.values(approvals).filter((a) => a.status === "pending"),
+          // What the review blocked shows only in its own chat; a task's shows on the task.
+          ...Object.values(approvals).filter(
+            (a) =>
+              a.status === "pending" ||
+              a.status === "sending" ||
+              (a.status === "blocked" && !a.taskId && a.conversationId === chat?.id),
+          ),
           ...Object.values(questions).filter((q) => q.status === "pending"),
         ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
         chat,
