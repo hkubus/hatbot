@@ -49,10 +49,7 @@ pub fn config_dir() -> PathBuf {
 }
 
 pub fn load_config() -> Config {
-    std::fs::read(config_dir().join("app.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    std::fs::read(config_dir().join("app.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 pub fn save_config(c: &Config) {

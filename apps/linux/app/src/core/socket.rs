@@ -11,7 +11,9 @@ use super::api::Api;
 #[derive(Debug, Clone, PartialEq)]
 pub enum SocketEvent {
     /// The first message came: the socket counts as open. `reconnected` after it had been before.
-    Open { reconnected: bool },
+    Open {
+        reconnected: bool,
+    },
     Text(String),
     Binary(Vec<u8>),
     Closed,

@@ -15,7 +15,7 @@ winit-core = "=0.31.0-beta.2"
 winit-common = { version = "=0.31.0-beta.2", default-features = false }
 bytes = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls-native-roots", "http2"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "fs", "process"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 futures = "0.3"
@@ -26,5 +26,6 @@ notify-rust = { version = "4", default-features = false, features = ["z-with-tok
 oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "wayland"] }
 jiff = "0.2"
+resvg = { version = "0.45", default-features = false }
 
 [dev-dependencies]

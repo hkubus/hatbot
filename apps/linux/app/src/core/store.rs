@@ -93,18 +93,21 @@ impl Store {
     pub fn bot_name(&self, id: Option<&str>) -> String {
         match id {
             None => String::new(),
-            Some(id) => self.bots.get(id).map(|b| b.name.clone()).unwrap_or_else(|| {
-                if id == HATBOT_ID { "Hatbot".into() } else { id.into() }
-            }),
+            Some(id) => self
+                .bots
+                .get(id)
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| if id == HATBOT_ID { "Hatbot".into() } else { id.into() }),
         }
     }
 
     pub fn chat_name(&self, c: Option<&Conversation>) -> String {
         let Some(c) = c else { return "Hatbot".into() };
         match c.kind {
-            ConversationKind::Group => c.title.clone().unwrap_or_else(|| {
-                c.bot_ids.iter().map(|b| self.bot_name(Some(b))).collect::<Vec<_>>().join(", ")
-            }),
+            ConversationKind::Group => c
+                .title
+                .clone()
+                .unwrap_or_else(|| c.bot_ids.iter().map(|b| self.bot_name(Some(b))).collect::<Vec<_>>().join(", ")),
             ConversationKind::Thread => c.title.clone().unwrap_or_else(|| "Thread".into()),
             ConversationKind::Direct => self.bot_name(c.bot_ids.first().map(String::as_str)),
         }
@@ -257,7 +260,13 @@ impl Store {
         self.tasks.insert(t.id, t);
     }
 
-    pub fn take_live(&mut self, approvals: Vec<Approval>, questions: Vec<Question>, desktop: Option<DesktopState>, unread: Vec<i64>) {
+    pub fn take_live(
+        &mut self,
+        approvals: Vec<Approval>,
+        questions: Vec<Question>,
+        desktop: Option<DesktopState>,
+        unread: Vec<i64>,
+    ) {
         self.approvals.retain(|_, a| a.status != ApprovalStatus::Pending);
         for a in approvals {
             self.approvals.insert(a.id, a);

@@ -1732,6 +1732,7 @@ dependencies = [
  "notify-rust",
  "oo7",
  "reqwest",
+ "resvg",
  "rfd",
  "rustls",
  "serde",

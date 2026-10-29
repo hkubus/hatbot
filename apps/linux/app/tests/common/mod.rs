@@ -46,7 +46,11 @@ pub async fn fake_brain(routes: &[(&str, u16, &str)]) -> FakeBrain {
                         let head = String::from_utf8_lossy(&buf[..i]).to_string();
                         let len = head
                             .lines()
-                            .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .find_map(|l| {
+                                l.to_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                            })
                             .unwrap_or(0);
                         while buf.len() < i + 4 + len {
                             let n = sock.read(&mut chunk).await.unwrap_or(0);

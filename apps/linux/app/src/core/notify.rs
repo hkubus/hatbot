@@ -31,7 +31,10 @@ pub struct Shown {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
     /// Answer it from the notification: POST this body to this path.
-    Call { path: String, body: Value },
+    Call {
+        path: String,
+        body: Value,
+    },
     Open(Target),
 }
 
@@ -99,15 +102,13 @@ impl Notice {
     /// What pressing a notification's button does.
     pub fn reply(&self, action: &str) -> Reply {
         match (self, action) {
-            (Notice::Approval(a), "approve" | "deny") if !a.kind.is_floor() => Reply::Call {
-                path: format!("/approvals/{}", a.id),
-                body: json!({ "decision": action }),
-            },
+            (Notice::Approval(a), "approve" | "deny") if !a.kind.is_floor() => {
+                Reply::Call { path: format!("/approvals/{}", a.id), body: json!({ "decision": action }) }
+            }
             (Notice::Question(q), a) => match a.strip_prefix("answer:").and_then(|i| i.parse::<usize>().ok()) {
-                Some(i) if i < q.choices.len() => Reply::Call {
-                    path: format!("/questions/{}", q.id),
-                    body: json!({ "answer": q.choices[i] }),
-                },
+                Some(i) if i < q.choices.len() => {
+                    Reply::Call { path: format!("/questions/{}", q.id), body: json!({ "answer": q.choices[i] }) }
+                }
                 _ => Reply::Open(self.target()),
             },
             _ => Reply::Open(self.target()),
@@ -117,6 +118,5 @@ impl Notice {
 
 /// A task that just ended is worth a notification; one that was already over isn't.
 pub fn task_ended(before: Option<&Task>, now: &Task) -> bool {
-    matches!(now.status, TaskStatus::Done | TaskStatus::Failed)
-        && before.is_some_and(|b| b.status.is_active())
+    matches!(now.status, TaskStatus::Done | TaskStatus::Failed) && before.is_some_and(|b| b.status.is_active())
 }

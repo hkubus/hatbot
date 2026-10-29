@@ -157,10 +157,7 @@ pub struct Attachment {
 
 impl Attachment {
     pub fn is_picture(&self) -> bool {
-        matches!(
-            self.media_type.as_str(),
-            "image/jpeg" | "image/png" | "image/gif" | "image/webp"
-        )
+        matches!(self.media_type.as_str(), "image/jpeg" | "image/png" | "image/gif" | "image/webp")
     }
 
     /// A chart or another block the brain draws from a JSON file.
@@ -323,12 +320,7 @@ impl TaskStep {
 /// The timeline with only the latest of the model's own notes; your notes on approvals stay.
 pub fn latest_note_only(steps: &[TaskStep]) -> Vec<&TaskStep> {
     let last = steps.iter().rposition(TaskStep::is_model_note);
-    steps
-        .iter()
-        .enumerate()
-        .filter(|(i, s)| !s.is_model_note() || Some(*i) == last)
-        .map(|(_, s)| s)
-        .collect()
+    steps.iter().enumerate().filter(|(i, s)| !s.is_model_note() || Some(*i) == last).map(|(_, s)| s).collect()
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -363,10 +355,7 @@ pub enum ApprovalKind {
 impl ApprovalKind {
     /// Money, and passwords and keys: never answered from a notification, only in the window.
     pub fn is_floor(self) -> bool {
-        matches!(
-            self,
-            Self::Purchase | Self::Payment | Self::Mandate | Self::AccountSecurity
-        )
+        matches!(self, Self::Purchase | Self::Payment | Self::Mandate | Self::AccountSecurity)
     }
 
     /// Whether the answer can carry a note: the task carries on afterwards.
@@ -674,10 +663,7 @@ pub struct SearchResults {
 
 impl SearchResults {
     pub fn is_empty(&self) -> bool {
-        self.messages.is_empty()
-            && self.tasks.is_empty()
-            && self.memory.is_empty()
-            && self.routines.is_empty()
+        self.messages.is_empty() && self.tasks.is_empty() && self.memory.is_empty() && self.routines.is_empty()
     }
 }
 
@@ -954,13 +940,11 @@ pub struct Bot {
 }
 
 pub const BOT_ICONS: [&str; 17] = [
-    "hat", "sparkles", "brain", "code", "terminal", "server", "wrench", "shield", "globe", "house",
-    "book", "pen", "chart", "mail", "cart", "cat", "heart",
+    "hat", "sparkles", "brain", "code", "terminal", "server", "wrench", "shield", "globe", "house", "book", "pen",
+    "chart", "mail", "cart", "cat", "heart",
 ];
 
-pub const BOT_COLORS: [&str; 9] = [
-    "amber", "red", "pink", "purple", "indigo", "blue", "teal", "green", "gray",
-];
+pub const BOT_COLORS: [&str; 9] = ["amber", "red", "pink", "purple", "indigo", "blue", "teal", "green", "gray"];
 
 pub const CHAT_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -1138,11 +1122,7 @@ pub enum Event {
         month_usd: f64,
     },
     #[serde(rename = "memory.committed")]
-    MemoryCommitted {
-        sha: String,
-        message: String,
-        author: String,
-    },
+    MemoryCommitted { sha: String, message: String, author: String },
     #[serde(rename = "paused")]
     Paused { paused: bool },
     #[serde(rename = "task.updated")]

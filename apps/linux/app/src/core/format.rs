@@ -39,22 +39,14 @@ pub fn pause(at: &Zoned, previous: Option<&Zoned>, now: &Zoned) -> Option<String
     if today.checked_sub(jiff::Span::new().days(6)).is_ok_and(|w| day >= w) {
         return Some(format!("{} {time}", fmt(at, "%A")));
     }
-    let label = if day.year() == today.year() {
-        fmt(at, "%a %-d %b")
-    } else {
-        fmt(at, "%-d %b %Y")
-    };
+    let label = if day.year() == today.year() { fmt(at, "%a %-d %b") } else { fmt(at, "%-d %b %Y") };
     Some(format!("{label} at {time}"))
 }
 
 /// The time today, otherwise the day and time: "14:05", "14 Oct, 09:05".
 pub fn stamp(iso: &str) -> String {
     let Some(d) = date(iso) else { return String::new() };
-    if d.date() == now().date() {
-        fmt(&d, "%H:%M")
-    } else {
-        fmt(&d, "%-d %b, %H:%M")
-    }
+    if d.date() == now().date() { fmt(&d, "%H:%M") } else { fmt(&d, "%-d %b, %H:%M") }
 }
 
 pub fn money(usd: f64) -> String {
@@ -64,15 +56,12 @@ pub fn money(usd: f64) -> String {
 /// "Opus 5.5" for claude-opus-5-5, worked out from the id so a new model has a name too; an id of
 /// another shape stays as it is.
 pub fn model_name(id: &str) -> String {
-    let digits = |s: &str, n: std::ops::RangeInclusive<usize>| {
-        n.contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
-    };
+    let digits =
+        |s: &str, n: std::ops::RangeInclusive<usize>| n.contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit());
     let parts: Vec<&str> = id.split('-').collect();
     let (family, major, rest) = match parts.as_slice() {
         ["claude", family, major, rest @ ..]
-            if !family.is_empty()
-                && family.bytes().all(|b| b.is_ascii_lowercase())
-                && digits(major, 1..=9) =>
+            if !family.is_empty() && family.bytes().all(|b| b.is_ascii_lowercase()) && digits(major, 1..=9) =>
         {
             (*family, *major, rest)
         }
@@ -142,28 +131,13 @@ pub fn when(cron: Option<&str>, run_at: Option<&str>) -> String {
     if let Some(cron) = cron {
         return describe_cron(cron);
     }
-    run_at
-        .and_then(date)
-        .map(|d| format!("Once, {}", fmt(&d, "%a %-d %b, %H:%M")))
-        .unwrap_or_default()
+    run_at.and_then(date).map(|d| format!("Once, {}", fmt(&d, "%a %-d %b, %H:%M"))).unwrap_or_default()
 }
 
-const DAYS: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
+const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 fn num(s: &str) -> Option<u32> {
-    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
-        s.parse().ok()
-    } else {
-        None
-    }
+    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }
 }
 
 fn ordinal(n: u32) -> String {
@@ -213,11 +187,7 @@ pub fn describe_cron(expr: &str) -> String {
             return format!("Every {n} minutes");
         }
         if let Some(m) = num(min) {
-            return if m == 0 {
-                "Every hour".into()
-            } else {
-                format!("Every hour at :{m:02}")
-            };
+            return if m == 0 { "Every hour".into() } else { format!("Every hour at :{m:02}") };
         }
     }
     let (Some(m), "*") = (num(min), mon) else {
@@ -229,15 +199,7 @@ pub fn describe_cron(expr: &str) -> String {
     let Some(hours) = hour.split(',').map(num).collect::<Option<Vec<_>>>() else {
         return expr.into();
     };
-    let at = format!(
-        "at {}",
-        list(
-            &hours
-                .iter()
-                .map(|h| format!("{h:02}:{m:02}"))
-                .collect::<Vec<_>>()
-        )
-    );
+    let at = format!("at {}", list(&hours.iter().map(|h| format!("{h:02}:{m:02}")).collect::<Vec<_>>()));
 
     if dom == "*" && dow == "*" {
         return format!("Every day {at}");
@@ -249,21 +211,14 @@ pub fn describe_cron(expr: &str) -> String {
         if ["0,6", "6,0", "6-7"].contains(&dow) {
             return format!("Weekends {at}");
         }
-        let Some(days) = dow
-            .split(',')
-            .map(|d| num(d).filter(|&n| n <= 7))
-            .collect::<Option<Vec<_>>>()
-        else {
+        let Some(days) = dow.split(',').map(|d| num(d).filter(|&n| n <= 7)).collect::<Option<Vec<_>>>() else {
             return expr.into();
         };
         let names: Vec<&str> = days.iter().map(|&d| DAYS[d as usize % 7]).collect();
         if let [one] = names[..] {
             return format!("Every {one} {at}");
         }
-        return format!(
-            "{} {at}",
-            list(&names.iter().map(|n| n[..3].to_string()).collect::<Vec<_>>())
-        );
+        return format!("{} {at}", list(&names.iter().map(|n| n[..3].to_string()).collect::<Vec<_>>()));
     }
     if dow == "*"
         && let Some(day) = num(dom).filter(|d| (1..=31).contains(d))

@@ -58,19 +58,55 @@ pub struct Window {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     Status,
-    Claim { #[serde(rename = "taskId")] task_id: String },
-    Release { #[serde(rename = "taskId")] task_id: String },
+    Claim {
+        #[serde(rename = "taskId")]
+        task_id: String,
+    },
+    Release {
+        #[serde(rename = "taskId")]
+        task_id: String,
+    },
     Screenshot,
-    Zoom { x: f64, y: f64, width: f64, height: f64 },
-    Action { name: String, input: Map<String, Value> },
+    Zoom {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+    Action {
+        name: String,
+        input: Map<String, Value>,
+    },
     Windows,
-    FocusWindow { id: i64 },
-    Inspect { #[serde(default)] x: Option<f64>, #[serde(default)] y: Option<f64> },
-    Exec { command: String, #[serde(rename = "timeoutMs")] timeout_ms: u64 },
-    PutFile { name: String, data: String, #[serde(default)] path: Option<String> },
-    GetFile { path: String },
-    Live { on: bool },
-    LiveInput { input: Value },
+    FocusWindow {
+        id: i64,
+    },
+    Inspect {
+        #[serde(default)]
+        x: Option<f64>,
+        #[serde(default)]
+        y: Option<f64>,
+    },
+    Exec {
+        command: String,
+        #[serde(rename = "timeoutMs")]
+        timeout_ms: u64,
+    },
+    PutFile {
+        name: String,
+        data: String,
+        #[serde(default)]
+        path: Option<String>,
+    },
+    GetFile {
+        path: String,
+    },
+    Live {
+        on: bool,
+    },
+    LiveInput {
+        input: Value,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -92,7 +128,10 @@ pub enum ErrorCode {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Message {
     Hello(Hello),
-    Req { id: u64, req: Request },
+    Req {
+        id: u64,
+        req: Request,
+    },
     Res {
         id: u64,
         ok: bool,
@@ -103,7 +142,9 @@ pub enum Message {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    Status { status: Status },
+    Status {
+        status: Status,
+    },
     #[serde(other)]
     Unknown,
 }

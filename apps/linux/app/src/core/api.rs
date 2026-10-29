@@ -67,7 +67,9 @@ pub fn server_url(input: &str) -> std::result::Result<String, String> {
         "https" => {}
         "http" if local => {}
         _ => {
-            return Err("Use your Hatbot's https address. Over http, your password and token would travel unencrypted.".into());
+            return Err(
+                "Use your Hatbot's https address. Over http, your password and token would travel unencrypted.".into(),
+            );
         }
     }
     let mut out = format!("{}://{}", url.scheme(), host);
@@ -174,6 +176,11 @@ impl Api {
         self.send(self.request(Method::POST, path).json(&Empty {})).await.map(|_| ())
     }
 
+    /// A POST whose answer the app doesn't read.
+    pub async fn post_unit<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> Result<()> {
+        self.send(self.request(Method::POST, path).json(body)).await.map(|_| ())
+    }
+
     pub async fn put<T: DeserializeOwned, B: Serialize + ?Sized>(&self, path: &str, body: &B) -> Result<T> {
         Self::decode(&self.send(self.request(Method::PUT, path).json(body)).await?)
     }
@@ -198,10 +205,7 @@ impl Api {
             .mime_str(media_type)
             .map_err(|_| ApiError::new("That file's type isn't one Hatbot takes."))?;
         let form = reqwest::multipart::Form::new().part("file", part);
-        let req = self
-            .request(Method::POST, path)
-            .timeout(Duration::from_secs(300))
-            .multipart(form);
+        let req = self.request(Method::POST, path).timeout(Duration::from_secs(300)).multipart(form);
         Self::decode(&self.send(req).await?)
     }
 }

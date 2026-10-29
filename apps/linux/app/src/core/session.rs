@@ -21,9 +21,8 @@ pub async fn sign_in(address: &str, password: &str, code: &str, device: &str) ->
         return Err(ApiError::new("Finish setting up Hatbot in the web app first."));
     }
     let code: String = code.chars().filter(|c| !c.is_whitespace()).collect();
-    let res: LoginResponse = anonymous
-        .post("/auth/login", &Login { password, totp: &code, client: "app", device })
-        .await?;
+    let res: LoginResponse =
+        anonymous.post("/auth/login", &Login { password, totp: &code, client: "app", device }).await?;
     let token = res
         .token
         .ok_or_else(|| ApiError::new("This Hatbot is too old for the app. Update it from Settings on the web."))?;
