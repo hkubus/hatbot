@@ -172,7 +172,14 @@ impl Core {
 
     /// Whether the brain may ask this now.
     pub fn gate(&self, req: &Request) -> Res<()> {
-        if matches!(req, Request::Status | Request::Release { .. } | Request::Unknown) {
+        if matches!(
+            req,
+            Request::Status
+                | Request::Release { .. }
+                | Request::Pause { .. }
+                | Request::Disable
+                | Request::Unknown
+        ) {
             return Ok(());
         }
         let s = self.state();
@@ -290,6 +297,14 @@ impl Core {
             Request::LiveInput { input } => {
                 self.live_input(input).await?;
                 Ok(ComputerResult::LiveInput)
+            }
+            Request::Pause { paused } => {
+                self.set_paused(paused);
+                Ok(ComputerResult::Pause)
+            }
+            Request::Disable => {
+                self.set_enabled(false);
+                Ok(ComputerResult::Disable)
             }
             Request::Unknown => {
                 Err("This computer's Hatbot doesn't know that request. It may need an update."
@@ -927,6 +942,17 @@ mod tests {
         assert!(fake.calls().is_empty());
         core.set_enabled(true);
         assert_eq!(code(&core, Request::Screenshot).await, None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_brain_can_pause_and_switch_off_but_not_on() {
+        let (_, core) = core(true);
+        assert_eq!(code(&core, Request::Pause { paused: true }).await, None);
+        assert_eq!(code(&core, click(10, 10)).await, Some(ErrorCode::Paused));
+        assert_eq!(code(&core, Request::Pause { paused: false }).await, None);
+        assert_eq!(code(&core, Request::Disable).await, None);
+        assert!(!core.status().enabled);
+        assert_eq!(code(&core, Request::Screenshot).await, Some(ErrorCode::Disabled));
     }
 
     #[tokio::test(start_paused = true)]

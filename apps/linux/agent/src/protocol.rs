@@ -129,6 +129,10 @@ pub enum Request {
     LiveInput {
         input: LiveInput,
     },
+    Pause {
+        paused: bool,
+    },
+    Disable,
     #[serde(other)]
     Unknown,
 }
@@ -266,6 +270,8 @@ pub enum ComputerResult {
     },
     Live,
     LiveInput,
+    Pause,
+    Disable,
     #[serde(other)]
     Unknown,
 }
