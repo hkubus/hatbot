@@ -939,4 +939,12 @@ export const migrations: string[] = [
     'Keep each message brief, a sentence or two, as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits.',
     'Keep each message brief, a sentence or two, as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits. Greet only in your first message, and match how the seller writes: if they''re casual (no greeting, "hej", "xD"), be casual back, and don''t open each message the same way.');
   `,
+  // 57: each plugin's own migrations, apart from these.
+  `
+  CREATE TABLE plugin_migrations (
+    plugin TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    PRIMARY KEY (plugin, version)
+  );
+  `,
 ];

@@ -1,7 +1,8 @@
 // The core decides who gets a tool and when it needs your approval; a plugin only says what its tools do.
 import type { Database } from "bun:sqlite";
-import type { ApprovalKind, Attachment, Task } from "@hatbot/shared";
+import { API_PREFIX, type ApprovalKind, type Attachment, type Task } from "@hatbot/shared";
 import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desktop";
+import { Hono } from "hono";
 import type { z } from "zod";
 
 /** The API's major version. A plugin built for another one isn't started. */
@@ -203,7 +204,40 @@ export type PluginInstance = {
   down?: () => string | null;
   recover?: () => Promise<void>;
   stop?: () => Promise<void> | void;
+  /** What it provides, by the names in `provides`. */
+  services?: Record<string, unknown>;
+  /** Answers the paths in `routes` (and `publicRoutes`); make it with `pluginRoutes()`. */
+  routes?: Hono<PluginEnv>;
+  /** Jobs the brain runs while it's ready, each every `everyMs`. */
+  ticks?: PluginTick[];
+  /** Lines for the system prompt, by where the model works, while it's ready. */
+  prompt?: Partial<Record<PromptPlace, string>>;
 };
+
+export type PluginTick = { name: string; everyMs: number; run: () => unknown };
+
+export type PromptPlace = "chat" | "task" | "research";
+
+export type PluginPrincipal = { kind: "session" | "token"; id: number };
+
+/** A route sees who's asking in `c.env`: null only on a public route. */
+export type PluginEnv = {
+  Bindings: { principal: PluginPrincipal | null; clientIp: string };
+};
+
+/** Under the API's prefix; a PluginError is shown as it is, anything else as "Something went wrong." */
+export function pluginRoutes(): Hono<PluginEnv> {
+  const app = new Hono<PluginEnv>().basePath(API_PREFIX);
+  app.notFound((c) => c.json({ error: "That's gone." }, 404));
+  app.onError((err, c) => {
+    if (err instanceof PluginError) return c.json({ error: err.message }, 400);
+    if ("getResponse" in err && typeof err.getResponse === "function")
+      return err.getResponse() as Response;
+    console.error(err);
+    return c.json({ error: "Something went wrong." }, 500);
+  });
+  return app;
+}
 
 export type PluginSignal = { key: string; text: string };
 
@@ -221,6 +255,17 @@ export type PluginContext<C> = {
   files?: PluginFiles;
   /** data/plugins/<id>; not made until it's first needed. */
   dataDir: string;
+  /** A service named in `needs`: there whenever the plugin is started. */
+  service: <T>(name: string) => T;
+  /** Its own small values, kept with Hatbot's settings. */
+  store: PluginStore;
+  /** Saves values for its `env` variables, as Settings does; plugins reading them restart. */
+  saveSecrets: (values: Record<string, string | null>) => Promise<void>;
+};
+
+export type PluginStore = {
+  get: (key: string) => string | null;
+  set: (key: string, value: string | null) => void;
 };
 
 export type PluginEnvVar = {
@@ -241,6 +286,24 @@ export type Plugin<C = unknown> = {
   env?: PluginEnvVar[];
   /** It takes secrets by any name too (MCP's ${NAME}). */
   named?: boolean;
+  /** The SDK major it was built for; without one, this one. */
+  sdk?: number;
+  /** Part of Hatbot itself: always on, and not listed in Settings. */
+  internal?: boolean;
+  /** On until switched off, for what needs no setting up. */
+  defaultOn?: boolean;
+  /** Every bot gets it, even one limited to some plugins. */
+  allBots?: boolean;
+  /** Services it gives other plugins once started. */
+  provides?: string[];
+  /** Services it can't start without; until a plugin provides each, it says so and waits. */
+  needs?: string[];
+  /** Its own tables: each runs once, in order, on every install that has the plugin. */
+  migrations?: string[];
+  /** Paths under /api/v1 it answers, for signed-in callers: "/boxes" takes /boxes and below. */
+  routes?: string[];
+  /** Ones anybody may call, as Hono patterns ("/hooks/:name"); the route checks who it is. */
+  publicRoutes?: string[];
   start: (ctx: PluginContext<C>) => Promise<PluginInstance> | PluginInstance;
 };
 

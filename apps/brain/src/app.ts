@@ -4,6 +4,7 @@ import { type Context, Hono, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getConnInfo } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
+import { requireAuth } from "./auth/middleware";
 import type { AuthService } from "./auth/service";
 import { compressJson } from "./compress";
 import type { AppEnv, Deps } from "./context";
@@ -81,6 +82,10 @@ export function createApp(deps: Deps) {
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
   app.route("/", boxRoutes);
+  for (const { id, routes, publicRoutes } of deps.plugins.routed()) {
+    for (const path of publicRoutes) app.all(path, toPlugin(id));
+    for (const path of routes) app.on(ALL, [path, `${path}/*`], requireAuth, toPlugin(id));
+  }
 
   app.notFound((c) => c.json({ error: "That's gone." }, 404));
   app.onError((err, c) => {
@@ -100,6 +105,18 @@ export function createApp(deps: Deps) {
   });
   return app;
 }
+
+const ALL = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
+/** A switched-off plugin's paths are gone, as if it weren't installed. */
+const toPlugin = (id: string) => async (c: Context<AppEnv>) => {
+  const routes = c.var.plugins.routesOf(id);
+  if (!routes) return c.json({ error: "That's gone." }, 404);
+  return routes.fetch(c.req.raw, {
+    principal: c.var.principal ?? null,
+    clientIp: c.var.clientIp,
+  });
+};
 
 const TOO_LARGE = "That's too large.";
 const overflowed = new WeakSet<Request>();

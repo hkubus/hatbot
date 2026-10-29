@@ -126,6 +126,10 @@ export function setSetting(db: Db, key: string, value: string) {
   ).run(key, value);
 }
 
+export function deleteSetting(db: Db, key: string) {
+  db.query("DELETE FROM settings WHERE key = ?").run(key);
+}
+
 function merged(base: Settings, patch: SettingsPatch): Settings {
   const safety = { ...base.safety, ...patch.safety };
   return {

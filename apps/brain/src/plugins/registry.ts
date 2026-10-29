@@ -9,7 +9,10 @@ import {
   type PluginFiles,
   type PluginInstance,
   type PluginSignal,
+  type PluginTick,
   type PluginTool,
+  type PromptPlace,
+  SDK_VERSION,
   type ToolImage,
   textOf,
   type Verdict,
@@ -20,7 +23,7 @@ import { untrustedBlock } from "../agent/untrusted";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import type { Secrets } from "../secrets";
-import { getSetting, setSetting } from "../settings";
+import { deleteSetting, getSetting, setSetting } from "../settings";
 
 const MAX_OUTPUT_CHARS = 30_000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -37,6 +40,7 @@ type Slot = {
   generation: number;
   retries: number;
   retry: ReturnType<typeof setTimeout> | null;
+  timers: ReturnType<typeof setInterval>[];
 };
 
 export type PluginsDeps = {
@@ -52,6 +56,10 @@ export type PluginsDeps = {
 export class Plugins {
   private slots = new Map<string, Slot>();
   private hostEnv: Record<string, string | undefined>;
+  /** Which plugin provides each service. */
+  private providers = new Map<string, string>();
+  private timing = false;
+  private stopping = false;
   retryMs = RETRY_MS;
 
   constructor(
@@ -59,9 +67,21 @@ export class Plugins {
     private d: PluginsDeps,
   ) {
     this.hostEnv = d.env ?? process.env;
+    const paths = new Map<string, string>();
     for (const plugin of plugins) {
       if (!/^[a-z][a-z0-9]{1,20}$/.test(plugin.id)) throw new Error(`bad plugin id "${plugin.id}"`);
       if (this.slots.has(plugin.id)) throw new Error(`two plugins named "${plugin.id}"`);
+      for (const name of plugin.provides ?? []) {
+        const other = this.providers.get(name);
+        if (other) throw new Error(`plugins ${other} and ${plugin.id} both provide "${name}"`);
+        this.providers.set(name, plugin.id);
+      }
+      for (const path of [...(plugin.routes ?? []), ...(plugin.publicRoutes ?? [])]) {
+        const other = paths.get(path);
+        if (other) throw new Error(`plugins ${other} and ${plugin.id} both answer ${path}`);
+        paths.set(path, plugin.id);
+      }
+      migrate(d.db, plugin);
       const stored = this.load(plugin);
       this.slots.set(plugin.id, {
         plugin,
@@ -73,32 +93,94 @@ export class Plugins {
         generation: 0,
         retries: 0,
         retry: null,
+        timers: [],
       });
     }
   }
 
+  /** Providers first, so what needs them finds them started. */
   async startAll() {
-    await Promise.all(
-      [...this.slots.values()].filter((s) => s.enabled).map((s) => this.restart(s)),
-    );
+    this.stopping = false;
+    const todo = [...this.slots.values()].filter((s) => s.enabled);
+    const started = new Set<string>();
+    while (todo.length) {
+      const now = todo.filter((s) =>
+        (s.plugin.needs ?? []).every((n) => {
+          const by = this.providers.get(n);
+          return !by || started.has(by) || !todo.some((t) => t.plugin.id === by);
+        }),
+      );
+      // A loop of needs: start them anyway, and each says what it's missing.
+      const batch = now.length ? now : todo.slice();
+      await Promise.all(batch.map((s) => this.restart(s, false)));
+      for (const s of batch) {
+        started.add(s.plugin.id);
+        todo.splice(todo.indexOf(s), 1);
+      }
+    }
   }
 
   async stopAll() {
+    this.stopping = true;
+    this.timing = false;
     await Promise.all([...this.slots.values()].map((s) => this.stop(s)));
   }
 
+  /** Runs plugins' ticks from now on, as they start; tests call `tick` instead. */
+  startTimers() {
+    this.timing = true;
+    for (const s of this.slots.values()) this.time(s);
+  }
+
+  /** Runs a ready plugin's tick once. */
+  async tick(id: string, name: string): Promise<void> {
+    const t = this.slots.get(id)?.instance?.ticks?.find((x) => x.name === name);
+    if (!t || this.slots.get(id)?.state !== "ready") throw new Error(`no tick ${id}:${name}`);
+    await t.run();
+  }
+
+  /** What a ready plugin gives others; null while none does. */
+  service<T>(name: string): T | null {
+    const by = this.providers.get(name);
+    const s = by ? this.slots.get(by) : undefined;
+    return s?.state === "ready" ? ((s.instance?.services?.[name] as T | undefined) ?? null) : null;
+  }
+
+  /** The plugins with routes, for the app to send requests on to. */
+  routed(): { id: string; routes: string[]; publicRoutes: string[] }[] {
+    return [...this.slots.values()]
+      .filter((s) => s.plugin.routes?.length || s.plugin.publicRoutes?.length)
+      .map((s) => ({
+        id: s.plugin.id,
+        routes: s.plugin.routes ?? [],
+        publicRoutes: s.plugin.publicRoutes ?? [],
+      }));
+  }
+
+  routesOf(id: string) {
+    const s = this.slots.get(id);
+    return s?.state === "ready" ? (s.instance?.routes ?? null) : null;
+  }
+
+  /** Ready plugins' lines for the prompt at `place`, in a stable order. */
+  prompt(place: PromptPlace, only: string[] | null = null, except: string[] = []): string {
+    return this.readyOnes(only, except)
+      .flatMap((s) => s.instance?.prompt?.[place]?.trim() || [])
+      .join("\n");
+  }
+
   list(): PluginInfo[] {
-    return [...this.slots.values()].map((s) => this.info(s));
+    return [...this.slots.values()].filter((s) => !s.plugin.internal).map((s) => this.info(s));
   }
 
   get(id: string): PluginInfo | null {
     const s = this.slots.get(id);
-    return s ? this.info(s) : null;
+    return s && !s.plugin.internal ? this.info(s) : null;
   }
 
   async update(id: string, patch: { enabled?: boolean; config?: unknown }): Promise<PluginInfo> {
     const s = this.slots.get(id);
-    if (!s) throw new PluginError(`No plugin "${id}".`);
+    if (!s || s.plugin.internal) throw new PluginError(`No plugin "${id}".`);
     if (patch.config !== undefined) {
       const parsed = s.plugin.config.safeParse(patch.config);
       if (!parsed.success) throw new PluginError(z.prettifyError(parsed.error));
@@ -202,8 +284,8 @@ export class Plugins {
       .filter(
         (s) =>
           (ready ? s.state === "ready" : s.enabled) &&
-          (!only || only.includes(s.plugin.id)) &&
-          !except.includes(s.plugin.id),
+          (everyBot(s.plugin) ||
+            ((!only || only.includes(s.plugin.id)) && !except.includes(s.plugin.id))),
       )
       .sort((a, b) => a.plugin.id.localeCompare(b.plugin.id));
   }
@@ -214,7 +296,9 @@ export class Plugins {
 
   /** Running or not, so a restart doesn't change the other bots' prompts. */
   names(only: string[] | null = null, except: string[] = []): string[] {
-    return this.readyOnes(only, except, false).map((s) => s.plugin.name);
+    return this.readyOnes(only, except, false)
+      .filter((s) => !everyBot(s.plugin))
+      .map((s) => s.plugin.name);
   }
 
   /** What the model may be offered. */
@@ -246,13 +330,14 @@ export class Plugins {
       console.error(`plugin ${plugin.id}: stored settings are invalid; using defaults`);
     }
     return {
-      enabled: stored.enabled === true,
+      enabled: plugin.internal || (stored.enabled ?? plugin.defaultOn ?? false),
       config: config.success ? config.data : plugin.config.parse({}),
     };
   }
 
-  private async restart(s: Slot) {
-    await this.stop(s);
+  /** `cascade`: what needs its services starts again too. */
+  private async restart(s: Slot, cascade = true) {
+    await this.stop(s, false);
     const generation = ++s.generation;
     s.state = "starting";
     s.message = null;
@@ -261,14 +346,36 @@ export class Plugins {
     let state: PluginState;
     let message: string | null = null;
     try {
-      instance = await s.plugin.start({
-        config: s.config,
-        env: this.env(),
-        named: s.plugin.named ? this.d.secrets.named(s.plugin.id) : {},
-        db: this.d.db,
-        files: this.d.files,
-        dataDir: join(this.d.dataDir, "plugins", s.plugin.id),
-      });
+      if ((s.plugin.sdk ?? SDK_VERSION) !== SDK_VERSION)
+        throw new PluginError(
+          `It's made for another version of Hatbot's plugin API (${s.plugin.sdk}, not ${SDK_VERSION}).`,
+        );
+      const missing = this.missing(s.plugin);
+      instance = missing
+        ? { status: { state: "needs_setup", message: missing }, tools: [] }
+        : await s.plugin.start({
+            config: s.config,
+            env: this.env(),
+            named: s.plugin.named ? this.d.secrets.named(s.plugin.id) : {},
+            db: this.d.db,
+            files: this.d.files,
+            dataDir: join(this.d.dataDir, "plugins", s.plugin.id),
+            service: <T>(name: string) => {
+              if (!s.plugin.needs?.includes(name))
+                throw new Error(`plugin ${s.plugin.id} doesn't say it needs "${name}"`);
+              return this.service<T>(name) as T;
+            },
+            store: {
+              get: (key) => getSetting(this.d.db, `${s.plugin.id}:${key}`),
+              set: (key, value) => {
+                if (value === null) deleteSetting(this.d.db, `${s.plugin.id}:${key}`);
+                else setSetting(this.d.db, `${s.plugin.id}:${key}`, value);
+              },
+            },
+            saveSecrets: async (values) => {
+              await this.setSecrets(s.plugin.id, values);
+            },
+          });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;
       if (instance.status.state !== "ready") message = instance.status.message;
@@ -288,6 +395,55 @@ export class Plugins {
     s.message = message;
     this.emit(s);
     this.later(s);
+    this.time(s);
+    if (cascade) await this.dependents(s);
+  }
+
+  /** What it needs that no ready plugin provides, in words; null when nothing. */
+  private missing(plugin: Plugin): string | null {
+    const names = (plugin.needs ?? []).filter((n) => this.service(n) === null);
+    if (!names.length) return null;
+    const by = [
+      ...new Set(
+        names.map((n) => {
+          const id = this.providers.get(n);
+          const p = id ? this.slots.get(id)?.plugin : undefined;
+          return p ? `the ${p.name} plugin` : `a plugin that provides "${n}"`;
+        }),
+      ),
+    ];
+    return `It needs ${by.join(" and ")}, switched on and working.`;
+  }
+
+  /** Starts again what needs `s`'s services, so each gets them as they are now. */
+  private async dependents(s: Slot) {
+    if (this.stopping) return;
+    const gives = s.plugin.provides ?? [];
+    if (!gives.length) return;
+    const users = [...this.slots.values()].filter(
+      (x) => x.enabled && x.plugin.needs?.some((n) => gives.includes(n)),
+    );
+    await Promise.all(users.map((x) => this.restart(x)));
+  }
+
+  private time(s: Slot) {
+    for (const t of s.timers) clearInterval(t);
+    s.timers = [];
+    if (!this.timing || s.state !== "ready") return;
+    const id = s.plugin.id;
+    s.timers = (s.instance?.ticks ?? []).map((t: PluginTick) => {
+      const timer = setInterval(() => {
+        try {
+          const out = t.run();
+          if (out instanceof Promise)
+            out.catch((err) => console.error(`${id} ${t.name} failed`, err));
+        } catch (err) {
+          console.error(`${id} ${t.name} failed`, err);
+        }
+      }, t.everyMs);
+      timer.unref?.();
+      return timer;
+    });
   }
 
   private later(s: Slot) {
@@ -338,10 +494,12 @@ export class Plugins {
     }
   }
 
-  private async stop(s: Slot) {
+  private async stop(s: Slot, cascade = true) {
     s.generation++;
     if (s.retry) clearTimeout(s.retry);
     s.retry = null;
+    for (const t of s.timers) clearInterval(t);
+    s.timers = [];
     const instance = s.instance;
     s.instance = null;
     const was = s.state;
@@ -353,12 +511,13 @@ export class Plugins {
     } catch (err) {
       console.error(`plugin ${s.plugin.id} failed to stop`, err);
     }
+    if (cascade && was !== "off") await this.dependents(s);
   }
 
   private checkTools(plugin: Plugin, tools: PluginTool[]) {
     const seen = new Set<string>();
     for (const t of tools) {
-      if (!t.name.startsWith(`${plugin.id}_`) || !TOOL_NAME.test(t.name))
+      if ((!plugin.internal && !t.name.startsWith(`${plugin.id}_`)) || !TOOL_NAME.test(t.name))
         throw new Error(`plugin ${plugin.id}: tool "${t.name}" must be named ${plugin.id}_…`);
       if (seen.has(t.name) || this.d.reserved.includes(t.name))
         throw new Error(`plugin ${plugin.id}: tool name "${t.name}" is taken`);
@@ -513,4 +672,24 @@ export function verdictFor(
       ...(t.kind ? { kind: t.kind } : {}),
     };
   return own;
+}
+
+/** Internal plugins and ones every bot gets aren't limited by a bot's list. */
+const everyBot = (p: Plugin) => Boolean(p.internal || p.allBots);
+
+/** A plugin's own tables, apart from the core's: its migrations run once each, in order. */
+function migrate(db: Db, plugin: Plugin) {
+  const list = plugin.migrations ?? [];
+  if (!list.length) return;
+  const done =
+    db
+      .query<{ v: number | null }, [string]>(
+        "SELECT max(version) AS v FROM plugin_migrations WHERE plugin = ?",
+      )
+      .get(plugin.id)?.v ?? 0;
+  for (let v = done + 1; v <= list.length; v++)
+    db.transaction(() => {
+      db.exec(list[v - 1] as string);
+      db.query("INSERT INTO plugin_migrations (plugin, version) VALUES (?, ?)").run(plugin.id, v);
+    })();
 }
