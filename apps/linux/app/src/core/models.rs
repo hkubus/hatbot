@@ -159,11 +159,6 @@ impl Attachment {
     pub fn is_picture(&self) -> bool {
         matches!(self.media_type.as_str(), "image/jpeg" | "image/png" | "image/gif" | "image/webp")
     }
-
-    /// A chart or another block the brain draws from a JSON file.
-    pub fn is_chart(&self) -> bool {
-        self.media_type == "application/vnd.hatbot.chart+json"
-    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]

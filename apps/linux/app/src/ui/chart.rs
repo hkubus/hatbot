@@ -20,10 +20,10 @@ const AXIS_H: f32 = 22.0;
 const PLOT_H: f32 = HEIGHT - TOP - AXIS_H;
 const LINE_H: f32 = 16.0;
 
-/// What a chart needs from the page: listing photos the brain has fetched, and opening a link.
+/// What a chart needs from the page: the pictures fetched from the brain, by path, and opening a link.
 pub struct Ctx<'a, M> {
     pub dark: bool,
-    pub photo: &'a dyn Fn(&str) -> Option<image::Handle>,
+    pub photos: Option<&'a HashMap<String, Option<image::Handle>>>,
     pub open: fn(String) -> M,
 }
 
@@ -1731,7 +1731,7 @@ fn meter<'a, M: 'a>(m: &'a spec::Meter) -> Element<'a, M> {
 /// A listing's photo through the brain, or an empty tile for one it won't fetch or hasn't yet.
 fn photo<'a, M: 'a>(url: Option<&str>, w: f32, ctx: Ctx<'a, M>) -> Element<'a, M> {
     let h = w * 3.0 / 4.0;
-    if let Some(handle) = url.filter(|u| spec::listing_photo(u)).and_then(|u| (ctx.photo)(u)) {
+    if let Some(handle) = url.and_then(spec::photo_path).and_then(|p| ctx.photos?.get(&p).cloned().flatten()) {
         return image(handle).width(w).height(h).content_fit(iced::ContentFit::Cover).border_radius(R_MD).into();
     }
     container(Space::new())

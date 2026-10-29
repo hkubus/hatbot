@@ -6,11 +6,13 @@ use iced::{Alignment, Element, Length, Padding, Task, Theme, keyboard};
 use serde_json::json;
 
 use super::app::{Message, Route, Session, failed, load_cards};
+use super::chart;
 use super::icons::{self, Icon};
 use super::markdown;
 use super::theme::{self, FS_MD, FS_SM, FS_TEXT, H, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
 use super::widgets::{body, btn, btn_sm, btn_wide, empty, error, input, small, strong, tiny, tone};
 use crate::core::api::ApiError;
+use crate::core::chart::{self as spec, ChartFile, ChartSpec, Kind, Part};
 use crate::core::format;
 use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
@@ -67,6 +69,7 @@ pub enum Msg {
     Threaded(Result<Conversation, ApiError>),
     Scrolled(scrollable::Viewport),
     Image(String, Option<Vec<u8>>),
+    ChartFile(String, Option<ChartSpec>),
     Download(Attachment),
 }
 
@@ -94,8 +97,18 @@ pub struct Chat {
     near_bottom: bool,
     earlier_asked: Option<i64>,
     images: HashMap<String, Option<image::Handle>>,
+    /// Replies with charts in them, cut into parts, as of the text they were cut from.
+    parts: HashMap<i64, (String, Vec<Part>)>,
+    /// Charts drawn from a file, by the path their values come from.
+    chart_files: HashMap<String, Loading>,
     /// The chat shows in an open window: what's in it counts as seen.
     pub visible: bool,
+}
+
+enum Loading {
+    Asked,
+    Got(ChartSpec),
+    Failed,
 }
 
 fn scroll_id() -> iced::widget::Id {
@@ -137,11 +150,9 @@ fn load_threads(s: &Session) -> Task<Message> {
     )
 }
 
-pub fn after_event(s: &mut Session, e: &Event) {
-    if matches!(e, Event::ConversationUpdated { .. } | Event::ConversationDeleted { .. }) {
-        // Threads come and go through conversation events; the list follows the store.
-    }
+pub fn after_event(s: &mut Session) -> Task<Message> {
     keep(s);
+    fetch_charts(s)
 }
 
 /// What the chat shows, kept parsed; and what it shows is seen.
@@ -168,6 +179,22 @@ fn keep(s: &mut Session) {
         })
         .collect();
     texts.extend(owned.iter().map(String::as_str));
+    let parts = &mut s.chat.parts;
+    parts.retain(|id, _| store.messages.iter().any(|m| m.id == *id));
+    for m in store.messages.iter().filter(|m| m.role == Role::Assistant) {
+        let shown = store.text(m);
+        if !shown.contains("```chart") && !shown.contains("~~~chart") {
+            parts.remove(&m.id);
+            continue;
+        }
+        if parts.get(&m.id).is_none_or(|(t, _)| t != shown) {
+            parts.insert(m.id, (shown.to_string(), spec::split(shown, m.status == MessageStatus::Streaming)));
+        }
+    }
+    texts.extend(parts.values().flat_map(|(_, l)| l).filter_map(|p| match p {
+        Part::Markdown(t) => Some(t.as_str()),
+        _ => None,
+    }));
     s.chat.md.keep(texts);
 }
 
@@ -199,6 +226,7 @@ fn sync(s: &mut Session) -> Task<Message> {
     {
         wanted.push(format!("/tasks/{task}/screens/{step}"));
     }
+    t.push(fetch_charts(s));
     for path in wanted {
         t.push(fetch_image(s, path));
     }
@@ -214,6 +242,45 @@ pub fn fetch_image(s: &mut Session, path: String) -> Task<Message> {
     s.chat.images.insert(path.clone(), None);
     let p = path.clone();
     s.call(move |api| async move { api.bytes(&p).await }, move |r| Message::Chat(Msg::Image(path, r.ok())))
+}
+
+/// The brain's paths for a chart's listing photos.
+fn photos(c: &ChartSpec) -> Vec<String> {
+    let urls: Vec<&String> = match &c.kind {
+        Kind::Listings(l) => l.items.iter().filter_map(|i| i.photo.as_ref()).collect(),
+        Kind::Gallery(g) => g.photos.iter().collect(),
+        _ => vec![],
+    };
+    urls.into_iter().filter_map(|u| spec::photo_path(u)).collect()
+}
+
+/// The values of charts drawn from files, and listing photos, not asked for yet.
+fn fetch_charts(s: &mut Session) -> Task<Message> {
+    let mut files: Vec<ChartFile> = Vec::new();
+    let mut wanted: Vec<String> = Vec::new();
+    for p in s.chat.parts.values().flat_map(|(_, l)| l) {
+        match p {
+            Part::File(f) if !s.chat.chart_files.contains_key(&f.path()) => files.push(f.clone()),
+            Part::Chart(c) => wanted.extend(photos(c).into_iter().filter(|p| !s.chat.images.contains_key(p))),
+            _ => {}
+        }
+    }
+    let mut t: Vec<Task<Message>> = files.into_iter().map(|f| fetch_chart(s, f)).collect();
+    t.extend(wanted.into_iter().map(|p| fetch_image(s, p)));
+    Task::batch(t)
+}
+
+fn fetch_chart(s: &mut Session, f: ChartFile) -> Task<Message> {
+    let path = f.path();
+    if s.chat.chart_files.contains_key(&path) {
+        return Task::none();
+    }
+    s.chat.chart_files.insert(path.clone(), Loading::Asked);
+    let p = path.clone();
+    s.call(
+        move |api| async move { api.bytes(&p).await },
+        move |r| Message::Chat(Msg::ChartFile(path, r.ok().and_then(|b| f.spec(&b)))),
+    )
 }
 
 pub fn image_of<'a>(s: &'a Session, path: &str) -> Option<&'a image::Handle> {
@@ -510,6 +577,10 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             t.push(mark_seen(s));
             return Task::batch(t);
         }
+        Msg::ChartFile(path, c) => {
+            s.chat.chart_files.insert(path, c.map_or(Loading::Failed, Loading::Got));
+            return Task::none();
+        }
         Msg::Image(path, bytes) => {
             s.chat.images.insert(path, bytes.map(image::Handle::from_bytes));
             return Task::none();
@@ -739,6 +810,26 @@ fn md<'a>(s: &'a Session, text: &'a str, dark: bool) -> Element<'a, Message> {
     }
 }
 
+/// A reply's Markdown, with the charts in it drawn.
+fn with_charts<'a>(s: &'a Session, id: i64, text: &'a str, dark: bool) -> Element<'a, Message> {
+    let Some((_, parts)) = s.chat.parts.get(&id).filter(|(t, _)| t == text) else { return md(s, text, dark) };
+    let ctx = chart::Ctx { dark, photos: Some(&s.chat.images), open: Message::Link };
+    let mut col = column![].spacing(SP_MD);
+    for p in parts {
+        col = col.push(match p {
+            Part::Markdown(t) => md(s, t, dark),
+            Part::Chart(c) => chart::view(c, ctx),
+            Part::File(f) => match s.chat.chart_files.get(&f.path()) {
+                Some(Loading::Got(c)) => chart::view(c, ctx),
+                Some(Loading::Failed) => small("This chart's numbers didn't load.").into(),
+                _ => chart::pending(),
+            },
+            Part::Pending => chart::pending(),
+        });
+    }
+    col.into()
+}
+
 fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> Element<'a, Message> {
     let store = &s.store;
     if m.is_note() {
@@ -918,7 +1009,7 @@ fn reply<'a>(
     } else {
         let shown = store.text(m);
         if !shown.is_empty() {
-            col = col.push(md(s, shown, dark));
+            col = col.push(with_charts(s, m.id, shown, dark));
         }
         if m.status == MessageStatus::Streaming {
             if shown.is_empty() && (m.task_id.is_none() || is_ended) {

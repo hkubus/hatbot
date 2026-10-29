@@ -594,7 +594,7 @@ fn streamed(app: &mut App, ev: Streamed) -> Task<Message> {
                 t.push(load_chats(s));
             }
             t.push(pages::on_event(s, page_event));
-            chat::after_event(s, &e);
+            t.push(chat::after_event(s));
             Task::batch(t)
         }
     };

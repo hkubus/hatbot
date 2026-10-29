@@ -94,7 +94,7 @@ pub fn view(s: &Session, dark: bool) -> Element<'_, Message> {
         }
     }
 
-    let ctx = chart::Ctx { dark, photo: &|_| None, open: |_| Message::Nothing };
+    let ctx = chart::Ctx { dark, photos: None, open: |_| Message::Nothing };
     let mut col = column![figures, windows].spacing(SP_MD);
     let mut charts = column![].spacing(SP_XL);
     for (name, spec) in &st.charts {
