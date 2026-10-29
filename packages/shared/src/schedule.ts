@@ -146,3 +146,12 @@ export function describeCron(expr: string): string {
     return `${ordinal(day)} of the month ${at}`;
   return expr;
 }
+
+/** The last time a weekly job was due at or before `now`, in the brain's time zone. */
+export function lastDue(now: number, weekday: number, hour: number): number {
+  const t = new Date(now);
+  t.setHours(hour, 0, 0, 0);
+  t.setDate(t.getDate() - ((t.getDay() - weekday + 7) % 7));
+  if (t.getTime() > now) t.setDate(t.getDate() - 7);
+  return t.getTime();
+}

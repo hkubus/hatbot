@@ -1,4 +1,12 @@
-import { PluginError, textOf } from "@hatbot/plugin-sdk";
+import {
+  PluginError,
+  SandboxError,
+  type SearchRoutine,
+  type TaskOrigin,
+  tagJson,
+  textOf,
+  untrustedOf,
+} from "@hatbot/plugin-sdk";
 import {
   type CreateWatcher,
   describeCondition,
@@ -12,16 +20,7 @@ import {
   type WatchSource,
 } from "@hatbot/shared";
 import type { z } from "zod";
-import type { Chats } from "../agent/chats";
-import { tagJson } from "../agent/untrusted";
-import { type Bots, orphaned } from "../bots";
-import type { Db } from "../db";
-import { type DesktopAgent, DesktopError } from "../desktop/client";
-import type { EventBus } from "../events";
-import type { Notifier } from "../notify";
-import { type Plugins, untrustedOf } from "../plugins/registry";
-import type { SettingsStore } from "../settings";
-import type { Tasks } from "../tasks/service";
+import { type Deps, orphaned } from "../deps";
 import { counts, pick, WatchError } from "./extract";
 
 export { WatchError } from "./extract";
@@ -33,19 +32,10 @@ const MAX_FIRES_PER_DAY = 12;
 const BACKOFF_AFTER_ERRORS = 3;
 const BACKOFF_MAX_MINUTES = 6 * 60;
 
-export type WatchersDeps = {
-  db: Db;
-  events: EventBus;
-  settings: SettingsStore;
-  tasks: Tasks;
-  chats: Chats;
-  notifier: Notifier;
-  desktop: DesktopAgent;
-  plugins: Plugins;
-  bots: Bots;
-  publicUrl: string;
-  clock?: () => number;
-};
+export type WatchersDeps = Pick<
+  Deps,
+  "db" | "events" | "settings" | "tasks" | "chats" | "notifier" | "desktop" | "plugins" | "bots"
+> & { publicUrl: string; clock?: () => number };
 
 type Row = {
   id: number;
@@ -480,7 +470,8 @@ export class Watchers {
     botId: string,
   ): Promise<{ value: string; untrusted: boolean }> {
     if (source.kind === "page") {
-      if (!this.d.desktop.configured)
+      const desktop = this.d.desktop;
+      if (!desktop?.configured)
         throw new WatchError("Pages are fetched from the desktop, which isn't set up.");
       if (source.render && source.path)
         throw new WatchError(
@@ -490,15 +481,15 @@ export class Watchers {
       let contentType: string;
       try {
         if (source.render) {
-          body = (await this.d.desktop.render(source.url ?? "")).html;
+          body = (await desktop.render(source.url ?? "")).html;
           contentType = "text/html";
         } else {
-          const r = await this.d.desktop.fetch(source.url ?? "");
+          const r = await desktop.fetch(source.url ?? "");
           if (r.status >= 400) throw new WatchError(`The page answered ${r.status}.`);
           ({ body, contentType } = r);
         }
       } catch (err) {
-        if (err instanceof DesktopError) throw new WatchError(err.message);
+        if (err instanceof SandboxError) throw new WatchError(err.message);
         throw err;
       }
       // Web pages are written by strangers, and so are their scripts.
@@ -532,6 +523,33 @@ export class Watchers {
     const input = t?.schema.safeParse(w.source.input ?? {});
     if (!t || !input?.success) return true;
     return untrustedOf(t, input.data);
+  }
+
+  /** What a watcher saw is shown to the review only when it's trusted. */
+  origin(): TaskOrigin {
+    return {
+      startedBy: (s) => `the watcher "${s}", whose value changed`,
+      standing: (task) => {
+        const tainted = this.d.db
+          .query<{ tainted: number }, [number]>("SELECT tainted FROM watchers WHERE id = ?")
+          .get(task.watcherId ?? -1)?.tainted;
+        if (tainted !== 0) return null;
+        const head = `Standing instructions for the watcher "${task.source ?? ""}":\n${task.goal}`;
+        return task.tainted
+          ? `${head}\n\nWhat it saw came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`
+          : `${head}\n\nWhat it saw (trusted):\n${task.payload ?? ""}`;
+      },
+    };
+  }
+
+  search(pattern: string): SearchRoutine[] {
+    return this.d.db
+      .query<{ id: number; name: string }, [string]>(
+        `SELECT id, name FROM watchers WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'
+         OR source LIKE ?1 ESCAPE '\\'`,
+      )
+      .all(pattern)
+      .map((r) => ({ kind: "watcher" as const, ...r }));
   }
 
   private changed(id: number) {

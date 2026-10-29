@@ -15,8 +15,11 @@ import {
   type PluginTick,
   type PluginTool,
   SDK_VERSION,
+  type SearchRoutine,
+  type TaskOrigin,
   type ToolImage,
   textOf,
+  untrustedOf,
   type Verdict,
 } from "@hatbot/plugin-sdk";
 import type { PluginEnvInfo, PluginInfo, PluginState, SafetySettings } from "@hatbot/shared";
@@ -56,6 +59,7 @@ export type PluginsDeps = {
   reserved: string[];
   publicUrl?: string;
   fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+  clock?: () => number;
   /** What the core itself provides, until a plugin does. */
   services?: Record<string, () => unknown>;
 };
@@ -175,6 +179,25 @@ export class Plugins {
   routesOf(id: string) {
     const s = this.slots.get(id);
     return s?.state === "ready" ? (s.instance?.routes ?? null) : null;
+  }
+
+  /** Its lines in Check everything; none while it isn't ready. */
+  checksOf(id: string) {
+    const s = this.slots.get(id);
+    return s?.state === "ready" ? (s.instance?.checks ?? []) : [];
+  }
+
+  /** The kind of task a ready plugin starts as `origin`. */
+  origin(origin: string): TaskOrigin | null {
+    for (const s of this.readyOnes(null, [])) {
+      const o = s.instance?.origins?.[origin];
+      if (o) return o;
+    }
+    return null;
+  }
+
+  search(query: string): SearchRoutine[] {
+    return this.readyOnes(null, []).flatMap((s) => s.instance?.search?.(query) ?? []);
   }
 
   /** Ready plugins' lines for the prompt at `place`, in a stable order. */
@@ -412,6 +435,7 @@ export class Plugins {
             },
             publicUrl: this.d.publicUrl ?? "",
             fetch: this.d.fetch ?? fetch,
+            clock: this.d.clock ?? Date.now,
           });
       this.checkTools(s.plugin, instance.tools);
       state = instance.status.state;
@@ -608,9 +632,6 @@ export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown
   const row = getSetting(db, `plugin:${id}`);
   return row === null ? {} : JSON.parse(row);
 }
-
-export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>
-  typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
 
 /** Labels untrusted output so it can't pose as instructions. Policy is the caller's job. */
 export async function runPluginTool(

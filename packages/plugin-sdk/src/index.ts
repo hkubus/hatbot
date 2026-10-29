@@ -10,9 +10,12 @@ import {
 } from "@hatbot/shared";
 import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desktop";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import type { z } from "zod";
+import type { PluginCheck, SearchRoutine, TaskOrigin } from "./host";
 import type { ModelProvider } from "./models";
 
+export * from "./host";
 export * from "./models";
 
 /** The API's major version. A plugin built for another one isn't started. */
@@ -134,6 +137,24 @@ export type ToolImage = {
 };
 export type ToolOutput = string | { text: string; images: ToolImage[] };
 export const textOf = (out: ToolOutput) => (typeof out === "string" ? out : out.text);
+
+const ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+export function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e: string) => {
+    if (e[0] === "#")
+      return String.fromCodePoint(
+        e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1)),
+      );
+    return ENTITIES[e.toLowerCase()] ?? all;
+  });
+}
 
 export type PluginTool<I = unknown> = {
   /** Starts with the plugin's id and an underscore. */
@@ -289,6 +310,12 @@ export type PluginInstance = {
   prompt?: Partial<Record<Place, string>>;
   /** It gives models: Settings lists them for each role. */
   models?: ModelProvider;
+  /** Its lines in Check everything, after its own. */
+  checks?: PluginCheck[];
+  /** The kinds of background task it starts, by `origin`. */
+  origins?: Record<string, TaskOrigin>;
+  /** Its own things whose names or instructions have `query` in them, for Search. */
+  search?: (query: string) => SearchRoutine[];
 };
 
 export type PluginTick = { name: string; everyMs: number; run: () => unknown };
@@ -316,6 +343,33 @@ export function pluginRoutes(): Hono<PluginEnv> {
 
 export type PluginSignal = { key: string; text: string };
 
+/** A request's JSON body, or a 400 in the API's shape, naming the field that's wrong. */
+export async function bodyOf<S extends z.ZodType>(
+  c: { req: { json: () => Promise<unknown> } },
+  schema: S,
+): Promise<z.output<S>> {
+  const bad = (error: string, field?: string) =>
+    new HTTPException(400, {
+      res: Response.json(field ? { error, field } : { error }, { status: 400 }),
+    });
+  const raw = await c.req.json().catch(() => {
+    throw bad("Something in that request isn't right.");
+  });
+  const r = schema.safeParse(raw);
+  if (r.success) return r.data;
+  const issue = r.error.issues[0];
+  const field = issue?.path.map(String).join(".");
+  throw bad(issue?.message ?? "Something in that request isn't right.", field || undefined);
+}
+
+/** JSON to put in a prompt: `<` can't close a tag around it. */
+export const tagJson = (value: unknown): string =>
+  (JSON.stringify(value) ?? "null").replace(/</g, "\\u003c");
+
+/** Whether a call's output is untrusted; without `output`, whether it may be. */
+export const untrustedOf = (t: PluginTool, input: unknown, output?: string): boolean =>
+  typeof t.untrusted === "function" ? t.untrusted(input, output) : Boolean(t.untrusted);
+
 export type PluginFiles = {
   desktop: Sandbox;
   attachments: PluginAttachments;
@@ -340,6 +394,8 @@ export type PluginContext<C> = {
   publicUrl: string;
   /** For requests out; tests answer them. */
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
+  /** The time now, in ms; tests move it. */
+  clock: () => number;
   /** Another plugin's settings as saved, read when called, even while it's off. */
   configOf: (id: string) => unknown;
   /** Tells the host something happened, as "<id>:<event>". */

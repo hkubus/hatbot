@@ -32,9 +32,6 @@ const toBot = (r: Row): Bot => ({
 
 export class BotError extends UserError {}
 
-/** A deleted bot's schedules, triggers and watchers, now Hatbot's and switched off. */
-export type Moved = { schedules: number[]; triggers: number[]; watchers: number[] };
-
 /** Letters that don't decompose into a plain one and an accent. */
 const FOLDED: Record<string, string> = {
   ł: "l",
@@ -192,33 +189,18 @@ export class Bots {
     return this.changed(id);
   }
 
-  /**
-   * Its chat, tasks and memory folder stay; its schedules, triggers and watchers go to Hatbot switched
-   * off, since Hatbot may have plugins the bot didn't. Returns the ids of what moved.
-   */
-  delete(id: string): Moved | null {
+  /** Its chat, tasks and memory folder stay; plugins move what's theirs on `bot.deleted`. */
+  delete(id: string): boolean {
     if (id === HATBOT_ID) throw new BotError("Hatbot can't be deleted.");
-    if (!this.active(id)) return null;
+    if (!this.active(id)) return false;
     const now = new Date(this.clock()).toISOString();
-    const move = (table: keyof typeof OFF) =>
-      this.db
-        .query<{ id: number }, [string, string]>(
-          `UPDATE ${table} SET bot_id = ?, ${OFF[table]} WHERE bot_id = ? RETURNING id`,
-        )
-        .all(HATBOT_ID, id)
-        .map((r) => r.id);
-    const moved = this.db.transaction(() => {
+    this.db.transaction(() => {
       this.db.query("UPDATE bots SET deleted_at = ? WHERE id = ?").run(now, id);
       // What you always allowed it was for it, with its plugins.
       this.db.query("DELETE FROM approval_rules WHERE bot_id = ?").run(id);
-      return {
-        schedules: move("schedules"),
-        triggers: move("triggers"),
-        watchers: move("watchers"),
-      };
     })();
     this.events.emit({ type: "bot.deleted", id });
-    return moved;
+    return true;
   }
 
   private freeColor(): Bot["color"] {
@@ -232,25 +214,6 @@ export class Bots {
     this.events.emit({ type: "bot.updated", bot });
     return bot;
   }
-}
-
-/** Clearing next_*_at means turning one back on works out when it's next due. */
-const OFF = {
-  schedules: "enabled = 0, next_run_at = NULL",
-  triggers: "enabled = 0",
-  watchers: "enabled = 0, next_check_at = NULL",
-};
-
-/**
- * An automation the bot's reply made as it was deleted, which delete didn't move: it goes to Hatbot
- * switched off and doesn't run, since Hatbot may have plugins the bot didn't.
- */
-export function orphaned(db: Db, table: keyof typeof OFF, id: number, botId: string): boolean {
-  if (botId === HATBOT_ID) return false;
-  if (db.query("SELECT 1 FROM bots WHERE id = ? AND deleted_at IS NULL").get(botId)) return false;
-  db.query(`UPDATE ${table} SET bot_id = ?, ${OFF[table]} WHERE id = ?`).run(HATBOT_ID, id);
-  console.log(`${table} ${id}: its bot ${botId} was deleted; moved to Hatbot, switched off`);
-  return true;
 }
 
 /** Hatbot's notes are the shared memory itself. */

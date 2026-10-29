@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
+import { type CallContext, type PluginTool, untrustedOf, type Verdict } from "@hatbot/plugin-sdk";
 import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
@@ -34,11 +34,8 @@ import {
   offered,
   runPluginTool,
   untrustedDefinitions,
-  untrustedOf,
   verdictFor,
 } from "../plugins/registry";
-import { usesReserve } from "../spend";
-import { alertMessageSource, alertParts } from "../triggers";
 import {
   addNotes,
   askOwner,
@@ -159,36 +156,15 @@ const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
-const STARTED_BY = {
-  schedule: (s: string) => `the schedule "${s}"`,
-  webhook: (s: string) => `the webhook "${s}"`,
-  alert: (s: string) => `an Uptime Kuma alert, through "${s}"`,
-  watch: (s: string) => `the watcher "${s}", whose value changed`,
-  heartbeat: () => "the heartbeat, which found something worth a look",
-  chat: () => "the owner, from the chat",
-};
-
 const SUSPECTED =
   "Something it read may be instructions aimed at Hatbot, so the review is skipped.";
 
-/** Kuma's own fields are trusted; its message is untrusted data. */
-const alertEvent = (
-  { alert, message }: { alert: string; message: string },
-  encode: (alert: string) => string,
+/** An event's trusted part, then the part whoever reaches its source could write. */
+const eventBlock = (
+  { trusted, untrusted }: { trusted: string; untrusted?: { text: string } },
+  encode: (text: string) => string,
 ) =>
-  `\n<event trusted="true">\n${encode(alert)}\n</event>${message ? `\n${untrustedBlock("event_message", message)}` : ""}`;
-
-/** What an alert the limits stopped said, so you still hear it. */
-function notInvestigated(limit: "daily" | "monthly", payload: string | null): string {
-  let said = (payload ?? "").slice(0, 500);
-  try {
-    const a = JSON.parse(payload ?? "") as Record<string, unknown>;
-    const where = a.url || a.hostname;
-    said = `${a.monitor ?? "A monitor"}${where ? ` (${where})` : ""} is down${a.message ? `: ${a.message}` : "."}`;
-  } catch {}
-  const spent = limit === "daily" ? "today's" : "this month's";
-  return `Not investigated: ${spent} limit is spent. The alert: ${said}`;
-}
+  `\n<event trusted="true">\n${encode(trusted)}\n</event>${untrusted?.text ? `\n${untrustedBlock("event_message", untrusted.text)}` : ""}`;
 
 export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
@@ -196,6 +172,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   if (!task) return;
   const ctx = tasks.toolContext(task, signal);
   const bot = tasks.botOf(task);
+  // A plugin's kind of task: what started it, and what of that the review may trust.
+  const origin = task.origin === "chat" ? null : d.plugins.origin(task.origin);
   const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const children = new Set<number>();
@@ -290,7 +268,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         url: null,
       });
     },
-    { reserve: usesReserve(task.origin) },
+    { reserve: tasks.reserves(task) },
   );
   const taint = (source: string, text?: Readable) => {
     if (text !== undefined) screener.add(source, text);
@@ -438,46 +416,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     return answer;
   };
 
-  /**
-   * An untrusted event isn't shown to the review, so it can't pick the target. Null for a schedule
-   * the chat made after reading untrusted content.
-   */
-  const standingWords = (): string | null => {
-    if (task.origin === "schedule") {
-      const tainted = d.db
-        .query<{ tainted: number }, [number]>("SELECT tainted FROM schedules WHERE id = ?")
-        .get(task.scheduleId ?? -1)?.tainted;
-      if (tainted !== 0) return null;
-      return `Standing instructions for the schedule "${task.source ?? ""}":\n${task.goal}`;
-    }
-    if (task.origin === "watch") {
-      const tainted = d.db
-        .query<{ tainted: number }, [number]>("SELECT tainted FROM watchers WHERE id = ?")
-        .get(task.watcherId ?? -1)?.tainted;
-      if (tainted !== 0) return null;
-      const head = `Standing instructions for the watcher "${task.source ?? ""}":\n${task.goal}`;
-      return task.tainted
-        ? `${head}\n\nWhat it saw came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`
-        : `${head}\n\nWhat it saw (trusted):\n${task.payload ?? ""}`;
-    }
-    if (task.origin === "heartbeat")
-      return `The heartbeat's instructions, which the owner turned on:\n${task.goal}`;
-    const kind = task.origin === "alert" ? "Uptime Kuma alert" : "webhook";
-    const head = `Standing instructions for the ${kind} "${task.source ?? ""}":\n${task.goal}`;
-    const trustedEvent =
-      task.origin === "alert" ||
-      d.db
-        .query<{ trusted: number }, [number]>("SELECT trusted FROM triggers WHERE id = ?")
-        .get(task.triggerId ?? -1)?.trusted === 1;
-    // An alert's message can be written by whoever reaches the service: not shown either.
-    const alert = task.origin === "alert" && task.payload ? alertParts(task.payload) : null;
-    const event = alert
-      ? `${alert.alert}${alert.message ? "\n\nIts message came from the monitored service and isn't trusted, so it isn't shown." : ""}`
-      : (task.payload ?? "");
-    return trustedEvent
-      ? `${head}\n\nThe event that started this task (trusted):\n${event}`
-      : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
-  };
+  /** The owner's standing instructions for what started it, as its plugin says; null if untrusted. */
+  const standingWords = (): string | null => origin?.standing?.(task) ?? null;
 
   const ownerWords = (): string | null => {
     const request = tasks.requestOf(id);
@@ -543,7 +483,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         sources: [...sources],
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
-      { reserve: usesReserve(task.origin) },
+      { reserve: tasks.reserves(task) },
     );
     if (check.safe)
       tasks.addStep(id, {
@@ -725,18 +665,21 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const index = await memoryIndex(d.memory, bot.id);
     const skills = d.skills.prompt();
     const source = task.source ?? "";
-    const alert = task.origin === "alert" && task.payload ? alertParts(task.payload) : null;
-    // What started it is screened like what it reads: an alert's message, or an untrusted event.
-    if (alert?.message)
-      screener.add(alertMessageSource(String(JSON.parse(alert.alert).monitor)), alert.message);
+    const event = task.payload ? (origin?.event?.(task.payload) ?? null) : null;
+    // What started it is screened like what it reads: an event's untrusted part, or an untrusted event.
+    if (event?.untrusted) screener.add(event.untrusted.source, event.untrusted.text);
     else if (task.tainted && task.payload)
       screener.add(task.taintedBy ?? "What started it", task.payload);
-    const payload = alert
-      ? alertEvent(alert, tagJson)
+    const payload = event
+      ? eventBlock(event, tagJson)
       : task.payload
         ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
         : "";
-    const startedBy = `Started by ${STARTED_BY[task.origin](source)}`;
+    const startedBy = `Started by ${
+      task.origin === "chat"
+        ? "the owner, from the chat"
+        : (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
+    }`;
     record("user", [
       {
         type: "text",
@@ -815,9 +758,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // Research's helpers leave room for its next request.
       run.reserveUsd = requests.ceiling(params);
       const overLimit =
-        task.origin === "alert"
-          ? (limit: "daily" | "monthly") => notInvestigated(limit, task.payload)
-          : undefined;
+        origin?.overLimit &&
+        ((limit: "daily" | "monthly") => origin.overLimit?.(limit, task) ?? "");
       if (!(await requests.hold(run.reserveUsd, askApproval, overLimit))) continue;
       const res = await requests.stream(params);
       record("assistant", res.content);
@@ -936,7 +878,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       const ended = finished as z.infer<typeof FinishTask> | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
       // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger,
-      // apart from an alert's message. Not while the web tools' code is still running: then only tool
+      // apart from an event's untrusted part. Not while the web tools' code is still running: then only tool
       // results may follow.
       if (!serverToolWaiting(res.content))
         for (const { kind, text: event } of tasks.takeInbox(id)) {
@@ -944,13 +886,12 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             results.push({ type: "text", text: steerNote(event) });
             continue;
           }
-          const alert = alertParts(event);
-          if (alert?.message)
-            taint(alertMessageSource(String(JSON.parse(alert.alert).monitor)), alert.message);
+          const parts = origin?.event?.(event) ?? null;
+          if (parts?.untrusted) taint(parts.untrusted.source, parts.untrusted.text);
           results.push({
             type: "text",
-            text: alert
-              ? alertEvent(alert, tagText).trim()
+            text: parts
+              ? eventBlock(parts, tagText).trim()
               : `<event trusted="true">\n${tagText(event)}\n</event>`,
           });
         }

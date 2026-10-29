@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
+import { counts, numberIn } from "@hatbot/plugin-automation";
 import { type Task, type Watcher, WatchSourceInput } from "@hatbot/shared";
-import { counts, numberIn } from "../src/watch/extract";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -158,7 +158,7 @@ test("a watcher the chat made after reading something untrusted is tainted until
     { content: [text("hi")] },
     {
       content: [
-        toolUse("watch_create", {
+        toolUse("automation_watch_create", {
           name: "Up",
           url: "https://example.com/s",
           prompt: "Restart it",

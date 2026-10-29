@@ -139,8 +139,6 @@ export function requestCeiling(
   return Math.max(own, declined + rescue) + searches;
 }
 
-export const usesReserve = (origin: string) => origin === "alert" || origin === "heartbeat";
-
 export class BudgetError extends Error {
   constructor(
     readonly limit: "task" | "daily" | "monthly",

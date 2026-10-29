@@ -48,9 +48,12 @@ export function realSandbox(t: TestApp) {
   return box;
 }
 
-/** The tools switched-on plugins give, without the core's own. */
+/** The tools switched-on plugins give, without the core's own or Automation's, which is on by default. */
 export const pluginTools = (t: TestApp): PluginTool[] =>
-  t.plugins.tools().filter((x) => !t.plugins.pluginOf(x.name)?.internal);
+  t.plugins.tools().filter((x) => {
+    const p = t.plugins.pluginOf(x.name);
+    return !p?.internal && p?.id !== "automation";
+  });
 
 export function toolOf(t: TestApp, name: string): PluginTool {
   const found = t.plugins.tools().find((x) => x.name === name);

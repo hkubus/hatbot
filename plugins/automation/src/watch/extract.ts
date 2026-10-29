@@ -1,8 +1,8 @@
+import { decodeEntities, PluginError } from "@hatbot/plugin-sdk";
 import type { WatchCondition, WatchSource } from "@hatbot/shared";
-import { UserError } from "../errors";
 import type { PatternJob } from "./pattern";
 
-export class WatchError extends UserError {}
+export class WatchError extends PluginError {}
 
 const MAX_VALUE_CHARS = 4000;
 const MAX_PATTERN_CHARS = 200_000;
@@ -67,24 +67,6 @@ async function pageText(html: string): Promise<string> {
     .transform(new Response(html))
     .text();
   return collapse(decodeEntities(out.join("")));
-}
-
-const ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-};
-export function decodeEntities(s: string): string {
-  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e: string) => {
-    if (e[0] === "#")
-      return String.fromCodePoint(
-        e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1)),
-      );
-    return ENTITIES[e.toLowerCase()] ?? all;
-  });
 }
 
 /** The value at a dotted path, e.g. "items.0.price". */

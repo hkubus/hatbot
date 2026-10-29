@@ -793,7 +793,7 @@ test("incognito sees no history, can't write or start work, and leaves nothing w
   expect(lastUserText(opening)).not.toContain("They run WireGuard.");
   const tools = toolNames(opening);
   expect(tools).toContain("memory_read");
-  for (const name of ["search_history", "memory_write", "run_task", "schedule_create"])
+  for (const name of ["search_history", "memory_write", "run_task", "automation_schedule_create"])
     expect(tools).not.toContain(name);
   // The second message continues the incognito conversation; a write the model tries anyway fails.
   expect(model.requests[2]?.messages.length).toBe(3);

@@ -12,23 +12,18 @@ import type { Config } from "./config";
 import type { Db } from "./db";
 import type { Desktop } from "./desktop/service";
 import type { EventBus } from "./events";
-import type { Heartbeat } from "./heartbeat";
 import type { ListingPhotos } from "./listing-photos";
 import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
 import type { Negotiations } from "./negotiate/service";
 import type { Plugins } from "./plugins/registry";
 import type { Questions } from "./questions";
-import type { WeeklyReport } from "./report";
-import type { Schedules } from "./schedules";
 import type { Secrets } from "./secrets";
 import type { SettingsStore } from "./settings";
 import type { Spend } from "./spend";
 import type { Tasks } from "./tasks/service";
 import type { Teach } from "./teach/service";
-import type { Triggers } from "./triggers";
 import type { Updates } from "./updates";
-import type { Watchers } from "./watch/service";
 
 export type Deps = {
   config: Config;
@@ -53,11 +48,6 @@ export type Deps = {
   /** A function because Settings can change it. */
   proxmox: () => Proxmox;
   updates: Updates;
-  schedules: Schedules;
-  triggers: Triggers;
-  watchers: Watchers;
-  heartbeat: Heartbeat;
-  report: WeeklyReport;
   proposals: Proposals;
   plugins: Plugins;
   teach: Teach;

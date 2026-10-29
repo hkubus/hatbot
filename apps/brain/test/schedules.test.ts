@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { Triggers } from "@hatbot/plugin-automation";
 import type { Schedule, Task, TriggerWithSecret } from "@hatbot/shared";
 import { EventBus } from "../src/events";
-import { Triggers } from "../src/triggers";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { ORIGIN, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -28,7 +28,7 @@ test("the chat makes a schedule; it runs when due and reports only when there's 
   const chat = new FakeModel([
     {
       content: [
-        toolUse("schedule_create", {
+        toolUse("automation_schedule_create", {
           name: "Framework stock check",
           prompt: "Check whether the Framework 16 is in stock. Tell me only if it is.",
           cron: "0 8 * * *",
@@ -57,7 +57,7 @@ test("the chat makes a schedule; it runs when due and reports only when there's 
   expect(t.tasks.list()).toMatchObject([{ origin: "schedule", lane: "background" }]);
   await t.tasks.idle();
   const tools = work.requests[0]?.tools?.map((x) => ("name" in x ? x.name : ""));
-  expect(tools).not.toContain("schedule_create");
+  expect(tools).not.toContain("automation_schedule_create");
   expect(t.thread.list().some((m) => m.kind === "task")).toBe(false);
   expect(t.notifier.sent).toHaveLength(0);
   expect(Date.parse(t.schedules.get(s.id)?.nextRunAt as string)).toBe(

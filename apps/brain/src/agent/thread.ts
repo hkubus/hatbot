@@ -43,7 +43,6 @@ import {
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
-import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import {
   BudgetError,
@@ -58,8 +57,6 @@ import {
 } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { clip, head } from "../text";
-import type { Triggers } from "../triggers";
-import type { Watchers } from "../watch/service";
 import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
 import {
   afterFallback,
@@ -213,9 +210,6 @@ export type Said = { id: number; text: string; status: "done" | "error"; stopped
 export type ThreadDeps = {
   /** Set once these exist; they need the thread too. */
   tasks?: Tasks;
-  schedules?: Schedules;
-  triggers?: Triggers;
-  watchers?: Watchers;
   approvals?: Approvals;
   negotiations?: Negotiations;
   proposals?: Proposals;

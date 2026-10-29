@@ -2,6 +2,7 @@ import { MATCH_END, MATCH_START, type SearchResults } from "@hatbot/shared";
 import { LISTED_CHAT } from "./agent/chats";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
+import type { Plugins } from "./plugins/registry";
 import type { Tasks } from "./tasks/service";
 
 const LIMIT = 30;
@@ -20,7 +21,7 @@ export function ftsQuery(query: string, join = " "): string | null {
 const like = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
 export async function search(
-  d: { db: Db; tasks: Tasks; memory: MemoryStore },
+  d: { db: Db; tasks: Tasks; memory: MemoryStore; plugins: Pick<Plugins, "search"> },
   query: string,
 ): Promise<SearchResults> {
   const q = query.trim();
@@ -58,14 +59,8 @@ export async function search(
     : [];
   const pattern = like(q);
   const tasks = d.tasks.list({ like: pattern, limit: LIMIT });
-  const routines = d.db
-    .query<{ kind: "schedule" | "trigger" | "watcher"; id: number; name: string }, string[]>(
-      `SELECT 'schedule' AS kind, id, name FROM schedules WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'
-       UNION ALL SELECT 'trigger', id, name FROM triggers WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'
-       UNION ALL SELECT 'watcher', id, name FROM watchers
-         WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\' OR source LIKE ?1 ESCAPE '\\'
-       ORDER BY name`,
-    )
-    .all(pattern);
+  const routines = d.plugins
+    .search(q)
+    .sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: "base" }));
   return { ...empty, messages, tasks, memory: await d.memory.search(q, LIMIT), routines };
 }

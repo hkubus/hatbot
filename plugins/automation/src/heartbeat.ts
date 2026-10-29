@@ -1,22 +1,12 @@
 // The heartbeat: every few minutes, a look at what went wrong without the model. Only something new
 // goes to Haiku, which tells you, starts a task, or lets it be.
+import { RESTARTED, type TaskOrigin, tagJson } from "@hatbot/plugin-sdk";
 import { HATBOT_ID, type HeartbeatInfo, type HeartbeatRun } from "@hatbot/shared";
-import type { Chats } from "./agent/chats";
-import { type ModelClient, oneShot } from "./agent/model";
-import { tagJson } from "./agent/untrusted";
-import type { Bots } from "./bots";
-import type { Db } from "./db";
-import type { Desktop } from "./desktop/service";
-import type { EventBus } from "./events";
-import type { Notifier } from "./notify";
-import type { Plugins } from "./plugins/registry";
-import { getSetting, type SettingsStore, setSetting } from "./settings";
-import type { Spend } from "./spend";
-import { RESTARTED, type Tasks } from "./tasks/service";
+import type { Deps } from "./deps";
 
 /** Room for thinking, so it can't crowd out the answer. */
 const TRIAGE_MAX_TOKENS = 4000;
-const STATE_KEY = "heartbeat:state";
+const STATE_KEY = "heartbeat";
 const KEEP_RUNS = 20;
 
 /**
@@ -46,20 +36,27 @@ type State = {
   recent: HeartbeatRun[];
 };
 
-export type HeartbeatDeps = {
-  db: Db;
-  events: EventBus;
-  settings: SettingsStore;
-  spend: Spend;
-  model: ModelClient;
-  tasks: Tasks;
-  chats: Chats;
-  notifier: Notifier;
-  plugins: Plugins;
-  desktop: Desktop;
-  bots: Bots;
-  publicUrl: string;
-  clock?: () => number;
+export type HeartbeatDeps = Pick<
+  Deps,
+  | "db"
+  | "events"
+  | "settings"
+  | "spend"
+  | "model"
+  | "tasks"
+  | "chats"
+  | "notifier"
+  | "plugins"
+  | "bots"
+  | "store"
+  | "publicUrl"
+> & { clock?: () => number };
+
+/** Its tasks: the instructions are the owner's, what it found isn't. */
+export const HEARTBEAT_ORIGIN: TaskOrigin = {
+  startedBy: () => "the heartbeat, which found something worth a look",
+  standing: (task) => `The heartbeat's instructions, which the owner turned on:\n${task.goal}`,
+  reserve: true,
 };
 
 const TRIAGE_PROMPT = `You are Hatbot's heartbeat. Every few minutes Hatbot looks over the owner's homelab and its own work, and you see what's new since the last look. Decide what to do with it, following the owner's instructions:
@@ -209,8 +206,6 @@ export class Heartbeat {
           key: `plugin:${p.id}`,
           text: `The ${p.name} plugin is broken: ${p.message ?? ""}`,
         });
-    if (this.d.desktop.agent.configured && !this.d.desktop.get().online)
-      out.push({ key: "desktop", text: "The desktop isn't answering." });
     const { todayUsd, monthUsd, limits } = this.d.spend.summary();
     const day = since.slice(0, 10);
     if (todayUsd >= limits.dailyUsd * 0.8)
@@ -314,8 +309,7 @@ export class Heartbeat {
 
   private async triage(instructions: string, list: string) {
     const content = `The owner's instructions:\n${instructions}\n\n<findings_json>\n${tagJson(list)}\n</findings_json>`;
-    const out = await oneShot(
-      this.d,
+    const out = await this.d.model.ask(
       {
         model: this.d.settings.get().smallModel,
         max_tokens: TRIAGE_MAX_TOKENS,
@@ -339,7 +333,7 @@ export class Heartbeat {
   }
 
   private state(): State {
-    const row = getSetting(this.d.db, STATE_KEY);
+    const row = this.d.store.get(STATE_KEY);
     const empty: State = {
       lastRunAt: null,
       seen: {},
@@ -350,6 +344,6 @@ export class Heartbeat {
   }
 
   private save(s: State) {
-    setSetting(this.d.db, STATE_KEY, JSON.stringify(s));
+    this.d.store.set(STATE_KEY, JSON.stringify(s));
   }
 }

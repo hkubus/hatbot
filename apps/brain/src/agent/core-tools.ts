@@ -28,7 +28,6 @@ export type CoreServices = Omit<
   | "ownerSaid"
   | "answering"
   | "approve"
-  | "scheduleCard"
 > & { t3Ready?: (bot: Offer["bot"]) => boolean };
 
 type Meta = {
@@ -54,13 +53,6 @@ const box = (label: string, change = false): Meta => ({
   places: CHAT,
   deferred: true,
   ...(change ? { when: noCoder } : {}),
-});
-const automation = (label: string, look = false): Meta => ({
-  plugin: "automation",
-  label,
-  places: CHAT,
-  deferred: true,
-  ...(look ? { access: "read", incognito: true } : {}),
 });
 
 const META: Record<string, Meta> = {
@@ -107,23 +99,12 @@ const META: Record<string, Meta> = {
   box_feed: box("Giving a box a feed", true),
   box_logs: box("Reading a box's logs"),
   box_call: box("Trying a box's backend"),
-  schedule_create: automation("Creating a schedule"),
-  schedule_list: automation("Looking at schedules", true),
-  schedule_update: automation("Changing a schedule"),
-  schedule_delete: automation("Deleting a schedule"),
-  watch_create: automation("Setting up a watcher"),
-  watch_list: automation("Looking at watchers", true),
-  watch_update: automation("Changing a watcher"),
-  watch_delete: automation("Deleting a watcher"),
-  trigger_list: automation("Looking at triggers", true),
-  trigger_update: automation("Changing a trigger"),
 };
 
 const NAMES: Record<string, string> = {
   memory: "Memory",
   tasks: "Tasks",
   boxes: "Boxes",
-  automation: "Automation",
 };
 
 /** A call's own part of what a core tool sees; its requests to the desktop end with the call. */
@@ -141,7 +122,6 @@ const fromCall = (s: CoreServices, call: CallContext): ToolContext => ({
   ownerSaid: call.ownerSaid,
   answering: call.answering,
   approve: call.approve,
-  scheduleCard: call.scheduleCard,
 });
 
 function coreTool(def: (typeof TOOLS)[number], services: () => CoreServices): PluginTool {

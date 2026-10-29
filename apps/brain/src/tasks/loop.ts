@@ -5,14 +5,7 @@ import { tagText } from "../agent/untrusted";
 import type { NewApproval, Outcome } from "../approvals";
 import { DesktopError } from "../desktop/client";
 import { progressNotes } from "../models-known";
-import {
-  BudgetError,
-  estimateTokens,
-  fixedTokens,
-  requestCeiling,
-  searchesIn,
-  usesReserve,
-} from "../spend";
+import { BudgetError, estimateTokens, fixedTokens, requestCeiling, searchesIn } from "../spend";
 import type { Tasks } from "./service";
 
 /** Ends the run from inside a helper. `escalate`: a failure a stronger model might get past. */
@@ -58,7 +51,7 @@ export function requestsFor(tasks: Tasks, task: Task, signal: AbortSignal) {
     },
 
     holdOnly: (usd: number) =>
-      d.spend.hold(usd, { id, limitUsd: tasks.budget(id) }, { reserve: usesReserve(task.origin) }),
+      d.spend.hold(usd, { id, limitUsd: tasks.budget(id) }, { reserve: tasks.reserves(task) }),
 
     /** At the task's limit it asks the owner for more and returns false, for the request to be retried. */
     async hold(

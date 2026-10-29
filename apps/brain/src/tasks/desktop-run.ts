@@ -39,7 +39,6 @@ import {
   typesText,
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
-import { usesReserve } from "../spend";
 import { skillPath } from "../teach/skills";
 import { type Armed, approvalKind, notCovered } from "./approval-kind";
 import {
@@ -557,7 +556,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           d,
           { taskId: id },
           { url, title: page.title, text },
-          { reserve: usesReserve(task.origin) },
+          { reserve: tasks.reserves(task) },
         ).then((v) => {
           if (!v.failed) verdicts.set(key, v);
           return v;
@@ -884,7 +883,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         sources: [...sources],
       },
       { tool, input, what, why },
-      { reserve: usesReserve(task.origin) },
+      { reserve: tasks.reserves(task) },
     );
     if (check.safe)
       tasks.addStep(id, {

@@ -15,20 +15,17 @@ import { botRoutes } from "./routes/bots";
 import { boxRoutes } from "./routes/boxes";
 import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
-import { heartbeatRoutes } from "./routes/heartbeat";
 import { memoryRoutes } from "./routes/memory";
 import { negotiationRoutes } from "./routes/negotiations";
 import { pluginRoutes } from "./routes/plugins";
 import { proposalRoutes } from "./routes/proposals";
 import { questionRoutes } from "./routes/questions";
-import { hookRoutes, scheduleRoutes } from "./routes/schedules";
 import { searchRoutes } from "./routes/search";
 import { streamRoutes } from "./routes/stream";
 import { approvalRoutes, taskRoutes } from "./routes/tasks";
 import { teachRoutes } from "./routes/teach";
 import { threadRoutes } from "./routes/thread";
 import { todoRoutes } from "./routes/todo";
-import { watcherRoutes } from "./routes/watchers";
 
 export const VERSION = "0.1.0";
 
@@ -69,16 +66,12 @@ export function createApp(deps: Deps) {
   app.route("/", taskRoutes);
   app.route("/", approvalRoutes);
   app.route("/", desktopRoutes);
-  app.route("/", scheduleRoutes);
-  app.route("/", hookRoutes);
   app.route("/", pluginRoutes);
   app.route("/", questionRoutes);
   app.route("/", teachRoutes);
   app.route("/", checkRoutes);
   app.route("/", negotiationRoutes);
-  app.route("/", watcherRoutes);
   app.route("/", searchRoutes);
-  app.route("/", heartbeatRoutes);
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
   app.route("/", boxRoutes);

@@ -1,4 +1,4 @@
-import { BOT_TEMPLATES, CreateBot, HATBOT_ID, UpdateBot } from "@hatbot/shared";
+import { BOT_TEMPLATES, CreateBot, UpdateBot } from "@hatbot/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
@@ -35,28 +35,10 @@ export const botRoutes = new Hono<AppEnv>()
   })
   .delete("/bots/:id", (c) => {
     const id = c.req.param("id");
-    const moved = c.var.bots.delete(id);
-    if (!moved) return c.json({ error: "That's gone." }, 404);
-    const { events, schedules, triggers, watchers, settings, chats, boxes } = c.var;
+    if (!c.var.bots.delete(id)) return c.json({ error: "That's gone." }, 404);
     // Its reply in progress stops: it mustn't make more as a bot that's gone.
-    chats.abortBot(id);
-    boxes.orphan(id);
-    // A heartbeat that ran as it is switched off, as its automations are.
-    const { heartbeat } = settings.get();
-    if (heartbeat.botId === id)
-      settings.update({ heartbeat: { ...heartbeat, enabled: false, botId: HATBOT_ID } });
-    for (const id of moved.schedules) {
-      const schedule = schedules.get(id);
-      if (schedule) events.emit({ type: "schedule.updated", schedule });
-    }
-    for (const id of moved.triggers) {
-      const trigger = triggers.get(id);
-      if (trigger) events.emit({ type: "trigger.updated", trigger });
-    }
-    for (const id of moved.watchers) {
-      const watcher = watchers.get(id);
-      if (watcher) events.emit({ type: "watcher.updated", watcher });
-    }
+    c.var.chats.abortBot(id);
+    c.var.boxes.orphan(id);
     return c.json({ ok: true });
   })
   .get("/spend/by-bot", spendDays, (c) => c.json(c.var.spend.byBot(c.req.valid("query").days)));

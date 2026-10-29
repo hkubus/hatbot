@@ -170,11 +170,9 @@ export class Checks {
       { id: "ping", name: "Dead-man ping", run: async () => this.ping() },
       { id: "proxmox", name: "Desktop snapshots", run: () => this.snapshots() },
       ...this.desktopChecks(),
-      { id: "schedules", name: "Schedules", run: async () => this.schedules() },
-      { id: "watchers", name: "Watchers", run: async () => this.watchers() },
       { id: "approvals", name: "Approvals", run: async () => this.approvals() },
     ];
-    for (const p of d.plugins.list().filter((p) => p.enabled))
+    for (const p of d.plugins.list().filter((p) => p.enabled)) {
       list.push({
         id: `plugin.${p.id}`,
         name: p.name,
@@ -191,6 +189,8 @@ export class Checks {
           return ok(await d.plugins.test(p.id));
         },
       });
+      list.push(...d.plugins.checksOf(p.id));
+    }
     return list;
   }
 
@@ -492,37 +492,6 @@ export class Checks {
         }),
       },
     ];
-  }
-
-  private schedules() {
-    // Each schedule's last three runs; three failures in a row mean it's broken.
-    const rows = this.d.db
-      .query<{ name: string; failed: number; runs: number }, []>(
-        `SELECT s.name, sum(t.status = 'failed') AS failed, count(*) AS runs FROM schedules s
-         JOIN tasks t ON t.id IN (SELECT id FROM tasks WHERE schedule_id = s.id AND parent_id IS NULL ORDER BY id DESC LIMIT 3)
-         WHERE s.enabled = 1 GROUP BY s.id`,
-      )
-      .all();
-    const broken = rows.filter((r) => r.runs === 3 && r.failed === 3).map((r) => `"${r.name}"`);
-    const count =
-      this.d.db
-        .query<{ n: number }, []>("SELECT count(*) AS n FROM schedules WHERE enabled = 1")
-        .get()?.n ?? 0;
-    if (broken.length)
-      return warn(`Failed its last three runs: ${broken.join(", ")}. Open it in Schedules.`);
-    return ok(count ? `${count} on, none failing.` : "None yet.");
-  }
-
-  private watchers() {
-    const rows = this.d.db
-      .query<{ name: string; errors: number }, []>(
-        "SELECT name, errors FROM watchers WHERE enabled = 1",
-      )
-      .all();
-    const failing = rows.filter((r) => r.errors > 0).map((r) => `"${r.name}"`);
-    if (failing.length)
-      return warn(`Can't read ${failing.join(", ")} right now. Open it in Schedules.`);
-    return ok(rows.length ? `${rows.length} on, all reading.` : "None yet.");
   }
 
   private approvals() {

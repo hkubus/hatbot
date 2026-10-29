@@ -2,6 +2,13 @@ import { Database } from "bun:sqlite";
 import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type {
+  Heartbeat,
+  Schedules,
+  Triggers,
+  Watchers,
+  WeeklyReport,
+} from "@hatbot/plugin-automation";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import type { Plugin } from "@hatbot/plugin-sdk";
 import { stepOf, totpAt } from "../src/auth/totp";
@@ -111,6 +118,11 @@ export async function testApp(
     fetch: async (url, init) =>
       url === `${ORIGIN}/api/v1/health` ? Response.json({ ok: true }) : outside.fetch(url, init),
   });
+  const automation = <T>(name: string) => {
+    const service = s.plugins.service<T>(name);
+    if (!service) throw new Error("the Automation plugin isn't ready");
+    return service;
+  };
   const seen: HatbotEvent[] = [];
   s.events.on((e) => seen.push(e));
   await s.plugins.startAll();
@@ -144,6 +156,21 @@ export async function testApp(
       nowMs += ms;
     },
     code: (secret: string) => totpAt(secret, stepOf(nowMs)),
+    get schedules() {
+      return automation<Schedules>("schedules");
+    },
+    get triggers() {
+      return automation<Triggers>("triggers");
+    },
+    get watchers() {
+      return automation<Watchers>("watchers");
+    },
+    get heartbeat() {
+      return automation<Heartbeat>("heartbeat");
+    },
+    get report() {
+      return automation<WeeklyReport>("report");
+    },
   };
 }
 

@@ -87,7 +87,7 @@ test("a deleted bot's chat takes no new messages, and what it left goes to Hatbo
   let go = () => {};
   const chat = new FakeModel([
     {
-      content: [toolUse("schedule_create", { name: "Nightly", prompt: "Cook", cron: "0 3 * * *" })],
+      content: [toolUse("automation_schedule_create", { name: "Nightly", prompt: "Cook", cron: "0 3 * * *" })],
       wait: new Promise<void>((r) => {
         go = r;
       }),
@@ -160,7 +160,7 @@ test("a deleted bot's chat takes no new messages, and what it left goes to Hatbo
   chat.script.push(
     {
       content: [
-        toolUse("schedule_create", { name: "Nightly", prompt: "Do it", cron: "0 3 * * *" }),
+        toolUse("automation_schedule_create", { name: "Nightly", prompt: "Do it", cron: "0 3 * * *" }),
       ],
       wait: new Promise<void>((r) => {
         next = r;

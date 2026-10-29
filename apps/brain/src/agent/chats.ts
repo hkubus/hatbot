@@ -11,15 +11,7 @@ import { resultText, Thread, type ThreadDeps } from "./thread";
 
 type Parts = Pick<
   ThreadDeps,
-  | "tasks"
-  | "schedules"
-  | "triggers"
-  | "watchers"
-  | "approvals"
-  | "attachments"
-  | "desktop"
-  | "negotiations"
-  | "proposals"
+  "tasks" | "approvals" | "attachments" | "desktop" | "negotiations" | "proposals"
 >;
 
 /** Must stay word for word messages_unread's condition. */

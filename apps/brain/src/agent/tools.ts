@@ -3,8 +3,6 @@ import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   type Bot,
   type Box,
-  describeCondition,
-  describeCron,
   dueTag,
   findTodo,
   HATBOT_ID,
@@ -13,17 +11,13 @@ import {
   MAX_BOX_HTML,
   MAX_WATCH_MINUTES,
   MIN_WATCH_MINUTES,
-  minWatchMinutes,
   parseTodos,
-  type Schedule,
   SKILL_NAME,
   type Source,
   type Task,
   TODO_FILE,
   type Todo,
   todoLine,
-  type Watcher,
-  type WatchSource,
   withDone,
   withTodo,
 } from "@hatbot/shared";
@@ -51,19 +45,10 @@ import type { Proposals } from "../memory/proposals";
 import { type Author, HATBOT, MemoryError, type MemoryStore } from "../memory/store";
 import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
-import type { Schedules } from "../schedules";
 import type { SettingsStore } from "../settings";
 import { refreshing } from "../tasks/research-goal";
 import type { Tasks } from "../tasks/service";
 import { skillPath } from "../teach/skills";
-import type { Triggers } from "../triggers";
-import {
-  conditionOf,
-  describeLook,
-  WatchError,
-  type Watchers,
-  watcherLine,
-} from "../watch/service";
 import type { Readable } from "./screening";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
 
@@ -76,9 +61,6 @@ export type ToolContext = {
   bots?: Bots;
   conversationId?: number;
   tasks?: Tasks;
-  schedules?: Schedules;
-  triggers?: Triggers;
-  watchers?: Watchers;
   messageId?: number;
   /** The conversation the reply is in: history search leaves it out, since the model already has it. */
   episodeId?: number;
@@ -86,7 +68,6 @@ export type ToolContext = {
   attachments?: Attachments;
   boxes?: Boxes;
   desktop?: DesktopAgent;
-  scheduleCard?: (s: Schedule) => void;
   proposals?: Proposals;
   /** For what Settings → Safety asks for; without it, everything asks as by default. */
   settings?: SettingsStore;
@@ -191,24 +172,12 @@ const dayStart = (date: string) => {
   const d = new Date(`${date}T00:00`);
   return Number.isNaN(d.getTime()) ? date : d.toISOString();
 };
-const scheduleLine = (s: Schedule) =>
-  `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
-/** A watcher for the chat: what it saw, from an untrusted source, is quoted and taints it. */
-function seenLine(ctx: ToolContext, w: Watcher): string {
-  const untrusted = ctx.watchers?.sawUntrusted(w) ?? true;
-  if (untrusted && w.lastValue !== null)
-    ctx.taint?.(`What the watcher "${w.name}" saw`, w.lastValue);
-  return watcherLine(w, untrusted);
-}
 
 const isCodeBot = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots?.codeBot()?.id === ctx.bot.id);
 
 /** The bot was deleted while it wrote this reply: what it makes now would run as nobody's. */
 const gone = (ctx: ToolContext) => Boolean(ctx.bot && ctx.bots && !ctx.bots.active(ctx.bot.id));
 const GONE = "Not made: the owner deleted you.";
-
-const whose = (botId: string, bot?: Bot, bots?: Bots) =>
-  bots && botId !== (bot?.id ?? HATBOT_ID) ? `\n  Runs as: ${bots.nameOf(botId)}` : "";
 
 function authorOf(ctx: ToolContext, path: string) {
   const id = ctx.bot?.id ?? HATBOT_ID;
@@ -281,122 +250,7 @@ async function asked(
   return r.content;
 }
 
-/**
- * A schedule or watcher made after something the conversation read was suspected of being a prompt
- * injection waits for you: its runs would act on what that text wrote, and Haiku's review isn't asked.
- */
-async function askedIfSuspected(
-  ctx: ToolContext,
-  signal: AbortSignal,
-  call: { name: string; input: unknown; what: string },
-): Promise<string> {
-  if (!(ctx.settings?.get().safety.injection ?? true) || !(await ctx.suspected?.())) return "";
-  if (!ctx.approve)
-    throw new NotChanged(
-      "Not changed: after a suspected prompt injection this needs the owner's approval, which can't be asked here.",
-    );
-  const why =
-    "Something this conversation read may be instructions aimed at a bot, so this needs your approval.";
-  const r = await ctx.approve({ tool: call.name, input: call.input, what: call.what, why }, signal);
-  if (r.isError) throw new NotChanged(r.content);
-  return r.content;
-}
-
 const cut = (s: string, n = 300) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-
-/** All of the change, in words for its approval, since it all goes ahead once approved. */
-function changing(what: string, changes: string[]): string {
-  return changes.length === 1 && changes[0] === "switch it off"
-    ? `Switch off the ${what}`
-    : `Change the ${what}: ${changes.join("; ")}`;
-}
-
-/** Switching a trigger off, or changing how many failed checks it waits for, asks as above. */
-function stoppingTrigger(
-  ctx: ToolContext,
-  signal: AbortSignal,
-  id: number,
-  patch: { enabled?: boolean; confirmChecks?: number },
-): Promise<string> {
-  const t = ctx.triggers?.get(id);
-  const off = t?.enabled && patch.enabled === false;
-  const checks = t && patch.confirmChecks !== undefined && patch.confirmChecks !== t.confirmChecks;
-  if (!t || (!off && !checks)) return Promise.resolve("");
-  const n = patch.confirmChecks ?? 0;
-  const what = [
-    ...(off ? ["switch it off"] : []),
-    ...(checks
-      ? [n ? `wait for ${n} more failed check${n > 1 ? "s" : ""}` : "act on a down alert at once"]
-      : []),
-  ].join(", and ");
-  return asked(ctx, signal, {
-    name: "trigger_update",
-    input: { id, ...patch },
-    what: `Change the trigger #${id} "${t.name}": ${what}`,
-  });
-}
-
-const watchFields = {
-  render: z
-    .boolean()
-    .optional()
-    .describe(
-      'A page: load it in a headless browser on the desktop and run its scripts first, for a page that fills in with JavaScript (empty or "Loading…" without). Slower: such a watcher looks every 15 minutes at most. Sites with bot protection block it too',
-    ),
-  selector: z
-    .string()
-    .optional()
-    .describe(
-      'A page: the text of the elements this CSS selector matches, e.g. ".price" or "#stock"',
-    ),
-  path: z
-    .string()
-    .optional()
-    .describe(
-      'JSON (an API, or a tool that answers in JSON): the value at this path, e.g. "items.0.price"',
-    ),
-  pattern: z
-    .string()
-    .optional()
-    .describe(
-      'A regular expression over the text (case-insensitive): its first group is the value, e.g. "Price:\\s*([\\d.,]+)"',
-    ),
-  when: z
-    .enum(["changed", "contains", "missing", "below", "above"])
-    .optional()
-    .describe(
-      'When a new value counts: "changed" (any change; the default), "contains"/"missing" the text, or a number "below"/"above" the value. Only a move into it counts, not every check while it holds',
-    ),
-  text: z.string().optional().describe('For "contains" and "missing"'),
-  value: z.number().optional().describe('For "below" and "above"'),
-  every_minutes: z
-    .number()
-    .int()
-    .positive()
-    .max(MAX_WATCH_MINUTES)
-    .optional()
-    .describe(
-      "How often to look, at least 5 (15 with render) and at most 10080 (a week); 60 if left out",
-    ),
-  once: z.boolean().optional().describe("Switch off after the first time it counts"),
-  prompt: z
-    .string()
-    .max(4000)
-    .optional()
-    .describe(
-      "What to do when it counts, as a background task that's told the old and new value and can't see this conversation. Leave out to just tell the owner",
-    ),
-};
-
-const scheduleWhen = {
-  cron: z
-    .string()
-    .optional()
-    .describe(
-      'Repeating: five-field cron (minute hour day-of-month month day-of-week) in the owner\'s local time, e.g. "0 8 * * *" for every day at 08:00, "30 7 * * 1-5" for weekdays at 07:30. At most every 5 minutes',
-    ),
-  at: z.string().optional().describe('Once: local date and time, e.g. "2026-10-11T08:00"'),
-};
 
 function ownBox(ctx: ToolContext, id: number): Box {
   const box = ctx.boxes?.get(id);
@@ -1518,326 +1372,6 @@ export const TOOLS = [
         ownerSaid: ownerSaid?.(),
       });
       return refused ?? `Sent to task #${id}. It reads it after its current step.`;
-    },
-  }),
-  def({
-    name: "schedule_create",
-    description:
-      "Schedule a background task that runs on its own, repeating (cron) or once (at). Each run gets your memory and tools, can use the desktop, and reports back in this thread, with a notification when there's something to tell. Write `prompt` as complete instructions for that future run: it can't see this conversation. If the owner's timing is vague, ask before creating it. The owner sees it in Schedules, where they can change or turn it off.",
-    schema: z.object({
-      name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 stock check"'),
-      prompt: z
-        .string()
-        .min(1)
-        .max(4000)
-        .describe(
-          "What each run does and when it should tell the owner, with every detail it needs",
-        ),
-      ...scheduleWhen,
-    }),
-    run: async ({ name, prompt, cron, at }, ctx, signal) => {
-      const { schedules, scheduleCard, tainted, bot } = ctx;
-      if (!schedules) return "Schedules aren't available.";
-      if (gone(ctx)) return GONE;
-      if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
-      const note = await askedIfSuspected(ctx, signal, {
-        name: "schedule_create",
-        input: { name, prompt, cron, at },
-        what: `Create the schedule "${name}", ${cron ? describeCron(cron).toLowerCase() : `once at ${at}`}: ${cut(prompt)}`,
-      });
-      const s = schedules.create(
-        { name, prompt, cron, at, botId: bot?.id ?? HATBOT_ID },
-        "chat",
-        tainted?.() ?? null,
-      );
-      scheduleCard?.(s);
-      return `Created schedule ${scheduleLine(s)}${note}`;
-    },
-  }),
-  def({
-    name: "schedule_list",
-    description: "List every schedule with its timing, next run and what it does.",
-    schema: z.object({}),
-    run: async (_, { schedules, bot, bots }) =>
-      schedules
-        ?.list()
-        .map((s) => scheduleLine(s) + whose(s.botId, bot, bots))
-        .join("\n") || "No schedules.",
-  }),
-  def({
-    name: "schedule_update",
-    description:
-      "Change a schedule: its name, what it does, its timing, or turn it on or off. Only the fields you give change.",
-    schema: z.object({
-      id: z.number().int(),
-      name: z.string().min(1).max(80).optional(),
-      prompt: z.string().min(1).max(4000).optional(),
-      enabled: z.boolean().optional(),
-      ...scheduleWhen,
-    }),
-    run: async ({ id, ...patch }, ctx, signal) => {
-      const { schedules, tainted } = ctx;
-      if (patch.cron && patch.at) return "Give either cron or at, not both.";
-      const current = schedules?.get(id);
-      // On, it looks after something: after reading untrusted content, anything but switching it on
-      // asks, since a new time or prompt can silence it as surely as switching it off. A new name
-      // always does: it's what a later approval to delete it would show.
-      const renamed =
-        current && patch.name !== undefined && patch.name !== current.name
-          ? [`rename it "${patch.name}"`]
-          : [];
-      const changes = current?.enabled
-        ? [
-            ...(patch.enabled === false ? ["switch it off"] : []),
-            ...renamed,
-            ...(patch.prompt !== undefined && patch.prompt !== current.prompt
-              ? [`make it do: ${cut(patch.prompt)}`]
-              : []),
-            ...(patch.cron !== undefined && patch.cron !== current.cron
-              ? [`run it ${describeCron(patch.cron).toLowerCase()}`]
-              : []),
-            ...(patch.at !== undefined ? [`run it once at ${patch.at}`] : []),
-          ]
-        : renamed;
-      const note =
-        current && changes.length
-          ? await asked(ctx, signal, {
-              name: "schedule_update",
-              input: { id, ...patch },
-              what: changing(`schedule #${id} "${current.name}"`, changes),
-            })
-          : "";
-      const s = schedules?.update(id, patch, { via: "chat", taintedBy: tainted?.() ?? null });
-      return s ? `Updated schedule ${scheduleLine(s)}${note}` : `No schedule #${id}.`;
-    },
-  }),
-  def({
-    name: "schedule_delete",
-    description: "Delete a schedule. Its past runs stay in the Tasks list.",
-    schema: z.object({ id: z.number().int() }),
-    run: async ({ id }, ctx, signal) => {
-      const { schedules } = ctx;
-      const s = schedules?.get(id);
-      const note = s
-        ? await asked(ctx, signal, {
-            name: "schedule_delete",
-            input: { id },
-            what: `Delete the schedule #${id} "${s.name}"`,
-          })
-        : "";
-      return schedules?.delete(id) ? `Deleted schedule #${id}.${note}` : `No schedule #${id}.`;
-    },
-  }),
-  def({
-    name: "watch_create",
-    description:
-      "Watch a web page or a plugin's read tool and act only when its value changes the way the owner wants: back in stock, a price below a number, a PR merged, a new release. It's checked on a timer without a model, so it costs nothing until something happens; prefer it to a schedule for \"tell me when…\". Pages are fetched from the desktop as plain HTML without running their scripts; set render for a page that fills in with JavaScript. Neither gets past bot protection (a challenge page, a captcha). Pick one value out with selector, path or pattern: a whole page changes too often. It looks once before it's made and tells you what it saw, or why it couldn't, so you can fix the selector or pattern.",
-    schema: z.object({
-      name: z.string().min(1).max(80).describe('Short name, e.g. "Framework 16 price"'),
-      url: z.string().optional().describe("A page or JSON API to fetch"),
-      tool: z
-        .string()
-        .optional()
-        .describe("Or a plugin's read tool to call, e.g. forgejo_issue or github_ci"),
-      tool_input: z.record(z.string(), z.unknown()).optional().describe("The tool's input"),
-      ...watchFields,
-    }),
-    run: async (input, ctx, signal) => {
-      const { watchers, tainted, bot } = ctx;
-      if (!watchers) return "Watchers aren't available.";
-      if (gone(ctx)) return GONE;
-      if (Boolean(input.url) === Boolean(input.tool)) return "Give either url or tool.";
-      const condition = conditionOf(input);
-      if (typeof condition === "string") return condition;
-      const prompt = input.prompt?.trim() ?? "";
-      const note = await askedIfSuspected(ctx, signal, {
-        name: "watch_create",
-        input,
-        what: `Create the watcher "${input.name}" on ${input.url ?? input.tool}${prompt ? `: ${cut(prompt)}` : ""}`,
-      });
-      const source: WatchSource = {
-        kind: input.url ? "page" : "tool",
-        ...(input.url
-          ? { url: input.url, ...(input.render ? { render: true } : {}) }
-          : { tool: input.tool, input: input.tool_input ?? {} }),
-        ...(input.selector ? { selector: input.selector } : {}),
-        ...(input.path ? { path: input.path } : {}),
-        ...(input.pattern ? { pattern: input.pattern } : {}),
-      };
-      try {
-        const w = await watchers.create(
-          {
-            name: input.name,
-            source,
-            condition,
-            prompt,
-            everyMinutes: Math.max(minWatchMinutes(source), input.every_minutes ?? 60),
-            once: input.once ?? false,
-            enabled: true,
-            botId: bot?.id ?? HATBOT_ID,
-          },
-          "chat",
-          tainted?.() ?? null,
-        );
-        return `Created watcher ${seenLine(ctx, w)}${note}`;
-      } catch (err) {
-        if (err instanceof WatchError) return `Not created: ${err.message}`;
-        throw err;
-      }
-    },
-  }),
-  def({
-    name: "watch_list",
-    description: "List every watcher with what it looks at, what it saw last, and what it does.",
-    schema: z.object({}),
-    run: async (_, ctx) =>
-      ctx.watchers
-        ?.list()
-        .map((w) => seenLine(ctx, w) + whose(w.botId, ctx.bot, ctx.bots))
-        .join("\n") || "No watchers.",
-  }),
-  def({
-    name: "watch_update",
-    description:
-      "Change a watcher: what counts, how often it looks, whether it runs the page's scripts, what it does, its name, or turn it on or off. Only the fields you give change.",
-    schema: z.object({
-      id: z.number().int(),
-      name: z.string().min(1).max(80).optional(),
-      enabled: z.boolean().optional(),
-      ...watchFields,
-    }),
-    run: async ({ id, ...input }, ctx, signal) => {
-      const { watchers, tainted } = ctx;
-      const w = watchers?.get(id);
-      if (!watchers || !w) return `No watcher #${id}.`;
-      const condition = input.when ? conditionOf(input) : undefined;
-      if (typeof condition === "string") return condition;
-      if (input.render !== undefined && w.source.kind !== "page")
-        return "Only a page has scripts to run; this watcher calls a tool.";
-      const picks = ["selector", "path", "pattern"] as const;
-      const source: WatchSource | undefined =
-        picks.some((k) => input[k] !== undefined) || input.render !== undefined
-          ? {
-              ...w.source,
-              // An empty string takes that pick away.
-              ...Object.fromEntries(
-                picks.filter((k) => input[k] !== undefined).map((k) => [k, input[k] || undefined]),
-              ),
-              ...(input.render !== undefined ? { render: input.render || undefined } : {}),
-            }
-          : undefined;
-      // Running the page's scripts looks less often, so a shorter time is raised to that.
-      const min = minWatchMinutes(source ?? w.source);
-      const every = input.every_minutes ?? (w.everyMinutes < min ? min : undefined);
-      const renamed =
-        input.name !== undefined && input.name !== w.name ? [`rename it "${input.name}"`] : [];
-      const changes = w.enabled
-        ? [
-            ...(input.enabled === false ? ["switch it off"] : []),
-            ...renamed,
-            ...(input.prompt !== undefined && input.prompt.trim() !== w.prompt
-              ? [
-                  input.prompt.trim()
-                    ? `make it do: ${cut(input.prompt.trim())}`
-                    : "make it only tell the owner",
-                ]
-              : []),
-            ...(condition ? [`count when it ${describeCondition(condition).toLowerCase()}`] : []),
-            ...(source ? [`look at ${describeLook(source)}`] : []),
-            ...(input.every_minutes !== undefined && input.every_minutes !== w.everyMinutes
-              ? [`look every ${input.every_minutes} min`]
-              : []),
-            ...(input.once !== undefined && input.once !== w.once
-              ? [input.once ? "count only once" : "keep counting"]
-              : []),
-          ]
-        : renamed;
-      const note = changes.length
-        ? await asked(ctx, signal, {
-            name: "watch_update",
-            input: { id, ...input },
-            what: changing(`watcher #${id} "${w.name}"`, changes),
-          })
-        : "";
-      try {
-        const updated = await watchers.update(
-          id,
-          {
-            name: input.name,
-            enabled: input.enabled,
-            condition,
-            prompt: input.prompt?.trim(),
-            everyMinutes: every === undefined ? undefined : Math.max(min, every),
-            once: input.once,
-            source,
-          },
-          { via: "chat", taintedBy: tainted?.() ?? null },
-        );
-        return updated ? `Updated watcher ${seenLine(ctx, updated)}${note}` : `No watcher #${id}.`;
-      } catch (err) {
-        if (err instanceof WatchError) return `Not changed: ${err.message}`;
-        throw err;
-      }
-    },
-  }),
-  def({
-    name: "watch_delete",
-    description: "Delete a watcher. The tasks it started stay in the Tasks list.",
-    schema: z.object({ id: z.number().int() }),
-    run: async ({ id }, ctx, signal) => {
-      const { watchers } = ctx;
-      const w = watchers?.get(id);
-      const note = w
-        ? await asked(ctx, signal, {
-            name: "watch_delete",
-            input: { id },
-            what: `Delete the watcher #${id} "${w.name}"`,
-          })
-        : "";
-      return watchers?.delete(id) ? `Deleted watcher #${id}.${note}` : `No watcher #${id}.`;
-    },
-  }),
-  def({
-    name: "trigger_list",
-    description:
-      "List the webhooks and Uptime Kuma alert hooks that start background tasks, with what each run does. The owner creates them in Automations.",
-    schema: z.object({}),
-    run: async (_, { triggers, bot, bots }) =>
-      triggers
-        ?.list()
-        .map(
-          (t) =>
-            `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"}${t.confirmChecks ? `, waits for ${t.confirmChecks} more failed check${t.confirmChecks > 1 ? "s" : ""}` : ""})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}${whose(t.botId, bot, bots)}`,
-        )
-        .join("\n") || "No triggers.",
-  }),
-  def({
-    name: "trigger_update",
-    description:
-      "Change what a trigger's runs do, rename it, turn it on or off, or how many more failed checks an Uptime Kuma alert waits for. Only the fields you give change.",
-    schema: z.object({
-      id: z.number().int(),
-      name: z.string().min(1).max(80).optional(),
-      prompt: z.string().min(1).max(4000).optional(),
-      enabled: z.boolean().optional(),
-      confirmChecks: z
-        .number()
-        .int()
-        .min(0)
-        .max(2)
-        .optional()
-        .describe(
-          "Uptime Kuma only: wait for this many more of the monitor's checks before acting on a down alert, so a blip that recovers starts nothing. 0 acts at once.",
-        ),
-    }),
-    run: async ({ id, ...patch }, ctx, signal) => {
-      const { triggers, tainted } = ctx;
-      // A trigger's runs trust its instructions; untrusted content mustn't get to write them.
-      if (patch.prompt !== undefined && tainted?.())
-        return "Not changed: this conversation has read untrusted content, so it can't rewrite what a trigger does. Ask the owner to change it in Automations.";
-      const note = await stoppingTrigger(ctx, signal, id, patch);
-      const t = triggers?.update(id, patch);
-      return t ? `Updated trigger #${t.id} "${t.name}".${note}` : `No trigger #${id}.`;
     },
   }),
 ];

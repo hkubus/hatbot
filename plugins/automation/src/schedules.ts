@@ -1,16 +1,20 @@
+import {
+  type Db,
+  type EventsHost,
+  PluginError,
+  type SearchRoutine,
+  type SettingsHost,
+  type TaskOrigin,
+  type TasksHost,
+} from "@hatbot/plugin-sdk";
 import { HATBOT_ID, type Schedule } from "@hatbot/shared";
 import { Cron } from "croner";
-import { orphaned } from "./bots";
-import type { Db } from "./db";
-import { UserError } from "./errors";
-import type { EventBus } from "./events";
-import type { SettingsStore } from "./settings";
-import type { Tasks } from "./tasks/service";
+import { orphaned } from "./deps";
 
 /** Runs closer together than this cost too much to be worth it. */
 const MIN_GAP_MS = 5 * 60_000;
 
-export class ScheduleError extends UserError {}
+export class ScheduleError extends PluginError {}
 
 type Row = {
   id: number;
@@ -63,9 +67,9 @@ export class Schedules {
 
   constructor(
     private db: Db,
-    private events: EventBus,
-    private settings: SettingsStore,
-    private tasks: Tasks,
+    private events: EventsHost,
+    private settings: SettingsHost,
+    private tasks: TasksHost,
     clock?: () => number,
   ) {
     this.clock = clock ?? Date.now;
@@ -236,6 +240,29 @@ export class Schedules {
     this.db.query("UPDATE schedules SET last_run_at = ? WHERE id = ?").run(this.now(), s.id);
     this.changed(s.id);
     return task;
+  }
+
+  /** A schedule the chat made after reading untrusted content has no standing words for the review. */
+  origin(): TaskOrigin {
+    return {
+      startedBy: (s) => `the schedule "${s}"`,
+      standing: (task) => {
+        const tainted = this.db
+          .query<{ tainted: number }, [number]>("SELECT tainted FROM schedules WHERE id = ?")
+          .get(task.scheduleId ?? -1)?.tainted;
+        if (tainted !== 0) return null;
+        return `Standing instructions for the schedule "${task.source ?? ""}":\n${task.goal}`;
+      },
+    };
+  }
+
+  search(pattern: string): SearchRoutine[] {
+    return this.db
+      .query<{ id: number; name: string }, [string]>(
+        "SELECT id, name FROM schedules WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'",
+      )
+      .all(pattern)
+      .map((r) => ({ kind: "schedule" as const, ...r }));
   }
 
   private changed(id: number) {

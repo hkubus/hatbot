@@ -1,17 +1,24 @@
 // Built the same way for the brain (main.ts) and for tests (test/helpers.ts): only the outside world
 // is passed in.
 import { join } from "node:path";
+import { automationPlugin } from "@hatbot/plugin-automation";
 import { codePlugin } from "@hatbot/plugin-code";
 import { Proxmox } from "@hatbot/plugin-proxmox/client";
 import { scoutPlugin } from "@hatbot/plugin-scout";
-import type { Plugin } from "@hatbot/plugin-sdk";
+import type {
+  HOST_SERVICES,
+  ModelHost,
+  Plugin,
+  PluginsHost,
+  SchedulesService,
+} from "@hatbot/plugin-sdk";
 import { selfPlugin } from "@hatbot/plugin-self";
 import { t3Plugin } from "@hatbot/plugin-t3";
 import type { T3Code } from "@hatbot/plugin-t3/client";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
 import { corePlugins } from "./agent/core-tools";
-import type { ModelClient } from "./agent/model";
+import { type ModelClient, oneShot } from "./agent/model";
 import { Models } from "./agent/models";
 import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
@@ -31,29 +38,25 @@ import { Desktop } from "./desktop/service";
 import { EventBus } from "./events";
 import { Backends } from "./hatbox/backends";
 import { type HatboxAgent, HttpHatboxAgent } from "./hatbox/client";
-import { Heartbeat } from "./heartbeat";
 import { ListingPhotos } from "./listing-photos";
 import { Listings } from "./listings/service";
 import { Proposals } from "./memory/proposals";
 import { MemoryStore } from "./memory/store";
+import { modelName } from "./models-known";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier, type Notifier } from "./notify";
 import { DeadManPing } from "./ping";
 import { Plugins } from "./plugins/registry";
 import { Questions } from "./questions";
-import { WeeklyReport } from "./report";
-import { Schedules } from "./schedules";
 import { Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
 import { Spend } from "./spend";
-import { Storage } from "./storage";
+import { Storage, storageLine } from "./storage";
 import { Tasks } from "./tasks/service";
 import { Teach } from "./teach/service";
 import { Skills } from "./teach/skills";
 import { TodoReminders } from "./todo-reminders";
-import { Triggers } from "./triggers";
 import { Updates } from "./updates";
-import { Watchers } from "./watch/service";
 
 export type Outside = {
   config: Config;
@@ -105,6 +108,7 @@ export async function createServices(o: Outside) {
       t3Plugin,
       scoutPlugin,
       selfPlugin,
+      automationPlugin,
       ...corePlugins(() => ({
         db,
         clock,
@@ -112,9 +116,7 @@ export async function createServices(o: Outside) {
         events,
         bots,
         tasks,
-        schedules,
-        triggers,
-        watchers,
+        schedules: () => plugins.service<SchedulesService>("schedules"),
         attachments,
         boxes,
         desktop: agent,
@@ -133,7 +135,32 @@ export async function createServices(o: Outside) {
       reserved: CORE_TOOL_NAMES,
       publicUrl,
       fetch: o.fetch,
-      services: { schedules: () => schedules },
+      clock,
+      services: {
+        tasks: () => tasks,
+        chats: () => chats,
+        bots: () => bots,
+        notifier: () => notifier,
+        events: () => events,
+        settings: () => settings,
+        model: (): ModelHost => ({
+          ask: (params, ledger, opts) => oneShot({ model: taskModel, spend }, params, ledger, opts),
+          name: modelName,
+        }),
+        spend: () => spend,
+        memory: () => memory,
+        storage: () => ({ line: async () => storageLine(await storage.measure()) }),
+        plugins: (): PluginsHost => ({
+          list: () => plugins.list(),
+          tools: (only) => plugins.tools(only ?? null),
+          signals: async () => [
+            ...(agent.configured && !desktop.get().online
+              ? [{ key: "desktop", text: "The desktop isn't answering." }]
+              : []),
+            ...(await plugins.signals()),
+          ],
+        }),
+      } satisfies Record<(typeof HOST_SERVICES)[number], () => unknown>,
     },
   );
   const models = new Models(plugins);
@@ -199,13 +226,8 @@ export async function createServices(o: Outside) {
       plugins.service<T3Code>("t3")?.forget(`task-${e.task.id}`);
   });
   const teach = new Teach({ ...core, lane: tasks.lane });
-  const schedules = new Schedules(db, events, settings, tasks, clock);
-  const triggers = new Triggers(db, events, settings, tasks, notifier, publicUrl, clock);
-  const watchers = new Watchers({ ...core, tasks, desktop: agent });
-  const heartbeat = new Heartbeat({ ...core, tasks });
   const todoReminders = new TodoReminders({ ...core });
   const proposals = new Proposals({ ...core, tasks });
-  const report = new WeeklyReport({ ...core });
   const negotiations = new Negotiations({ ...core, tasks });
   tasks.negotiations = negotiations;
   const listings = new Listings({ ...core, tasks });
@@ -213,9 +235,6 @@ export async function createServices(o: Outside) {
   tasks.logins = new Logins({ ...core });
   chats.attach({
     tasks,
-    schedules,
-    triggers,
-    watchers,
     approvals,
     attachments,
     desktop: agent,
@@ -260,13 +279,8 @@ export async function createServices(o: Outside) {
     loginLimits,
     tasks,
     teach,
-    schedules,
-    triggers,
-    watchers,
-    heartbeat,
     todoReminders,
     proposals,
-    report,
     negotiations,
     listings,
     listingPhotos: new ListingPhotos(o.fetch),

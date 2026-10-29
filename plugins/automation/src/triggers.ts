@@ -1,4 +1,13 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type {
+  Db,
+  EventsHost,
+  Notifier,
+  SearchRoutine,
+  SettingsHost,
+  TaskOrigin,
+  TasksHost,
+} from "@hatbot/plugin-sdk";
 import {
   API_PREFIX,
   HATBOT_ID,
@@ -6,13 +15,7 @@ import {
   type Trigger,
   type TriggerWithSecret,
 } from "@hatbot/shared";
-import { sameText } from "./auth/keys";
-import { orphaned } from "./bots";
-import type { Db } from "./db";
-import type { EventBus } from "./events";
-import type { Notifier } from "./notify";
-import type { SettingsStore } from "./settings";
-import type { Tasks } from "./tasks/service";
+import { orphaned } from "./deps";
 
 const MAX_SKEW_S = 300;
 const REPLAY_WINDOW_MS = 30 * 24 * 3600_000;
@@ -74,9 +77,9 @@ export class Triggers {
 
   constructor(
     private db: Db,
-    private events: EventBus,
-    private settings: SettingsStore,
-    private tasks: Tasks,
+    private events: EventsHost,
+    private settings: SettingsHost,
+    private tasks: TasksHost,
     private notifier: Notifier,
     private publicUrl: string,
     private clock: () => number = Date.now,
@@ -524,9 +527,78 @@ export class Triggers {
     if (trigger) this.events.emit({ type: "trigger.updated", trigger });
     return trigger;
   }
+
+  search(pattern: string): SearchRoutine[] {
+    return this.db
+      .query<{ id: number; name: string }, [string]>(
+        "SELECT id, name FROM triggers WHERE name LIKE ?1 ESCAPE '\\' OR prompt LIKE ?1 ESCAPE '\\'",
+      )
+      .all(pattern)
+      .map((r) => ({ kind: "trigger" as const, ...r }));
+  }
+
+  /** A webhook's and an alert's tasks. An untrusted event isn't shown to the review, so it can't pick the target. */
+  origins(): Record<"webhook" | "alert", TaskOrigin> {
+    const standing = (task: Task) => {
+      const kind = task.origin === "alert" ? "Uptime Kuma alert" : "webhook";
+      const head = `Standing instructions for the ${kind} "${task.source ?? ""}":\n${task.goal}`;
+      const trustedEvent =
+        task.origin === "alert" ||
+        this.db
+          .query<{ trusted: number }, [number]>("SELECT trusted FROM triggers WHERE id = ?")
+          .get(task.triggerId ?? -1)?.trusted === 1;
+      // An alert's message can be written by whoever reaches the service: not shown either.
+      const alert = task.origin === "alert" && task.payload ? alertParts(task.payload) : null;
+      const event = alert
+        ? `${alert.alert}${alert.message ? "\n\nIts message came from the monitored service and isn't trusted, so it isn't shown." : ""}`
+        : (task.payload ?? "");
+      return trustedEvent
+        ? `${head}\n\nThe event that started this task (trusted):\n${event}`
+        : `${head}\n\nThe event that started this task came from outside and isn't trusted, so it isn't shown: it can't choose what to act on.`;
+    };
+    return {
+      webhook: { startedBy: (s) => `the webhook "${s}"`, standing },
+      alert: {
+        startedBy: (s) => `an Uptime Kuma alert, through "${s}"`,
+        standing,
+        event: alertEvent,
+        reserve: true,
+        overLimit: (limit, task) => notInvestigated(limit, task.payload),
+      },
+    };
+  }
+}
+
+/** Kuma's own fields are trusted; its message is untrusted data. */
+function alertEvent(text: string) {
+  const a = alertParts(text);
+  if (!a) return null;
+  const monitor = String((JSON.parse(a.alert) as { monitor?: unknown }).monitor);
+  return {
+    trusted: a.alert,
+    ...(a.message ? { untrusted: { source: alertMessageSource(monitor), text: a.message } } : {}),
+  };
+}
+
+/** What an alert the limits stopped said, so you still hear it. */
+function notInvestigated(limit: "daily" | "monthly", payload: string | null): string {
+  let said = (payload ?? "").slice(0, 500);
+  try {
+    const a = JSON.parse(payload ?? "") as Record<string, unknown>;
+    const where = a.url || a.hostname;
+    said = `${a.monitor ?? "A monitor"}${where ? ` (${where})` : ""} is down${a.message ? `: ${a.message}` : "."}`;
+  } catch {}
+  const spent = limit === "daily" ? "today's" : "this month's";
+  return `Not investigated: ${spent} limit is spent. The alert: ${said}`;
 }
 
 const newSecret = () => randomBytes(24).toString("base64url");
+
+const sameText = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
 
 /** As Kuma writes a status: "502 - Bad Gateway". */
 const REASONS =

@@ -26,7 +26,7 @@ const brain = await createServices({
   secrets,
 });
 const { app, auth, approvals, chats, desktop, negotiations, plugins, settings, tasks } = brain;
-const { schedules, triggers, watchers, heartbeat, report, proposals, storage, ping } = brain;
+const { proposals, storage, ping } = brain;
 const { boxes } = brain;
 await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
@@ -58,18 +58,11 @@ setInterval(() => safely("chat sweep", () => chats.sweep()), 60_000);
 setInterval(() => safely("to-do reminders", () => brain.todoReminders.tick()), 60_000);
 // Runs missed while the brain was down start once plugins are up, so they get their tools.
 void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
-  safely("schedules", () => schedules.tick());
-  safely("triggers", () => triggers.tick());
-  safely("watchers", () => watchers.tick());
+  plugins.startTimers();
   safely("listings", () => brain.listings.tick());
   setInterval(() => safely("listings", () => brain.listings.tick()), 5 * 60_000);
   setInterval(() => {
     safely("ping", () => ping.tick());
-    safely("schedules", () => schedules.tick());
-    safely("triggers", () => triggers.tick());
-    safely("watchers", () => watchers.tick());
-    safely("heartbeat", () => heartbeat.tick());
-    safely("weekly report", () => report.tick());
     safely("proposals", () => proposals.tick());
     safely("storage", () => storage.tick());
     safely("boxes", () => boxes.backends?.tick());

@@ -39,6 +39,7 @@ test("an internal plugin is always on, gives every bot its tools, and isn't in S
     run: async () => "nothing",
   });
   const t = await app([plain({ id: "core", internal: true, start: () => ready([look]) })]);
+  await t.plugins.update("automation", { enabled: false });
   expect(t.plugins.list().map((p) => p.id)).not.toContain("core");
   expect(t.plugins.tools([], ["core"]).map((x) => x.name)).toContain("look_around");
   expect(t.plugins.names()).toEqual([]);
@@ -150,6 +151,7 @@ test("a plugin keeps small values of its own, and adds lines to the prompt while
     },
   });
   const t = await app([p]);
+  await t.plugins.update("automation", { enabled: false });
   // biome-ignore lint/style/noNonNullAssertion: set by start
   const mine = store!;
   mine.set("last", "42");

@@ -3,9 +3,9 @@
 
 // Escaping every `<` keeps it valid JSON that can't close its tag. `>` and `&` stay, so commands like
 // `cmd 2>&1` read plainly in a review.
-export function tagJson(value: unknown): string {
-  return (JSON.stringify(value) ?? "null").replace(/</g, "\\u003c");
-}
+import { tagJson } from "@hatbot/plugin-sdk";
+
+export { tagJson };
 
 export function untrustedBlock(
   tag: string,

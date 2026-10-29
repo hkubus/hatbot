@@ -1,38 +1,15 @@
 // The weekly report: the last seven days in a few lines, made without the model, in Hatbot's chat and
 // as a notification.
-import { localDay, parseTodos, TODO_FILE } from "@hatbot/shared";
-import type { Chats } from "./agent/chats";
-import type { Bots } from "./bots";
-import type { Db } from "./db";
-import type { MemoryStore } from "./memory/store";
-import { modelName } from "./models-known";
-import type { Notifier } from "./notify";
-import { getSetting, type SettingsStore, setSetting } from "./settings";
-import { type Storage, storageLine } from "./storage";
+import { HATBOT_ID, lastDue, localDay, parseTodos, TODO_FILE } from "@hatbot/shared";
+import type { Deps } from "./deps";
 
-const LAST_KEY = "report:last";
+const LAST_KEY = "report";
 const WEEK = 7 * 86400_000;
 
-export type ReportDeps = {
-  db: Db;
-  settings: SettingsStore;
-  chats: Chats;
-  notifier: Notifier;
-  bots: Bots;
-  memory: MemoryStore;
-  storage: Storage;
-  publicUrl: string;
-  clock?: () => number;
-};
-
-/** The last time a weekly job was due at or before `now`, in the brain's time zone. */
-export function lastDue(now: number, weekday: number, hour: number): number {
-  const t = new Date(now);
-  t.setHours(hour, 0, 0, 0);
-  t.setDate(t.getDate() - ((t.getDay() - weekday + 7) % 7));
-  if (t.getTime() > now) t.setDate(t.getDate() - 7);
-  return t.getTime();
-}
+export type ReportDeps = Pick<
+  Deps,
+  "db" | "settings" | "chats" | "notifier" | "bots" | "memory" | "storage" | "model" | "store"
+> & { publicUrl: string; clock?: () => number };
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -67,8 +44,8 @@ export class WeeklyReport {
     this.sending = true;
     try {
       const { text, line } = await this.make();
-      setSetting(this.d.db, LAST_KEY, new Date(this.clock()).toISOString());
-      this.d.chats.note("hatbot", text);
+      this.d.store.set(LAST_KEY, new Date(this.clock()).toISOString());
+      this.d.chats.note(HATBOT_ID, text);
       void this.d.notifier.send({
         title: "Your week",
         message: line,
@@ -82,7 +59,7 @@ export class WeeklyReport {
   }
 
   private lastSent(): number | null {
-    const v = getSetting(this.d.db, LAST_KEY);
+    const v = this.d.store.get(LAST_KEY);
     return v ? Date.parse(v) : null;
   }
 
@@ -155,7 +132,7 @@ export class WeeklyReport {
     for (const t of failed) lines.push(`  - Failed: [${t.title}](/tasks/${t.id})`);
     for (const r of desktop)
       lines.push(
-        `- Desktop on ${modelName(r.model)}: ${r.done} done, ${r.failed} failed${r.rescued ? `, ${r.rescued} of them then done on another model` : ""}.`,
+        `- Desktop on ${this.d.model.name(r.model)}: ${r.done} done, ${r.failed} failed${r.rescued ? `, ${r.rescued} of them then done on another model` : ""}.`,
       );
     if (answered || expired)
       lines.push(
@@ -171,8 +148,8 @@ export class WeeklyReport {
     const ticked = todos.filter((t) => t.done && (t.doneOn ?? "") > weekAgo).length;
     const overdue = todos.filter((t) => !t.done && t.due && t.due < today).length;
     if (ticked || overdue) lines.push(`- To-do: ${ticked} done, ${overdue} overdue.`);
-    const storage = await this.d.storage.measure().catch(() => null);
-    if (storage) lines.push(`- Storage: ${storageLine(storage)}`);
+    const storage = await this.d.storage.line().catch(() => null);
+    if (storage) lines.push(`- Storage: ${storage}`);
     const line = [
       `${usd(total)} spent`,
       `${plural(ran, "task")}${count("failed") ? ` (${count("failed")} failed)` : ""}`,

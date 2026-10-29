@@ -648,6 +648,11 @@ export class Tasks {
     return r?.box_job ? (JSON.parse(r.box_job) as BoxJob) : null;
   }
 
+  /** It may spend what's kept back for alerts. */
+  reserves(task: Task): boolean {
+    return task.origin !== "chat" && Boolean(this.d.plugins.origin(task.origin)?.reserve);
+  }
+
   requestOf(id: number): string | null {
     return (
       this.d.db

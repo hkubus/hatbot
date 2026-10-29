@@ -1,29 +1,7 @@
+import type { Notification, Notifier } from "@hatbot/plugin-sdk";
 import type { NtfyConfig } from "./secrets";
 
-export type NtfyAction =
-  | { action: "view"; label: string; url: string; clear?: boolean }
-  | {
-      action: "http";
-      label: string;
-      url: string;
-      method: "POST";
-      headers?: Record<string, string>;
-      body: string;
-      clear?: boolean;
-    };
-
-export type Notification = {
-  title: string;
-  message: string;
-  priority?: 1 | 2 | 3 | 4 | 5;
-  tags?: string[];
-  click?: string;
-  actions?: NtfyAction[];
-};
-
-export interface Notifier {
-  send(n: Notification): Promise<void>;
-}
+export type { Notification, Notifier, NtfyAction } from "@hatbot/plugin-sdk";
 
 /**
  * A topic named by hand could be guessed, and on a server that lets anyone read, read. One is random
