@@ -134,7 +134,31 @@ pub fn when(cron: Option<&str>, run_at: Option<&str>) -> String {
     run_at.and_then(date).map(|d| format!("Once, {}", fmt(&d, "%a %-d %b, %H:%M"))).unwrap_or_default()
 }
 
-const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/// "Every 15 minutes", "Every hour", "Every 2 days".
+pub fn every(minutes: i64) -> String {
+    let unit = |n: i64, word: &str| if n == 1 { format!("Every {word}") } else { format!("Every {n} {word}s") };
+    if minutes > 0 && minutes % 1440 == 0 {
+        unit(minutes / 1440, "day")
+    } else if minutes > 0 && minutes % 60 == 0 {
+        unit(minutes / 60, "hour")
+    } else {
+        unit(minutes, "minute")
+    }
+}
+
+/// "2026-11-02 08:00" in local time, as the brain's ISO 8601; None when it isn't that, or is past.
+pub fn local_to_iso(text: &str) -> Option<String> {
+    let dt: jiff::civil::DateTime = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M", text.trim()).ok()?;
+    let z = dt.to_zoned(TimeZone::system()).ok()?;
+    (z.timestamp() > Timestamp::now()).then(|| z.timestamp().to_string())
+}
+
+/// An ISO 8601 date as "2026-11-02 08:00" in local time, to edit.
+pub fn iso_to_local(iso: &str) -> String {
+    date(iso).map(|d| fmt(&d, "%Y-%m-%d %H:%M")).unwrap_or_default()
+}
+
+pub const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 fn num(s: &str) -> Option<u32> {
     if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }

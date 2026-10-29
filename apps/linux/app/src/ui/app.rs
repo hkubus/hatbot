@@ -45,6 +45,26 @@ pub enum Route {
     Computer,
 }
 
+impl Route {
+    pub fn parse(page: &str) -> Option<Route> {
+        Some(match page {
+            "chat" => Route::Chat,
+            "threads" => Route::Threads,
+            "tasks" => Route::Tasks,
+            "live" => Route::Live,
+            "automations" => Route::Schedules,
+            "memory" => Route::Memory,
+            "todo" => Route::Todo,
+            "boxes" => Route::Boxes,
+            "search" => Route::Search,
+            "settings" => Route::Settings,
+            "spend" => Route::Spend,
+            "computer" => Route::Computer,
+            p => Route::Task(p.strip_prefix("task/")?.parse().ok()?),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Streamed {
     Open { reconnected: bool },
@@ -66,6 +86,7 @@ pub enum Message {
     Kept(Result<(), String>),
     Stream(Streamed),
     Go(Route),
+    Shortcut(String),
     Chat(chat::Msg),
     Page(pages::Msg),
     Loaded(Loaded),
@@ -112,6 +133,8 @@ pub struct App {
     banner: Option<banner::Shown>,
     agent: Option<hatbot_agent::Handle>,
     pub agent_state: hatbot_agent::AgentState,
+    /// A page asked for before signing in finished.
+    start: Option<Route>,
 }
 
 pub struct Session {
@@ -186,7 +209,7 @@ pub fn failed(e: ApiError) -> Message {
     if e.is_unauthorized() { Message::Unauthorized } else { Message::Toast(e.message) }
 }
 
-pub fn boot(open_window: bool) -> (App, Task<Message>) {
+pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
     let config = vault::load_config();
     let app = App {
         dark: true,
@@ -198,6 +221,7 @@ pub fn boot(open_window: bool) -> (App, Task<Message>) {
         banner: None,
         agent: None,
         agent_state: Default::default(),
+        start: page.as_deref().and_then(Route::parse),
     };
     let restore = Task::perform(
         async move {
@@ -257,7 +281,7 @@ impl App {
         }
     }
 
-    fn session_mut(&mut self) -> Option<&mut Session> {
+    pub fn session_mut(&mut self) -> Option<&mut Session> {
         match &mut self.phase {
             Phase::In(s) => Some(s),
             _ => None,
@@ -325,8 +349,13 @@ impl App {
         vault::save_config(&self.config);
         self.start_agent();
         self.sync_tray();
+        let start = self.start.take();
         let s = self.session().unwrap();
-        Task::batch([load_chats(s), load_plugins(s), load_settings(s), chat::load_page(s)])
+        let mut t = vec![load_chats(s), load_plugins(s), load_settings(s), chat::load_page(s)];
+        if let Some(r) = start {
+            t.push(Task::done(Message::Go(r)));
+        }
+        Task::batch(t)
     }
 
     fn sign_out(&mut self) -> Task<Message> {
@@ -416,6 +445,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Kept(Err(e)) => app.toast(format!("{e} You'll sign in again next time.")),
         Message::Kept(Ok(())) => Task::none(),
         Message::Stream(s) => streamed(app, s),
+        Message::Shortcut(key) => match app.session().and_then(|s| shell::shortcut(s, &key)) {
+            Some(r) => update(app, Message::Go(r)),
+            None => Task::none(),
+        },
         Message::Go(route) => {
             let Phase::In(s) = &mut app.phase else { return Task::none() };
             s.route = route.clone();
@@ -467,6 +500,14 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
 fn outside(app: &mut App, o: Outside) -> Task<Message> {
     match o {
         Outside::Open => app.open_window(),
+        Outside::Show(page) => {
+            let Some(r) = Route::parse(&page) else { return app.open_window() };
+            if app.session().is_none() {
+                app.start = Some(r);
+                return app.open_window();
+            }
+            Task::batch([app.open_window(), update(app, Message::Go(r))])
+        }
         Outside::Quit => {
             if let Some(a) = app.agent.take() {
                 a.shutdown();
@@ -788,6 +829,17 @@ pub fn subscription(app: &App) -> Subscription<Message> {
         ));
         if app.window.is_some() {
             subs.push(pages::subscription(s));
+            // While typing into the live view, keys belong to the desktop.
+            if !pages::live::typing(s) {
+                subs.push(iced::keyboard::listen().filter_map(|e| match e {
+                    iced::keyboard::Event::KeyPressed { key: iced::keyboard::Key::Character(c), modifiers, .. }
+                        if modifiers.command() =>
+                    {
+                        Some(Message::Shortcut(c.to_string()))
+                    }
+                    _ => None,
+                }));
+            }
         }
     }
     Subscription::batch(subs)

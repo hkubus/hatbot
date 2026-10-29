@@ -200,15 +200,24 @@ fn sync(s: &mut Session) -> Task<Message> {
         wanted.push(format!("/tasks/{task}/screens/{step}"));
     }
     for path in wanted {
-        if s.chat.images.contains_key(&path) {
-            continue;
-        }
-        s.chat.images.insert(path.clone(), None);
-        let p = path.clone();
-        t.push(s.call(move |api| async move { api.bytes(&p).await }, move |r| Message::Chat(Msg::Image(path, r.ok()))));
+        t.push(fetch_image(s, path));
     }
     t.push(mark_seen(s));
     Task::batch(t)
+}
+
+/// A picture from the brain, kept by its path; asked for once.
+pub fn fetch_image(s: &mut Session, path: String) -> Task<Message> {
+    if s.chat.images.contains_key(&path) {
+        return Task::none();
+    }
+    s.chat.images.insert(path.clone(), None);
+    let p = path.clone();
+    s.call(move |api| async move { api.bytes(&p).await }, move |r| Message::Chat(Msg::Image(path, r.ok())))
+}
+
+pub fn image_of<'a>(s: &'a Session, path: &str) -> Option<&'a image::Handle> {
+    s.chat.images.get(path).and_then(Option::as_ref)
 }
 
 /// The window came to the front: what's on screen now counts as seen.
@@ -1069,11 +1078,8 @@ fn waiting(s: &Session) -> Option<Element<'_, Message>> {
     let approvals = s.store.pending_approvals();
     let questions = s.store.pending_questions();
     let count = approvals.len() + questions.len();
-    let body: Element<'_, Message> = if let Some(a) = approvals.first() {
-        approval(s, a)
-    } else {
-        question(s, questions.first()?)
-    };
+    let body: Element<'_, Message> =
+        if let Some(a) = approvals.first() { approval(s, a) } else { question(s, questions.first()?) };
     let mut col = column![body].spacing(SP_MD);
     if count > 1 {
         col = col.push(small(format!("{} more waiting", count - 1)));

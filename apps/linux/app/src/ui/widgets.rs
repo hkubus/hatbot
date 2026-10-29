@@ -169,3 +169,56 @@ pub fn rule<'a, M: 'a>() -> Element<'a, M> {
 pub fn count<'a, M: 'a>(n: usize) -> Element<'a, M> {
     container(text(n.to_string()).size(FS_SM).font(theme::SEMIBOLD)).padding([1, 7]).style(theme::badge).into()
 }
+
+/// A choice between a few views, as the web's segmented chips.
+pub fn segmented<'a, M: Clone + 'a, V: Copy + PartialEq + 'a>(
+    options: &[(&'a str, V)],
+    selected: V,
+    on: impl Fn(V) -> M,
+) -> Element<'a, M> {
+    let mut r = row![].spacing(SP);
+    for (name, v) in options {
+        r = r.push(
+            button(container(label(*name)).center_y(Length::Fill))
+                .height(H_SM)
+                .padding([0.0, SP_MD])
+                .style(theme::chip(*v == selected))
+                .on_press(on(*v)),
+        );
+    }
+    r.into()
+}
+
+/// A row in a list that opens something.
+pub fn list_row<'a, M: Clone + 'a>(content: impl Into<Element<'a, M>>, on: Option<M>) -> Element<'a, M> {
+    button(content).width(Length::Fill).padding([SP_MD, SP_LG]).style(theme::row(false)).on_press_maybe(on).into()
+}
+
+/// A name and its value, side by side.
+pub fn labeled<'a, M: 'a>(name: &'a str, value: impl Into<Element<'a, M>>) -> Element<'a, M> {
+    row![text(name).size(FS_MD).style(tone(|c| c.muted)).width(160), container(value).width(Length::Fill)]
+        .spacing(SP_LG)
+        .into()
+}
+
+/// A titled group on a page.
+pub fn section<'a, M: 'a>(name: &'a str, content: impl Into<Element<'a, M>>) -> Element<'a, M> {
+    column![heading(name), content.into()].spacing(SP_MD).into()
+}
+
+/// A text field over several lines, for prompts and instructions.
+pub fn area<'a, M: Clone + 'a>(
+    content: &'a iced::widget::text_editor::Content,
+    placeholder: &'a str,
+    on: impl Fn(iced::widget::text_editor::Action) -> M + 'a,
+) -> iced::widget::TextEditor<'a, iced::advanced::text::highlighter::PlainText, M> {
+    iced::widget::text_editor(content)
+        .placeholder(placeholder)
+        .on_action(on)
+        .size(FS_TEXT)
+        .line_height(1.5)
+        .padding([10, 14])
+        .min_height(96)
+        .max_height(320)
+        .style(theme::editor)
+}

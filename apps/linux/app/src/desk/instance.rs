@@ -13,11 +13,11 @@ fn path() -> PathBuf {
 }
 
 /// Tells a running copy to open its window. False when none runs.
-pub fn ask_running(open: bool) -> bool {
+pub fn ask_running(open: bool, page: Option<&str>) -> bool {
     match UnixStream::connect(path()) {
         Ok(mut s) => {
             if open {
-                let _ = s.write_all(b"open\n");
+                let _ = s.write_all(format!("open {}\n", page.unwrap_or("")).as_bytes());
             }
             true
         }
@@ -37,11 +37,14 @@ pub fn listen() -> std::io::Result<std::os::unix::net::UnixListener> {
 pub async fn serve(listener: std::os::unix::net::UnixListener) {
     let Ok(l) = tokio::net::UnixListener::from_std(listener) else { return };
     while let Ok((mut s, _)) = l.accept().await {
-        let mut buf = [0u8; 16];
+        let mut buf = [0u8; 64];
         if let Ok(n) = s.read(&mut buf).await
-            && buf[..n].starts_with(b"open")
+            && let Some(rest) = String::from_utf8_lossy(&buf[..n]).strip_prefix("open")
         {
-            inbox::send(Outside::Open);
+            match rest.trim() {
+                "" => inbox::send(Outside::Open),
+                page => inbox::send(Outside::Show(page.to_string())),
+            }
         }
     }
 }

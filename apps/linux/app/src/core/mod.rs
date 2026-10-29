@@ -1,6 +1,7 @@
 pub mod api;
 pub mod delta;
 pub mod format;
+pub mod jpeg;
 pub mod models;
 pub mod notify;
 pub mod session;

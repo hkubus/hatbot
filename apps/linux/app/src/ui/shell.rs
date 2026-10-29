@@ -53,6 +53,20 @@ fn views(s: &Session, sec: Section) -> Vec<(Route, &'static str)> {
     v
 }
 
+/// Ctrl with 1 to 4, K or comma goes to a section, as the sidebar lists them.
+pub fn shortcut(s: &Session, key: &str) -> Option<Route> {
+    let sec = match key {
+        "1" => Section::Chat,
+        "2" => Section::Tasks,
+        "3" => Section::Memory,
+        "4" => Section::Boxes,
+        "k" => Section::Search,
+        "," => Section::Settings,
+        _ => return None,
+    };
+    views(s, sec).into_iter().next().map(|(r, _)| r)
+}
+
 pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
     let main = column![toolbar(s)]
         .push(

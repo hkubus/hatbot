@@ -10,6 +10,8 @@ use iced::Subscription;
 pub enum Outside {
     /// Open the window: the tray, a notification's body, or `hatbot` run again.
     Open,
+    /// `hatbot --open <page>`.
+    Show(String),
     Notice {
         key: String,
         action: String,

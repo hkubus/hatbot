@@ -1,5 +1,5 @@
 // `hatbot` opens the window, in the running daemon if there is one; `hatbot --daemon` runs windowless
-// at login; `hatbot --banner` is the on-screen banner the daemon shows while it uses this computer.
+// at login; `hatbot --open tasks` opens it on a page (see `Route::parse`); `hatbot --banner` is the on-screen banner the daemon shows while it uses this computer.
 use hatbot::desk::{banner, instance};
 use hatbot::ui::{app, theme};
 
@@ -13,10 +13,11 @@ fn main() {
         return;
     }
     let daemon = args.iter().any(|a| a == "--daemon");
-    if instance::ask_running(!daemon) {
+    let page = args.iter().position(|a| a == "--open").and_then(|i| args.get(i + 1)).cloned();
+    if instance::ask_running(!daemon, page.as_deref()) {
         return;
     }
-    let mut d = iced::daemon(move || app::boot(!daemon), app::update, app::view)
+    let mut d = iced::daemon(move || app::boot(!daemon, page.clone()), app::update, app::view)
         .title(app::title)
         .theme(app::theme)
         .subscription(app::subscription)

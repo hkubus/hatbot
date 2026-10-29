@@ -772,6 +772,12 @@ pub struct SettingsChange {
     pub small_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expert_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly_report: Option<WeeklyReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todo_hour: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_tidy: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Default)]
