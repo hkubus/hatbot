@@ -1,0 +1,177 @@
+[
+  {
+    "id": "pi5-cpu-ram",
+    "question": "Which CPU does the Raspberry Pi 5 use, and what is the most RAM a Raspberry Pi 5 has been sold with?",
+    "answer": "Broadcom BCM2712, a quad-core Arm Cortex-A76 at 2.4 GHz; up to 16 GB (the 16 GB model came out in January 2025)."
+  },
+  {
+    "id": "pi5-pcie",
+    "question": "How many PCIe lanes does the Raspberry Pi 5 bring out, and at which PCIe generation does it run by default?",
+    "answer": "One lane (x1), PCIe 2.0 by default; Gen 3 can be enabled but isn't officially supported."
+  },
+  {
+    "id": "pi5-wireless",
+    "question": "Which Wi-Fi standard and which Bluetooth version does the Raspberry Pi 5 support?",
+    "answer": "Dual-band 802.11ac (Wi-Fi 5) and Bluetooth 5.0 (with BLE)."
+  },
+  {
+    "id": "7800x3d",
+    "question": "What is the AMD Ryzen 7 7800X3D's default TDP, and how much L3 cache does it have?",
+    "answer": "120 W TDP; 96 MB of L3 cache."
+  },
+  {
+    "id": "n100",
+    "question": "What is the Intel N100's TDP, and how much memory does Intel say it supports at most?",
+    "answer": "6 W; 16 GB (single channel), per Intel's spec page."
+  },
+  {
+    "id": "ds923-cpu",
+    "question": "Which CPU is in the Synology DS923+, what is that CPU's TDP, and how much RAM does the DS923+ take at most?",
+    "answer": "AMD Ryzen Embedded R1600; its TDP is 12-25 W (configurable, 25 W nominal); up to 32 GB of ECC RAM."
+  },
+  {
+    "id": "990pro",
+    "question": "What is the Samsung 990 Pro 2 TB's rated sequential read speed?",
+    "answer": "Up to 7,450 MB/s."
+  },
+  {
+    "id": "usb-pd-epr",
+    "question": "What is the most power USB Power Delivery 3.1 can carry with Extended Power Range, and at what voltage?",
+    "answer": "240 W, at 48 V and 5 A."
+  },
+  {
+    "id": "thunderbolt5",
+    "question": "What bandwidth does Thunderbolt 5 offer, both ways and with Bandwidth Boost?",
+    "answer": "80 Gbps bidirectional; up to 120 Gbps in one direction with Bandwidth Boost."
+  },
+  {
+    "id": "poe-bt",
+    "question": "How much power can an IEEE 802.3bt Type 4 PoE source supply per port, and how much reaches the powered device?",
+    "answer": "Up to 90 W at the source (PSE); about 71.3 W at the device (PD)."
+  },
+  {
+    "id": "wifi7",
+    "question": "What is Wi-Fi 7's (802.11be) widest channel, and its highest modulation?",
+    "answer": "320 MHz channels; 4096-QAM."
+  },
+  {
+    "id": "zigbee-thread",
+    "question": "Which radio standard do Zigbee and Thread both build on, and in which band do they usually run?",
+    "answer": "IEEE 802.15.4; the 2.4 GHz band."
+  },
+  {
+    "id": "matter-1-0",
+    "question": "When was the Matter 1.0 specification released?",
+    "answer": "4 October 2022."
+  },
+  {
+    "id": "eu-usb-c",
+    "question": "From what date must new phones sold in the EU have a USB-C charging port, and from when does it apply to laptops?",
+    "answer": "28 December 2024 for phones; 28 April 2026 for laptops."
+  },
+  {
+    "id": "win10-eos",
+    "question": "On what date did Windows 10 (Home and Pro) reach the end of support?",
+    "answer": "14 October 2025."
+  },
+  {
+    "id": "linux-rust",
+    "question": "In which Linux kernel version did Rust support first land in mainline, and when was that version released?",
+    "answer": "Linux 6.1, released in December 2022 (11 December)."
+  },
+  {
+    "id": "bcachefs",
+    "question": "In which Linux kernel version was bcachefs merged?",
+    "answer": "Linux 6.7 (released January 2024)."
+  },
+  {
+    "id": "i386-dropped",
+    "question": "In which kernel version did Linux drop support for the Intel 386 CPU?",
+    "answer": "Linux 3.8 (released February 2013)."
+  },
+  {
+    "id": "pve8-base",
+    "question": "Which Debian release and which Linux kernel did Proxmox VE 8.0 ship with, and when was that kernel version released upstream?",
+    "answer": "Debian 12 (Bookworm) and kernel 6.2; Linux 6.2 was released in February 2023."
+  },
+  {
+    "id": "debian-13",
+    "question": "Which Debian version is codenamed Trixie, and when was it released?",
+    "answer": "Debian 13; released on 9 August 2025."
+  },
+  {
+    "id": "luks2-defaults",
+    "question": "What are cryptsetup's default cipher and key derivation function for LUKS2?",
+    "answer": "aes-xts-plain64; Argon2id."
+  },
+  {
+    "id": "openssh-mlkem",
+    "question": "Which OpenSSH release made the ML-KEM post-quantum hybrid key exchange the default?",
+    "answer": "OpenSSH 10.0 (April 2025), with mlkem768x25519-sha256; it was added in 9.9."
+  },
+  {
+    "id": "tls13-rfc",
+    "question": "Which RFC defines TLS 1.3, and in what year was it published?",
+    "answer": "RFC 8446, published August 2018."
+  },
+  {
+    "id": "http-413",
+    "question": "Which HTTP status code does RFC 9110 name \"Content Too Large\"?",
+    "answer": "413."
+  },
+  {
+    "id": "ext4-limits",
+    "question": "On ext4 with 4 KiB blocks, what are the longest file name and the largest file size?",
+    "answer": "255 bytes; 16 TiB."
+  },
+  {
+    "id": "sqlite-max",
+    "question": "What is the largest database SQLite can hold, per its own limits page?",
+    "answer": "About 281 TB (4,294,967,294 pages of 65,536 bytes)."
+  },
+  {
+    "id": "python-313",
+    "question": "When was Python 3.13 released, and which two experimental features did it add to CPython?",
+    "answer": "7 October 2024; a free-threaded build without the GIL, and an experimental JIT compiler."
+  },
+  {
+    "id": "bun-windows",
+    "question": "Which Bun release first supported Windows, and when?",
+    "answer": "Bun 1.1, April 2024."
+  },
+  {
+    "id": "k8s-dockershim",
+    "question": "In which Kubernetes version was dockershim removed?",
+    "answer": "Kubernetes 1.24 (May 2022)."
+  },
+  {
+    "id": "steam-deck-oled",
+    "question": "What are the Steam Deck OLED's battery capacity and screen size?",
+    "answer": "50 Wh; 7.4 inches."
+  },
+  {
+    "id": "framework-16-gpu",
+    "question": "Which graphics card was the first GPU module for the Framework Laptop 16?",
+    "answer": "AMD Radeon RX 7700S."
+  },
+  {
+    "id": "ha-green",
+    "question": "Which chip is in the Home Assistant Green, and how much RAM does it have?",
+    "answer": "Rockchip RK3566; 4 GB of LPDDR4."
+  },
+  {
+    "id": "everest",
+    "question": "What height for Mount Everest did China and Nepal announce together in 2020?",
+    "answer": "8,848.86 m."
+  },
+  {
+    "id": "warsaw-m2",
+    "question": "When did the first section of Warsaw Metro line M2 open?",
+    "answer": "8 March 2015."
+  },
+  {
+    "id": "poland-vat",
+    "question": "Since when has Poland's standard VAT rate been 23%?",
+    "answer": "1 January 2011."
+  }
+]
