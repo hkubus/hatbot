@@ -13,7 +13,8 @@ const HOW = `How Hatbot works
 - Spending has daily and monthly limits for everything; the last part of each is kept for alerts. Research tasks have a limit each; other tasks have none of their own.
 - Memory is a git repo of markdown files: every write is a commit the owner can review and revert.
 - Every task keeps a timeline of its steps: tool calls, approvals, blocks and notes.
-- On a Proxmox install, the brain's API token can audit, power guests on and off, and snapshot Hatbot's own guests. The SSH plugin reaches containers only through /usr/local/sbin/hatbot-pct-exec, which runs one command in one running container and refuses Hatbot's own; the hatbot user's sudo allows that program and nothing else.`;
+- On a Proxmox install, the brain's API token can audit, power guests on and off, and snapshot Hatbot's own guests. The SSH plugin reaches containers only through /usr/local/sbin/hatbot-pct-exec, which runs one command in one running container and refuses Hatbot's own; the hatbot user's sudo allows that program and nothing else.
+- Helpers (ask_helpers) run on the small model with this bot's lookups and the web, and can't change anything.`;
 
 const KINDS: Record<SafetyKind, string> = {
   send: "messages to people",

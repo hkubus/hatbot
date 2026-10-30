@@ -76,6 +76,13 @@ const META: Record<string, Meta> = {
   ask_bot: { plugin: "tasks", label: "Asking another bot", places: CHAT, when: withOthers },
   get_task: { plugin: "tasks", label: "Checking on a task", places: CHAT },
   steer_task: { plugin: "tasks", label: "Steering a task", places: CHAT },
+  ask_helpers: {
+    plugin: "tasks",
+    label: "Asking helpers",
+    access: "read",
+    places: WORK,
+    incognito: false,
+  },
   hatbot_about: {
     plugin: "about",
     label: "Checking how Hatbot is set up",

@@ -45,6 +45,7 @@ import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
 import { aboutHatbot } from "./about";
 import type { Chats } from "./chats";
+import { AskHelpersInput, askHelpers, MAX_HELPERS } from "./helpers";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
 export {
@@ -729,6 +730,31 @@ export const TOOLS = [
         ...(task.summary ? [untrustedBlock("summary", task.summary, from)] : []),
         ...(steps ? [untrustedBlock("steps", steps, from)] : []),
       ].join("\n");
+    },
+  }),
+  def({
+    name: "ask_helpers",
+    description: `Hand parts of a job to helpers that look things up at once: up to ${MAX_HELPERS}, each on the small model with your plugins' read tools, memory and the web, and nothing that changes anything. Use it when each part takes several lookups (one host, service or account each), to check them side by side and keep the detail out of your own context. A helper can't see this conversation or the other parts, so each brief says everything. Waits until they're done and returns what each found. After untrusted content, a brief can't hold links.`,
+    schema: AskHelpersInput,
+    run: async (
+      input,
+      { tasks, bot, taskId, episodeId, conversationId, tainted, taint },
+      signal,
+    ) => {
+      if (!tasks || !bot) return "Helpers aren't available here.";
+      return askHelpers(
+        {
+          tasks,
+          bot,
+          signal,
+          taskId,
+          episodeId,
+          conversationId,
+          tainted: () => tainted?.() ?? null,
+          taint: (by) => taint?.(by),
+        },
+        input,
+      );
     },
   }),
   def({
