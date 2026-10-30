@@ -94,8 +94,8 @@ function helpers(model: FakeModel) {
   };
 }
 
-const finish = (answer: string, report: string, notify = true) => ({
-  content: [toolUse("finish_research", { outcome: "done", answer, report, notify })],
+const finish = (answer: string, report: string, unverified = "", notify = true) => ({
+  content: [toolUse("finish_research", { outcome: "done", answer, report, unverified, notify })],
 });
 const INVESTIGATE = {
   content: [
@@ -155,6 +155,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
     finish(
       "Get the **DS925+**: it's **2,399 zł** [2] and quiet [1].",
       "## Answer\n\nThe DS925+ [1, 2].\n\n| NAS | Noise |\n|---|---|\n| DS925+ | 22.4 dB(A) [1] |",
+      "- Its noise under load [1]: not on the page.",
     ),
   ]);
   helpers(work);
@@ -190,7 +191,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   const report = await t.memory.read(REPORT_PATH);
   expect(report).toContain("| DS925+ | 22.4 dB(A) [[2]](https://www.synology.com/ds925+/spec) |");
   expect(report).toContain(
-    "## Sources\n\n1. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925), undated, primary\n2. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2026-04, primary",
+    "## Could not verify\n\n- Its noise under load [[2]](https://www.synology.com/ds925+/spec): not on the page.\n\n## Sources\n\n1. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925), undated, primary\n2. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2026-04, primary",
   );
   expect(t.attachments.forTask(task.id).map((f) => f.name)).toEqual([
     "quiet-nas-for-four-drives.md",
@@ -215,6 +216,7 @@ test("the check runs once, on a finish it can check; citations that aren't sourc
           outcome: "failed",
           answer: "Couldn't [9].",
           report: "",
+          unverified: "",
           notify: true,
         }),
       ],

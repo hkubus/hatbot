@@ -116,6 +116,12 @@ export const FinishResearch = z.object({
     .string()
     .max(60_000)
     .describe("The full report in markdown, citing as [n]. Empty if it failed"),
+  unverified: z
+    .string()
+    .max(6000)
+    .describe(
+      "Markdown list: each claim you dropped or couldn't confirm, with why (not found, only in a search result, the quote wasn't on the page, the check found it unsupported, sources disagree and nothing settles it). Empty if there's none",
+    ),
   notify: z.boolean().describe("true unless this was a routine refresh where nothing changed"),
 });
 export type ResearchResult = z.infer<typeof FinishResearch>;
@@ -909,6 +915,8 @@ export async function finishResearch(
   const { d, task } = run;
   const { sources } = state;
   const texts = [result.answer, result.report];
+  /** Citations anywhere, the could-not-verify list's too; that list itself isn't checked. */
+  const all = [...texts, result.unverified];
   state.draft = result;
   // The chat was told research ends in a saved report.
   if (result.outcome === "done" && !result.report.trim())
@@ -918,7 +926,7 @@ export async function finishResearch(
     };
   // Citations that aren't sources go back every time; the rest is checked on the first report
   // that's done, not on a failed one before it or one that cites no source yet.
-  const unknown = citedIn(texts).filter((n) => !sources.get(n));
+  const unknown = citedIn(all).filter((n) => !sources.get(n));
   const check =
     state.checked || result.outcome !== "done"
       ? null
@@ -971,7 +979,7 @@ export async function finishResearch(
   }
 
   // Numbered as first cited, the answer's first; the report's list has the same numbers.
-  const order = citedIn(texts).filter((n) => sources.get(n));
+  const order = citedIn(all).filter((n) => sources.get(n));
   const renumber = new Map(
     order.map((n, i) => [n, { k: i + 1, url: (sources.get(n) as Source).url }]),
   );
@@ -985,6 +993,7 @@ export async function finishResearch(
   const content = [
     head(run, unchecked),
     linked(result.report.trim(), renumber),
+    ...couldNotVerify(result.unverified, renumber),
     ...sourceList(sources, order, d.clock()),
   ].join("\n\n");
   const saved = await saveReport(run, content);
@@ -1014,6 +1023,10 @@ function howRead(sources: ResearchSources, s: Source): string[] {
 function sourceLine(sources: ResearchSources, s: Source, k: number, now: number): string {
   const about = [...aboutSource(s, now), ...howRead(sources, s)];
   return `${k}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)}), ${about.join(", ")}`;
+}
+
+function couldNotVerify(text: string, renumber: Map<number, { k: number; url: string }>): string[] {
+  return text.trim() ? ["## Could not verify", linked(text.trim(), renumber)] : [];
 }
 
 function sourceList(sources: ResearchSources, order: number[], now: number): string[] {
@@ -1087,12 +1100,11 @@ export async function keepUnfinished(
   try {
     // Numbered as the helpers' findings were, which the draft cites.
     const all = sources.list.map((s) => s.n);
+    const same = new Map(all.map((n) => [n, { k: n, url: (sources.get(n) as Source).url }]));
     const body = draft
       ? [
-          linked(
-            draft.report.trim() || draft.answer.trim(),
-            new Map(all.map((n) => [n, { k: n, url: (sources.get(n) as Source).url }])),
-          ),
+          linked(draft.report.trim() || draft.answer.trim(), same),
+          ...couldNotVerify(draft.unverified, same),
           ...sourceList(sources, all, run.d.clock()),
         ]
       : [
