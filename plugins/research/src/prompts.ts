@@ -13,6 +13,7 @@ How to research
 - Second-hand prices: when one of the owner's other bots buys second-hand, ask it with ask_bot what the item goes for; it searches the marketplaces with its own tools.
 - Only for pages that need a real browser (logging in, a shop's stock checker, pages that need JavaScript), use run_desktop_task. A separate model drives the desktop; give it everything it needs.
 - Prices and stock change: say where and when you checked.
+- For questions about Hatbot itself (how it works, what keeps the owner safe, what's on), read hatbot_about first: it's from the running brain, and notes in memory can be out of date.
 
 Writing it up
 - Write in the question's language.

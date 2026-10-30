@@ -76,6 +76,12 @@ const META: Record<string, Meta> = {
   ask_bot: { plugin: "tasks", label: "Asking another bot", places: CHAT, when: withOthers },
   get_task: { plugin: "tasks", label: "Checking on a task", places: CHAT },
   steer_task: { plugin: "tasks", label: "Steering a task", places: CHAT },
+  hatbot_about: {
+    plugin: "about",
+    label: "Checking how Hatbot is set up",
+    access: "read",
+    places: ALL,
+  },
   thread_open: { plugin: "threads", label: "Opening a thread", places: CHAT, when: mainChat },
   thread_read: {
     plugin: "threads",
@@ -97,6 +103,7 @@ const NAMES: Record<string, string> = {
   memory: "Memory",
   tasks: "Tasks",
   threads: "Threads",
+  about: "About Hatbot",
 };
 
 /** A call's own part of what a core tool sees; its requests to the desktop end with the call. */

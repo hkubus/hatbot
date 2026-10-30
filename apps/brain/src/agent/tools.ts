@@ -43,6 +43,7 @@ import { NEGOTIATE_TOOL_NAMES } from "../negotiate/names";
 import { describeCall, runPluginTool } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Tasks } from "../tasks/service";
+import { aboutHatbot } from "./about";
 import type { Chats } from "./chats";
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
@@ -86,6 +87,8 @@ export type ToolContext = {
     call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
+  /** The commit the brain runs, when it was deployed from one. */
+  release?: () => string | null;
 };
 
 export const NeedsYou = z
@@ -727,6 +730,14 @@ export const TOOLS = [
         ...(steps ? [untrustedBlock("steps", steps, from)] : []),
       ].join("\n");
     },
+  }),
+  def({
+    name: "hatbot_about",
+    description:
+      "How you yourself work and how you're set up now, from the running brain: what asks the owner and what the safety review decides, untrusted content, approvals, pausing, spending limits and what's spent, models, your plugins and what each tool looks at or changes. Answer questions about yourself from this, not from memory.",
+    schema: z.object({}),
+    run: async (_, { tasks, bot, release }) =>
+      tasks && bot ? aboutHatbot(tasks, bot, release?.() ?? null) : "Not available here.",
   }),
   def({
     name: "steer_task",

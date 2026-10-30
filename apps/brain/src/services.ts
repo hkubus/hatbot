@@ -140,6 +140,7 @@ export async function createServices(o: Outside) {
       attachments,
       desktop: desktop()?.agent,
       settings,
+      release: () => updates.info().current?.sha ?? null,
     })),
   ];
   const installer = new Installer({
