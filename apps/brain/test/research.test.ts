@@ -39,13 +39,15 @@ const NOISE = {
   quote: "Noise level: 22.4 dB(A)",
   url: "https://www.synology.com/ds925+/spec",
   title: "DS925+ specifications",
-  date: "2025-04",
+  date: "2026-04",
+  kind: "primary",
 };
 const PRICE = {
   claim: "The DS925+ costs 2,399 zł at x-kom.",
   quote: "Synology DS925+ 2 399,00 zł",
   url: "https://www.x-kom.pl/p/ds925",
   title: "Synology DS925+ | x-kom",
+  kind: "primary",
 };
 
 const fetched = (url: string, data: string, id: string): Block[] => [
@@ -169,10 +171,10 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
 
   const findings = resultsIn(work.requests.at(-1));
   expect(findings).toContain(
-    '[1] "DS925+ specifications" https://www.synology.com/ds925+/spec "2025-04"',
+    '[1] "DS925+ specifications" https://www.synology.com/ds925+/spec "2026-04"',
   );
   expect(findings).toContain('[2] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925');
-  expect(findings.match(/Unconfirmed: the quote isn't in what the helper read/g)).toHaveLength(1);
+  expect(findings.match(/Unconfirmed: the helper didn't fetch this page/g)).toHaveLength(1);
 
   // The check reads the confirmed quotes only, as data.
   const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
@@ -188,7 +190,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   const report = await t.memory.read(REPORT_PATH);
   expect(report).toContain("| DS925+ | 22.4 dB(A) [[2]](https://www.synology.com/ds925+/spec) |");
   expect(report).toContain(
-    "## Sources\n\n1. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925)\n2. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2025-04",
+    "## Sources\n\n1. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925), undated, primary\n2. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2026-04, primary",
   );
   expect(t.attachments.forTask(task.id).map((f) => f.name)).toEqual([
     "quiet-nas-for-four-drives.md",
@@ -391,6 +393,52 @@ const SPEC_PDF = Buffer.from(
   ].join("\n"),
 ).toString("base64");
 
+test("a report's sources say their date or that they have none, their kind, when they're old, and when their quotes weren't checked", async () => {
+  const LAUNCH = "https://www.synology.com/news/ds925";
+  const FORUM = "https://forum.example.com/ds925-noise";
+  const work = new FakeModel([
+    ONE_PART,
+    finish("Quiet [1], they say [2], or not [3].", "Quiet [1], they say [2], or not [3]."),
+  ]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...fetched(NOISE.url, SPEC_PAGE, "srvtoolu_spec"),
+            ...fetched(LAUNCH, "The quietest NAS we've made.", "srvtoolu_launch"),
+            toolUse("report_findings", {
+              findings: [
+                NOISE,
+                {
+                  claim: "Synology calls it its quietest.",
+                  quote: "The quietest NAS ever",
+                  url: LAUNCH,
+                  title: "Launch",
+                  date: "March 2024",
+                  kind: "maker",
+                },
+                { ...NOISE, claim: "Loud.", quote: "It's loud", url: FORUM, title: "Forum" },
+              ],
+              gaps: "",
+            }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  expect(resultsIn(work.requests.findLast((r) => !isHelper(r)))).toContain(
+    '[2] "Launch" https://www.synology.com/news/ds925 "March 2024" (maker\'s claim; over a year old)',
+  );
+  expect(await t.memory.read(task.reportPath as string)).toContain(
+    [
+      "1. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2026-04, primary",
+      "2. [Launch](https://www.synology.com/news/ds925), March 2024, maker's claim, over a year old, quotes not found on the page",
+      "3. [Forum](https://forum.example.com/ds925-noise), 2026-04, primary, search result only",
+    ].join("\n"),
+  );
+});
+
 test("a quote from a fetched PDF is checked against the PDF's text", async () => {
   const work = new FakeModel([ONE_PART, finish("It's **22.4 dB(A)** [1].", "Quiet [1].")]);
   const OTHER = "https://www.synology.com/ds925+/datasheet";
@@ -459,7 +507,9 @@ test("a finding's page is an http(s) link without tracking, one page is one sour
   // The shortcut link went back to the helper as invalid.
   expect(resultsIn(work.requests[2])).toContain("Invalid input");
   const findings = resultsIn(work.requests.at(-1));
-  expect(findings).toContain('[1] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925\n');
+  expect(findings).toContain(
+    '[1] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925 (undated; primary)\n',
+  );
   expect(findings).not.toContain("[2]");
   expect(findings.match(/<\/findings>/g)).toHaveLength(1);
   expect(findings.match(/<\/part>/g)).toHaveLength(1);

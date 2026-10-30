@@ -59,6 +59,14 @@ const Part = z.object({
 });
 const Investigate = z.object({ parts: z.array(Part).min(1).max(MAX_PARTS) });
 
+const KINDS = ["primary", "maker", "independent"] as const;
+type Kind = (typeof KINDS)[number];
+const KIND_LABEL: Record<Kind, string> = {
+  primary: "primary",
+  maker: "maker's claim",
+  independent: "independent",
+};
+
 // Kept short: the lead keeps every finding for the whole run, five helpers' worth each round.
 const Finding = z.object({
   claim: z.string().min(1).max(300).describe("What the page says, in your words, with its numbers"),
@@ -77,7 +85,12 @@ const Finding = z.object({
     .string()
     .max(40)
     .optional()
-    .describe("When the page was published or last updated, if it says"),
+    .describe("When the page was published or last updated, if it says; left out if it doesn't"),
+  kind: z
+    .enum(KINDS)
+    .describe(
+      "primary: where the fact itself comes from (official docs, specs, papers, data, a shop's own price); maker: what a maker says to sell its own product (launch posts, marketing, its own benchmarks); independent: others' tests, reviews, press and owners' reports",
+    ),
 });
 const ReportFindings = z.object({
   findings: z.array(Finding).max(15),
@@ -147,8 +160,41 @@ const folderOf = (bot: { id: string }) => {
   return folder ? `${folder}/research` : "research";
 };
 
-/** `read`: a helper read the page, so its link is one the task has. */
-type Source = { n: number; url: string; title: string; date?: string; read?: boolean };
+/**
+ * `read`: a helper's search or fetch came back with the page, so its link is one the task has.
+ * `fetched`: a helper read the page itself, not only a search result.
+ */
+type Source = {
+  n: number;
+  url: string;
+  title: string;
+  date?: string;
+  kind?: Kind;
+  read?: boolean;
+  fetched?: boolean;
+};
+
+const YEAR_MS = 365 * 24 * 3600_000;
+
+/**
+ * Whether a page's date is over a year before `now`. A date with only its year is old once that whole
+ * year is; one that can't be read isn't.
+ */
+export function isOld(date: string, now: number): boolean {
+  const ms = Date.parse(date);
+  if (!Number.isNaN(ms)) return now - ms > YEAR_MS;
+  const year = date.match(/\b(?:19|20)\d{2}\b/)?.[0];
+  return year !== undefined && now - Date.UTC(Number(year) + 1, 0, 1) > YEAR_MS;
+}
+
+/** A source's date, or that it has none, its kind, and whether it's old, as the lead and the report see them. */
+function aboutSource(s: Source, now: number): string[] {
+  return [
+    s.date ?? "undated",
+    ...(s.kind ? [KIND_LABEL[s.kind]] : []),
+    ...(s.date && isOld(s.date, now) ? ["over a year old"] : []),
+  ];
+}
 
 /** One page, one source: without its fragment, tracking parameters or a trailing slash. */
 export function pageUrl(url: string): string {
@@ -203,6 +249,7 @@ export function quoteFound(quote: string, read: string): boolean {
 type Read = {
   texts: string[];
   visited: Set<string>;
+  fetched: Set<string>;
   unreadable: { pages: Set<string>; code: boolean };
 };
 
@@ -228,6 +275,7 @@ async function addRead(content: Anthropic.Beta.BetaContentBlock[], into: Read) {
       into.texts.push(title ?? "", text ?? "");
       const url = page(b.content.url);
       if (url) into.visited.add(url);
+      if (url) into.fetched.add(url);
       if (url && text === null) into.unreadable.pages.add(url);
     } else if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
       for (const r of b.content) {
@@ -263,15 +311,23 @@ export class ResearchSources {
   readonly list: Source[] = [];
   readonly findings: Quoted[] = [];
 
-  add(f: z.infer<typeof Finding>, confirmed = true, unchecked = false, read = false): number {
+  add(
+    f: Omit<z.infer<typeof Finding>, "kind"> & { kind?: Kind },
+    confirmed = true,
+    unchecked = false,
+    read = false,
+    fetched = false,
+  ): number {
     const url = pageUrl(f.url);
     let s = this.list.find((x) => x.url === url);
     if (!s) {
       s = { n: this.list.length + 1, url, title: f.title.trim() || url };
-      if (f.date?.trim()) s.date = f.date.trim();
       this.list.push(s);
     }
+    if (!s.date && f.date?.trim()) s.date = f.date.trim();
+    if (!s.kind && f.kind) s.kind = f.kind;
     if (read) s.read = true;
+    if (fetched) s.fetched = true;
     this.findings.push({
       n: s.n,
       claim: f.claim,
@@ -412,6 +468,7 @@ type HelperReport = Findings & {
   read: string;
   unreadable?: { pages: Set<string>; code: boolean };
   visited?: Set<string>;
+  fetched?: Set<string>;
 };
 
 const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "report_findings" };
@@ -427,14 +484,16 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   const read: Read = {
     texts: [],
     visited: new Set(),
+    fetched: new Set(),
     unreadable: { pages: new Set(), code: false },
   };
-  const { texts, unreadable, visited } = read;
+  const { texts, unreadable, visited, fetched } = read;
   const done = (r: Findings & { note?: string }): HelperReport => ({
     ...r,
     read: plain(texts.join("\n")),
     unreadable,
     visited,
+    fetched,
   });
   const stopped = (note: string) => done({ findings: [], gaps: "", note });
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -643,15 +702,17 @@ export async function investigate(
       const unchecked =
         !confirmed &&
         Boolean(r.unreadable && (r.unreadable.code || r.unreadable.pages.has(pageUrl(f.url))));
-      const n = sources.add(f, confirmed, unchecked, r.visited?.has(pageUrl(f.url)));
+      const url = pageUrl(f.url);
+      const n = sources.add(f, confirmed, unchecked, r.visited?.has(url), r.fetched?.has(url));
       bySource.set(n, [
         ...(bySource.get(n) ?? []),
-        `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${confirmed ? "" : unchecked ? `\n  ${UNCHECKED}` : "\n  Unconfirmed: the quote isn't in what the helper read."}`,
+        `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${confirmed ? "" : `\n  ${unchecked ? UNCHECKED : r.fetched?.has(url) ? NOT_ON_PAGE : NOT_FETCHED}`}`,
       ]);
     }
     const found = [...bySource].map(([n, lines]) => {
       const s = sources.get(n) as Source;
-      return `[${n}] ${tagJson(s.title)} ${s.url}${s.date ? ` ${tagJson(s.date)}` : ""}\n${lines.join("\n")}`;
+      const about = aboutSource(s, run.d.clock()).slice(s.date ? 1 : 0);
+      return `[${n}] ${tagJson(s.title)} ${s.url}${s.date ? ` ${tagJson(s.date)}` : ""}${about.length ? ` (${about.join("; ")})` : ""}\n${lines.join("\n")}`;
     });
     return [
       `<part topic=${tagJson(part.topic)}>`,
@@ -671,6 +732,8 @@ export async function investigate(
   };
 }
 
+const NOT_ON_PAGE = "Unconfirmed: the quote isn't in what the helper read.";
+const NOT_FETCHED = "Unconfirmed: the helper didn't fetch this page, so its quote isn't checked.";
 const UNCHECKED =
   "Unchecked: the helper read it through code, or in a PDF whose text couldn't be read here.";
 
@@ -914,17 +977,10 @@ export async function finishResearch(
   const unchecked = state.unchecked
     ? `The numbers weren't checked against their sources (${state.unchecked}).`
     : "";
-  // Cited sources whose quotes the check took as they were, since their pages couldn't be read here.
-  const unread = order.filter((n) =>
-    sources.findings.some((f) => f.n === n && f.unchecked && !f.confirmed),
-  );
-  const unreadNote = unread.length
-    ? `Quotes from ${unread.map((n) => `[${renumber.get(n)?.k}]`).join(", ")} couldn't be checked against their pages (read through code, or PDFs that couldn't be read).`
-    : "";
   const content = [
-    head(run, [unchecked, unreadNote].filter(Boolean).join(" ")),
+    head(run, unchecked),
     linked(result.report.trim(), renumber),
-    ...sourceList(sources, order),
+    ...sourceList(sources, order, d.clock()),
   ].join("\n\n");
   const saved = await saveReport(run, content);
   return {
@@ -941,11 +997,22 @@ function head(run: { d: Deps; task: Task }, note: string): string {
   ].join("\n\n");
 }
 
-function sourceList(sources: ResearchSources, order: number[]): string[] {
-  const list = order.map((n, i) => {
-    const s = sources.get(n) as Source;
-    return `${i + 1}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)})${s.date ? `, ${s.date}` : ""}`;
-  });
+/** How a source's quotes stand, when none of them was found in what the helper read. */
+function howRead(sources: ResearchSources, s: Source): string[] {
+  const quotes = sources.findings.filter((f) => f.n === s.n);
+  if (!quotes.length || quotes.some((f) => f.confirmed)) return [];
+  if (quotes.some((f) => f.unchecked)) return ["quotes not checked: read through code or a PDF"];
+  return [s.fetched ? "quotes not found on the page" : "search result only"];
+}
+
+/** A source in a report's list: its link, date or "undated", kind, age and how it was read. */
+function sourceLine(sources: ResearchSources, s: Source, k: number, now: number): string {
+  const about = [...aboutSource(s, now), ...howRead(sources, s)];
+  return `${k}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)}), ${about.join(", ")}`;
+}
+
+function sourceList(sources: ResearchSources, order: number[], now: number): string[] {
+  const list = order.map((n, i) => sourceLine(sources, sources.get(n) as Source, i + 1, now));
   return list.length ? ["## Sources", list.join("\n")] : [];
 }
 
@@ -1021,7 +1088,7 @@ export async function keepUnfinished(
             draft.report.trim() || draft.answer.trim(),
             new Map(all.map((n) => [n, { k: n, url: (sources.get(n) as Source).url }])),
           ),
-          ...sourceList(sources, all),
+          ...sourceList(sources, all, run.d.clock()),
         ]
       : [
           "## What the helpers found",
@@ -1033,7 +1100,7 @@ export async function keepUnfinished(
                   (f) =>
                     `   - ${f.claim} "${f.quote}"${f.confirmed ? "" : f.unchecked ? " (the page couldn't be read to check the quote)" : " (the quote wasn't found on the page)"}`,
                 );
-              return `${s.n}. [${s.title.replace(/[[\]]/g, "")}](${linkUrl(s.url)})${s.date ? `, ${s.date}` : ""}\n${found.join("\n")}`;
+              return `${sourceLine(sources, s, s.n, run.d.clock())}\n${found.join("\n")}`;
             })
             .join("\n"),
         ];
@@ -1047,7 +1114,9 @@ export async function keepUnfinished(
 }
 
 const JSON_STRING = String.raw`"(?:[^"\\]|\\.)*"`;
-const SOURCE_LINE = new RegExp(String.raw`^\[\d+\] (${JSON_STRING}) (\S+)(?: (${JSON_STRING}))?$`);
+const SOURCE_LINE = new RegExp(
+  String.raw`^\[\d+\] (${JSON_STRING}) (\S+)(?: (${JSON_STRING}))?(?: \(([^)]*)\))?$`,
+);
 const CLAIM_LINE = new RegExp(`^- (${JSON_STRING})$`);
 const QUOTE_LINE = new RegExp(`^  Quote: (${JSON_STRING})$`);
 
@@ -1056,14 +1125,19 @@ const QUOTE_LINE = new RegExp(`^  Quote: (${JSON_STRING})$`);
  * numbers come out the same.
  */
 function readFindings(result: string, sources: ResearchSources) {
-  let source: { title: string; url: string; date?: string } | null = null;
+  let source: { title: string; url: string; date?: string; kind?: Kind } | null = null;
   let claim: string | null = null;
   for (const line of result.split("\n")) {
     const s = SOURCE_LINE.exec(line);
     const c = CLAIM_LINE.exec(line);
     const q = QUOTE_LINE.exec(line);
     if (s?.[1] && s[2])
-      source = { title: JSON.parse(s[1]), url: s[2], date: s[3] ? JSON.parse(s[3]) : undefined };
+      source = {
+        title: JSON.parse(s[1]),
+        url: s[2],
+        date: s[3] ? JSON.parse(s[3]) : undefined,
+        kind: KINDS.find((k) => s[4]?.split("; ").includes(KIND_LABEL[k])),
+      };
     else if (c?.[1]) claim = JSON.parse(c[1]);
     else if (q?.[1] && source && claim !== null) {
       sources.add({ ...source, claim, quote: JSON.parse(q[1]) });
@@ -1072,6 +1146,8 @@ function readFindings(result: string, sources: ResearchSources) {
       const last = sources.findings.at(-1);
       if (last) last.confirmed = false;
       if (last && line.startsWith("  Unchecked:")) last.unchecked = true;
+      const s = last && sources.get(last.n);
+      if (s && line !== `  ${NOT_FETCHED}`) s.fetched = true;
     }
   }
 }
