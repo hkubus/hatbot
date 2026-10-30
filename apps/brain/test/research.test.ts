@@ -375,6 +375,56 @@ test("research's notes, read back, are untrusted and taint the reader; other not
   expect(tainted).toHaveLength(2);
 });
 
+/** A one-page PDF that says "Noise level: 22.4 dB(A)". */
+const SPEC_PDF = Buffer.from(
+  [
+    "%PDF-1.4",
+    "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+    "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj",
+    "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj",
+    "4 0 obj<</Length 54>>stream",
+    "BT /F1 12 Tf 10 50 Td (Noise level: 22.4 dB\\(A\\)) Tj ET",
+    "endstream endobj",
+    "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj",
+    "trailer<</Root 1 0 R>>",
+    "%%EOF",
+  ].join("\n"),
+).toString("base64");
+
+test("a quote from a fetched PDF is checked against the PDF's text", async () => {
+  const work = new FakeModel([ONE_PART, finish("It's **22.4 dB(A)** [1].", "Quiet [1].")]);
+  const OTHER = "https://www.synology.com/ds925+/datasheet";
+  const pdf = (url: string, data: string, id: string): Block[] => {
+    const [use, result] = fetched(url, "", id) as [Block, Block];
+    const r = result as unknown as { content: { content: { source: unknown } } };
+    r.content.content.source = { type: "base64", media_type: "application/pdf", data };
+    return [use, result];
+  };
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...pdf(NOISE.url, SPEC_PDF, "srvtoolu_pdf"),
+            ...pdf(OTHER, "bm90IGEgcGRm", "srvtoolu_bad"),
+            toolUse("report_findings", {
+              findings: [
+                NOISE,
+                { ...NOISE, claim: "Louder.", quote: "Noise level: 30 dB(A)", url: OTHER },
+              ],
+              gaps: "",
+            }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  await startResearch(t);
+  const findings = resultsIn(work.requests.findLast((r) => !isHelper(r)));
+  // The PDF read: the first quote is in it. One fetch wouldn't open, so the other is only unchecked.
+  expect(findings).toContain('Quote: "Noise level: 22.4 dB(A)"\n[2]');
+  expect(findings.match(/Unchecked:/g)).toHaveLength(1);
+});
+
 test("a finding's page is an http(s) link without tracking, one page is one source, and its text can't close the findings", async () => {
   const work = new FakeModel([ONE_PART, finish("It's **2,399 zł** [1].", "The DS925+ [1].")]);
   let tries = 0;
