@@ -1,5 +1,5 @@
 // Research: a background task that plans a question, hands its parts to helpers that search at once,
-// checks the numbers it cites against what the pages said, and ends in a saved, cited report.
+// checks what it cites against what the pages said, and ends in a saved, cited report.
 import {
   definePlugin,
   hosts,
@@ -56,7 +56,7 @@ export const researchPlugin = definePlugin({
   id: "research",
   name: "Research",
   description:
-    "Research tasks: many searches and pages at once, the numbers checked against their sources, and a cited report saved in memory.",
+    "Research tasks: many searches and pages at once, what the report says checked against its sources, and a cited report saved in memory.",
   config: z.object({}),
   defaultOn: true,
   allBots: true,
@@ -81,7 +81,7 @@ const researchTool = (d: Deps) =>
   tool({
     name: "research",
     description:
-      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, the numbers it cites are checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
+      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
     schema: ResearchInput,
     access: "own",
     places: ["chat"],

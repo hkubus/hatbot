@@ -176,10 +176,10 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   expect(findings).toContain('[2] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925');
   expect(findings.match(/Unconfirmed: the helper didn't fetch this page/g)).toHaveLength(1);
 
-  // The check reads the confirmed quotes only, as data.
+  // The check reads the question and the confirmed quotes only, as data.
   const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
   expect(String(check?.messages[0]?.content)).toStartWith(
-    '<sources trusted="false">\n[2] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[1] "DS925+ specifications"\n- "Noise level: 22.4 dB(A)"\n</sources>',
+    '<question trusted="false">\nWhich quiet four-bay NAS should I buy, under 3,000 zł?\n</question>\n\n<sources trusted="false">\n[2] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[1] "DS925+ specifications"\n- "Noise level: 22.4 dB(A)"\n</sources>',
   );
 
   // Renumbered as first cited, as links; saved in memory and attached.
@@ -206,7 +206,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   expect(purposes.map((p) => p.purpose)).toEqual(["research", "task"]);
 });
 
-test("the number check runs once, on a finish it can check; citations that aren't sources always go back", async () => {
+test("the check runs once, on a finish it can check; citations that aren't sources always go back", async () => {
   const work = new FakeModel([
     INVESTIGATE,
     {
@@ -244,7 +244,7 @@ test("the number check runs once, on a finish it can check; citations that aren'
   expect(checks).toBe(2);
   expect(task.status).toBe("done");
   expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
-  expect(await t.memory.read(task.reportPath as string)).not.toContain("weren't checked");
+  expect(await t.memory.read(task.reportPath as string)).not.toContain("wasn't checked");
 });
 
 test("a quote is found in what the helper read, whatever the spaces and number format, but not a number copied wrong", () => {
@@ -583,15 +583,15 @@ test("a brief or a desktop task may name only links the task already has, tracki
   expect(task.status).toBe("done");
 });
 
-test("a number check that would go over the task's limit doesn't run, and the report says it's unchecked", async () => {
+test("a check that would go over the task's limit doesn't run, and the report says it's unchecked", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Get the DS925+ [1].", "Report [1].")]);
   helpers(work);
   work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
   const t = await testApp(new FakeModel(), work);
   const check = t.spend.check.bind(t.spend);
   t.spend.check = (usd, ...rest) => {
-    // Only the number check's own call is made from checkNumbers.
-    if (new Error().stack?.includes("checkNumbers"))
+    // Only the check's own call is made from checkReport.
+    if (new Error().stack?.includes("checkReport"))
       throw new BudgetError("task", "This task would go over its $3 limit.");
     return check(usd, ...rest);
   };
@@ -599,7 +599,7 @@ test("a number check that would go over the task's limit doesn't run, and the re
   expect(task.status).toBe("done");
   expect(work.creates.find((p) => p.system === RESEARCH_CHECK_PROMPT)).toBeUndefined();
   expect(await t.memory.read(task.reportPath as string)).toContain(
-    "The numbers weren't checked against their sources (a spending limit stopped it)._",
+    "It wasn't checked against its sources (a spending limit stopped it)._",
   );
 });
 

@@ -1,6 +1,6 @@
 // The lead plans the question and hands parts to Haiku helpers that search at once; each finding
 // comes back with the quote it rests on and a numbered source. Before the report is final, Haiku
-// checks its numbers against those quotes.
+// checks what it says against those quotes.
 import type Anthropic from "@anthropic-ai/sdk";
 import {
   BudgetError,
@@ -30,7 +30,7 @@ import { z } from "zod";
 import { pdfText } from "./pdf";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "./prompts";
 
-/** Room for the number check's thinking and its verdict. */
+/** Room for the check's thinking and its verdict. */
 const CHECK_TOKENS = 16000;
 export const MAX_RESEARCH_STEPS = 60;
 /** The API's task budget for the research loop: the model paces itself to finish within it. */
@@ -134,7 +134,7 @@ export const RESEARCH_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "finish_research",
     description:
-      "End the research with the answer for the chat and the full report, citing sources as [n]. First, the numbers you cite as [n] are checked against the quotes the helpers copied from those pages (confirmed and unchecked ones, not unconfirmed); a mismatch comes back to fix. Numbers you link or don't cite aren't checked. Call it once.",
+      "End the research with the answer for the chat and the full report, citing sources as [n]. First, what you cite as [n] is checked against the quotes the helpers copied from those pages (confirmed and unchecked ones, not unconfirmed), and numbers without a citation are listed; a problem comes back to fix. Call it once.",
     schema: FinishResearch,
   }),
 ];
@@ -350,7 +350,7 @@ export class ResearchState {
   /** finish_research went through: what it ended with is the run's. */
   finished = false;
   /**
-   * The numbers are checked the first time it finishes as done citing a source, and again after a
+   * The report is checked the first time it finishes as done citing a source, and again after a
    * check that failed; `unchecked` says why the last one failed.
    */
   checked = false;
@@ -696,7 +696,7 @@ export async function investigate(
     const bySource = new Map<number, string[]>();
     // What came from the pages is in JSON strings, so it can't close the tags around it.
     for (const f of r.findings) {
-      // A quote the helper typed but didn't read can't check a number. One from a page that can't be
+      // A quote the helper typed but didn't read can't check a claim. One from a page that can't be
       // read here (a PDF it couldn't open, or code's encrypted output) can't be told apart from it, so it's used as it is.
       const confirmed = quoteFound(f.quote, r.read);
       const unchecked =
@@ -829,16 +829,17 @@ function evidenceFor(sources: ResearchSources, cited: number[]): string {
     }
   }
   const omitted = left.length
-    ? `\n\nNot shown, for length: ${left.map((n) => `[${n}]`).join(", ")}. Don't list numbers that cite only these.`
+    ? `\n\nNot shown, for length: ${left.map((n) => `[${n}]`).join(", ")}. Don't list statements that cite only these.`
     : "";
   return `${blocks.join("\n\n")}${omitted}`;
 }
 
 /**
- * Haiku's check of the numbers cited as [n] against the quotes found in what the helpers read: the
- * problems it found, or why it couldn't check; null when the text cites no source.
+ * Haiku's check of what's cited as [n] against the quotes found in what the helpers read, and of
+ * numbers with no citation: the problems it found, or why it couldn't check; null when the text cites
+ * no source.
  */
-async function checkNumbers(
+async function checkReport(
   run: ResearchRun,
   sources: ResearchSources,
   text: string,
@@ -846,10 +847,14 @@ async function checkNumbers(
   const { d } = run;
   const cited = citedIn([text]).filter((n) => sources.get(n));
   if (!cited.length) return null;
-  const content = `${untrustedFields("sources", evidenceFor(sources, cited))}\n\n<report>\n${text}\n</report>`;
+  const content = [
+    untrustedFields("question", run.task.goal),
+    untrustedFields("sources", evidenceFor(sources, cited)),
+    `<report>\n${text}\n</report>`,
+  ].join("\n\n");
   const { id } = run.task;
   try {
-    // Past a limit it throws, and the report says its numbers weren't checked.
+    // Past a limit it throws, and the report says it wasn't checked.
     const out = await d.model.ask(
       {
         model: d.settings.get().smallModel,
@@ -876,12 +881,12 @@ async function checkNumbers(
             ? [{ text: p.text.slice(0, 200), why: String(p.why ?? "").slice(0, 300) }]
             : [],
         )
-        .slice(0, 15),
+        .slice(0, 20),
     };
   } catch (err) {
     if (err instanceof BudgetError) return { failed: "a spending limit stopped it" };
     // The check helps; it doesn't hold the report up, which says it wasn't checked.
-    console.error(`research task ${run.task.id}: the number check failed`, err);
+    console.error(`research task ${run.task.id}: the check failed`, err);
     return { failed: `the check failed: ${modelErrorText(err)}` };
   }
 }
@@ -892,8 +897,8 @@ const slugOf = (title: string) => slugWords(title).slice(0, 60).replace(/-+$/, "
 const dayOf = (ms: number) => new Date(ms).toLocaleDateString("sv-SE");
 
 /**
- * finish_research: checks the report (citations that aren't sources each time, and once the numbers
- * their quotes don't say), then saves it. A string sends it back to the model; otherwise the task's
+ * finish_research: checks the report (citations that aren't sources each time, and once what its
+ * quotes don't say), then saves it. A string sends it back to the model; otherwise the task's
  * summary.
  */
 export async function finishResearch(
@@ -911,13 +916,13 @@ export async function finishResearch(
       retry:
         "Not finished: the report is empty. Write the full report, then call finish_research again.",
     };
-  // Citations that aren't sources go back every time; the numbers are checked on the first report
+  // Citations that aren't sources go back every time; the rest is checked on the first report
   // that's done, not on a failed one before it or one that cites no source yet.
   const unknown = citedIn(texts).filter((n) => !sources.get(n));
   const check =
     state.checked || result.outcome !== "done"
       ? null
-      : await checkNumbers(run, sources, texts.join("\n\n"));
+      : await checkReport(run, sources, texts.join("\n\n"));
   // Cancelled while the check ran: nothing is saved.
   if (run.signal.aborted) throw run.signal.reason;
   if (check && "problems" in check) {
@@ -928,7 +933,7 @@ export async function finishResearch(
     state.unchecked = check.failed;
     d.tasks.addStep(task.id, {
       kind: "note",
-      name: "The number check didn't run",
+      name: "The check didn't run",
       detail: check.failed,
       url: null,
     });
@@ -937,7 +942,7 @@ export async function finishResearch(
   if (unknown.length || problems.length) {
     d.tasks.addStep(task.id, {
       kind: "note",
-      name: "Checked the numbers",
+      name: "Checked the report",
       detail: [
         ...(unknown.length ? [`No source ${unknown.map((n) => `[${n}]`).join(", ")}`] : []),
         ...problems.map((p) => `"${p.text}": ${p.why}`),
@@ -953,14 +958,14 @@ export async function finishResearch(
         // The checker read the quotes, which come from web pages: its verdict is data too.
         ...(problems.length
           ? [
-              "A check of the numbers you cite against the confirmed quotes of those sources found these:",
+              "A check of the report against the confirmed quotes of its sources found these:",
               untrustedFields(
                 "check",
                 problems.map((p) => `- ${tagJson(p.text)}: ${tagJson(p.why)}`).join("\n"),
               ),
             ]
           : []),
-        "Look at each against its source (fetch it again if you need to): correct the number if the source says otherwise, or drop the number or the citation if you can't confirm it. Then call finish_research again.",
+        "Look at each against its source (fetch it again if you need to): correct it if the source says otherwise, cite a finding that says it, or drop it if you can't confirm it. Then call finish_research again.",
       ].join("\n"),
     };
   }
@@ -975,7 +980,7 @@ export async function finishResearch(
   if (!result.report.trim()) return { summary: answer };
 
   const unchecked = state.unchecked
-    ? `The numbers weren't checked against their sources (${state.unchecked}).`
+    ? `It wasn't checked against its sources (${state.unchecked}).`
     : "";
   const content = [
     head(run, unchecked),
@@ -984,7 +989,7 @@ export async function finishResearch(
   ].join("\n\n");
   const saved = await saveReport(run, content);
   return {
-    summary: `${answer}\n\n${savedLine(saved, "The full report")}${state.unchecked ? " Its numbers weren't checked against their sources." : ""}`,
+    summary: `${answer}\n\n${savedLine(saved, "The full report")}${state.unchecked ? " It wasn't checked against its sources." : ""}`,
   };
 }
 
