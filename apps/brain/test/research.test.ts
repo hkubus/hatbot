@@ -175,7 +175,8 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
     '[1] "DS925+ specifications" https://www.synology.com/ds925+/spec "2026-04"',
   );
   expect(findings).toContain('[2] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925');
-  expect(findings.match(/Unconfirmed: the helper didn't fetch this page/g)).toHaveLength(1);
+  // The price helper didn't read the maker's page, but the noise helper did, and the quote is on it.
+  expect(findings).not.toContain("Unconfirmed");
 
   // The check reads the question and the confirmed quotes only, as data.
   const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
@@ -439,6 +440,42 @@ test("a report's sources say their date or that they have none, their kind, when
       "3. [Forum](https://forum.example.com/ds925-noise), 2026-04, primary, search result only",
     ].join("\n"),
   );
+});
+
+test("read_source gives back a source's page as a helper fetched it, or the parts around some words", async () => {
+  const FORUM = "https://forum.example.com/ds925-noise";
+  const work = new FakeModel([
+    ONE_PART,
+    { content: [toolUse("read_source", { n: 1, find: "NOISE LEVEL" })] },
+    { content: [toolUse("read_source", { n: 1, find: "fan curve" })] },
+    { content: [toolUse("read_source", { n: 2 })] },
+    finish("Quiet [1].", "Quiet [1]."),
+  ]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...fetched(NOISE.url, `${"x".repeat(5000)}\n${SPEC_PAGE}`, "srvtoolu_spec"),
+            toolUse("report_findings", {
+              findings: [NOISE, { ...NOISE, url: FORUM, title: "Forum" }],
+              gaps: "",
+            }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  await startResearch(t);
+  const leads = work.requests.filter((r) => !isHelper(r));
+  const around = resultsIn(leads[2]);
+  expect(around).toStartWith(
+    '<page source="[1] https://www.synology.com/ds925+/spec" trusted="false">\n"xxx',
+  );
+  expect(around).toContain("Noise level: 22.4");
+  // Only the page around the words: not the 5,000 characters before them.
+  expect(around.length).toBeLessThan(2000);
+  expect(resultsIn(leads[3])).toBe("\"fan curve\" isn't on [1]'s page.");
+  expect(resultsIn(leads[4])).toStartWith("No helper fetched [2]'s page this run");
 });
 
 test("a quote from a fetched PDF is checked against the PDF's text", async () => {

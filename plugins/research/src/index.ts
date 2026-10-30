@@ -27,6 +27,7 @@ import {
   RESEARCH_TOOLS,
   type ResearchRun,
   ResearchState,
+  readSource,
   refusedLinks,
   researchPrompt,
 } from "./research";
@@ -144,6 +145,7 @@ const researchRunner = (d: Deps): TaskRunner => ({
       refuse: (text, who) => refusedLinks(run, found.sources, text, who),
       call: async (name, input, c) => {
         if (name === "investigate") return investigate(run, found.sources, input);
+        if (name === "read_source") return readSource(found.sources, input);
         if (finishedIn === c.step)
           return { content: "Not run: call finish_research once a turn.", isError: true };
         finishedIn = c.step;
