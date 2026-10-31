@@ -1068,7 +1068,7 @@ fn with_actions<'a>(
         top = top.push(Space::new().width(BAR)).push(line).extend(actions);
     }
     let top = container(top).width(Length::Fill).height(Length::Fill).align_bottom(Length::Fill);
-    iced::widget::hover(base, if user { top.align_right(Length::Fill) } else { top }).into()
+    iced::widget::hover(base, if user { top.align_right(Length::Fill) } else { top })
 }
 
 fn act<'a>(i: Icon, tip: &'a str, on: Message) -> Element<'a, Message> {
