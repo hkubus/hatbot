@@ -8,7 +8,7 @@ use crate::core::models::*;
 use crate::ui::app::{Message, Session, failed};
 use crate::ui::confirm;
 use crate::ui::theme::{self, FS_TEXT, SP, SP_MD};
-use crate::ui::widgets::{btn_sm, error, list_row, page, small, tiny};
+use crate::ui::widgets::{btn_sm, empty, error, list_row, page, tiny};
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -68,7 +68,7 @@ pub fn view(s: &Session) -> Element<'_, Message> {
         col = col.push(error(e.as_str()));
     }
     if st.loaded && s.store.boxes.is_empty() {
-        col = col.push(small("No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep."));
+        col = col.push(empty("No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep."));
     }
     let mut list: Vec<&AppBox> = s.store.boxes.values().collect();
     list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
