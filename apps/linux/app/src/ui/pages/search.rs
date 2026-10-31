@@ -1,6 +1,6 @@
 // Search: messages, tasks, memory and automations, as the brain finds them.
-use iced::widget::{column, rich_text, span, text};
-use iced::{Element, Font, Task};
+use iced::widget::{column, container, rich_text, span, text, text_input};
+use iced::{Element, Font, Length, Padding, Task};
 
 use super::Msg as PageMsg;
 use crate::core::api::query;
@@ -8,8 +8,9 @@ use crate::core::format;
 use crate::core::models::*;
 use crate::ui::app::{Message, Route, Session};
 use crate::ui::chat;
-use crate::ui::theme::{self, FS_TEXT, SP_LG, SP_XS};
-use crate::ui::widgets::{error, input, list_row, page, section, small, tiny};
+use crate::ui::icons::{self, Icon};
+use crate::ui::theme::{self, FS_LG, FS_TEXT, SP_LG, SP_XS};
+use crate::ui::widgets::{error, list_row, page, section, small, tiny};
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -97,8 +98,16 @@ fn snippet(t: &str, dark: bool) -> Element<'_, Message> {
 
 pub fn view(s: &Session, dark: bool) -> Element<'_, Message> {
     let st = &s.pages.search;
-    let mut col = column![input("Search messages, tasks and memory", &st.query, |q| m(Msg::Query(q))).id(field_id())]
-        .spacing(SP_LG);
+    let field = text_input("Search chats, tasks and memory", &st.query)
+        .on_input(|q| m(Msg::Query(q)))
+        .id(field_id())
+        .size(FS_LG)
+        .padding(Padding { top: 16.0, bottom: 16.0, left: 52.0, right: SP_LG })
+        .style(theme::search_field);
+    let glass = container(icons::icon(Icon::Search, 22.0, icons::text_2))
+        .padding(Padding::default().left(SP_LG))
+        .center_y(Length::Fill);
+    let mut col = column![iced::widget::stack![field, glass]].spacing(SP_LG);
     if let Some(e) = &st.error {
         col = col.push(error(e.as_str()));
     }

@@ -1,5 +1,5 @@
 // A bot's settings and a group's, and making new ones.
-use iced::widget::{button, column, container, row, text, text_editor};
+use iced::widget::{Space, button, column, container, row, text, text_editor, text_input};
 use iced::{Alignment, Element, Length, Task};
 
 use super::Msg as PageMsg;
@@ -8,10 +8,8 @@ use crate::core::models::*;
 use crate::ui::app::{self, Message, Route, Session, failed};
 use crate::ui::confirm;
 use crate::ui::icons;
-use crate::ui::theme::{self, FS_TEXT, R_MD, SP, SP_MD, SP_XL};
-use crate::ui::widgets::{
-    Choice, area, btn, error, field, fill, group, input, page, picker, section, segmented, small, switch_row, tiles,
-};
+use crate::ui::theme::{self, FS_MD, R_MD, SP, SP_LG, SP_MD, SP_SM, SP_XS};
+use crate::ui::widgets::{Choice, area, btn, btn_sm, error, fill, page, page_narrow, segmented, select, switch, tone};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Making {
@@ -404,10 +402,10 @@ pub fn view<'a>(s: &'a Session, r: &'a Route) -> Element<'a, Message> {
                 Making::Bot => bot_form(s, None),
                 Making::Group => group_form(s, None),
             };
-            page(column![tabs, body].spacing(SP_XL))
+            page_narrow(column![tabs, body].spacing(SP_LG))
         }
-        Route::Bot(id) => page(bot_form(s, Some(id))),
-        Route::Group(id) => page(group_form(s, *id)),
+        Route::Bot(id) => page_narrow(bot_form(s, Some(id))),
+        Route::Group(id) => page_narrow(group_form(s, *id)),
         _ => page(column![]),
     }
 }
@@ -416,64 +414,36 @@ fn bot_form<'a>(s: &'a Session, id: Option<&'a String>) -> Element<'a, Message> 
     let st = &s.pages.bots;
     let Some(f) = &st.form else { return column![].into() };
     let is_hatbot = id.is_some_and(|i| i == HATBOT);
-    let mut col = column![].spacing(SP_XL);
-    if let Some(e) = &st.error {
-        col = col.push(error(e.as_str()));
-    }
+    let mut col = column![].spacing(SP);
     if id.is_none() && !st.templates.is_empty() {
         let mut list = vec![Choice { id: String::new(), name: "None".into() }];
         list.extend(st.templates.iter().map(|t| Choice { id: t.id.clone(), name: t.name.clone() }));
         let sel = list.iter().find(|c| Some(&c.id) == st.template.as_ref()).cloned().or(list.first().cloned());
-        col = col.push(tiles(vec![picker("Template", list, sel, |c| m(Msg::Template(c)))]));
+        col = col.push(form_row("Template", select(list, sel, |c| m(Msg::Template(c)))));
     }
-    let name = if is_hatbot {
-        Element::from(text(f.name.as_str()).size(FS_TEXT))
-    } else {
-        input("Name", &f.name, |v| m(Msg::Name(v))).into()
-    };
-    col = col.push(field("Name", name));
+    // Hatbot keeps its name: the field shows it, but can't be typed in.
+    let mut name = text_input("Chef", &f.name).padding([15, SP_MD as u16]).size(FS_MD).style(theme::input);
+    if !is_hatbot {
+        name = name.on_input(|v| m(Msg::Name(v)));
+    }
+    col = col.push(labeled_above("Name", name));
 
-    let mut icons_row = row![].spacing(SP);
+    let mut icons_row = row![].spacing(SP_XS);
     for i in BOT_ICONS {
-        let lit = f.icon == i;
-        icons_row = icons_row.push(
-            button(icons::bot(i, &f.color, 24.0, lit))
-                .padding(8)
-                .style(move |t, st| {
-                    let mut b = theme::plain_square(t, st);
-                    if lit {
-                        b.background = Some(theme::alpha(theme::colors(t).text, 0.12).into());
-                    }
-                    b.border.radius = R_MD.into();
-                    b
-                })
-                .on_press(m(Msg::Icon(i))),
-        );
+        icons_row = icons_row.push(pick(icons::bot(i, &f.color, 22.0, false), f.icon == i, m(Msg::Icon(i))));
     }
-    col = col.push(section("Icon", icons_row.wrap()));
+    col = col.push(labeled_above("Icon", icons_row.wrap()));
 
-    let mut colors = row![].spacing(SP);
+    let mut colors = row![].spacing(SP_XS);
     for c in BOT_COLORS {
-        let lit = f.color == c;
-        colors = colors.push(
-            button(container(text("")).width(26).height(26).style(move |t| container::Style {
-                background: Some(theme::bot_color(t, c).into()),
-                border: iced::Border { radius: 13.0.into(), ..Default::default() },
-                ..Default::default()
-            }))
-            .padding(5)
-            .style(move |t, _| button::Style {
-                border: iced::Border {
-                    radius: 20.0.into(),
-                    width: if lit { 2.0 } else { 0.0 },
-                    color: theme::colors(t).text_2,
-                },
-                ..Default::default()
-            })
-            .on_press(m(Msg::Color(c))),
-        );
+        let swatch = container(Space::new()).width(18).height(18).style(move |t| container::Style {
+            background: Some(theme::bot_color(t, c).into()),
+            border: iced::border::rounded(9),
+            ..Default::default()
+        });
+        colors = colors.push(pick(swatch, f.color == c, m(Msg::Color(c))));
     }
-    col = col.push(section("Colour", colors.wrap()));
+    col = col.push(labeled_above("Colour", colors.wrap()));
 
     let role_ready = id.is_none() || st.base.is_some();
     let mut editor =
@@ -484,7 +454,7 @@ fn bot_form<'a>(s: &'a Session, id: Option<&'a String>) -> Element<'a, Message> 
     if !role_ready {
         editor = editor.on_action(|_| Message::Nothing);
     }
-    col = col.push(section("Role", editor));
+    col = col.push(labeled_above("Role", editor));
 
     let defaults = s.settings.as_ref();
     let model_name = |id: &str| {
@@ -509,34 +479,27 @@ fn bot_form<'a>(s: &'a Session, id: Option<&'a String>) -> Element<'a, Message> 
     }];
     efforts.extend(CHAT_EFFORTS.iter().map(|e| Choice { id: e.to_string(), name: effort_name(e) }));
     let effort_sel = efforts.iter().find(|c| c.id == f.chat_effort.clone().unwrap_or_default()).cloned();
-    col = col.push(tiles(vec![
-        picker("Model", model_list, model_sel, |c| m(Msg::Model(c))),
-        picker("Effort", efforts, effort_sel, |c| m(Msg::Effort(c))),
-    ]));
+    col = col.push(form_row("Model", select(model_list, model_sel, |c| m(Msg::Model(c)))));
+    col = col.push(form_row("Effort", select(efforts, effort_sel, |c| m(Msg::Effort(c)))));
 
     if let Some(plugins) = s.plugins.as_ref().filter(|p| !p.is_empty()) {
-        let mut p =
-            vec![switch_row("Every plugin that's on", None, f.plugins.is_none(), Some(|v| m(Msg::AllPlugins(v))))];
+        let mut p: Vec<Element<'a, Message>> = vec![form_row(
+            "Every plugin that's on",
+            switch(f.plugins.is_none(), Some(m(Msg::AllPlugins(f.plugins.is_some())))),
+        )];
         if let Some(on) = &f.plugins {
             let mut sorted: Vec<&PluginName> = plugins.iter().collect();
             sorted.sort_by(|a, b| a.name.cmp(&b.name));
             for pl in sorted {
                 if pl.enabled {
-                    let id = pl.id.clone();
-                    p.push(switch_row(
-                        pl.name.as_str(),
-                        None,
-                        on.contains(&pl.id),
-                        Some(move |v| m(Msg::Plugin(id.clone(), v))),
-                    ));
+                    let lit = on.contains(&pl.id);
+                    p.push(form_row(pl.name.as_str(), switch(lit, Some(m(Msg::Plugin(pl.id.clone(), !lit))))));
                 } else {
-                    p.push(
-                        row![text(pl.name.as_str()).size(FS_TEXT).width(Length::Fill), small("Off in Plugins")].into(),
-                    );
+                    p.push(form_row(pl.name.as_str(), text("Off in Plugins").size(FS_MD).style(tone(|c| c.muted))));
                 }
             }
         }
-        col = col.push(group("Plugins", p));
+        col = col.extend(p);
     }
 
     let changed = match (&st.base, id) {
@@ -545,62 +508,135 @@ fn bot_form<'a>(s: &'a Session, id: Option<&'a String>) -> Element<'a, Message> 
         (None, Some(_)) => false,
     };
     let can_save = !st.busy && changed && !f.name.trim().is_empty() && role_ready;
-    let mut actions = row![].spacing(SP).align_y(Alignment::Center);
-    if let Some(id) = id.filter(|_| !is_hatbot) {
-        let notes = super::link(&format!("memory/bots/{id}/INDEX.md")).unwrap_or_default();
-        actions = actions.push(btn("Delete", theme::plain, Some(m(Msg::Delete)))).push(btn(
-            "Its notes",
-            theme::plain,
-            Some(Message::Batch(notes)),
-        ));
+    if let Some(id) = id {
+        let (label, open) = if is_hatbot {
+            ("Memory".to_string(), vec![Message::Go(Route::Memory)])
+        } else {
+            (format!("bots/{id}/"), super::link(&format!("memory/bots/{id}/INDEX.md")).unwrap_or_default())
+        };
+        col = col.push(
+            row![
+                text("Its notes").size(FS_MD).style(tone(|c| c.muted)).width(92),
+                button(text(label).size(FS_MD)).padding(0).style(theme::link).on_press(Message::Batch(open))
+            ]
+            .spacing(SP_MD),
+        );
     }
-    actions = actions.push(fill()).push(btn(
+    col = col.push(save_bar(
+        st.error.as_deref(),
         if id.is_none() { "Create" } else { "Save" },
-        theme::primary,
         can_save.then_some(m(Msg::Save)),
     ));
-    col.push(actions).into()
+    let mut head = row![back("Chat", Message::Go(Route::Chat)), fill()].align_y(Alignment::Center);
+    if id.is_some() && !is_hatbot {
+        head = head.push(btn_sm("Delete", theme::danger_text, Some(m(Msg::Delete))));
+    }
+    let panel = container(col).padding(SP_LG).width(Length::Fill).style(theme::tile(true, true));
+    if id.is_none() { panel.into() } else { column![head, panel].spacing(SP_LG).into() }
+}
+
+/// A label over what it names, in a form's panel.
+fn labeled_above<'a>(name: &'a str, e: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    column![text(name).size(FS_MD).style(tone(|c| c.text_2)), e.into()].spacing(SP_XS).into()
+}
+
+/// A label with its control at the far end, the web's `.form-row`.
+fn form_row<'a>(name: &'a str, e: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    row![text(name).size(FS_MD).style(tone(|c| c.text_2)).width(Length::Fill), e.into()]
+        .spacing(SP)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// One of a bot's icons or colours to pick: round, and squarer on the soft accent once picked.
+fn pick<'a>(content: impl Into<Element<'a, Message>>, on: bool, msg: Message) -> Element<'a, Message> {
+    button(container(content).center(40))
+        .padding(0)
+        .style(move |t, status| {
+            let c = theme::colors(t);
+            let mut b = theme::plain(t, status);
+            if on {
+                b.background = Some(c.hue_soft.into());
+                b.border.radius = R_MD.into();
+            } else {
+                b.border.radius = 20.0.into();
+            }
+            b
+        })
+        .on_press(msg)
+        .into()
+}
+
+/// The error, if any, and the form's one button at the end.
+fn save_bar<'a>(error_text: Option<&'a str>, label: &'a str, on: Option<Message>) -> Element<'a, Message> {
+    let mut r = row![].spacing(SP).align_y(Alignment::Center);
+    r = r.push(container(error_text.map(error)).width(Length::Fill));
+    r.push(btn(label, theme::primary, on).height(theme::H_LG)).into()
+}
+
+/// The web's back button: a chevron and where it goes back to, in the accent.
+fn back<'a>(label: &'a str, to: Message) -> Element<'a, Message> {
+    button(
+        row![icons::icon(icons::Icon::Back, 18.0, icons::hue), text(label).size(FS_MD).font(theme::MEDIUM)]
+            .spacing(SP_XS)
+            .align_y(Alignment::Center),
+    )
+    .padding([SP_SM, SP_MD])
+    .style(theme::link_pill)
+    .on_press(to)
+    .into()
 }
 
 fn group_form(s: &Session, id: Option<i64>) -> Element<'_, Message> {
     let st = &s.pages.bots;
     let stored = id.and_then(|id| s.store.conversations.iter().find(|c| c.id == id));
-    let mut col = column![].spacing(SP_XL);
-    if let Some(e) = &st.error {
-        col = col.push(error(e.as_str()));
-    }
-    col = col.push(field("Name", input("Name", &st.title, |v| m(Msg::Title(v)))));
+    let mut col = column![].spacing(SP);
+    col = col.push(labeled_above(
+        "Name",
+        text_input("Name", &st.title)
+            .on_input(|v| m(Msg::Title(v)))
+            .padding([15, SP_MD as u16])
+            .size(FS_MD)
+            .style(theme::input),
+    ));
     let mut bots = Vec::new();
     for b in s.store.bot_ids.iter().filter_map(|id| s.store.bots.get(id)) {
         let id = b.id.clone();
+        let lit = st.members.contains(&b.id);
         bots.push(
             row![
                 icons::bot(&b.icon, &b.color, 22.0, false),
-                switch_row(
-                    b.name.as_str(),
-                    None,
-                    st.members.contains(&b.id),
-                    Some(move |v| m(Msg::Member(id.clone(), v)))
-                )
+                text(b.name.as_str()).size(FS_MD).width(Length::Fill),
+                switch(lit, Some(m(Msg::Member(id, !lit))))
             ]
             .spacing(SP_MD)
             .align_y(Alignment::Center)
             .into(),
         );
     }
-    col = col.push(group("Bots", bots));
+    col = col.push(labeled_above("Bots", column(bots).spacing(SP)));
     let valid = (2..=MAX_GROUP_BOTS).contains(&st.members.len());
     let changed = stored.is_none_or(|c| st.title.trim() != c.title.as_deref().unwrap_or("") || st.members != c.bot_ids);
-    let mut actions = row![].spacing(SP);
-    if let Some(id) = id {
-        actions = actions.push(btn("Delete group", theme::plain, Some(m(Msg::DeleteGroup(id)))));
-    }
-    actions = actions.push(fill()).push(btn(
+    col = col.push(save_bar(
+        st.error.as_deref(),
         if id.is_none() { "Create" } else { "Save" },
-        theme::primary,
         (!st.busy && valid && changed).then_some(m(Msg::SaveGroup)),
     ));
-    col.push(actions).into()
+    let panel = container(col).padding(SP_LG).width(Length::Fill).style(theme::tile(true, true));
+    match id {
+        None => panel.into(),
+        Some(id) => column![
+            row![
+                back("Chat", Message::Go(Route::Chat)),
+                fill(),
+                btn_sm("Delete", theme::danger_text, Some(m(Msg::DeleteGroup(id))))
+            ]
+            .align_y(Alignment::Center),
+            panel
+        ]
+        .spacing(SP_LG)
+        .into(),
+    }
 }
 
 fn capitalised(s: &str) -> String {
