@@ -79,6 +79,26 @@ export function canonical(value: unknown): string {
   );
 }
 
+/**
+ * Whether what a task or conversation has read by now could be what an approval was given for: one
+ * of the same untrusted sources, the same page or the same tool on the same things, or one from the
+ * same place. A page read after it, from somewhere else, isn't covered by a scope given then.
+ */
+const matches = (readByNow: string[] | undefined, claimed: string) => {
+  if (!readByNow?.length) return true;
+  const split = (s: string) => {
+    const [name, detail = ""] = s.split(": (", 2);
+    return { name, detail: detail.replace(/\)$/, "") };
+  };
+  const then = split(claimed);
+  return readByNow.some((r) => {
+    if (r === claimed) return true;
+    const now = split(r);
+    if (now.name === then.name) return !now.detail || then.detail.includes(now.detail);
+    return then.detail.length > 3 && now.detail.startsWith(then.detail);
+  });
+};
+
 export type NewApproval = {
   taskId: number | null;
   botId?: string;
@@ -105,6 +125,8 @@ export type Granted = {
   episodeId?: number;
   /** Only the untrusted-content rule asks: what a scope over the rest of the work covers. */
   taintOnly: boolean;
+  /** What the task or conversation has read by now. */
+  sources?: string[];
 };
 
 export class Approvals {
@@ -267,24 +289,33 @@ export class Approvals {
   /**
    * Why a call that would ask goes ahead on what you approved before, or null: this exact call is
    * one you always allow, or, where only untrusted content asks, you allowed the tool on the same
-   * thing for the rest of this task or conversation.
+   * thing for the rest of this task or conversation, and what it had read then comes from the same
+   * place as what it has read now.
    */
   granted(q: Granted): string | null {
     const input = canonical(q.input);
-    const rule = this.db
-      .query<{ id: number }, [string, string, string]>(
-        "SELECT id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?",
-      )
-      .get(q.botId, q.tool, input);
-    if (rule) return "You always allow this.";
+    if (
+      this.db
+        .query<{ id: number }, [string, string, string]>(
+          "SELECT id FROM approval_rules WHERE bot_id = ? AND tool = ? AND input = ?",
+        )
+        .get(q.botId, q.tool, input)
+    )
+      return "You always allow this.";
     if (!q.taintOnly || (q.taskId === undefined && q.episodeId === undefined)) return null;
     const session = this.db
-      .query<{ id: number }, [string, string, string, number, number]>(
-        `SELECT id FROM approvals WHERE status = 'approved' AND scope = 'session' AND bot_id = ?
-         AND tool = ? AND target = ? AND (task_id = ? OR (task_id IS NULL AND episode_id = ?)) LIMIT 1`,
+      .query<{ id: number; sources: string | null }, [string, string, string, number, number]>(
+        `SELECT id, sources FROM approvals WHERE status = 'approved' AND scope = 'session' AND bot_id = ?
+         AND tool = ? AND target = ? AND (task_id = ? OR (task_id IS NULL AND episode_id = ?))
+         ORDER BY id DESC`,
       )
-      .get(q.botId, q.tool, q.target ?? "", q.taskId ?? -1, q.episodeId ?? -1);
-    if (!session) return null;
+      .all(...[q.botId, q.tool, q.target ?? "", q.taskId ?? -1, q.episodeId ?? -1]);
+    const covered = session.some((r) =>
+      ((r.sources ? (JSON.parse(r.sources) as string[]) : []) as string[]).some((s) =>
+        matches(q.sources, s),
+      ),
+    );
+    if (!covered) return null;
     return `You allowed ${q.tool}${q.target ? ` on ${q.target}` : ""} for the rest of this ${q.taskId !== undefined ? "task" : "conversation"}.`;
   }
 

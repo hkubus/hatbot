@@ -24,6 +24,9 @@ step "1/3 Source"
 src_sha='' src_subject='' src_remote=''
 if [[ $SOURCE =~ ^([0-9]+):(/.+)$ && $HATBOT_TRANSPORT == pct ]]; then
   src_ct=${BASH_REMATCH[1]} src_dir=${BASH_REMATCH[2]}
+  # Whether it's a checkout at all, before a directory named on the command line is searched as root in it.
+  pct exec "$src_ct" -- git --no-pager -C "$src_dir" rev-parse --git-dir >/dev/null 2>&1 ||
+    die "$src_dir in CT $src_ct isn't a git checkout"
   pct exec "$src_ct" -- git -C "$src_dir" archive --format=tar HEAD >"$tmp/app.tar" ||
     die "could not archive $src_dir in CT $src_ct"
   src_sha=$(pct exec "$src_ct" -- git -C "$src_dir" rev-parse HEAD)

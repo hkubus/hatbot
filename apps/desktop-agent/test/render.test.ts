@@ -46,6 +46,42 @@ test.skipIf(!withChromium)("a page's scripts run before it's read", async () => 
   expect(r.body.html).toContain('<p id="price">€1,299</p>');
 });
 
+test.skipIf(!withChromium)(
+  "Chromium goes to the address that was checked, and a name that resolves elsewhere isn't loaded",
+  async () => {
+    // The check may think shop.example (an alias of loopback here) is fine, but Chromium resolves nothing
+    // on its own, so the name leads nowhere. The address it was given is where the page comes from.
+    const r = await call(
+      { url: `http://shop.example:${server.port}/shop` },
+      { chromium, check: async () => "127.0.0.1" },
+    );
+    expect(r.status).toBe(200);
+    expect(r.body.html).toContain('<p id="price">€1,299</p>');
+    // Where the check names no address (the loopback server here), the name is left to Chromium.
+    const named = await call(
+      { url: `http://127.0.0.1:${server.port}/shop` },
+      { chromium, check: async () => {} },
+    );
+    expect(named.body.html).toContain('<p id="price">€1,299</p>');
+    // A redirect to another name goes nowhere: its address was never checked.
+    const away = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () =>
+        new Response(null, { status: 302, headers: { location: "http://elsewhere.example/" } }),
+    });
+    try {
+      const moved = await call(
+        { url: `http://elsewhere.invalid:${away.port}/` },
+        { chromium, check: async () => "127.0.0.1" },
+      );
+      expect(moved.status).toBe(502);
+    } finally {
+      away.stop(true);
+    }
+  },
+);
+
 test("only the internet is rendered, over http and https", async () => {
   const real = { chromium: "/nonexistent" };
   expect(await call({ url: "file:///etc/passwd" }, real)).toEqual({
