@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import {
   collapse,
+  conversationPage,
   type GateState,
   gateCheck,
   onConversation,
@@ -326,4 +327,16 @@ test("addresses match by host, path and the query they need", () => {
   // Fullwidth digits, soft hyphens and direction marks compare as what they show.
   expect(collapse("Dam １­５００‎ zł")).toBe("Dam 1500 zł");
   expect(collapse("Dam 1 500")).toBe(collapse("Dam 1 500"));
+});
+
+test("a Vinted conversation opened from the listing counts, by its UUID too", () => {
+  const listing = "https://www.vinted.pl/items/10339912585-dysk-ssd-480gb";
+  expect(conversationPage("https://www.vinted.pl/inbox/123456789", listing)).toBe(true);
+  expect(
+    conversationPage(
+      "https://www.vinted.pl/inbox/01a193a1-a30c-7b7c-9abe-522d33bca17e?referrer=%2Fitems%2F10339912585",
+      listing,
+    ),
+  ).toBe(true);
+  expect(conversationPage("https://www.vinted.pl/inbox/settings", listing)).toBe(false);
 });

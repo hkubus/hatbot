@@ -244,7 +244,7 @@ test("a negotiation starts without asking, and sends inside its mandate", async 
 
   expect(results(chat, 1)).toContain('trusted=\\"false\\"');
   const [thread] = t.chats.threads(t.thread.conversationId);
-  expect(thread?.title).toBe("an RTX 3070 for the media PC");
+  expect(thread?.title).toBe("an RTX 3070 for the media PC · OLX, 1,500 zł");
   expect(t.negotiations.get(1)).toMatchObject({
     mandate: { opening: 1060, target: 1250, limit: 1450 },
   });
@@ -413,6 +413,10 @@ test("several sellers at once: contact details in one mandate ask for all, one a
       .map((n) => n.conversationId)
       .sort(),
   ).toEqual(threads.map((c) => c.id).sort());
+  expect(threads.map((c) => c.title).sort()).toEqual([
+    "a warm jacket · OLX, 1,500 zł",
+    "a warm jacket · Vinted, 300 EUR",
+  ]);
   expect(approval?.conversationId).toBe(group.id);
   t.approvals.decide((approval as Approval).id, "approve", "web");
   await waitFor(() => t.negotiations.list().every((n) => n.status === "open"));
@@ -461,6 +465,10 @@ test("starting a negotiation asks when Safety settings say so", async () => {
   );
   expect(t.approvals.list(true).map((a) => a.kind)).toEqual(["mandate"]);
   expect(t.negotiations.get(1)?.status).toBe("awaiting_mandate");
+  // No want given: the seller's title isn't the owner's words.
+  expect(t.chats.threads(t.thread.conversationId).map((c) => c.title)).toEqual([
+    "OLX listing, 1,500 zł",
+  ]);
   await t.plugins.stopAll();
 });
 

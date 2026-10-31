@@ -806,3 +806,13 @@ test("a note from a tainted chat taints the task it steers", async () => {
   await t.tasks.idle();
   expect(t.tasks.get(task.id)?.taintedBy).toBe("The chat had read: A web page");
 });
+
+test("a task started from the chat that fails says so on its own card, not on a second one", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel([]));
+  const task = t.tasks.createBackgroundTask({ title: "Tidy", goal: "g", origin: "chat" }) as Task;
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("failed");
+  const cards = t.thread.list().filter((m) => m.kind === "task");
+  expect(cards).toHaveLength(1);
+  expect(cards[0]?.text).toContain("Failed");
+});

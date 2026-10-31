@@ -359,13 +359,29 @@ export class Negotiations {
 
   /**
    * Each negotiation talks to you in its own thread: its mandate, holds, tasks and the seller's
-   * replies go there. Named by the want, not the listing's title, which is the seller's words.
+   * replies go there. Named by the want, not the listing's title, which is the seller's words, and
+   * told apart from the want's other listings by marketplace and price.
    */
   private openThread(n: Negotiation): number | null {
+    // A want left out takes the first listing's title.
+    const first = this.d.db
+      .query<{ title: string }, [number]>(
+        "SELECT title FROM negotiations WHERE want_id = ? ORDER BY id LIMIT 1",
+      )
+      .get(n.wantId)?.title;
+    const owners = first === undefined || n.want !== first.slice(0, 200);
+    const market = parseKey(n.listingKey)?.marketplace || null;
+    const price = n.asking !== null ? zl(n.asking, n.mandate.currency) : null;
+    const where = [market, price].filter(Boolean).join(", ");
+    const title = owners
+      ? `${n.want.slice(0, 80)}${where ? ` · ${where}` : ""}`
+      : market
+        ? `${market} listing${price ? `, ${price}` : ""}`
+        : `Negotiation #${n.id}`;
     try {
       return this.d.chats.openThread({
         botId: n.botId,
-        title: n.want === n.title.slice(0, 200) ? `Negotiation #${n.id}` : n.want.slice(0, 80),
+        title,
         message: `Negotiation #${n.id}, for ${n.listingUrl}: ${mandateAims(n)}. I'll ask you about it here and tell you here how it goes.`,
         key: `negotiation:${n.id}`,
       }).conversation.id;

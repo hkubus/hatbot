@@ -1069,7 +1069,7 @@ export class Tasks {
 
   /**
    * Ends a task: status, summary, the card's text, and a notification. One under a reply has its bot
-   * write that reply again, to say what came of it. A background task's card is added now; with
+   * write that reply again, to say what came of it. A background task without a card gets one now; with
    * `notify` false (a routine result), a finished one gets neither card nor notification.
    */
   finish(
@@ -1106,7 +1106,7 @@ export class Tasks {
     if (underReply && status !== "cancelled") this.d.chats.endReply(task, told);
     if (card.changes || (underReply && !told)) this.d.chats.markEdited(id);
     if (told) void this.d.chats.taskEnded(conversationId, reporter);
-    else if (tell && task.lane === "background")
+    else if (tell && task.lane === "background" && !card.changes)
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
     if (status === "done" && task.todo) this.tickTodo(task, task.todo);

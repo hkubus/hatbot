@@ -82,7 +82,8 @@ export function onConversation(tab: string, gate: SendGate): boolean {
 const CONVERSATION_PATHS: [string, RegExp][] = [
   ["allegrolokalnie.pl", /^\/(?:konwersacje|wiadomosci)\/[\w-]{8,}$/],
   ["olx.pl", /^\/myaccount\/answers\/\d+$/],
-  ["vinted.pl", /^\/inbox\/\d+$/],
+  // Vinted's used to be numbers and are now UUIDs.
+  ["vinted.pl", /^\/inbox\/(?:\d+|[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})$/i],
 ];
 
 export function conversationPage(url: string, listingUrl: string): boolean {
