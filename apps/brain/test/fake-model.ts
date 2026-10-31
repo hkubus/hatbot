@@ -47,6 +47,10 @@ export class FakeModel implements ModelClient {
   creates: CreateParams[] = [];
   /** Picks a response for a request before the script does: for requests made at once. */
   route: ((p: Omit<StreamParams, "stream">) => Scripted | undefined) | null = null;
+  /** Gives each request a cache entry of what it sent, as a real one does: a miss writes, a hit reads. */
+  caching = false;
+  /** Each request's breakpoints, by system prompt and tools, and where each one's entry ends. */
+  private cached = new Map<string, { at: number[]; ends: number[] }>();
   /** Replies to create() calls other than summaries, e.g. injection screening. */
   onCreate: ((p: CreateParams) => string | undefined) | null = null;
   constructor(
@@ -73,10 +77,39 @@ export class FakeModel implements ModelClient {
     const stop =
       next.stop_reason ??
       (next.content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn");
-    const res = message(next.model ?? params.model, next.content, stop, next.usage);
+    const res = message(
+      next.model ?? params.model,
+      next.content,
+      stop,
+      this.caching ? this.cacheUsage(params, stop !== "max_tokens") : next.usage,
+    );
     if (next.container)
       res.container = { id: next.container, expires_at: "2026-10-17T00:00:00Z", skills: null };
     return res;
+  }
+
+  /**
+   * What this request costs in the cache, as the API reads one: the entry it reads is the one a
+   * request with the same system prompt and tools left before it, at a breakpoint its own
+   * breakpoints reach, and it writes the rest of what it sends. `kept`: the request ended there, so
+   * its own end is the entry behind its breakpoints.
+   */
+  private cacheUsage(params: Omit<StreamParams, "stream">, kept: boolean) {
+    const key = JSON.stringify([params.system, params.tools]);
+    const sent = JSON.stringify(params.messages);
+    const tokens = Math.ceil(sent.length / 3.5);
+    const at = [...sent.matchAll(/"cache_control":\{"type":"ephemeral"\}/g)].map(
+      (m) => m.index ?? 0,
+    );
+    const last = this.cached.get(key);
+    const ends = at.map((_, k) => {
+      const before = last?.ends[k] ?? 0;
+      return before && before >= (last?.at[k] ?? 0) && before <= tokens ? before : 0;
+    });
+    const read = ends.length ? Math.min(...ends.filter((e) => e > 0)) : 0;
+    const read0 = read > 0 && read <= tokens ? read : 0;
+    if (kept || at.length) this.cached.set(key, { at, ends: [...(kept ? [tokens] : []), ...ends] });
+    return { cache_read_input_tokens: read0, cache_creation_input_tokens: tokens - read0 };
   }
 
   async create(params: CreateParams) {

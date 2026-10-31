@@ -27,13 +27,44 @@ export interface ModelClient {
     handlers: StreamHandlers,
   ): Promise<Anthropic.Beta.BetaMessage>;
   create(params: CreateParams): Promise<Anthropic.Beta.BetaMessage>;
+  /** How long requests run, for when their cache entries end. */
+  readonly timing?: RequestTiming;
+}
+
+/**
+ * When a request that has started can be over: its own start, plus what the last one of the same
+ * kind on the same model took, or a guess while only some have been answered. Only a key for the
+ * five minutes after a chat request, which is how long its cache entry lasts.
+ */
+export class RequestTiming {
+  private seen = new Map<string, number>();
+  /** Requests taken and not answered yet: their time can't be told from the gap since the last answer. */
+  private sending = 0;
+
+  /** A request was taken: until it's answered, the gap since the last one may be part of it. */
+  answering(): void {
+    this.sending++;
+  }
+
+  answered(sent: number, key: string): void {
+    this.sending = Math.max(0, this.sending - 1);
+    this.seen.set(key, Math.min(Date.now() - sent, 10 * 60_000));
+  }
+
+  /** No later than the request just sent can end. */
+  endsBy(sent: number, key: string): number {
+    const took = this.seen.get(key) ?? (this.sending ? 180_000 : 0);
+    return this.sending ? sent + took : Math.max(sent, Date.now());
+  }
 }
 
 export class AnthropicModelClient implements ModelClient {
   private client: Anthropic;
+  readonly timing: RequestTiming;
 
   constructor(apiKey?: string) {
     this.client = new Anthropic(apiKey ? { apiKey } : {});
+    this.timing = new RequestTiming();
   }
 
   setApiKey(apiKey: string) {
@@ -50,6 +81,14 @@ export class AnthropicModelClient implements ModelClient {
       signal: handlers.signal,
       maxRetries: 0,
     });
+    // A request's cache entry lasts five minutes from its last token, not from its first: its own
+    // record is that it ended, which the ledger says, but its entry ends rather than starts then.
+    const sent = Date.now();
+    this.timing.answering();
+    stream.finalMessage().then(
+      () => this.timing.answered(sent, `${params.model}:${(params.max_tokens ?? 0) > 0}`),
+      () => this.timing.answered(sent, `${params.model}:${(params.max_tokens ?? 0) > 0}`),
+    );
     const server = new Map<number, { name: string; json: string }>();
     let used: { model: string; usage: Anthropic.Beta.BetaUsage } | null = null;
     try {

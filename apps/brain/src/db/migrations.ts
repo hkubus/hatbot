@@ -854,4 +854,11 @@ export const migrations: string[] = [
   UPDATE bots SET plugins = replace(plugins, '"claude"', '"t3"') WHERE plugins LIKE '%"claude"%';
   DELETE FROM settings WHERE key = 'plugin:claude';
   `,
+  // 51: what a chat request left in the cache, under which system prompt and tools, and when it
+  // ended: its entry's five minutes start then, not at the first token, and only a request with the
+  // same prompt and tools reads it.
+  `
+  ALTER TABLE spend_ledger ADD COLUMN ended_at TEXT;
+  ALTER TABLE spend_ledger ADD COLUMN prefix TEXT;
+  `,
 ];

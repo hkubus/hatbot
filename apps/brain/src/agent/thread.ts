@@ -85,6 +85,7 @@ import {
   type ModelClient,
   modelErrorText,
   oneShot,
+  RequestTiming,
 } from "./model";
 import {
   CHART_GUESS,
@@ -269,9 +270,12 @@ export class Thread {
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
   /** When each bot's last chat request or keep-warm was sent, and in which episode: its cache entry's five minutes run from then. */
-  private sentAt = new Map<string, { episodeId: number; at: number }>();
+  private sentAt = new Map<string, { episodeId: number; at: number; endsAt?: number }>();
   /** Each bot's last chat request, sent again to keep it cached for half an hour after it. */
-  private warm = new Map<string, { episodeId: number; params: CreateParams; at: number }>();
+  private warm = new Map<
+    string,
+    { episodeId: number; params: CreateParams; prefix: string; at: number }
+  >();
   /**
    * What each episode read, being screened. Kept across replies: a verdict the last reply didn't
    * wait for still holds back a change the next one makes.
@@ -1182,22 +1186,30 @@ export class Thread {
   }
 
   /**
-   * Prompt tokens the bot's last request left in the cache, while its five minutes last, which a
-   * keep-warm starts again. The ledger has when a request ended, so after a restart it's taken to
-   * have run as long as a turn may.
+   * Prompt tokens the bot's last request left in the cache while its five minutes last, with the
+   * prefix they were left under: a request with another system prompt or tools reads none of them.
+   * The ledger has when a request ended, which is when its entry's five minutes start.
    */
-  private cachedTokens(episodeId: number, botId: string): number {
+  private cached(
+    episodeId: number,
+    botId: string,
+    prefix: string,
+  ): { tokens: number; prefix: string } {
     const last = this.d.db
-      .query<{ tokens: number; created_at: string }, [number, string]>(
-        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens, created_at
+      .query<
+        { tokens: number; left: number; prefix: string; ended_at: string | null },
+        [number, string]
+      >(
+        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens,
+           cache_read_tokens + cache_write_5m_tokens AS left, prefix, ended_at
          FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
       )
       .get(episodeId, botId);
-    if (!last) return 0;
-    const ended = Date.parse(last.created_at);
-    const sent = this.sentAt.get(botId);
-    const at = sent && sent.episodeId === episodeId ? sent.at : ended - MAX_TURN_MS;
-    return this.clock() - at < CACHE_MS ? last.tokens : 0;
+    const at = process.env.OLD_TTL ? 0 : last?.ended_at ? Date.parse(last.ended_at) : 0;
+    // Its own prefix only, and only while its five minutes last from the end it recorded.
+    if (!last || !at || this.clock() - at >= CACHE_MS || last.prefix !== prefix || !last.left)
+      return { tokens: 0, prefix };
+    return { tokens: last.tokens, prefix };
   }
 
   private promptTokens(episodeId: number): number {
@@ -1260,9 +1272,11 @@ export class Thread {
       const open = db
         .query<{ id: number }, [number]>("SELECT id FROM episodes WHERE id = ? AND summarized = 0")
         .get(w.episodeId);
+      // A read is a cache hit: written tokens the API read back aren't written again.
       const r = db
         .query<{ written: number; spent: number }, [number, string]>(
-          `SELECT coalesce(sum(CASE WHEN purpose = 'thread' THEN cache_write_5m_tokens END), 0) AS written,
+          `SELECT coalesce(sum(CASE WHEN purpose = 'thread'
+             THEN max(0, cache_write_5m_tokens - cache_read_tokens) END), 0) AS written,
              coalesce(sum(CASE WHEN purpose = 'keep-warm' THEN cost_usd END), 0) AS spent
            FROM spend_ledger WHERE episode_id = ? AND bot_id = ?`,
         )
@@ -1279,7 +1293,7 @@ export class Thread {
         this.warm.delete(botId);
         continue;
       }
-      const cached = this.cachedTokens(w.episodeId, botId);
+      const cached = this.cached(w.episodeId, botId, w.prefix).tokens;
       this.sentAt.set(botId, { episodeId: w.episodeId, at: now });
       try {
         const release = spend.hold(
@@ -1287,6 +1301,17 @@ export class Thread {
         );
         try {
           const res = await model.create({ ...w.params, max_tokens: 0 });
+          // The entry the ping keeps is this one, and it lasts to when it ends.
+          const threads = db
+            .query<{ id: number }, [number, string]>(
+              "SELECT id FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1",
+            )
+            .get(w.episodeId, botId);
+          if (threads)
+            db.query("UPDATE spend_ledger SET ended_at = ? WHERE id = ?").run(
+              this.now(),
+              threads.id,
+            );
           spend.recordResponse({
             model: w.params.model,
             purpose: "keep-warm",
@@ -2151,13 +2176,14 @@ export class Thread {
       };
     };
 
-    const bill = (model: string, purpose: string, usage: Anthropic.Beta.BetaUsage) => {
+    const bill = (model: string, purpose: string, usage: Anthropic.Beta.BetaUsage, at?: string) => {
       used.costUsd += spend.recordResponse({
         model,
         purpose,
         usage,
         episodeId: episode.id,
         botId: bot.id,
+        ...(at === undefined ? {} : { endedAt: this.clock(), prefix: at }),
       });
       used.tokens += tokenCount(tokensOf(usage));
       events.emit({ type: "message.usage", id: out.id, ...used });
@@ -2260,7 +2286,8 @@ export class Thread {
           count,
         );
         // What it may cost at most, held against the limits until it's recorded.
-        const cached = this.cachedTokens(episode.id, bot.id);
+        const prefix = prefixOf(chatModel, system, tools);
+        const cached = this.cached(episode.id, bot.id, prefix).tokens;
         let held: () => void;
         try {
           held = hold(
@@ -2306,8 +2333,15 @@ export class Thread {
             : markPrevious(messages),
         };
         const sentAt = this.clock();
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: sentAt });
-        this.warm.set(bot.id, { episodeId: episode.id, params, at: sentAt });
+        // The ledger says when the request ended, which is when its entry's five minutes start.
+        this.sentAt.set(bot.id, {
+          episodeId: episode.id,
+          at: sentAt,
+          endsAt: (this.d.model.timing ?? new RequestTiming()).endsBy(sentAt, `${chatModel}:true`),
+        });
+        // A keep-warm's cost is held at what this request sends, which the next one reads only if it
+        // has the same system prompt and tools.
+        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: sentAt });
         const res = await model.stream(params, {
           onText: say,
           onThinking: (delta) => events.emit({ type: "message.progress", id: out.id, text: delta }),
@@ -2336,7 +2370,9 @@ export class Thread {
         const content = afterFallback(res.content);
         // The turn first: what the API has answered is kept, whatever recording its cost does.
         this.appendTurn(episode.id, bot.id, "assistant", content);
-        bill(chatModel, "thread", res.usage);
+        // With the system prompt and tools it was sent with: only a request with the same ones reads
+        // what it left in the cache.
+        bill(chatModel, "thread", res.usage, prefix);
         // The last request's entry was there to read, but most of it was written again.
         const read = res.usage.cache_read_input_tokens ?? 0;
         if (cached > 4000 && read < cached / 2)
@@ -2497,8 +2533,8 @@ export class Thread {
           );
           return toolResult(call.id, r.content, r.isError, r.image);
         });
-        // The prefix under which the answer is recorded: this turn's, with the results about to
-        // follow the owner's turn rather than a new one. It opens the next request's start.
+        // The prefix under which the answer is recorded, for the next request to read and for its
+        // cost to be held at, and where it starts: with the results about to follow the owner's turn.
         const start = prefixOf(chatModel, system, tools);
         this.d.db.transaction(() => {
           this.appendTurn(episode.id, bot.id, "user", results);
