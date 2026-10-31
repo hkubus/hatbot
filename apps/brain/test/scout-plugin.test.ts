@@ -208,6 +208,29 @@ test("Haggler makes a Scout watch for what the owner wants looked for all the ti
   expect(JSON.parse(r.text).watch).toMatchObject({ id: "watch-1", targetPrice: 1700 });
 });
 
+test("Hatbot makes a Scout research watch and records a flip without asking", async () => {
+  const t = await testApp();
+  await connected(t, fakeScout());
+  const research = named(t.plugins.tools(), "scout_market_watch_create");
+  const watch = { name: "RTX 3080", query: "rtx 3080", sources: ["OLX", "Allegro Lokalnie"] };
+  expect(verdictFor(research, watch, call()).action).toBe("allow");
+  expect(JSON.parse((await runPluginTool(research, watch, call())).text).watch).toMatchObject({
+    id: "market-watch-1",
+  });
+  const flip = named(t.plugins.tools(), "scout_flip_create");
+  const bought = {
+    title: "ThinkPad T480",
+    buyChannel: "OLX",
+    boughtOn: "2026-10-30",
+    buyPrice: 600,
+  };
+  expect(verdictFor(flip, bought, call()).action).toBe("allow");
+  expect(JSON.parse((await runPluginTool(flip, bought, call())).text).flip).toMatchObject({
+    id: 12,
+    buyPrice: 600,
+  });
+});
+
 test("a Haggler made after Scout is connected lists flips", async () => {
   const t = await testApp();
   await connected(t, fakeScout());

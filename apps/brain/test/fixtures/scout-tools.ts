@@ -103,6 +103,33 @@ export function scoutServer(o: ScoutOptions): McpServer {
       return json({ watch: { id: "watch-1", enabled: true, ...input } });
     },
   );
+  server.registerTool(
+    "scout_market_watch_create",
+    {
+      description: "Create a market-research watch",
+      inputSchema: { name: z.string(), query: z.string(), sources: z.array(z.string()) },
+    },
+    async (input) => {
+      log("scout_market_watch_create", input);
+      return json({ watch: { id: "market-watch-1", enabled: true, ...input } });
+    },
+  );
+  server.registerTool(
+    "scout_flip_create",
+    {
+      description: "Record a flip",
+      inputSchema: {
+        title: z.string(),
+        buyChannel: z.string(),
+        boughtOn: z.string(),
+        buyPrice: z.number(),
+      },
+    },
+    async (input) => {
+      log("scout_flip_create", input);
+      return json({ flip: { id: 12, ...input } });
+    },
+  );
   if (o.full) {
     server.registerTool(
       "scout_price_reference",

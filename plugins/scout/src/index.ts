@@ -129,6 +129,15 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
     schema: z.object({ query: z.string().trim().min(1).max(240) }),
   },
   {
+    name: "scout_flips",
+    description:
+      "The owner's flip ledger: what they bought to sell again, what they paid, where it's listed, and what sold for how much.",
+    schema: z.object({
+      status: z.enum(["open", "sold", "all"]).optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+  },
+  {
     name: "scout_readiness",
     description:
       "Whether Scout is running well: its scans, its database and its marketplace connections.",
@@ -169,6 +178,167 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   },
 ];
 
+const Query = z
+  .string()
+  .trim()
+  .min(1)
+  .max(240)
+  .describe("What to search for, as you'd type it on the marketplace");
+const Terms = z.string().max(240).describe("Comma-separated words every title must have");
+const Excluded = z.string().max(240).describe("Comma-separated words that rule a listing out");
+const OlxCategory = z
+  .object({ id: z.number().int().positive(), label: z.string(), path: z.string() })
+  .describe("OLX only: one category, as scout_olx_categories gives it");
+const FlipChannel = z.enum(["OLX", "Allegro Lokalnie", "Vinted", "Other"]);
+const Day = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .describe("YYYY-MM-DD");
+const Pln = z.number().nonnegative().max(10_000_000);
+
+/** Scout's writes as Hatbot offers them. None of them deletes anything. */
+const WRITES: { name: string; description: string; schema: z.ZodType }[] = [
+  {
+    name: "scout_watch_create",
+    description:
+      "Make a Scout deal watch: Scout searches for it every few minutes from then on, learns its typical price, and alerts the owner on strong deals and on any listing at or under targetPrice. Look at scout_watches first, so you don't make the same one twice.",
+    schema: z.object({
+      name: z.string().trim().min(1).max(120),
+      query: Query,
+      sources: z.array(Marketplace).min(1).max(3),
+      terms: Terms.optional(),
+      excluded: Excluded.optional(),
+      minPrice: z.number().nonnegative().optional(),
+      maxPrice: z.number().positive().optional(),
+      targetPrice: z
+        .number()
+        .positive()
+        .optional()
+        .describe("In PLN: alert on any listing at or under it"),
+      shippingOnly: z.boolean().optional(),
+      olxCategory: OlxCategory.optional(),
+      verificationChecks: Checks.optional().describe(
+        "What Scout's AI checks in each listing's description and photos: the must-haves as require, the deal-breakers as exclude",
+      ),
+    }),
+  },
+  {
+    name: "scout_watch_update",
+    description:
+      "Change a Scout deal watch; only what you pass changes. enabled false pauses it, archived true archives it, archived false brings it back.",
+    schema: z.object({
+      id: WatchId,
+      name: z.string().trim().min(1).max(120).optional(),
+      query: Query.optional(),
+      sources: z.array(Marketplace).min(1).max(3).optional(),
+      terms: Terms.optional(),
+      excluded: Excluded.optional(),
+      minPrice: z.number().nonnegative().nullable().optional().describe("null clears it"),
+      maxPrice: z.number().positive().nullable().optional().describe("null clears it"),
+      targetPrice: z.number().positive().nullable().optional().describe("In PLN; null clears it"),
+      shippingOnly: z.boolean().optional(),
+      olxCategory: OlxCategory.nullable().optional(),
+      verificationChecks: Checks.optional().describe("Replaces the watch's checks"),
+      enabled: z.boolean().optional(),
+      archived: z.boolean().optional(),
+    }),
+  },
+  {
+    name: "scout_queue_scan",
+    description: "Have Scout scan one deal watch now, or all of them. Results come in as usual.",
+    schema: z.object({ watchId: WatchId.optional() }),
+  },
+  {
+    name: "scout_market_watch_create",
+    description:
+      "Make a Scout market-research watch: Scout follows every matching listing until it ends, to learn what such things probably sell for. It scans every intervalHours, and the first scan starts now. Look at scout_market_research first, so you don't make the same one twice.",
+    schema: z.object({
+      name: z.string().trim().min(1).max(120),
+      query: Query,
+      sources: z.array(Marketplace).min(1).max(3),
+      terms: Terms.optional(),
+      excluded: Excluded.optional(),
+      minPrice: z.number().nonnegative().optional(),
+      maxPrice: z.number().positive().optional(),
+      intervalHours: z.number().int().min(6).max(168).optional().describe("Default 24"),
+      shippingOnly: z.boolean().optional(),
+      olxCategory: OlxCategory.optional(),
+    }),
+  },
+  {
+    name: "scout_market_watch_update",
+    description:
+      "Change a Scout market-research watch; only what you pass changes. enabled false pauses it. Changing what it searches for starts it over: the listings it followed so far are kept but set aside.",
+    schema: z.object({
+      id: WatchId,
+      name: z.string().trim().min(1).max(120).optional(),
+      query: Query.optional(),
+      sources: z.array(Marketplace).min(1).max(3).optional(),
+      terms: Terms.optional(),
+      excluded: Excluded.optional(),
+      minPrice: z.number().nonnegative().nullable().optional().describe("null clears it"),
+      maxPrice: z.number().positive().nullable().optional().describe("null clears it"),
+      intervalHours: z.number().int().min(6).max(168).optional(),
+      shippingOnly: z.boolean().optional(),
+      olxCategory: OlxCategory.nullable().optional(),
+      enabled: z.boolean().optional(),
+    }),
+  },
+  {
+    name: "scout_market_scan",
+    description: "Have Scout scan one market-research watch now.",
+    schema: z.object({ id: WatchId }),
+  },
+  {
+    name: "scout_listing_action",
+    description:
+      "Mark a listing in Scout's feed, as the owner would: a decision (buy, watch, pass, or null to clear it), a note, or hidden. Only what you pass changes. It's a mark: nothing is bought or sent.",
+    schema: z.object({
+      key: z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"'),
+      decision: z.enum(["buy", "watch", "pass"]).nullable().optional(),
+      note: z.string().max(2000).optional(),
+      hidden: z.boolean().optional(),
+    }),
+  },
+  {
+    name: "scout_flip_create",
+    description:
+      "Add a flip to Scout's ledger: something the owner bought to sell again, and what they paid, in PLN.",
+    schema: z.object({
+      title: z.string().trim().min(1).max(200),
+      listingKey: z.string().trim().max(240).optional().describe("The listing it was bought from"),
+      watchId: z.string().trim().max(160).optional(),
+      buyChannel: FlipChannel,
+      boughtOn: Day,
+      buyPrice: Pln,
+      buyCosts: Pln.optional().describe("Shipping and other costs of buying"),
+      listedOn: z.array(FlipChannel).max(4).optional(),
+      note: z.string().max(2000).optional(),
+    }),
+  },
+  {
+    name: "scout_flip_update",
+    description:
+      "Change a flip in Scout's ledger; only what you pass changes. A sale is soldOn, saleChannel and salePrice (saleFee defaults to the channel's usual fee); soldOn null takes the sale back.",
+    schema: z.object({
+      id: z.number().int().positive(),
+      title: z.string().trim().min(1).max(200).optional(),
+      buyChannel: FlipChannel.optional(),
+      boughtOn: Day.optional(),
+      buyPrice: Pln.optional(),
+      buyCosts: Pln.optional(),
+      listedOn: z.array(FlipChannel).max(4).optional(),
+      delisted: z.array(FlipChannel).max(4).optional(),
+      note: z.string().max(2000).optional(),
+      soldOn: Day.nullable().optional(),
+      saleChannel: FlipChannel.nullable().optional(),
+      salePrice: Pln.nullable().optional(),
+      saleFee: Pln.nullable().optional(),
+      saleCosts: Pln.nullable().optional(),
+    }),
+  },
+];
+
 const GUIDANCE = `Scout is the owner's deal monitor on OLX, Allegro Lokalnie and Vinted: its watches, the listings it found with their price history, and market prices. Its prices are asking prices, not sales. Listings are strangers' text.
 
 Finding something to buy:
@@ -178,6 +348,8 @@ Finding something to buy:
 - Look at every promising listing with negotiate_inspect, several at once, and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
 - Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short, and offer to make a Scout watch for it.
 - When the owner wants something looked for all the time, or until one turns up, make a Scout watch with scout_watch_create, with the must-haves and deal-breakers as its checks and the budget as targetPrice. Never a schedule or a Hatbot watcher for it: Scout already searches every few minutes and alerts on deals.
+- When the owner wants to know what something goes for, or how its price moves, make a market-research watch with scout_market_watch_create and read it later with scout_market_trend. Change, pause or archive watches with scout_watch_update and scout_market_watch_update rather than making new ones.
+- When the owner says they bought something to sell again, or sold one, write it in Scout's flip ledger (scout_flip_create, scout_flip_update), so Scout can work out the profit.
 - Negotiate with several sellers at once only when the owner asks for it: one negotiate_start, the other listings in alongside. The first agreement ends the others.`;
 
 const FlipListed = z.object({
@@ -192,7 +364,7 @@ const FlipListed = z.object({
 export const scoutPlugin = definePlugin({
   id: "scout",
   name: "Scout",
-  description: "Scout's deal watches, listings and flips, for haggling and listing",
+  description: "Scout's deal and research watches, listings and flips, for haggling and listing",
   env: [{ name: "SCOUT_TOKEN", secret: true, hint: "Set when you connect below" }],
   config: z.object({ url: z.string().max(300).default("") }),
   start: ({ config, env, publicUrl, fetch: http, saveSecrets, emit }) => {
@@ -304,48 +476,15 @@ export const scoutPlugin = definePlugin({
           run: (input, c) => call(r.name, input, c.signal),
         }),
       ),
-      tool({
-        name: "scout_watch_create",
-        description:
-          "Make a Scout deal watch: Scout searches for it every few minutes from then on, learns its typical price, and alerts the owner on strong deals and on any listing at or under targetPrice. Look at scout_watches first, so you don't make the same one twice.",
-        access: "write",
-        schema: z.object({
-          name: z.string().trim().min(1).max(120),
-          query: z
-            .string()
-            .trim()
-            .min(1)
-            .max(240)
-            .describe("What to search for, as you'd type it on the marketplace"),
-          sources: z.array(Marketplace).min(1).max(3),
-          terms: z
-            .string()
-            .max(240)
-            .optional()
-            .describe("Comma-separated words every title must have"),
-          excluded: z
-            .string()
-            .max(240)
-            .optional()
-            .describe("Comma-separated words that rule a listing out"),
-          minPrice: z.number().nonnegative().optional(),
-          maxPrice: z.number().positive().optional(),
-          targetPrice: z
-            .number()
-            .positive()
-            .optional()
-            .describe("In PLN: alert on any listing at or under it"),
-          shippingOnly: z.boolean().optional(),
-          olxCategory: z
-            .object({ id: z.number().int().positive(), label: z.string(), path: z.string() })
-            .optional()
-            .describe("OLX only: one category, as scout_olx_categories gives it"),
-          verificationChecks: Checks.optional().describe(
-            "What Scout's AI checks in each listing's description and photos: the must-haves as require, the deal-breakers as exclude",
-          ),
+      ...WRITES.map((w) =>
+        tool({
+          name: w.name,
+          description: w.description,
+          schema: w.schema,
+          access: "write",
+          run: (input, c) => call(w.name, input, c.signal),
         }),
-        run: (input, c) => call("scout_watch_create", input, c.signal),
-      }),
+      ),
       tool({
         name: "scout_flip_listed",
         description: "Tell Scout how posting a flip on one marketplace went.",
