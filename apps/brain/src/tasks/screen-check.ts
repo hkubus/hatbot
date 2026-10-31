@@ -76,7 +76,7 @@ export async function judgedHold(
     const v = JSON.parse(out) as { consequential?: unknown; label?: unknown };
     if (v.consequential !== true) return null;
     const label = typeof v.label === "string" ? v.label.trim().slice(0, 60) : "";
-    return label ? { label } : { unlabelled: "button" };
+    return label ? { label, judged: true } : { unlabelled: "button" };
   } catch (err) {
     console.error(`task ${taskId}: couldn't check the step from a screenshot`, err);
     return { unseen: true };

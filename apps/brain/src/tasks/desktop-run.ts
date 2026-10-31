@@ -1160,7 +1160,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     });
     await capture(bytes, "Before approval", "screenshot", step.id);
     // The step held on this page, if any, is what this asks for: the owner sees it, and it sets the kind.
-    const held = lastHeld && samePage(lastHeld.page, page) ? lastHeld : null;
+    // A computer has no page: there, the held step is the last one.
+    const held = lastHeld && (machine || samePage(lastHeld.page, page)) ? lastHeld : null;
     lastHeld = null;
     const kind = approvalKind(
       input.kind,
