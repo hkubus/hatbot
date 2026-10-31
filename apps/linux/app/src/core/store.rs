@@ -24,6 +24,27 @@ pub struct LiveReply {
     pub usage: Option<(i64, f64)>,
 }
 
+/// The chat, or the thread open beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum At {
+    Chat,
+    Side,
+}
+
+/// What's loaded of one chat: a bot's own, a group or a thread.
+#[derive(Debug, Default)]
+pub struct Pane {
+    pub conversation_id: i64,
+    pub incognito: bool,
+    pub messages: Vec<ThreadMessage>,
+    pub has_earlier: bool,
+    /// Its messages are known: until then, none isn't an empty chat.
+    pub thread_known: bool,
+    pub replies: HashMap<i64, LiveReply>,
+    /// Message events that came while the latest page loaded: the page may have been read before them.
+    missed: Option<Vec<Event>>,
+}
+
 #[derive(Debug, Default)]
 pub struct Store {
     pub connected: bool,
@@ -37,19 +58,13 @@ pub struct Store {
     /// Threads of the chats you've opened; they stay out of the chat list.
     pub threads: HashMap<i64, Conversation>,
 
-    /// The chat that's showing: a bot's own, a group or a thread.
-    pub conversation_id: i64,
-    pub incognito: bool,
-    pub messages: Vec<ThreadMessage>,
-    pub has_earlier: bool,
-    /// The open chat's messages are known: until then, none isn't an empty chat.
-    pub thread_known: bool,
-    pub replies: HashMap<i64, LiveReply>,
+    /// The chat that's showing: a bot's own or a group.
+    pub chat: Pane,
+    /// A thread of it, beside it.
+    pub side: Option<Pane>,
     pub episodes: HashMap<i64, Episode>,
     pub unread: Vec<i64>,
     incognito_ids: HashSet<i64>,
-    /// Message events that came while the latest page loaded: the page may have been read before them.
-    missed: Option<Vec<Event>>,
 
     pub tasks: HashMap<i64, Task>,
     pub steps: HashMap<i64, Vec<TaskStep>>,
@@ -72,7 +87,7 @@ pub struct Store {
 
 impl Store {
     pub fn new() -> Self {
-        Self { conversation_id: 1, ..Self::default() }
+        Self { chat: Pane { conversation_id: 1, ..Pane::default() }, ..Self::default() }
     }
 
     pub fn pending_approvals(&self) -> Vec<&Approval> {
@@ -114,32 +129,47 @@ impl Store {
     }
 
     pub fn current_chat(&self) -> Option<&Conversation> {
-        self.conversations
-            .iter()
-            .find(|c| c.id == self.conversation_id)
-            .or_else(|| self.threads.get(&self.conversation_id))
+        self.conversations.iter().find(|c| c.id == self.chat.conversation_id)
     }
 
-    /// The chat the list shows as open: a thread's own chat while you're in the thread.
-    pub fn listed_chat_id(&self) -> i64 {
-        self.current_chat().and_then(|c| c.parent_id).unwrap_or(self.conversation_id)
+    pub fn side_thread(&self) -> Option<&Conversation> {
+        self.threads.get(&self.side.as_ref()?.conversation_id)
+    }
+
+    pub fn pane(&self, at: At) -> Option<&Pane> {
+        match at {
+            At::Chat => Some(&self.chat),
+            At::Side => self.side.as_ref(),
+        }
+    }
+
+    pub fn pane_mut(&mut self, at: At) -> Option<&mut Pane> {
+        match at {
+            At::Chat => Some(&mut self.chat),
+            At::Side => self.side.as_mut(),
+        }
+    }
+
+    fn panes_mut(&mut self) -> impl Iterator<Item = &mut Pane> {
+        std::iter::once(&mut self.chat).chain(self.side.as_mut())
     }
 
     /// The chat's API path; a brain from before bots has only /thread.
-    pub fn chat_path(&self) -> String {
-        if self.conversations.is_empty() {
-            "/thread".into()
-        } else {
-            format!("/conversations/{}", self.conversation_id)
+    pub fn chat_path(&self, at: At) -> String {
+        match self.pane(at) {
+            Some(p) if !self.conversations.is_empty() || at == At::Side => {
+                format!("/conversations/{}", p.conversation_id)
+            }
+            _ => "/thread".into(),
         }
     }
 
-    pub fn page_path(&self, before: Option<i64>) -> String {
-        let mut p = format!("{}/messages?limit={PAGE}", self.chat_path());
+    pub fn page_path(&self, at: At, before: Option<i64>) -> String {
+        let mut p = format!("{}/messages?limit={PAGE}", self.chat_path(at));
         if let Some(b) = before {
             p += &format!("&before={b}");
         }
-        if self.incognito {
+        if self.pane(at).is_some_and(|p| p.incognito) {
             p += "&incognito=1";
         }
         p
@@ -154,21 +184,26 @@ impl Store {
 
     pub fn text<'a>(&'a self, m: &'a ThreadMessage) -> &'a str {
         if m.status == MessageStatus::Streaming
-            && let Some(r) = self.replies.get(&m.id)
+            && let Some(r) = self.reply(m.id)
         {
             return &r.text;
         }
         &m.text
     }
 
-    /// Opens another chat: what's shown goes until its page loads.
+    pub fn reply(&self, id: i64) -> Option<&LiveReply> {
+        self.chat.replies.get(&id).or_else(|| self.side.as_ref()?.replies.get(&id))
+    }
+
+    /// Opens another chat, which closes the thread beside the last: what's shown goes until its page loads.
     pub fn open(&mut self, id: i64) {
-        self.conversation_id = id;
-        self.incognito = false;
-        self.messages.clear();
-        self.replies.clear();
-        self.has_earlier = false;
-        self.thread_known = false;
+        self.chat = Pane { conversation_id: id, ..Pane::default() };
+        self.side = None;
+    }
+
+    /// A thread beside the chat, or none.
+    pub fn open_side(&mut self, id: Option<i64>) {
+        self.side = id.map(|id| Pane { conversation_id: id, ..Pane::default() });
     }
 
     pub fn put_conversation(&mut self, c: Conversation) {
@@ -190,67 +225,23 @@ impl Store {
     }
 
     /// Starts a load of the latest page: message events from now on are kept to replay over it.
-    pub fn loading_page(&mut self) {
-        self.missed = Some(Vec::new());
-    }
-
-    /// The latest page, merged into what's loaded. The page is the truth from its first message on;
-    /// earlier pages you'd loaded stay, unless more than a page came while away.
-    pub fn take_page(&mut self, conversation: i64, incognito: bool, latest: Vec<ThreadMessage>) {
-        let missed = self.missed.take().unwrap_or_default();
-        if conversation != self.conversation_id || incognito != self.incognito {
-            return;
-        }
-        let full = latest.len() == PAGE;
-        match (latest.first().map(|m| m.id), self.messages.last().map(|m| m.id)) {
-            (Some(floor), Some(last)) => {
-                if full && last < floor {
-                    self.has_earlier = true;
-                    self.messages = latest;
-                } else {
-                    let before: Vec<_> = if full {
-                        self.messages.iter().filter(|m| m.id < floor).cloned().collect()
-                    } else {
-                        Vec::new()
-                    };
-                    if before.is_empty() {
-                        self.has_earlier = full;
-                    }
-                    self.messages = before.into_iter().chain(latest).collect();
-                }
-            }
-            _ => {
-                self.has_earlier = full;
-                self.messages = latest;
-            }
-        }
-        self.thread_known = true;
-        let streaming: HashMap<i64, String> = self
-            .messages
-            .iter()
-            .filter(|m| m.status == MessageStatus::Streaming)
-            .map(|m| (m.id, m.text.clone()))
-            .collect();
-        self.replies.retain(|id, _| streaming.contains_key(id));
-        for (id, text) in streaming {
-            self.replies.entry(id).or_default().text = text;
-        }
-        for e in missed {
-            self.follow(&e);
+    pub fn loading_page(&mut self, at: At) {
+        if let Some(p) = self.pane_mut(at) {
+            p.missed = Some(Vec::new());
         }
     }
 
-    /// An earlier page, put before what's shown.
-    pub fn take_earlier(&mut self, conversation: i64, first: i64, older: Vec<ThreadMessage>) {
-        if conversation != self.conversation_id || self.messages.first().map(|m| m.id) != Some(first) {
-            return;
+    pub fn take_page(&mut self, at: At, conversation: i64, incognito: bool, latest: Vec<ThreadMessage>) {
+        if let Some(p) = self.pane_mut(at) {
+            p.take_page(conversation, incognito, latest);
         }
-        self.has_earlier = older.len() == PAGE;
-        let mut all = older;
-        all.append(&mut self.messages);
-        self.messages = all;
     }
 
+    pub fn take_earlier(&mut self, at: At, conversation: i64, first: i64, older: Vec<ThreadMessage>) {
+        if let Some(p) = self.pane_mut(at) {
+            p.take_earlier(conversation, first, older);
+        }
+    }
     pub fn take_task(&mut self, t: Task) {
         let held = self.tasks.get(&t.id);
         let t = t.keeping(held);
@@ -299,23 +290,23 @@ impl Store {
 
     pub fn apply(&mut self, event: Event) -> Vec<Effect> {
         let mut fx = Vec::new();
-        if let Some(missed) = &mut self.missed
-            && matches!(
-                event,
-                Event::MessageCreated { .. }
-                    | Event::MessageDelta { at: Some(_), .. }
-                    | Event::MessageDone { .. }
-                    | Event::MessageRewrite { .. }
-                    | Event::MessageEdited { .. }
-                    | Event::MessageSeen { .. }
-                    | Event::MessageDeleted { .. }
-                    | Event::MessageTask { .. }
-                    | Event::MessageLinked { .. }
-                    | Event::MessageBox { .. }
-                    | Event::MessageAttachment { .. }
-            )
-        {
-            missed.push(event.clone());
+        if matches!(
+            event,
+            Event::MessageCreated { .. }
+                | Event::MessageDelta { at: Some(_), .. }
+                | Event::MessageDone { .. }
+                | Event::MessageRewrite { .. }
+                | Event::MessageEdited { .. }
+                | Event::MessageSeen { .. }
+                | Event::MessageDeleted { .. }
+                | Event::MessageTask { .. }
+                | Event::MessageLinked { .. }
+                | Event::MessageBox { .. }
+                | Event::MessageAttachment { .. }
+        ) {
+            for missed in self.panes_mut().filter_map(|p| p.missed.as_mut()) {
+                missed.push(event.clone());
+            }
         }
         match event {
             Event::Snapshot(s) => {
@@ -367,12 +358,12 @@ impl Store {
             | Event::MessageBox { .. }
             | Event::MessageAttachment { .. } => self.follow(&event),
             Event::MessageProgress { id, text } => {
-                if let Some(r) = self.live(id) {
+                for r in self.panes_mut().filter_map(|p| p.live(id)) {
                     r.progress = tail(&(r.progress.clone() + &text), 400);
                 }
             }
             Event::MessageUsage { id, tokens, cost_usd } => {
-                if let Some(r) = self.live(id) {
+                for r in self.panes_mut().filter_map(|p| p.live(id)) {
                     r.usage = Some((tokens, cost_usd));
                 }
             }
@@ -480,12 +471,80 @@ impl Store {
         for t in &gone {
             self.threads.remove(t);
         }
-        if gone.contains(&self.conversation_id) {
+        if self.side.as_ref().is_some_and(|p| gone.contains(&p.conversation_id)) {
+            self.side = None;
+        }
+        if gone.contains(&self.chat.conversation_id) {
             let first = self.conversations.first().map_or(1, |c| c.id);
             self.open(first);
             return true;
         }
         false
+    }
+
+    fn follow(&mut self, event: &Event) {
+        for p in self.panes_mut() {
+            p.follow(event);
+        }
+    }
+}
+
+impl Pane {
+    /// The latest page, merged into what's loaded. The page is the truth from its first message on;
+    /// earlier pages you'd loaded stay, unless more than a page came while away.
+    fn take_page(&mut self, conversation: i64, incognito: bool, latest: Vec<ThreadMessage>) {
+        let missed = self.missed.take().unwrap_or_default();
+        if conversation != self.conversation_id || incognito != self.incognito {
+            return;
+        }
+        let full = latest.len() == PAGE;
+        match (latest.first().map(|m| m.id), self.messages.last().map(|m| m.id)) {
+            (Some(floor), Some(last)) => {
+                if full && last < floor {
+                    self.has_earlier = true;
+                    self.messages = latest;
+                } else {
+                    let before: Vec<_> = if full {
+                        self.messages.iter().filter(|m| m.id < floor).cloned().collect()
+                    } else {
+                        Vec::new()
+                    };
+                    if before.is_empty() {
+                        self.has_earlier = full;
+                    }
+                    self.messages = before.into_iter().chain(latest).collect();
+                }
+            }
+            _ => {
+                self.has_earlier = full;
+                self.messages = latest;
+            }
+        }
+        self.thread_known = true;
+        let streaming: HashMap<i64, String> = self
+            .messages
+            .iter()
+            .filter(|m| m.status == MessageStatus::Streaming)
+            .map(|m| (m.id, m.text.clone()))
+            .collect();
+        self.replies.retain(|id, _| streaming.contains_key(id));
+        for (id, text) in streaming {
+            self.replies.entry(id).or_default().text = text;
+        }
+        for e in missed {
+            self.follow(&e);
+        }
+    }
+
+    /// An earlier page, put before what's shown.
+    fn take_earlier(&mut self, conversation: i64, first: i64, older: Vec<ThreadMessage>) {
+        if conversation != self.conversation_id || self.messages.first().map(|m| m.id) != Some(first) {
+            return;
+        }
+        self.has_earlier = older.len() == PAGE;
+        let mut all = older;
+        all.append(&mut self.messages);
+        self.messages = all;
     }
 
     /// The live reply for a streaming message, made here for one loaded mid-reply.

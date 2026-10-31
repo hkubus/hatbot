@@ -65,7 +65,7 @@ pub fn title(s: &Session) -> String {
         Route::Spend => "Spend",
         Route::Computer => "This computer",
         Route::NewBot => "New bot",
-        Route::Chat | Route::Threads => "",
+        Route::Chat => "",
     }
     .into()
 }
@@ -96,9 +96,11 @@ pub fn link(page: &str) -> Option<Vec<Message>> {
         let open = Message::Page(Msg::Memory(memory::Msg::Open(memory::View::File(path.to_string()))));
         return Some(vec![Message::Go(Route::Memory), open]);
     }
+    if page == "threads" {
+        return Some(vec![Message::Go(Route::Chat), Message::Chat(super::chat::Msg::ShowThreads(true))]);
+    }
     let r = match page {
         "chat" | "new" => Route::Chat,
-        "threads" => Route::Threads,
         "tasks" => Route::Tasks,
         "live" => Route::Live,
         "automations" | "schedules" => Route::Schedules,

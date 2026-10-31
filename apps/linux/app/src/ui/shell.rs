@@ -27,7 +27,7 @@ enum Section {
 
 fn section(r: &Route) -> Section {
     match r {
-        Route::Chat | Route::Threads | Route::Bot(_) | Route::NewBot | Route::Group(_) => Section::Chat,
+        Route::Chat | Route::Bot(_) | Route::NewBot | Route::Group(_) => Section::Chat,
         Route::Tasks | Route::Task(_) | Route::Live | Route::Schedules => Section::Tasks,
         Route::Memory | Route::Todo => Section::Memory,
         Route::Boxes => Section::Boxes,
@@ -162,8 +162,8 @@ impl Entry {
 
 /// The chats, each a bot's own or a group; one Chat when there are none yet.
 fn chats(s: &Session) -> Vec<Entry> {
-    let in_chat = s.route == Route::Chat || s.route == Route::Threads;
-    let open = s.store.listed_chat_id();
+    let in_chat = s.route == Route::Chat;
+    let open = s.store.chat.conversation_id;
     let mut v: Vec<Entry> = s
         .store
         .conversations
@@ -377,7 +377,7 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
     if sec == Section::Chat && s.route != Route::NewBot {
         let chat = s.store.current_chat();
         let name = s.store.chat_name(chat);
-        let title = if s.store.incognito { format!("{name} · Incognito") } else { name };
+        let title = if s.store.chat.incognito { format!("{name} · Incognito") } else { name };
         if nav == Nav::Tabs && s.route == Route::Chat {
             let chevron = icons::icon(Icon::Chevron, ICON, icons::text_2).rotation(Radians(FRAC_PI_2));
             let open = s.chat_menu;
@@ -394,29 +394,20 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
         } else {
             bar = bar.push(text(title).size(FS_XL).font(theme::MEDIUM));
         }
-        let thread = chat.filter(|c| c.is_thread());
         // The sidebar has each chat's.
         if nav != Nav::Full
-            && let Some(c) = chat.filter(|_| thread.is_none())
+            && let Some(c) = chat
         {
             bar = bar.push(icon_btn(Icon::Sliders, "About", Some(Message::Go(about(c)))));
         }
         bar = bar.push(fill());
-        if let Some(t) = thread {
-            if let Some(parent) = t.parent_id {
-                bar = bar.push(btn_sm("Back", theme::plain, Some(Message::Chat(chat::Msg::Open(parent)))));
-            }
-            if t.resolved_at.is_none() {
-                bar = bar.push(btn_sm("Resolve", theme::outlined, Some(Message::Chat(chat::Msg::Resolve(t.id)))));
-            }
-        } else if let Some(c) = chat {
+        if let Some(c) = chat {
             if c.kind == ConversationKind::Direct {
                 let open: Vec<&Conversation> =
                     s.store.threads.values().filter(|t| t.parent_id == Some(c.id) && t.resolved_at.is_none()).collect();
-                let on = s.route == Route::Threads;
-                let target = if on { Route::Chat } else { Route::Threads };
-                let mut b = row![icon_btn_styled(Icon::Forum, "Threads", Some(Message::Go(target)), on)]
-                    .align_y(Alignment::Center);
+                let on = s.chat.threads_open;
+                let toggle = Message::Chat(chat::Msg::ShowThreads(!on));
+                let mut b = row![icon_btn_styled(Icon::Forum, "Threads", Some(toggle), on)].align_y(Alignment::Center);
                 if !open.is_empty() {
                     let needs = open.iter().any(|t| s.store.thread_needs_you(t));
                     b = b.push(text(open.len().to_string()).size(FS_SM).style(move |t: &Theme| {
@@ -427,7 +418,7 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
                 bar = bar.push(b);
             }
             if c.kind != ConversationKind::Group {
-                let on = s.store.incognito;
+                let on = s.store.chat.incognito;
                 bar = bar.push(icon_btn_styled(
                     Icon::Incognito,
                     if on { "Leave incognito" } else { "Incognito" },
