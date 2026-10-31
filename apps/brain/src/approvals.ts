@@ -13,8 +13,6 @@ import type { Db } from "./db";
 import type { EventBus } from "./events";
 
 const TTL_MS = 24 * 3600_000;
-/** How long a message to a person waits before it goes, for you to stop it. */
-export const SEND_WINDOW_MS = 30_000;
 /**
  * Kinds a notification may approve from a locked phone; the rest are approved in the app, which the
  * notification's Approve opens: the iOS app approves behind Face ID.
@@ -317,8 +315,8 @@ export class Approvals {
     return anyway ? "You chose to run it anyway." : null;
   }
 
-  /** A message to a person that goes once SEND_WINDOW_MS passes, unless you deny (stop) it first. */
-  sending(input: NewApproval): Approval {
+  /** A message to a person that goes once `waitMs` passes, unless you deny (stop) it first. */
+  sending(input: NewApproval, waitMs: number): Approval {
     const row = this.db
       .query<{ id: number }, [string, number | null, string, string, string, string]>(
         `INSERT INTO approvals (bot_id, task_id, kind, summary, reason, sources, status, created_at, expires_at)
@@ -330,7 +328,7 @@ export class Approvals {
         input.kind,
         input.summary,
         this.now(),
-        new Date(this.clock() + SEND_WINDOW_MS).toISOString(),
+        new Date(this.clock() + waitMs).toISOString(),
       );
     const approval = this.get(row?.id ?? -1);
     if (!approval) throw new Error("approval insert failed");

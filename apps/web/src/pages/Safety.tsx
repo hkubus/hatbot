@@ -123,6 +123,18 @@ export function SafetyPage({ toast }: { toast: Toast }) {
             save={(chatCommands) => put({ chatCommands })}
             input={{ type: "number", min: 1, max: 50, step: 1 }}
           />
+          <SavedRow<number>
+            label="Seconds to wait before sending a message the review allowed, so you can stop it"
+            saved={safety.sendWaitS}
+            parse={(text) => {
+              const n = Number(text.trim());
+              return Number.isInteger(n) && n >= 0 && n <= 300
+                ? { value: n }
+                : { error: "A whole number from 0 to 300." };
+            }}
+            save={(sendWaitS) => put({ sendWaitS })}
+            input={{ type: "number", min: 0, max: 300, step: 1 }}
+          />
         </Group>
 
         <Group title="Tools" empty={!tools.length && "None. Set them on each plugin's page."}>

@@ -18,6 +18,7 @@ const Safety = z.object({
   untrusted: z.boolean(),
   tools: z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), z.enum(["ask", "allow"])),
   chatCommands: z.number().int().min(1).max(50),
+  sendWaitS: z.number().int().min(0).max(300),
 });
 
 export const Settings = z.object({
@@ -101,6 +102,7 @@ export const DEFAULT_SETTINGS: Settings = {
     untrusted: true,
     tools: {},
     chatCommands: 2,
+    sendWaitS: 0,
   },
   notificationsOpen: "web",
   desktopModel: "claude-haiku-5-5",

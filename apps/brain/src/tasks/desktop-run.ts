@@ -998,10 +998,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return r;
   };
 
-  /** Null once the window passes; why not, if the owner stopped it. */
+  /** Null once the window passes, or with none set; why not, if the owner stopped it. */
   const sendWindow = async (summary: string): Promise<string | null> => {
-    const a = d.approvals.sending({ taskId: id, botId: task.botId, kind: "send", summary });
-    tasks.addStep(id, { kind: "note", name: "Sending in 30 s", detail: summary, url: lastUrl });
+    const wait = d.settings.get().safety.sendWaitS;
+    if (!wait) return null;
+    const a = d.approvals.sending(
+      { taskId: id, botId: task.botId, kind: "send", summary },
+      wait * 1000,
+    );
+    tasks.addStep(id, {
+      kind: "note",
+      name: `Sending in ${wait} s`,
+      detail: summary,
+      url: lastUrl,
+    });
     const outcome = await d.approvals.wait(a.id, signal);
     return outcome === "approved"
       ? null

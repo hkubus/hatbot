@@ -3,7 +3,7 @@ import type { StreamParams } from "@hatbot/plugin-sdk";
 import { CLICK_CHECK_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeComputer, withComputer } from "./fake-computer";
 import { computer, FakeModel, type Scripted, text, toolUse } from "./fake-model";
-import { letSend, type TestApp, testApp, waitFor } from "./helpers";
+import { type TestApp, testApp, waitFor } from "./helpers";
 import { ended } from "./plugin-helpers";
 
 const stops: (() => void)[] = [];
@@ -177,7 +177,6 @@ test("on a computer, Enter held from a screenshot goes once the review finds it 
   const { computer: laptop } = await connected(t);
   const task = startOn(t, "m-laptop", "Send Sam hi on Discord");
   t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
-  await letSend(t);
   expect((await ended(t, task.id)).status).toBe("done");
 
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
