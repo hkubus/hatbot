@@ -124,6 +124,11 @@ fn scroll_id() -> iced::widget::Id {
     iced::widget::Id::new("chat")
 }
 
+/// The thread is anchored to its bottom, where iced counts offsets from, so its start is the newest message.
+fn to_latest() -> Task<Message> {
+    iced::widget::operation::snap_to(scroll_id(), iced::widget::scrollable::RelativeOffset::START)
+}
+
 pub fn load_page(s: &Session) -> Task<Message> {
     let conversation = s.store.conversation_id;
     let incognito = s.store.incognito;
@@ -326,7 +331,7 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             s.chat.unfolded.clear();
             s.chat.near_bottom = true;
             s.chat.earlier_asked = None;
-            let mut t = vec![load_page(s), load_threads(s), iced::widget::operation::snap_to_end(scroll_id())];
+            let mut t = vec![load_page(s), load_threads(s), to_latest()];
             if was_incognito {
                 t.push(s.fire(move |api| async move { api.delete(&format!("{left}/incognito")).await }));
             }
@@ -376,7 +381,7 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
                     if m.incognito == s.store.incognito && m.conversation_id == s.store.conversation_id {
                         s.store.apply(Event::MessageCreated { message: m });
                     }
-                    iced::widget::operation::snap_to_end(scroll_id())
+                    to_latest()
                 }
                 Err(e) if e.is_unauthorized() => Task::done(Message::Unauthorized),
                 Err(e) => {
