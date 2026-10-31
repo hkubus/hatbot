@@ -49,6 +49,7 @@ pub enum Msg {
         id: i64,
         approve: bool,
         scope: Option<String>,
+        answer: Option<String>,
     },
     Decided(i64, Result<Approval, ApiError>),
     Own(i64, String),
@@ -440,14 +441,10 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             s.chat.notes.insert(id, v);
             Task::none()
         }
-        Msg::Decide { id, approve, scope } => {
-            let note = s.chat.notes.get(&id).map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        Msg::Decide { id, approve, scope, answer } => {
+            let note = answer.or_else(|| s.chat.notes.get(&id).cloned());
             s.chat.busy.insert(format!("a{id}"));
-            let body = json!({
-                "decision": if approve { "approve" } else { "deny" },
-                "note": note,
-                "scope": scope,
-            });
+            let body = crate::core::notify::decision(approve, note.as_deref(), scope.as_deref());
             s.call(
                 move |api| async move { api.post::<Approval, _>(&format!("/approvals/{id}"), &body).await },
                 move |r| Message::Chat(Msg::Decided(id, r)),
@@ -1210,12 +1207,12 @@ pub fn approval<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
         btn_wide(
             "Deny",
             theme::deny,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: false, scope: None }))
+            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: false, scope: None, answer: None }))
         ),
         btn_wide(
             "Approve",
             theme::primary,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: None }))
+            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: None, answer: None }))
         ),
     ]
     .spacing(SP_LG);
@@ -1224,18 +1221,40 @@ pub fn approval<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
     }
     col = col.push(buttons);
     let mut more = row![].spacing(SP_LG);
-    if a.scopes.iter().any(|x| x == "session") {
-        more = more.push(btn_sm(
-            if a.task_id.is_none() { "For this chat" } else { "For this task" },
-            theme::plain,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: Some("session".into()) })),
-        ));
-    }
     if a.scopes.iter().any(|x| x == "always") {
         more = more.push(btn_sm(
             "Always",
             theme::plain,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: Some("always".into()) })),
+            (!busy).then_some(Message::Chat(Msg::Decide {
+                id,
+                approve: true,
+                scope: Some("always".into()),
+                answer: None,
+            })),
+        ));
+    }
+    if a.scopes.iter().any(|x| x == "schedule") {
+        more = more.push(btn_sm(
+            "Always for this schedule",
+            theme::plain,
+            (!busy).then_some(Message::Chat(Msg::Decide {
+                id,
+                approve: true,
+                scope: Some("schedule".into()),
+                answer: None,
+            })),
+        ));
+    }
+    for answer in &a.answers {
+        more = more.push(btn_sm(
+            answer.as_str(),
+            theme::plain,
+            (!busy).then_some(Message::Chat(Msg::Decide {
+                id,
+                approve: true,
+                scope: None,
+                answer: Some(answer.clone()),
+            })),
         ));
     }
     if a.task_id.is_none()

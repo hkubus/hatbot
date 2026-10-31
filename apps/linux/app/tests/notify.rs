@@ -1,5 +1,5 @@
 use hatbot::core::models::*;
-use hatbot::core::notify::{Notice, Reply, Target, task_ended};
+use hatbot::core::notify::{Notice, Reply, Target, decision, task_ended};
 use serde_json::json;
 
 fn approval(kind: &str) -> Approval {
@@ -50,4 +50,13 @@ fn only_a_task_that_just_ended_is_told() {
     assert!(!task_ended(Some(&t("done")), &t("done")));
     assert!(!task_ended(None, &t("done")));
     assert!(!task_ended(Some(&t("running")), &t("cancelled")));
+}
+
+#[test]
+fn deciding_in_the_window_leaves_out_an_empty_note_and_scope() {
+    assert_eq!(decision(true, Some("  "), None), json!({"decision": "approve"}));
+    assert_eq!(
+        decision(true, Some("Use the work card"), Some("always")),
+        json!({"decision": "approve", "note": "Use the work card", "scope": "always"})
+    );
 }

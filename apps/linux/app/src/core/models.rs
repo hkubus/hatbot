@@ -409,6 +409,9 @@ pub struct Approval {
     /// How far approving it may go besides this once; a scope this app doesn't know is left out.
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Ready answers: each approves it, with itself as the note.
+    #[serde(default)]
+    pub answers: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]

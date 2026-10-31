@@ -116,6 +116,18 @@ impl Notice {
     }
 }
 
+/// What deciding an approval posts. The brain takes a missing note or scope, never a null one.
+pub fn decision(approve: bool, note: Option<&str>, scope: Option<&str>) -> Value {
+    let mut body = json!({ "decision": if approve { "approve" } else { "deny" } });
+    if let Some(n) = note.map(str::trim).filter(|n| !n.is_empty()) {
+        body["note"] = json!(n);
+    }
+    if let Some(sc) = scope {
+        body["scope"] = json!(sc);
+    }
+    body
+}
+
 /// A task that just ended is worth a notification; one that was already over isn't.
 pub fn task_ended(before: Option<&Task>, now: &Task) -> bool {
     matches!(now.status, TaskStatus::Done | TaskStatus::Failed) && before.is_some_and(|b| b.status.is_active())
