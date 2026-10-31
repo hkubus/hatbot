@@ -25,13 +25,19 @@ impl Drop for Sway {
 
 /// A headless sway with one 1600x1000 monitor at scale 2, and its socket.
 fn sway(name: &str) -> Option<(Sway, PathBuf)> {
+    sway_turned(name, "normal")
+}
+
+/// The same, with the monitor turned as sway's `output transform` says.
+fn sway_turned(name: &str, transform: &str) -> Option<(Sway, PathBuf)> {
     std::env::var_os("HATBOT_WAYLAND_TESTS")?;
     let dir = std::env::temp_dir().join(format!("hatbot-sway-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
     let config = dir.join("config");
-    std::fs::write(&config, "xwayland disable\noutput * mode 1600x1000 scale 2\n").unwrap();
+    std::fs::write(&config, format!("xwayland disable\noutput * mode 1600x1000 scale 2 transform {transform}\n"))
+        .unwrap();
     let child = Command::new("sway")
         .args(["-c".as_ref(), config.as_os_str()])
         .env("XDG_RUNTIME_DIR", &dir)
@@ -101,6 +107,63 @@ async fn captures_the_monitor_and_moves_the_pointer_on_it() {
     assert_ne!(region(&at_100, 1200, 800), region(&at_600, 1200, 800), "no pointer at (600, 400)");
     let again = w.capture(out.name.clone()).await.unwrap();
     assert_eq!(region(&again, 200, 200), region(&at_600, 200, 200));
+}
+
+#[tokio::test]
+async fn captures_a_turned_monitor_upright_and_points_on_it_as_it_shows() {
+    for transform in ["90", "180", "270", "flipped", "flipped-90", "flipped-180", "flipped-270"] {
+        let Some((_sway, socket)) = sway_turned(&format!("turned-{transform}"), transform) else { return };
+        let w = connect(&socket);
+        let out = &w.outputs().await.unwrap()[0];
+        w.motion(out.name.clone(), 60.0, 60.0).await.unwrap();
+        let ours = w.capture(out.name.clone()).await.unwrap();
+        assert_eq!((ours.width, ours.height), (out.width * 2, out.height * 2), "{transform}");
+        // grim turns its captures upright; the pointer is all that's on screen, so its box says both
+        // where the pointer went and which way the picture faces.
+        let grim = Command::new("grim")
+            .args(["-c", "-t", "ppm", "-"])
+            .env("XDG_RUNTIME_DIR", socket.parent().unwrap())
+            .env("WAYLAND_DISPLAY", socket.file_name().unwrap())
+            .output()
+            .expect("grim (apt or pacman install grim)");
+        let theirs = from_ppm(&grim.stdout);
+        assert_eq!((theirs.width, theirs.height), (ours.width, ours.height), "{transform}");
+        let (b, theirs_b) = (drawn(&ours), drawn(&theirs));
+        assert_eq!(b, theirs_b, "{transform}");
+        assert!(b.0 < 240 && b.1 < 240, "{transform}: the pointer is at {b:?}, not by (120, 120)");
+    }
+}
+
+/// Where anything but black is: left, top, right, bottom.
+fn drawn(f: &crate::computer::Frame) -> (u32, u32, u32, u32) {
+    let (mut b, mut any) = ((u32::MAX, u32::MAX, 0, 0), false);
+    for y in 0..f.height {
+        for x in 0..f.width {
+            let i = ((y * f.width + x) * 3) as usize;
+            if f.rgb[i..i + 3] != [0, 0, 0] {
+                any = true;
+                b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
+            }
+        }
+    }
+    assert!(any, "the capture is all black");
+    b
+}
+
+fn from_ppm(bytes: &[u8]) -> crate::computer::Frame {
+    let mut fields = Vec::new();
+    let mut at = 0;
+    while fields.len() < 4 {
+        let start = at;
+        while !bytes[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        fields.push(String::from_utf8_lossy(&bytes[start..at]).into_owned());
+        at += 1;
+    }
+    assert_eq!(fields[0], "P6");
+    let (width, height): (u32, u32) = (fields[1].parse().unwrap(), fields[2].parse().unwrap());
+    crate::computer::Frame { width, height, rgb: bytes[at..at + (width * height * 3) as usize].to_vec() }
 }
 
 #[tokio::test]
