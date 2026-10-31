@@ -44,8 +44,8 @@ jobs:
         working-directory: apps/linux
     steps:
       - uses: actions/checkout@v7
-      # sway runs headless for the Wayland tests.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libxkbcommon-dev sway
+      # sway runs headless for the Wayland tests; grim checks their screenshots.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libxkbcommon-dev sway grim
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
