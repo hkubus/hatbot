@@ -341,6 +341,7 @@ pub enum ApprovalKind {
     Budget,
     Mandate,
     Listing,
+    Computer,
     Other,
     #[default]
     #[serde(other)]
@@ -348,9 +349,9 @@ pub enum ApprovalKind {
 }
 
 impl ApprovalKind {
-    /// Money, and passwords and keys: never answered from a notification, only in the window.
+    /// Never approved from a notification, only in the window: the brain's `approvableFromNotification`.
     pub fn is_floor(self) -> bool {
-        matches!(self, Self::Purchase | Self::Payment | Self::Mandate | Self::AccountSecurity)
+        !matches!(self, Self::Send | Self::SubmitPersonalData | Self::Delete | Self::Listing | Self::Other)
     }
 
     /// Whether the answer can carry a note: the task carries on afterwards.
@@ -363,12 +364,35 @@ impl ApprovalKind {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
     Pending,
+    /// The safety review stopped it; you may still run it anyway.
+    Blocked,
+    /// A message to a person that goes at `expires_at` unless you stop it.
+    Sending,
     Approved,
     Denied,
     Expired,
     #[default]
     #[serde(other)]
     Cancelled,
+}
+
+/// The body that answers an approval. The brain takes a missing note or scope, not a null one.
+pub fn decision(approve: bool, note: Option<&str>, scope: Option<&str>) -> serde_json::Value {
+    let mut body = serde_json::json!({ "decision": if approve { "approve" } else { "deny" } });
+    if let Some(note) = note.map(str::trim).filter(|n| !n.is_empty()) {
+        body["note"] = note.into();
+    }
+    if let Some(scope) = scope {
+        body["scope"] = scope.into();
+    }
+    body
+}
+
+impl ApprovalStatus {
+    /// Still to do something about: waiting on you, blocked, or about to send.
+    pub fn is_open(self) -> bool {
+        matches!(self, Self::Pending | Self::Blocked | Self::Sending)
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
@@ -406,9 +430,12 @@ pub struct Approval {
     pub decided_via: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
-    /// How far approving it may go besides this once; a scope this app doesn't know is left out.
+    /// How far approving it may go besides this once.
     #[serde(default)]
     pub scopes: Vec<String>,
+    /// Ready answers: each approves it, with itself as the note.
+    #[serde(default)]
+    pub answers: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -830,6 +830,10 @@ pub fn subscription(app: &App) -> Subscription<Message> {
         ));
         if app.window.is_some() {
             subs.push(pages::subscription(s));
+            // A message about to send counts down.
+            if s.store.approvals.values().any(|a| a.status == ApprovalStatus::Sending) {
+                subs.push(iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Nothing));
+            }
             // While typing into the live view, keys belong to the desktop.
             if !pages::live::typing(s) {
                 subs.push(iced::keyboard::listen().filter_map(|e| match e {

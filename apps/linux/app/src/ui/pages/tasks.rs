@@ -294,7 +294,7 @@ pub fn view_task<'a>(s: &'a Session, pages: &'a Pages, id: i64, dark: bool) -> E
         return page(empty(if st.missing == Some(id) { "This task doesn't exist." } else { "" }));
     };
     let mut col = column![].spacing(SP_XL);
-    for a in s.store.pending_approvals().into_iter().filter(|a| a.task_id == Some(id)) {
+    for a in s.store.approvals.values().filter(|a| a.task_id == Some(id) && a.status.is_open()) {
         col = col.push(container(chat::approval(s, a)).padding(SP_LG).width(Length::Fill).style(theme::attention));
     }
     for q in s.store.pending_questions().into_iter().filter(|q| q.task_id == id) {

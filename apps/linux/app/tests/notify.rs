@@ -18,8 +18,10 @@ fn approve_and_deny_answer_the_approval() {
 }
 
 #[test]
-fn money_passwords_and_keys_open_the_window_instead() {
-    for kind in ["purchase", "payment", "mandate", "account_security"] {
+fn money_keys_doors_and_suspicions_open_the_window_instead() {
+    for kind in
+        ["purchase", "payment", "mandate", "account_security", "access", "computer", "budget", "injection_warning"]
+    {
         let n = Notice::Approval(approval(kind));
         assert_eq!(n.shown("Hatbot").actions.len(), 1, "{kind}");
         assert_eq!(n.reply("approve"), Reply::Open(Target::Approval(8)), "{kind}");
@@ -50,4 +52,14 @@ fn only_a_task_that_just_ended_is_told() {
     assert!(!task_ended(Some(&t("done")), &t("done")));
     assert!(!task_ended(None, &t("done")));
     assert!(!task_ended(Some(&t("running")), &t("cancelled")));
+}
+
+#[test]
+fn an_answer_leaves_out_what_it_lacks() {
+    assert_eq!(decision(true, None, None), json!({"decision": "approve"}));
+    assert_eq!(decision(false, Some("  "), None), json!({"decision": "deny"}));
+    assert_eq!(
+        decision(true, Some(" Use the other card "), Some("always")),
+        json!({"decision": "approve", "note": "Use the other card", "scope": "always"})
+    );
 }

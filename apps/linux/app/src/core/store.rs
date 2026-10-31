@@ -267,7 +267,7 @@ impl Store {
         desktop: Option<DesktopState>,
         unread: Vec<i64>,
     ) {
-        self.approvals.retain(|_, a| a.status != ApprovalStatus::Pending);
+        self.approvals.retain(|_, a| !a.status.is_open());
         for a in approvals {
             self.approvals.insert(a.id, a);
         }

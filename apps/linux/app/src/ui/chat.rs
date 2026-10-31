@@ -49,8 +49,17 @@ pub enum Msg {
         id: i64,
         approve: bool,
         scope: Option<String>,
+        /// A ready answer, sent as the note.
+        answer: Option<String>,
     },
     Decided(i64, Result<Approval, ApiError>),
+    RunAnyway {
+        id: i64,
+        always: bool,
+    },
+    Ran(i64, Result<Approval, ApiError>),
+    Dismiss(i64),
+    Dismissed(i64, Result<(), ApiError>),
     Own(i64, String),
     Answer(i64, String),
     Answered(i64, Result<Question, ApiError>),
@@ -440,14 +449,10 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             s.chat.notes.insert(id, v);
             Task::none()
         }
-        Msg::Decide { id, approve, scope } => {
-            let note = s.chat.notes.get(&id).map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        Msg::Decide { id, approve, scope, answer } => {
+            let note = answer.or_else(|| s.chat.notes.get(&id).cloned());
             s.chat.busy.insert(format!("a{id}"));
-            let body = json!({
-                "decision": if approve { "approve" } else { "deny" },
-                "note": note,
-                "scope": scope,
-            });
+            let body = decision(approve, note.as_deref(), scope.as_deref());
             s.call(
                 move |api| async move { api.post::<Approval, _>(&format!("/approvals/{id}"), &body).await },
                 move |r| Message::Chat(Msg::Decided(id, r)),
@@ -459,6 +464,48 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
                 Ok(a) => {
                     s.chat.notes.remove(&id);
                     s.store.approvals.insert(a.id, a);
+                    Task::none()
+                }
+                Err(e) => Task::done(failed(e)),
+            }
+        }
+        Msg::RunAnyway { id, always } => {
+            s.chat.busy.insert(format!("a{id}"));
+            let body = if always { json!({ "always": true }) } else { json!({}) };
+            s.call(
+                move |api| async move { api.post::<Approval, _>(&format!("/approvals/{id}/anyway"), &body).await },
+                move |r| Message::Chat(Msg::Ran(id, r)),
+            )
+        }
+        Msg::Ran(id, r) => {
+            s.chat.busy.remove(&format!("a{id}"));
+            match r {
+                // A chat's blocked reply runs on its next turn, so ask for it.
+                Ok(a) if a.task_id.is_none() => {
+                    s.store.approvals.insert(a.id, a);
+                    send(s, Some("Run it anyway.".into()))
+                }
+                Ok(a) => {
+                    s.store.approvals.insert(a.id, a);
+                    Task::none()
+                }
+                Err(e) => Task::done(failed(e)),
+            }
+        }
+        Msg::Dismiss(id) => {
+            s.chat.busy.insert(format!("a{id}"));
+            s.call(
+                move |api| async move { api.post_empty(&format!("/approvals/{id}/dismiss")).await },
+                move |r| Message::Chat(Msg::Dismissed(id, r)),
+            )
+        }
+        Msg::Dismissed(id, r) => {
+            s.chat.busy.remove(&format!("a{id}"));
+            match r {
+                Ok(()) => {
+                    if let Some(a) = s.store.approvals.get_mut(&id) {
+                        a.status = ApprovalStatus::Cancelled;
+                    }
                     Task::none()
                 }
                 Err(e) => Task::done(failed(e)),
@@ -1166,7 +1213,18 @@ fn choices<'a>(s: &'a Session, m: &'a ThreadMessage) -> Element<'a, Message> {
 
 /// The first thing waiting on you, above the composer, in plain text.
 fn waiting(s: &Session) -> Option<Element<'_, Message>> {
-    let approvals = s.store.pending_approvals();
+    let chat = s.store.conversation_id;
+    // What the review blocked shows only in its own chat; a task's shows on the task.
+    let approvals: Vec<&Approval> = s
+        .store
+        .approvals
+        .values()
+        .filter(|a| match a.status {
+            ApprovalStatus::Pending | ApprovalStatus::Sending => true,
+            ApprovalStatus::Blocked => a.task_id.is_none() && a.conversation_id == Some(chat),
+            _ => false,
+        })
+        .collect();
     let questions = s.store.pending_questions();
     let count = approvals.len() + questions.len();
     let body: Element<'_, Message> =
@@ -1179,6 +1237,14 @@ fn waiting(s: &Session) -> Option<Element<'_, Message>> {
 }
 
 pub fn approval<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
+    match a.status {
+        ApprovalStatus::Blocked => blocked(s, a),
+        ApprovalStatus::Sending => sending(s, a),
+        _ => pending(s, a),
+    }
+}
+
+fn pending<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
     let busy = s.chat.busy.contains(&format!("a{}", a.id));
     let id = a.id;
     let mut col = column![
@@ -1210,12 +1276,12 @@ pub fn approval<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
         btn_wide(
             "Deny",
             theme::deny,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: false, scope: None }))
+            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: false, scope: None, answer: None }))
         ),
         btn_wide(
             "Approve",
             theme::primary,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: None }))
+            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: None, answer: None }))
         ),
     ]
     .spacing(SP_LG);
@@ -1224,18 +1290,26 @@ pub fn approval<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
     }
     col = col.push(buttons);
     let mut more = row![].spacing(SP_LG);
-    if a.scopes.iter().any(|x| x == "session") {
-        more = more.push(btn_sm(
-            if a.task_id.is_none() { "For this chat" } else { "For this task" },
-            theme::plain,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: Some("session".into()) })),
-        ));
+    for (scope, label) in [("always", "Always"), ("schedule", "Always for this schedule")] {
+        if a.scopes.iter().any(|x| x == scope) {
+            more = more.push(btn_sm(
+                label,
+                theme::plain,
+                (!busy).then_some(Message::Chat(Msg::Decide {
+                    id,
+                    approve: true,
+                    scope: Some(scope.into()),
+                    answer: None,
+                })),
+            ));
+        }
     }
-    if a.scopes.iter().any(|x| x == "always") {
+    for answer in &a.answers {
         more = more.push(btn_sm(
-            "Always",
+            answer.as_str(),
             theme::plain,
-            (!busy).then_some(Message::Chat(Msg::Decide { id, approve: true, scope: Some("always".into()) })),
+            (!busy)
+                .then(|| Message::Chat(Msg::Decide { id, approve: true, scope: None, answer: Some(answer.clone()) })),
         ));
     }
     if a.task_id.is_none()
@@ -1246,6 +1320,55 @@ pub fn approval<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
         more = more.push(btn_sm("Trust this chat", theme::plain, Some(Message::Chat(Msg::Trust(chat, episode)))));
     }
     col.push(more).into()
+}
+
+/// What the safety review blocked: nothing waits on it, but you may run it anyway.
+fn blocked<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
+    let busy = s.chat.busy.contains(&format!("a{}", a.id));
+    let id = a.id;
+    let live = a.task_id.is_none_or(|t| s.store.tasks.get(&t).is_some_and(|t| t.status.is_active()));
+    let mut col = column![text(format!("Blocked: {}", a.summary)).size(theme::FS_TEXT).line_height(1.5)].spacing(SP);
+    if !a.reason.is_empty() {
+        col = col.push(body(a.reason.as_str()));
+    }
+    let mut buttons =
+        row![btn_wide("Dismiss", theme::outlined, (!busy).then_some(Message::Chat(Msg::Dismiss(id))))].spacing(SP_LG);
+    if a.scopes.iter().any(|x| x == "always") {
+        buttons = buttons.push(btn_wide(
+            "Always",
+            theme::outlined,
+            (!busy).then_some(Message::Chat(Msg::RunAnyway { id, always: true })),
+        ));
+    }
+    if live {
+        buttons = buttons.push(btn_wide(
+            "Run anyway",
+            theme::primary,
+            (!busy).then_some(Message::Chat(Msg::RunAnyway { id, always: false })),
+        ));
+    }
+    if let Some(task) = a.task_id {
+        buttons = buttons.push(btn("Open task", theme::outlined, Some(Message::Go(Route::Task(task)))));
+    }
+    col.push(buttons).into()
+}
+
+/// A message to a person that goes once its time is up, unless you stop it.
+fn sending<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
+    let busy = s.chat.busy.contains(&format!("a{}", a.id));
+    let id = a.id;
+    let left = format::seconds_left(&a.expires_at);
+    column![
+        text(a.summary.as_str()).size(theme::FS_TEXT).line_height(1.5),
+        body(if left > 0 { format!("Sending in {left} s") } else { "Sending".into() }),
+        row![btn_wide(
+            "Stop",
+            theme::deny,
+            (!busy && left > 0).then_some(Message::Chat(Msg::Decide { id, approve: false, scope: None, answer: None }))
+        )]
+    ]
+    .spacing(SP)
+    .into()
 }
 
 pub fn question<'a>(s: &'a Session, q: &'a Question) -> Element<'a, Message> {

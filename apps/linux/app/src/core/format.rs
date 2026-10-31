@@ -13,6 +13,13 @@ pub fn now() -> Zoned {
     Zoned::now()
 }
 
+/// Whole seconds until an ISO 8601 time, rounded up; 0 once it's past or isn't one.
+pub fn seconds_left(iso: &str) -> i64 {
+    let Ok(ts) = iso.parse::<Timestamp>() else { return 0 };
+    let ms = ts.as_millisecond() - Timestamp::now().as_millisecond();
+    if ms > 0 { (ms + 999) / 1000 } else { 0 }
+}
+
 fn fmt(d: &Zoned, pattern: &str) -> String {
     d.strftime(pattern).to_string()
 }

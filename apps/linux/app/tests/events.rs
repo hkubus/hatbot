@@ -105,6 +105,21 @@ fn an_approval_answered_elsewhere_stops_waiting() {
 }
 
 #[test]
+fn blocked_and_sending_stay_after_a_reconnect_but_dont_wait_on_you() {
+    let mut store = Store::new();
+    let snapshot = SNAPSHOT.replace(
+        r#""approvals":[{"id":4"#,
+        r#""approvals":[{"id":5,"kind":"send","summary":"Text Ola","status":"blocked","scopes":["always"]},{"id":6,"kind":"send","summary":"Text Ola","status":"sending"},{"id":4"#,
+    );
+    store.apply(Event::parse(&snapshot));
+    assert_eq!(store.approvals[&5].status, ApprovalStatus::Blocked);
+    assert_eq!(store.approvals[&6].status, ApprovalStatus::Sending);
+    assert_eq!(store.needs_you(), 1);
+    store.apply(Event::parse(SNAPSHOT));
+    assert!(!store.approvals.contains_key(&5) && !store.approvals.contains_key(&6));
+}
+
+#[test]
 fn deleting_the_open_chat_goes_back_to_another() {
     let mut store = Store::new();
     store.apply(Event::parse(SNAPSHOT));
