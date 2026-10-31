@@ -1,12 +1,14 @@
 // A chat with a bot or a group: its messages in folds, what waits on you, and the composer.
 use std::collections::{HashMap, HashSet};
 
-use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_editor};
+use iced::widget::{Space, column, container, image, row, scrollable, text, text_editor};
 use iced::{Alignment, Element, Length, Padding, Task, Theme, keyboard};
 use serde_json::json;
 
 use super::app::{Message, Route, Session, failed, load_cards};
+use super::button::button;
 use super::chart;
+use super::focus;
 use super::icons::{self, Icon};
 use super::markdown;
 use super::theme::{self, FS_LG, FS_MD, FS_SM, FS_TEXT, H_LG, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
@@ -1025,7 +1027,7 @@ fn pane<'a>(app: &'a super::app::App, s: &'a Session, at: At) -> Element<'a, Mes
     .on_scroll(move |v| Message::Chat(Msg::Scrolled(at, v)))
     .style(theme::scroll)
     .height(Length::Fill);
-    column![list, composer(s, at, &name, gutter)].into()
+    column![container(list).id(focus::BOTTOM), composer(s, at, &name, gutter)].into()
 }
 
 /// How far a bot's message reaches left of the column, for its unread bar.
@@ -1789,6 +1791,7 @@ fn composer<'a>(s: &'a Session, at: At, name: &str, gutter: f32) -> Element<'a, 
     container(container(col).max_width(MEASURE).width(Length::Fill))
         .center_x(Length::Fill)
         .padding(Padding::default().left(gutter).right(gutter).bottom(SP_LG).top(SP))
+        .id(focus::COMPOSER)
         .into()
 }
 

@@ -1,9 +1,8 @@
 // The small pieces every page is built from, in the web's sizes.
-use iced::widget::{
-    Space, button, column, container, pick_list, row, scrollable, text, text_editor, text_input, tooltip,
-};
+use iced::widget::{Space, column, container, pick_list, row, scrollable, text, text_editor, text_input, tooltip};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 
+use super::button::{self, button, reach};
 use super::icons::{self, Icon};
 use super::theme::{
     self, Colors, FS_LG, FS_MD, FS_SM, FS_TEXT, FS_XL, H, H_SM, NAV_ICON, PAGE, SP, SP_LG, SP_MD, SP_XL, SP_XS,
@@ -390,17 +389,25 @@ pub fn area<'a, M: Clone + 'a>(
         .style(theme::editor)
 }
 
-/// The web's filled dropdown.
+/// The web's filled dropdown. From the keyboard, Enter and the arrows step through its choices.
 pub fn select<'a, T: ToString + PartialEq + Clone + 'a, M: Clone + 'a>(
     options: Vec<T>,
     selected: Option<T>,
     on: impl Fn(T) -> M + 'a,
-) -> pick_list::PickList<'a, T, Vec<T>, T, M> {
-    pick_list(options, selected, on)
+) -> Element<'a, M> {
+    let n = options.len();
+    let at = selected.as_ref().and_then(|s| options.iter().position(|o| o == s));
+    let step = |by: usize| options.get(at.map_or(0, |i| (i + by) % n.max(1))).cloned().map(&on);
+    let (up, down) = (step(n.saturating_sub(1)), step(1));
+    let list = pick_list(options, selected, on)
         .style(theme::select)
         .text_size(FS_MD)
         .padding(Padding { top: 11.0, bottom: 11.0, left: SP_MD, right: SP_MD })
-        .handle(pick_list::Handle::Arrow { size: Some(iced::Pixels(14.0)) })
+        .handle(pick_list::Handle::Arrow { size: Some(iced::Pixels(14.0)) });
+    match (up, down) {
+        (Some(up), Some(down)) => reach(list, down.clone(), theme::R_MD).on_step(up, down).into(),
+        _ => list.into(),
+    }
 }
 
 /// A choice in a picker, shown by its name.

@@ -3,6 +3,7 @@ use iced::widget::{column, container, mouse_area, opaque, row, text};
 use iced::{Element, Length, Task};
 
 use super::app::Message;
+use super::focus;
 use super::theme::{self, FS_MD, FS_XL, SP, SP_LG, SP_XL};
 use super::widgets::{btn, fill, tone};
 
@@ -35,6 +36,7 @@ pub fn view(d: &Dialog) -> Element<'_, Message> {
     )
     .padding(SP_XL)
     .max_width(420)
+    .id(focus::MODAL)
     .style(theme::dialog);
     opaque(
         mouse_area(container(opaque(card)).center(Length::Fill).style(theme::scrim)).on_press(Message::Answer(false)),

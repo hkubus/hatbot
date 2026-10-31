@@ -11,7 +11,7 @@ use iced::{Element, Length, Size, Subscription, Task, Theme, window};
 
 use super::chat::{self, Chat};
 use super::pages::{self, Pages};
-use super::{confirm, login, shell, theme};
+use super::{confirm, focus, login, shell, theme};
 use crate::core::api::{Api, ApiError};
 use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
@@ -68,6 +68,9 @@ pub enum Message {
     Stream(Streamed),
     Go(Route),
     Shortcut(String),
+    Focus(focus::Move),
+    /// Where the focus was before a dialog or a menu took it, to go back to.
+    FocusFrom(Option<usize>),
     Batch(Vec<Message>),
     Ask(Box<confirm::Dialog>),
     Answer(bool),
@@ -125,6 +128,7 @@ pub struct App {
     /// A page asked for before signing in finished.
     start: Option<String>,
     dialog: Option<Box<confirm::Dialog>>,
+    focus_back: Option<usize>,
 }
 
 pub struct Session {
@@ -218,6 +222,7 @@ pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
         agent_state: Default::default(),
         start: page,
         dialog: None,
+        focus_back: None,
     };
     let restore = Task::perform(
         async move {
@@ -253,6 +258,13 @@ pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
 }
 
 impl App {
+    fn focus_back(&mut self) -> Task<Message> {
+        match self.focus_back.take() {
+            Some(at) => focus::shift(focus::Move::To(at)),
+            None => Task::none(),
+        }
+    }
+
     fn open_window(&mut self) -> Task<Message> {
         if let Some(id) = self.window {
             return window::gain_focus(id);
@@ -366,16 +378,21 @@ impl App {
                 notices::close(key);
             }
         }
-        self.phase = Phase::Out(login::Login::new(server.clone().unwrap_or_default()));
+        let l = login::Login::new(server.clone().unwrap_or_default());
+        let focus = l.focus();
+        self.phase = Phase::Out(l);
         self.agent_state = Default::default();
         self.sync_banner();
         self.sync_tray();
         match server {
-            Some(server) => Task::future(async move {
-                vault::clear(&server).await;
-                Message::Nothing
-            }),
-            None => Task::none(),
+            Some(server) => Task::batch([
+                focus,
+                Task::future(async move {
+                    vault::clear(&server).await;
+                    Message::Nothing
+                }),
+            ]),
+            None => focus,
         }
     }
 
@@ -439,14 +456,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             if let Some(s) = app.session_mut() {
                 s.chat_menu = on;
             }
-            Task::none()
+            if on { focus::moved(focus::Move::Enter).map(Message::FocusFrom) } else { app.focus_back() }
         }
         Message::Outside(o) => outside(app, o),
         Message::Restored(Some((server, token))) => app.signed_in(server, token),
         Message::Restored(None) => {
-            app.phase = Phase::Out(login::Login::new(app.config.server.clone().unwrap_or_default()));
+            let l = login::Login::new(app.config.server.clone().unwrap_or_default());
+            let focus = l.focus();
+            app.phase = Phase::Out(l);
             app.sync_tray();
-            Task::none()
+            focus
         }
         Message::Login(m) => match &mut app.phase {
             Phase::Out(l) => login::update(l, m),
@@ -471,12 +490,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Batch(list) => Task::batch(list.into_iter().map(Task::done)),
         Message::Ask(d) => {
             app.dialog = Some(d);
-            Task::none()
+            focus::moved(focus::Move::Enter).map(Message::FocusFrom)
         }
-        Message::Answer(yes) => match app.dialog.take() {
-            Some(d) if yes => update(app, d.on),
-            _ => Task::none(),
-        },
+        Message::Answer(yes) => {
+            let back = app.focus_back();
+            match app.dialog.take() {
+                Some(d) if yes => Task::batch([update(app, d.on), back]),
+                _ => back,
+            }
+        }
         Message::Shortcut(key) => match app.session().and_then(|s| shell::shortcut(s, &key)) {
             Some(r) => update(app, Message::Go(r)),
             None => Task::none(),
@@ -526,6 +548,11 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             s.fire(move |api| async move { api.post_empty(path).await })
         }
         Message::SignOut | Message::Unauthorized => app.sign_out(),
+        Message::Focus(m) => focus::shift(m),
+        Message::FocusFrom(at) => {
+            app.focus_back = at;
+            Task::none()
+        }
         Message::Nothing => Task::none(),
     }
 }
@@ -857,6 +884,30 @@ pub fn subscription(app: &App) -> Subscription<Message> {
             _ => None,
         }),
     ];
+    let typing = app.session().is_some_and(pages::live::typing);
+    if app.window.is_some() && !typing {
+        subs.push(iced::keyboard::listen().filter_map(|e| {
+            use focus::Move;
+            use iced::keyboard::{Event, Key, key::Named};
+            let Event::KeyPressed { key: Key::Named(key), modifiers, .. } = e else { return None };
+            if modifiers.command() || modifiers.alt() {
+                return None;
+            }
+            Some(Message::Focus(match key {
+                Named::Tab if modifiers.shift() => Move::Previous,
+                Named::Tab => Move::Next,
+                Named::F6 => Move::Region(!modifiers.shift()),
+                Named::ArrowDown | Named::ArrowRight => Move::Down,
+                Named::ArrowUp | Named::ArrowLeft => Move::Up,
+                _ => return None,
+            }))
+        }));
+        if app.dialog.is_some() {
+            subs.push(escape(Close::Dialog));
+        } else if app.session().is_some_and(|s| s.chat_menu) {
+            subs.push(escape(Close::ChatMenu));
+        }
+    }
     if let Some(s) = app.session() {
         subs.push(Subscription::run_with(
             StreamKey {
@@ -883,18 +934,34 @@ pub fn subscription(app: &App) -> Subscription<Message> {
                     _ => None,
                 }));
             }
-            if s.chat.threads_open && s.route == Route::Chat {
-                subs.push(iced::keyboard::listen().filter_map(|e| match e {
-                    iced::keyboard::Event::KeyPressed {
-                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                        ..
-                    } => Some(Message::Chat(chat::Msg::ShowThreads(false))),
-                    _ => None,
-                }));
+            if s.chat.threads_open && s.route == Route::Chat && app.dialog.is_none() && !s.chat_menu {
+                subs.push(escape(Close::Threads));
             }
         }
     }
     Subscription::batch(subs)
+}
+
+/// What Escape closes, unless a field took it to let go of the focus.
+#[derive(Clone, Copy, Hash)]
+enum Close {
+    Dialog,
+    ChatMenu,
+    Threads,
+}
+
+fn escape(c: Close) -> Subscription<Message> {
+    iced::keyboard::listen().with(c).filter_map(|(c, e)| match e {
+        iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            ..
+        } => Some(match c {
+            Close::Dialog => Message::Answer(false),
+            Close::ChatMenu => Message::ChatMenu(false),
+            Close::Threads => Message::Chat(chat::Msg::ShowThreads(false)),
+        }),
+        _ => None,
+    })
 }
 
 pub fn theme(app: &App, _: window::Id) -> Option<Theme> {
@@ -914,20 +981,13 @@ pub fn view(app: &App, _: window::Id) -> Element<'_, Message> {
         Phase::Out(l) => login::view(l).map(Message::Login),
         Phase::In(s) => shell::view(app, s),
     };
-    let with_toast = match &app.toast {
-        Some((_, t)) => iced::widget::stack![
-            body,
-            container(container(text(t.as_str()).size(theme::FS_MD)).padding([12, 16]).style(theme::toast))
-                .align_bottom(Length::Fill)
-                .center_x(Length::Fill)
-                .padding(24)
-        ]
-        .into(),
-        None => body,
-    };
-    let with_toast = match &app.dialog {
-        Some(d) => iced::widget::stack![with_toast, confirm::view(d)].into(),
-        None => with_toast,
-    };
-    container(with_toast).width(Length::Fill).height(Length::Fill).style(theme::bar).into()
+    let toast = app.toast.as_ref().map(|(_, t)| {
+        container(container(text(t.as_str()).size(theme::FS_MD)).padding([12, 16]).style(theme::toast))
+            .align_bottom(Length::Fill)
+            .center_x(Length::Fill)
+            .padding(24)
+    });
+    // The page stays the stack's first layer, so a toast or a dialog coming and going keeps its focus and scrolling.
+    let layers = iced::widget::stack![body].push(toast).push(app.dialog.as_deref().map(confirm::view));
+    container(layers).width(Length::Fill).height(Length::Fill).style(theme::bar).into()
 }
