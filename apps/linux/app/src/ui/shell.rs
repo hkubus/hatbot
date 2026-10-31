@@ -1,5 +1,5 @@
 // The window's frame, as the web's: the rail with the chats and sections, the top bar, the banners.
-use iced::widget::{Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text};
+use iced::widget::{Space, button, column, container, hover, mouse_area, opaque, row, scrollable, stack, text};
 use std::f32::consts::FRAC_PI_2;
 
 use iced::{Alignment, Element, Length, Padding, Radians, Theme};
@@ -7,12 +7,13 @@ use iced::{Alignment, Element, Length, Padding, Radians, Theme};
 use super::app::{App, Message, Route, Session};
 use super::icons::{self, Icon};
 use super::theme::{self, FS_LG, FS_MD, FS_SM, FS_XL, ICON, NAV_ICON, SP, SP_LG, SP_MD, SP_XS};
-use super::widgets::{btn_sm, count, fill, icon_btn, icon_btn_styled};
+use super::widgets::{btn_sm, count, fill, icon_btn, icon_btn_sized, icon_btn_styled};
 use super::{chat, pages};
 use crate::core::models::{Conversation, ConversationKind};
 
 const RAIL: f32 = 272.0;
 const COMPACT_RAIL: f32 = 96.0;
+const GUTTER: f32 = 24.0;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Section {
@@ -146,6 +147,7 @@ struct Entry {
     badge: Option<usize>,
     lit: bool,
     on: Message,
+    about: Option<Route>,
 }
 
 impl Entry {
@@ -171,8 +173,9 @@ fn chats(s: &Session) -> Vec<Entry> {
             glyph: chat_glyph(s, c),
             name: s.store.chat_name(Some(c)),
             badge: (c.unread > 0).then_some(c.unread as usize),
-            lit: in_chat && c.id == open,
+            lit: (in_chat && c.id == open) || s.route == about(c),
             on: Message::Chat(chat::Msg::Open(c.id)),
+            about: Some(about(c)),
         })
         .collect();
     if v.is_empty() {
@@ -182,6 +185,7 @@ fn chats(s: &Session) -> Vec<Entry> {
             badge: None,
             lit: in_chat,
             on: Message::Go(Route::Chat),
+            about: None,
         });
     }
     v
@@ -205,9 +209,18 @@ fn sections(s: &Session) -> Vec<Entry> {
             badge: (sc == Section::Tasks && pending > 0).then_some(pending),
             lit: sec == sc,
             on: Message::Go(first),
+            about: None,
         })
     })
     .collect()
+}
+
+/// Where a chat's settings are: its group's, or its bot's.
+fn about(c: &Conversation) -> Route {
+    match c.kind {
+        ConversationKind::Group => Route::Group(Some(c.id)),
+        _ => Route::Bot(c.bot_ids.first().cloned().unwrap_or_else(|| "hatbot".into())),
+    }
 }
 
 fn chat_glyph(s: &Session, c: &Conversation) -> Glyph {
@@ -229,29 +242,30 @@ fn nav_scroll<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Messa
 
 fn sidebar(s: &Session) -> Element<'_, Message> {
     let brand = row![
-        container(icons::hat(28.0, false, |t: &Theme| theme::colors(t).hue)).padding([0, 6]),
-        text("Hatbot").size(FS_XL).font(theme::TEXT),
+        icons::brand(40.0),
+        text("Hatbot").size(FS_XL).font(theme::MEDIUM),
         fill(),
         icon_btn(Icon::Plus, "New bot or group", Some(Message::Go(Route::NewBot))),
     ]
-    .spacing(SP)
+    .spacing(SP_MD)
     .align_y(Alignment::Center)
-    .height(64);
-    let list = |v: Vec<Entry>| column(v.into_iter().map(nav_item)).spacing(2);
-    let rail = column![brand, nav_scroll(column![list(chats(s)), Space::new().height(SP_LG), list(sections(s))])]
-        .padding(Padding::default().left(SP_MD).right(SP_MD));
+    .height(64)
+    .padding(Padding::default().left(SP_MD).right(SP_XS));
+    let chats = column(chats(s).into_iter().map(|e| chat_item(s, e)));
+    let sections = column(sections(s).into_iter().map(nav_item));
+    let rail =
+        column![brand, Space::new().height(SP), nav_scroll(column![chats, Space::new().height(SP_MD), sections])]
+            .padding(Padding::default().left(SP_MD).right(SP_MD));
     container(rail).width(RAIL).height(Length::Fill).into()
 }
 
 fn rail(s: &Session) -> Element<'_, Message> {
-    let brand = column![
-        icons::hat(28.0, false, |t: &Theme| theme::colors(t).hue),
-        icon_btn(Icon::Plus, "New bot or group", Some(Message::Go(Route::NewBot))),
-    ]
-    .spacing(SP)
-    .align_x(Alignment::Center)
-    .width(Length::Fill)
-    .padding([SP_MD, 0.0]);
+    let brand =
+        column![icons::brand(40.0), icon_btn(Icon::Plus, "New bot or group", Some(Message::Go(Route::NewBot))),]
+            .spacing(SP)
+            .align_x(Alignment::Center)
+            .width(Length::Fill)
+            .padding([SP_MD, 0.0]);
     let list = |v: Vec<Entry>| column(v.into_iter().map(rail_item)).spacing(2);
     let items = column![list(chats(s)), Space::new().height(SP_MD), list(sections(s))];
     let rail = column![brand, nav_scroll(items)].padding(Padding::default().left(SP_XS).right(SP_XS));
@@ -267,6 +281,7 @@ fn tab_bar(s: &Session) -> Element<'_, Message> {
         badge: (unread > 0).then_some(unread),
         lit: section(&s.route) == Section::Chat,
         on: Message::Go(Route::Chat),
+        about: None,
     };
     let tabs = std::iter::once(chat).chain(sections(s)).map(|e| container(rail_item(e)).width(Length::Fill).into());
     container(row(tabs).align_y(Alignment::Center)).height(72).padding([0.0, SP_XS]).width(Length::Fill).into()
@@ -280,20 +295,25 @@ fn chat_menu(s: &Session) -> Element<'_, Message> {
         badge: None,
         lit: false,
         on: Message::Go(Route::NewBot),
+        about: None,
     };
     let items =
         chats(s).into_iter().map(|e| Entry { on: Message::Batch(vec![Message::ChatMenu(false), e.on.clone()]), ..e });
-    let list = column(items.chain(std::iter::once(new)).map(nav_item)).spacing(2);
+    let list = column(items.chain(std::iter::once(new)).map(nav_item));
     let menu =
         container(scrollable(list).style(theme::scroll)).padding(SP_XS).width(300).max_height(480).style(theme::menu);
     container(opaque(menu)).padding(Padding::default().top(60).left(SP_LG)).into()
 }
 
 fn nav_item<'a>(e: Entry) -> Element<'a, Message> {
-    let mut r = row![e.glyph(), text(e.name).size(FS_MD).font(theme::MEDIUM).width(Length::Fill)]
+    nav_button(&e, true)
+}
+
+fn nav_button<'a>(e: &Entry, with_badge: bool) -> Element<'a, Message> {
+    let mut r = row![e.glyph(), text(e.name.clone()).size(FS_MD).font(theme::MEDIUM).width(Length::Fill)]
         .spacing(SP_MD)
         .align_y(Alignment::Center);
-    if let Some(n) = e.badge {
+    if let Some(n) = e.badge.filter(|_| with_badge) {
         r = r.push(count(n));
     }
     button(r.height(Length::Fill))
@@ -301,8 +321,31 @@ fn nav_item<'a>(e: Entry) -> Element<'a, Message> {
         .padding([0.0, SP_LG])
         .width(Length::Fill)
         .style(theme::nav(e.lit))
-        .on_press(e.on)
+        .on_press(e.on.clone())
         .into()
+}
+
+/// A chat's row: under the pointer, its settings' button takes the count's place, as on the web.
+fn chat_item<'a>(_: &'a Session, e: Entry) -> Element<'a, Message> {
+    let Some(about) = e.about.clone() else { return nav_item(e) };
+    let base = nav_button(&e, true);
+    let lit = e.lit;
+    let over = stack![
+        // The rail's colour under the row, so the count beneath doesn't show through.
+        container(nav_button(&e, false)).style(move |t: &Theme| {
+            let c = theme::colors(t);
+            container::Style {
+                background: (!lit).then(|| c.bar.into()),
+                border: iced::border::rounded(theme::PILL),
+                ..Default::default()
+            }
+        }),
+        container(icon_btn_sized(Icon::Sliders, "About", Some(Message::Go(about)), ICON))
+            .align_right(Length::Fill)
+            .center_y(56)
+            .padding(Padding::default().right(SP)),
+    ];
+    hover(base, over)
 }
 
 /// Material's rail item: the icon on a pill, its name under it.
@@ -330,6 +373,7 @@ fn rail_item<'a>(e: Entry) -> Element<'a, Message> {
 fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
     let sec = section(&s.route);
     let mut bar = row![].spacing(SP_XS).align_y(Alignment::Center).height(64);
+    let mut tabbed = false;
     if sec == Section::Chat && s.route != Route::NewBot {
         let chat = s.store.current_chat();
         let name = s.store.chat_name(chat);
@@ -338,21 +382,24 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
             let chevron = icons::icon(Icon::Chevron, ICON, icons::text_2).rotation(Radians(FRAC_PI_2));
             let open = s.chat_menu;
             bar = bar.push(
-                button(row![text(title).size(FS_XL), chevron].spacing(SP_XS).align_y(Alignment::Center))
-                    .padding([SP_XS, SP])
-                    .style(theme::plain)
-                    .on_press(Message::ChatMenu(!open)),
+                button(
+                    row![text(title).size(FS_XL).font(theme::MEDIUM), chevron]
+                        .spacing(SP_XS)
+                        .align_y(Alignment::Center),
+                )
+                .padding([SP_XS, SP])
+                .style(theme::plain)
+                .on_press(Message::ChatMenu(!open)),
             );
         } else {
-            bar = bar.push(text(title).size(FS_XL));
+            bar = bar.push(text(title).size(FS_XL).font(theme::MEDIUM));
         }
         let thread = chat.filter(|c| c.is_thread());
-        if let Some(c) = chat.filter(|_| thread.is_none()) {
-            let about = match c.kind {
-                ConversationKind::Group => Route::Group(Some(c.id)),
-                _ => Route::Bot(c.bot_ids.first().cloned().unwrap_or_else(|| "hatbot".into())),
-            };
-            bar = bar.push(icon_btn(Icon::Sliders, "About", Some(Message::Go(about))));
+        // The sidebar has each chat's.
+        if nav != Nav::Full
+            && let Some(c) = chat.filter(|_| thread.is_none())
+        {
+            bar = bar.push(icon_btn(Icon::Sliders, "About", Some(Message::Go(about(c)))));
         }
         bar = bar.push(fill());
         if let Some(t) = thread {
@@ -391,7 +438,8 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
         }
     } else {
         let tabs = views(s, sec);
-        if tabs.len() > 1 {
+        tabbed = tabs.len() > 1;
+        if tabbed {
             let active = tab_of(&s.route);
             let mut t = row![].height(Length::Fill);
             for (r, name) in tabs {
@@ -399,12 +447,14 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
             }
             bar = bar.push(t);
         } else {
-            bar = bar.push(text(pages::title(s)).size(FS_XL));
+            bar = bar.push(text(pages::title(s)).size(FS_XL).font(theme::MEDIUM));
         }
         bar = bar.push(fill());
     }
     bar = bar.push(icon_btn_styled(Icon::Search, "Search", Some(Message::Go(Route::Search)), s.route == Route::Search));
-    container(bar).padding(Padding::default().left(SP_LG + 8.0).right(SP_MD)).width(Length::Fill).into()
+    // The gutter, less a tab's padding, so the first tab's name lines up with a title.
+    let left = if tabbed { GUTTER - SP_LG } else { GUTTER };
+    container(bar).padding(Padding::default().left(left).right(SP_MD)).width(Length::Fill).into()
 }
 
 /// The tab a page belongs to.

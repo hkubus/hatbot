@@ -1,6 +1,6 @@
 // Tasks: what's running and what finished, and one task's timeline.
 use iced::widget::{column, container, image, row, text, text_editor};
-use iced::{Alignment, Color, Element, Length, Task};
+use iced::{Color, Element, Length, Task};
 use serde_json::json;
 
 use super::{Msg as PageMsg, Pages};
@@ -11,9 +11,10 @@ use crate::core::store::PAGE;
 use crate::ui::app::{Message, Route, Session, failed};
 use crate::ui::chat;
 use crate::ui::icons::{self, Icon};
-use crate::ui::theme::{self, Colors, FS_LG, FS_MD, FS_SM, FS_XL, SP, SP_LG, SP_MD, SP_SM, SP_XL};
+use crate::ui::theme::{self, Colors, FS_MD, FS_SM, FS_XL, SP, SP_LG, SP_MD, SP_PAGE, SP_SM, SP_XL};
 use crate::ui::widgets::{
-    area, body, btn, btn_sm, card, empty, error, gap, labeled, list_row, page, section, segmented, small, tiny, tone,
+    Column, area, body, btn_sm, card, empty, error, gap, heading, labeled, link_line, link_tiles, page, section,
+    segmented, small, table, tiny, tone,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -210,7 +211,7 @@ fn screens(s: &mut Session, id: i64) -> Task<Message> {
 pub fn status_tone(st: TaskStatus) -> fn(&Colors) -> Color {
     match st {
         TaskStatus::WaitingApproval | TaskStatus::WaitingTakeover | TaskStatus::WaitingAnswer => |c| c.hue,
-        TaskStatus::Running => |c| c.text_2,
+        TaskStatus::Running => |c| c.hue,
         TaskStatus::Done => |c| c.success,
         TaskStatus::Failed => |c| c.danger,
         TaskStatus::Queued | TaskStatus::Cancelled => |c| c.muted,
@@ -219,31 +220,28 @@ pub fn status_tone(st: TaskStatus) -> fn(&Colors) -> Color {
 
 pub fn view_list(s: &Session) -> Element<'_, Message> {
     let st = &s.pages.tasks;
-    let mut col =
-        column![segmented(&[("Active", Filter::Active), ("Finished", Filter::Done)], st.filter, |f| m(Msg::Filter(f)))]
-            .spacing(SP_LG);
+    let mut col = column![].spacing(SP_PAGE);
+    let mut waiting = Vec::new();
     if let Some(r) = s.store.desktop.as_ref().and_then(|d| d.request.as_ref()) {
-        col = col.push(
-            container(
-                row![
-                    icons::filled(Icon::Hand, 20.0, icons::hue),
-                    text(format!("Hatbot needs you: {}", r.reason)).size(FS_MD).width(Length::Fill),
-                    btn_sm("Open Live", theme::primary, Some(Message::Go(Route::Live)))
-                ]
-                .spacing(SP_MD)
-                .align_y(Alignment::Center),
-            )
-            .padding(SP_LG)
-            .width(Length::Fill)
-            .style(theme::attention),
-        );
-    }
-    for a in s.store.pending_approvals() {
-        col = col.push(container(chat::approval(s, a)).padding(SP_LG).width(Length::Fill).style(theme::attention));
+        waiting.push((link_line("Take over the desktop", Some(r.reason.clone())), Message::Go(Route::Live)));
     }
     for q in s.store.pending_questions() {
-        col = col.push(container(chat::question(s, q)).padding(SP_LG).width(Length::Fill).style(theme::attention));
+        waiting.push((link_line(q.question.as_str(), None), Message::Go(Route::Task(q.task_id))));
     }
+    for a in s.store.pending_approvals() {
+        let to = match a.task_id {
+            Some(id) => Message::Go(Route::Task(id)),
+            None => Message::Go(Route::Chat),
+        };
+        waiting.push((link_line(format!("Can I go ahead? {}", a.summary), None), to));
+    }
+    if !waiting.is_empty() {
+        col = col.push(
+            column![container(heading("Waiting for you")).padding([0.0, SP_LG]), link_tiles(waiting)].spacing(SP_SM),
+        );
+    }
+    col = col
+        .push(segmented(&[("Active", Filter::Active), ("Finished", Filter::Done)], st.filter, |f| m(Msg::Filter(f))));
     if let Some(e) = &st.error {
         col = col.push(error(e.as_str()));
     }
@@ -265,27 +263,49 @@ pub fn view_list(s: &Session) -> Element<'_, Message> {
     if shown.is_empty() && loaded && st.error.is_none() {
         col = col.push(empty(if st.filter == Filter::Active { "Nothing running." } else { "No tasks yet." }));
     }
-    let mut rows = column![].spacing(2);
-    for t in shown {
-        rows = rows.push(list_row(
-            column![
-                text(t.title.as_str()).size(FS_LG),
-                row![
-                    text(format::status_label(t.status)).size(FS_SM).style(tone(status_tone(t.status))),
-                    tiny(format::stamp(t.started_at.as_deref().unwrap_or(&t.created_at))),
-                    tiny(s.store.bot_name(Some(&t.bot_id))),
-                ]
-                .spacing(SP)
-            ]
-            .spacing(2),
-            Some(Message::Go(Route::Task(t.id))),
-        ));
+    if !shown.is_empty() {
+        col = col.push(task_table(shown));
     }
-    col = col.push(rows);
     if st.filter == Filter::Done && st.more {
-        col = col.push(btn("Show more", theme::outlined, Some(m(Msg::More))));
+        col = col.push(btn_sm("Earlier", theme::plain, Some(m(Msg::More))));
     }
     page(col)
+}
+
+/// Tasks as the web lists them: title, status, when it started and what it cost.
+pub fn task_table<'a>(tasks: Vec<&'a AgentTask>) -> Element<'a, Message> {
+    let cols = [
+        Column { name: "Task", share: 6, num: false },
+        Column { name: "Status", share: 2, num: false },
+        Column { name: "Started", share: 2, num: false },
+        Column { name: "Cost", share: 1, num: true },
+    ];
+    let rows = tasks
+        .into_iter()
+        .map(|t| {
+            let cells = vec![
+                text(t.title.as_str()).size(FS_MD).font(theme::MEDIUM).into(),
+                status(t.status),
+                text(format::stamp(t.started_at.as_deref().unwrap_or(&t.created_at)))
+                    .size(FS_MD)
+                    .style(tone(|c| c.muted))
+                    .into(),
+                text(t.cost_usd.map(format::money).unwrap_or_default()).size(FS_MD).into(),
+            ];
+            (cells, Message::Go(Route::Task(t.id)))
+        })
+        .collect();
+    table(&cols, rows)
+}
+
+/// Plain coloured text; a chip only for what waits on you.
+fn status<'a>(st: TaskStatus) -> Element<'a, Message> {
+    let label = text(format::status_label(st)).size(FS_SM).font(theme::MEDIUM).style(tone(status_tone(st)));
+    if matches!(st, TaskStatus::WaitingApproval | TaskStatus::WaitingTakeover | TaskStatus::WaitingAnswer) {
+        container(label).padding([4, 8]).style(theme::attention_chip).into()
+    } else {
+        label.into()
+    }
 }
 
 pub fn view_task<'a>(s: &'a Session, pages: &'a Pages, id: i64, dark: bool) -> Element<'a, Message> {

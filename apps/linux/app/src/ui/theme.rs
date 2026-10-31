@@ -1,7 +1,7 @@
 // The web app's Material 3 Expressive look: its CSS variables, light and dark, and the widget styles
 // built from them.
 use iced::border::{self, Border, Radius};
-use iced::widget::{button, checkbox, container, pick_list, scrollable, text_editor, text_input, toggler};
+use iced::widget::{button, checkbox, container, pick_list, scrollable, text_editor, text_input};
 use iced::{Background, Color, Font, Shadow, Theme, Vector, font};
 
 pub const TEXT: Font = Font::with_name("Google Sans Flex");
@@ -44,6 +44,8 @@ pub const SP_MD: f32 = 12.0;
 pub const SP_LG: f32 = 16.0;
 pub const SP_XL: f32 = 24.0;
 pub const SP_2XL: f32 = 40.0;
+/// The web's `--sp-xl`, above a page.
+pub const SP_PAGE: f32 = 20.0;
 
 pub const H_SM: f32 = 32.0;
 pub const H: f32 = 40.0;
@@ -187,6 +189,11 @@ pub fn theme(dark: bool) -> Theme {
     )
 }
 
+/// Text that can be selected and copied.
+pub fn selectable(theme: &Theme) -> iced_selection::text::Style {
+    iced_selection::text::Style { color: None, selection: alpha(colors(theme).hue, 0.3) }
+}
+
 pub fn colors(theme: &Theme) -> &'static Colors {
     if theme.extended_palette().is_dark { &DARK } else { &LIGHT }
 }
@@ -231,6 +238,15 @@ fn disabled(mut s: button::Style, status: button::Status) -> button::Style {
     s
 }
 
+/// A filled button that can't be pressed: the web's grey, not a faded fill.
+fn filled_off(c: &Colors, mut s: button::Style, status: button::Status) -> button::Style {
+    if status == button::Status::Disabled {
+        s.background = Some(alpha(c.text, 0.12).into());
+        s.text_color = alpha(c.text, 0.38);
+    }
+    s
+}
+
 /// `.btn`: outlined.
 pub fn outlined(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
@@ -248,7 +264,8 @@ pub fn outlined(theme: &Theme, status: button::Status) -> button::Style {
 /// `.btn.primary`: what needs you, filled with the accent.
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
-    disabled(
+    filled_off(
+        c,
         button::Style {
             background: Some(layered(c.hue, c.on_hue, status)),
             text_color: c.on_hue,
@@ -261,7 +278,8 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 
 pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
-    disabled(
+    filled_off(
+        c,
         button::Style {
             background: Some(layered(c.danger, c.on_hue, status)),
             text_color: c.on_hue,
@@ -289,7 +307,8 @@ pub fn deny(theme: &Theme, status: button::Status) -> button::Style {
 /// The accent's soft tone: a chosen chip or a second choice.
 pub fn tonal(theme: &Theme, status: button::Status) -> button::Style {
     let c = colors(theme);
-    disabled(
+    filled_off(
+        c,
         button::Style {
             background: Some(layered(c.hue_soft, c.text, status)),
             text_color: c.text,
@@ -298,6 +317,49 @@ pub fn tonal(theme: &Theme, status: button::Status) -> button::Style {
         },
         status,
     )
+}
+
+/// Disabled ink for a filled control: the web's text at 38%.
+pub fn faint(c: &Colors) -> Color {
+    alpha(c.text, 0.38)
+}
+
+/// The composer's send button: the accent, or a faint fill while there's nothing to send.
+pub fn send(theme: &Theme, status: button::Status) -> button::Style {
+    let c = colors(theme);
+    let background = match status {
+        button::Status::Disabled => alpha(c.text, 0.12),
+        button::Status::Hovered => mix(c.on_hue, 0.08, c.hue),
+        _ => c.hue,
+    };
+    button::Style {
+        background: Some(background.into()),
+        text_color: c.on_hue,
+        border: round(PILL),
+        ..Default::default()
+    }
+}
+
+/// The back button over a page: the accent's text on no fill.
+pub fn link_pill(theme: &Theme, status: button::Status) -> button::Style {
+    let c = colors(theme);
+    button::Style {
+        background: hover(c.hue, status),
+        text_color: c.hue,
+        border: round(PILL),
+        ..button::Style::default()
+    }
+}
+
+/// A button that deletes: red text on no fill.
+pub fn danger_text(theme: &Theme, status: button::Status) -> button::Style {
+    let c = colors(theme);
+    button::Style {
+        background: hover(c.danger, status),
+        text_color: c.danger,
+        border: round(PILL),
+        ..button::Style::default()
+    }
 }
 
 /// A text button, or an icon button with no fill.
@@ -403,6 +465,65 @@ pub fn chip(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
+/// `.tb-btn`: an icon on no fill; when on, the soft accent with its corners squared off.
+pub fn tb_btn(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        if on {
+            button::Style {
+                background: Some(layered(c.hue_soft, c.text, status)),
+                text_color: c.text,
+                border: round(R_MD),
+                ..button::Style::default()
+            }
+        } else {
+            plain(theme, status)
+        }
+    }
+}
+
+/// `.seg`: the options' shared pill-shaped track.
+pub fn seg_track(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style { background: Some(c.surface_2.into()), border: round(PILL), ..Default::default() }
+}
+
+/// An option on the track; the chosen one a filled pill.
+pub fn seg(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        let radius = if status == button::Status::Pressed { R_MD } else { PILL };
+        if on {
+            button::Style {
+                background: Some(layered(c.hue, c.on_hue, status)),
+                text_color: c.on_hue,
+                border: round(radius),
+                ..button::Style::default()
+            }
+        } else {
+            button::Style {
+                background: hover(c.text_2, status),
+                text_color: c.text_2,
+                border: round(radius),
+                ..button::Style::default()
+            }
+        }
+    }
+}
+
+/// The switch's track, as the web's `.switch`.
+pub fn switch_track(theme: &Theme, status: button::Status, on: bool, enabled: bool) -> button::Style {
+    let c = colors(theme);
+    let fade = |col: Color| if enabled { col } else { alpha(col, 0.38) };
+    let track = if on { c.hue } else { c.surface_3 };
+    let track = if status == button::Status::Hovered { mix(c.text, 0.08, track) } else { track };
+    button::Style {
+        background: Some(fade(track).into()),
+        border: Border { color: fade(if on { c.hue } else { c.outline }), width: 2.0, radius: PILL.into() },
+        ..button::Style::default()
+    }
+}
+
 pub fn page(theme: &Theme) -> container::Style {
     let c = colors(theme);
     container::Style { background: Some(c.bg.into()), text_color: Some(c.text), ..Default::default() }
@@ -445,6 +566,29 @@ pub fn tile(first: bool, last: bool) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
+/// A tile that opens something.
+pub fn tile_btn(first: bool, last: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let c = colors(theme);
+        let (top, bottom) = (if first { R_LG } else { R_XS }, if last { R_LG } else { R_XS });
+        button::Style {
+            background: Some(layered(c.surface_1, c.text, status)),
+            text_color: c.text,
+            border: Border {
+                radius: Radius::default().top_left(top).top_right(top).bottom_left(bottom).bottom_right(bottom),
+                ..Border::default()
+            },
+            ..button::Style::default()
+        }
+    }
+}
+
+/// A page's main panel beside its own list, as memory's editor.
+pub fn panel(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style { background: Some(c.surface_1.into()), border: round(R_XL), ..Default::default() }
+}
+
 pub fn well(theme: &Theme) -> container::Style {
     let c = colors(theme);
     container::Style { background: Some(c.surface_2.into()), border: round(R_XL), ..Default::default() }
@@ -481,7 +625,21 @@ pub fn user_bubble(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(c.hue.into()),
         text_color: Some(c.on_hue),
-        border: round(20.0),
+        border: Border {
+            radius: Radius { top_left: 20.0, top_right: 20.0, bottom_right: 4.0, bottom_left: 20.0 },
+            ..Border::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// What waits on you, in a list: the web's `.chip.attn`.
+pub fn attention_chip(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        background: Some(c.hue_soft.into()),
+        text_color: Some(c.text),
+        border: round(R_SM),
         ..Default::default()
     }
 }
@@ -542,26 +700,79 @@ pub fn line(theme: &Theme) -> container::Style {
     container::Style { background: Some(c.line.into()), ..Default::default() }
 }
 
-pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+/// A field inside an `affix`: the box around it is the field.
+pub fn bare_input(theme: &Theme, _: text_input::Status) -> text_input::Style {
     let c = colors(theme);
-    let focused = matches!(status, text_input::Status::Focused { .. });
     text_input::Style {
-        background: c.surface_2.into(),
-        border: Border { color: if focused { c.hue } else { c.surface_2 }, width: 2.0, radius: R_MD.into() },
+        background: Color::TRANSPARENT.into(),
+        border: Border::default(),
         icon: c.muted,
-        placeholder: c.soft,
+        placeholder: c.muted,
         value: c.text,
         selection: alpha(c.hue, 0.35),
     }
 }
 
-/// The composer's field: the box around it shows the focus.
-pub fn composer_field(theme: &Theme, _: text_editor::Status) -> text_editor::Style {
+/// `.affix`: a filled field with its unit inside.
+pub fn affix(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style { background: Some(c.surface_3.into()), border: round(R_MD), ..Default::default() }
+}
+
+/// The web's filled field: a tone up from the tile, lighter under the pointer, ringed while you type.
+fn field_fill(c: &Colors, hovered: bool) -> Color {
+    if hovered { mix(c.text, 0.08, c.surface_3) } else { c.surface_3 }
+}
+
+pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let c = colors(theme);
+    let focused = matches!(status, text_input::Status::Focused { .. });
+    let fill =
+        field_fill(c, matches!(status, text_input::Status::Hovered | text_input::Status::Focused { is_hovered: true }));
+    text_input::Style {
+        background: fill.into(),
+        border: Border { color: if focused { c.hue } else { fill }, width: 2.0, radius: R_MD.into() },
+        icon: c.muted,
+        placeholder: c.soft,
+        value: if status == text_input::Status::Disabled { c.muted } else { c.text },
+        selection: alpha(c.hue, 0.35),
+    }
+}
+
+/// Search's big pill field, the web's `.search-box`.
+pub fn search_field(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let c = colors(theme);
+    let focused = matches!(status, text_input::Status::Focused { .. });
+    text_input::Style {
+        background: c.surface_2.into(),
+        border: Border { color: if focused { c.hue } else { c.surface_2 }, width: 2.0, radius: PILL.into() },
+        icon: c.text_2,
+        placeholder: c.muted,
+        value: c.text,
+        selection: alpha(c.hue, 0.35),
+    }
+}
+
+/// An editor that is the whole panel it's on.
+pub fn bare_editor(theme: &Theme, _: text_editor::Status) -> text_editor::Style {
     let c = colors(theme);
     text_editor::Style {
         background: Color::TRANSPARENT.into(),
         border: Border::default(),
-        placeholder: c.soft,
+        placeholder: c.muted,
+        value: c.text,
+        selection: alpha(c.hue, 0.35),
+    }
+}
+
+/// The chat's composer: the whole box is the field, ringed while it has the focus.
+pub fn composer_field(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let c = colors(theme);
+    let focused = matches!(status, text_editor::Status::Focused { .. });
+    text_editor::Style {
+        background: c.surface_2.into(),
+        border: Border { color: if focused { c.hue } else { c.surface_2 }, width: 2.0, radius: R_XL.into() },
+        placeholder: c.muted,
         value: c.text,
         selection: alpha(c.hue, 0.35),
     }
@@ -570,34 +781,16 @@ pub fn composer_field(theme: &Theme, _: text_editor::Status) -> text_editor::Sty
 pub fn editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
     let c = colors(theme);
     let focused = matches!(status, text_editor::Status::Focused { .. });
+    let fill = field_fill(
+        c,
+        matches!(status, text_editor::Status::Hovered | text_editor::Status::Focused { is_hovered: true }),
+    );
     text_editor::Style {
-        background: c.surface_2.into(),
-        border: Border { color: if focused { c.hue } else { c.surface_2 }, width: 2.0, radius: R_MD.into() },
+        background: fill.into(),
+        border: Border { color: if focused { c.hue } else { fill }, width: 2.0, radius: R_MD.into() },
         placeholder: c.soft,
         value: c.text,
         selection: alpha(c.hue, 0.35),
-    }
-}
-
-pub fn switch(theme: &Theme, status: toggler::Status) -> toggler::Style {
-    let c = colors(theme);
-    let (on, hovered, off) = match status {
-        toggler::Status::Active { is_toggled } => (is_toggled, false, false),
-        toggler::Status::Hovered { is_toggled } => (is_toggled, true, false),
-        toggler::Status::Disabled { is_toggled } => (is_toggled, false, true),
-    };
-    let fade = |col: Color| if off { alpha(col, 0.38) } else { col };
-    let track = if on { c.hue } else { c.surface_3 };
-    toggler::Style {
-        background: fade(if hovered { mix(c.text, 0.08, track) } else { track }).into(),
-        background_border_width: if on { 0.0 } else { 2.0 },
-        background_border_color: fade(c.outline),
-        foreground: fade(if on { c.on_hue } else { c.outline }).into(),
-        foreground_border_width: 0.0,
-        foreground_border_color: Color::TRANSPARENT,
-        text_color: Some(c.text),
-        border_radius: None,
-        padding_ratio: if on { 0.12 } else { 0.22 },
     }
 }
 
@@ -625,12 +818,14 @@ pub fn check(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
 pub fn select(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
     let c = colors(theme);
     let open = matches!(status, pick_list::Status::Opened { .. });
+    let fill =
+        field_fill(c, matches!(status, pick_list::Status::Hovered | pick_list::Status::Opened { is_hovered: true }));
     pick_list::Style {
         text_color: c.text,
-        placeholder_color: c.soft,
-        handle_color: c.muted,
-        background: (if matches!(status, pick_list::Status::Hovered) { c.surface_3 } else { c.surface_2 }).into(),
-        border: Border { color: if open { c.hue } else { c.surface_2 }, width: 2.0, radius: R_MD.into() },
+        placeholder_color: c.muted,
+        handle_color: c.text_2,
+        background: fill.into(),
+        border: Border { color: if open { c.hue } else { fill }, width: 2.0, radius: R_MD.into() },
     }
 }
 

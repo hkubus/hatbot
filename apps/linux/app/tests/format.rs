@@ -51,3 +51,13 @@ fn a_spending_limit_of_nothing_is_refused() {
     assert!(!Limits { daily_usd: 0.0, ..ok.clone() }.valid());
     assert!(!Limits { boxes_usd: Some(-1.0), ..ok }.valid());
 }
+
+#[test]
+fn the_chat_names_the_day_between_messages() {
+    let now: jiff::Zoned = "2026-10-31T12:00[UTC]".parse().unwrap();
+    let at = |s: &str| s.parse::<jiff::Zoned>().unwrap();
+    assert_eq!(format::day(&at("2026-10-31T01:00[UTC]"), &now), "Today");
+    assert_eq!(format::day(&at("2026-10-30T23:00[UTC]"), &now), "Yesterday");
+    assert_eq!(format::day(&at("2026-10-17T09:00[UTC]"), &now), "Saturday 17 October");
+    assert_eq!(format::day(&at("2025-10-17T09:00[UTC]"), &now), "Friday 17 October 2025");
+}

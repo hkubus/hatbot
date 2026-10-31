@@ -1,6 +1,6 @@
 // Memory: its files, each to read and edit, what changed in it, and changes a bot proposes.
 use iced::widget::{column, container, row, scrollable, text, text_editor};
-use iced::{Alignment, Element, Length, Task};
+use iced::{Alignment, Element, Length, Padding, Task};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -12,13 +12,12 @@ use crate::ui::app::{Message, Session, failed};
 use crate::ui::confirm;
 use crate::ui::icons::{self, Icon};
 use crate::ui::markdown;
-use crate::ui::theme::{self, FS_MD, FS_XL, SP, SP_LG, SP_MD, SP_SM, SP_XL};
-use crate::ui::widgets::{btn, btn_sm, card, empty, error, fill, input, small, tiny, tone};
+use crate::ui::theme::{self, FS_LG, FS_MD, FS_SM, FS_XL, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
+use crate::ui::widgets::{btn, btn_sm, card, empty, error, fill, input, rule, small, tone};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
     File(String),
-    History(Option<String>),
     Commit(MemoryCommit),
     Proposal(i64),
 }
@@ -67,6 +66,8 @@ pub struct State {
     conflict: Option<Conflict>,
     saving: bool,
     new_name: Option<String>,
+    /// The open file is shown read, not in the editor.
+    reading: bool,
     log: Option<Vec<MemoryCommit>>,
     diff: Option<(String, String)>,
 }
@@ -102,10 +103,14 @@ fn load(s: &Session) -> Task<Message> {
 fn reopen(s: &Session) -> Task<Message> {
     let st = &s.pages.memory;
     match &st.view {
-        Some(View::File(p)) if st.draft.is_none() && !st.is_new => read(s, p.clone()),
-        Some(View::History(p)) => log(s, p.clone()),
+        Some(View::File(p)) if !st.is_new && !edited(st) => Task::batch([read(s, p.clone()), log(s, Some(p.clone()))]),
         _ => Task::none(),
     }
+}
+
+/// Whether the editor holds anything that isn't saved.
+fn edited(st: &State) -> bool {
+    st.draft.as_ref().is_some_and(|d| Some(d.text()) != st.content.as_ref().map(|c| c.content.clone()))
 }
 
 /// Memory changed: what shows is read again.
@@ -133,8 +138,13 @@ pub fn update(s: &mut Session, msg: Msg) -> Task<Message> {
     let st = &mut s.pages.memory;
     match msg {
         Msg::Tree(Ok(files)) => {
+            // Like the web, memory opens at its index.
+            let index = st.view.is_none() && files.iter().any(|f| f.path == "INDEX.md");
             st.files = Some(files);
             st.error = None;
+            if index {
+                return update(s, Msg::Open(View::File("INDEX.md".into())));
+            }
         }
         Msg::Tree(Err(e)) => st.error = Some(e),
         Msg::Proposals(list) => {
@@ -149,11 +159,9 @@ pub fn update(s: &mut Session, msg: Msg) -> Task<Message> {
             return match v {
                 View::File(p) => {
                     st.content = None;
-                    read(s, p)
-                }
-                View::History(p) => {
                     st.log = None;
-                    log(s, p)
+                    st.reading = false;
+                    Task::batch([read(s, p.clone()), log(s, Some(p))])
                 }
                 View::Commit(c) => {
                     st.diff = None;
@@ -175,12 +183,18 @@ pub fn update(s: &mut Session, msg: Msg) -> Task<Message> {
         Msg::File(path, r) => {
             if st.view.as_ref() == Some(&View::File(path)) {
                 match r {
-                    Ok(c) => st.content = Some(c),
+                    Ok(c) => {
+                        if !st.reading {
+                            st.draft = Some(text_editor::Content::with_text(&c.content));
+                        }
+                        st.content = Some(c);
+                    }
                     Err(e) => st.error = Some(e),
                 }
             }
         }
         Msg::Edit => {
+            st.reading = false;
             st.draft =
                 Some(text_editor::Content::with_text(st.content.as_ref().map(|c| c.content.as_str()).unwrap_or("")));
         }
@@ -190,6 +204,7 @@ pub fn update(s: &mut Session, msg: Msg) -> Task<Message> {
             }
         }
         Msg::Cancel => {
+            st.reading = true;
             st.draft = None;
             st.conflict = None;
             if st.is_new {
@@ -331,10 +346,11 @@ pub fn texts(s: &Session) -> Vec<String> {
 
 pub fn view<'a>(s: &'a Session, md: &'a markdown::Cache, dark: bool) -> Element<'a, Message> {
     row![
-        container(list(s)).width(300).height(Length::Fill),
-        container(scrollable(container(detail(s, md, dark)).padding([SP_LG, SP_XL])).style(theme::scroll))
+        container(list(s)).width(230).height(Length::Fill),
+        container(detail(s, md, dark))
             .width(Length::Fill)
             .height(Length::Fill)
+            .padding(Padding::default().right(SP).bottom(SP))
     ]
     .height(Length::Fill)
     .into()
@@ -342,10 +358,10 @@ pub fn view<'a>(s: &'a Session, md: &'a markdown::Cache, dark: bool) -> Element<
 
 fn list(s: &Session) -> Element<'_, Message> {
     let st = &s.pages.memory;
-    let mut col = column![].spacing(2);
+    let mut col = column![].spacing(0);
     let pending: Vec<&Proposal> = s.store.proposals.values().filter(|p| p.status == ProposalStatus::Pending).collect();
     if !pending.is_empty() {
-        col = col.push(container(tiny("To look over")).padding([SP_SM, SP_MD]));
+        col = col.push(folder("To look over", Icon::Zap));
         for p in pending {
             col = col.push(entry(
                 Icon::Zap,
@@ -357,18 +373,15 @@ fn list(s: &Session) -> Element<'_, Message> {
     }
     let mut files: Vec<&MemoryFile> = st.files.iter().flatten().collect();
     files.sort_by_key(|f| (f.path.contains('/'), f.path.as_str()));
-    let mut folder = String::new();
+    let mut dir_shown = String::new();
     for f in files {
         let (dir, name) = match f.path.rsplit_once('/') {
             Some((d, n)) => (d.to_string(), n.to_string()),
             None => (String::new(), f.path.clone()),
         };
-        if dir != folder {
-            folder = dir.clone();
-            col = col.push(
-                container(tiny(format!("{dir}/")))
-                    .padding(iced::Padding::default().left(SP_MD).top(SP_MD).bottom(SP_SM)),
-            );
+        if dir != dir_shown {
+            dir_shown = dir.clone();
+            col = col.push(folder(format!("{dir}/"), Icon::Folder));
         }
         col = col.push(entry(
             Icon::File,
@@ -378,15 +391,10 @@ fn list(s: &Session) -> Element<'_, Message> {
         ));
     }
     if st.files.as_ref().is_some_and(Vec::is_empty) {
-        col = col.push(container(small("Memory is empty.")).padding(SP_MD));
+        col = col.push(container(small("Memory is empty.")).padding([SP_XS, SP_MD]));
     }
-    let mut actions = column![
-        entry(Icon::Commit, "History".into(), st.view == Some(View::History(None)), m(Msg::Open(View::History(None)))),
-        entry(Icon::Zap, "Propose a tidy-up".into(), false, m(Msg::Tidy)),
-    ]
-    .spacing(2);
-    actions = match &st.new_name {
-        Some(n) => actions.push(
+    col = match &st.new_name {
+        Some(n) => col.push(
             container(
                 row![
                     input("folder/name.md", n, |v| m(Msg::NewName(v))).on_submit(m(Msg::New)),
@@ -397,61 +405,47 @@ fn list(s: &Session) -> Element<'_, Message> {
             )
             .padding([SP_SM, 0.0]),
         ),
-        None => actions.push(entry(Icon::Plus, "New file".into(), false, m(Msg::New))),
+        None => col.push(entry(Icon::Plus, "New file".into(), false, m(Msg::New))),
     };
-    scrollable(column![actions, col].spacing(SP_LG).padding([SP_LG, SP_MD]))
-        .style(theme::scroll)
-        .height(Length::Fill)
-        .into()
+    col = col.push(entry(Icon::Zap, "Tidy up".into(), false, m(Msg::Tidy)));
+    scrollable(col.padding([SP_MD, SP])).style(theme::scroll).height(Length::Fill).into()
+}
+
+/// A folder's name over its files, in the accent.
+fn folder<'a>(name: impl text::IntoFragment<'a>, i: Icon) -> Element<'a, Message> {
+    container(
+        row![icons::icon(i, 18.0, icons::hue), text(name).size(FS_SM).font(theme::MEDIUM).style(tone(|c| c.hue))]
+            .spacing(SP_SM)
+            .align_y(Alignment::Center),
+    )
+    .padding(Padding { top: SP_MD, right: SP_MD, bottom: SP_XS, left: SP_MD })
+    .into()
 }
 
 fn entry<'a>(i: Icon, name: String, lit: bool, on: Message) -> Element<'a, Message> {
     iced::widget::button(
-        row![icons::icon(i, 18.0, if lit { |c| c.text } else { |c| c.muted }), text(name).size(FS_MD)]
-            .spacing(SP_MD)
-            .align_y(Alignment::Center),
+        row![icons::icon(i, 18.0, if lit { |c| c.text } else { |c| c.text_2 }), text(name).size(FS_MD)]
+            .spacing(SP_SM)
+            .align_y(Alignment::Center)
+            .height(28),
     )
     .width(Length::Fill)
-    .padding([8.0, SP_MD])
-    .style(theme::row(lit))
+    .padding([SP_XS, SP_MD])
+    .style(theme::nav(lit))
     .on_press(on)
     .into()
 }
 
+/// The open file, commit or proposal, on the web's rounded editor panel.
 fn detail<'a>(s: &'a Session, md: &'a markdown::Cache, dark: bool) -> Element<'a, Message> {
     let st = &s.pages.memory;
-    let mut col = column![].spacing(SP_LG).max_width(860);
-    if let Some(e) = &st.error {
-        col = col.push(error(e.as_str()));
-    }
-    match &st.view {
-        None => col = col.push(empty("Pick a file to read it.")),
-        Some(View::File(path)) => col = col.push(file(st, path, md, dark)),
-        Some(View::History(_)) => {
-            col = col.push(text("History").size(FS_XL));
-            match &st.log {
-                None => {}
-                Some(l) if l.is_empty() => col = col.push(small("No changes yet.")),
-                Some(l) => {
-                    for c in l {
-                        col = col.push(
-                            iced::widget::button(
-                                column![
-                                    text(c.message.as_str()).size(FS_MD),
-                                    tiny(format!("{} · {} · {}", c.author, c.files.join(", "), format::stamp(&c.date)))
-                                ]
-                                .spacing(2),
-                            )
-                            .width(Length::Fill)
-                            .padding([SP_MD, SP_LG])
-                            .style(theme::row(false))
-                            .on_press(m(Msg::Open(View::Commit(c.clone())))),
-                        );
-                    }
-                }
-            }
-        }
+    let inner: Element<'a, Message> = match &st.view {
+        None => scrollable(column![].push(st.error.as_deref().map(error)).push(empty("Pick a file to read it.")))
+            .style(theme::scroll)
+            .into(),
+        Some(View::File(path)) => file(st, path, md, dark),
         Some(View::Commit(c)) => {
+            let mut col = column![].spacing(SP_LG).padding([SP_LG, GUTTER]);
             col = col.push(
                 row![
                     column![
@@ -469,47 +463,61 @@ fn detail<'a>(s: &'a Session, md: &'a markdown::Cache, dark: bool) -> Element<'a
             {
                 col = col.push(diff(d));
             }
+            scrollable(col).style(theme::scroll).into()
         }
-        Some(View::Proposal(id)) => {
-            if let Some(p) = s.store.proposals.get(id) {
-                col = col.push(proposal(p));
-            }
-        }
-    }
-    col.into()
+        Some(View::Proposal(id)) => match s.store.proposals.get(id) {
+            Some(p) => scrollable(container(proposal(p)).padding([SP_LG, GUTTER])).style(theme::scroll).into(),
+            None => column![].into(),
+        },
+    };
+    container(inner).width(Length::Fill).height(Length::Fill).style(theme::panel).into()
 }
 
+/// The web's gutter inside the editor panel.
+const GUTTER: f32 = 24.0;
+
 fn file<'a>(st: &'a State, path: &'a str, md: &'a markdown::Cache, dark: bool) -> Element<'a, Message> {
-    let mut col = column![].spacing(SP_LG);
-    let mut head = row![text(path).size(FS_XL).width(Length::Fill)].spacing(SP).align_y(Alignment::Center);
+    let mut bar = row![text(path).size(FS_MD).font(theme::CODE).width(Length::Fill)]
+        .spacing(SP)
+        .align_y(Alignment::Center)
+        .height(32);
     if st.draft.is_some() {
-        let changed = st.draft.as_ref().map(|d| d.text()) != st.content.as_ref().map(|c| c.content.clone());
-        head = head.push(btn_sm("Cancel", theme::plain, Some(m(Msg::Cancel)))).push(btn_sm(
+        let changed = edited(st);
+        if !st.is_new {
+            bar = bar.push(btn_sm("Read", theme::outlined, Some(m(Msg::Cancel))));
+            bar = bar.push(btn_sm("Delete", theme::plain, Some(m(Msg::Delete(path.to_string())))));
+        } else {
+            bar = bar.push(btn_sm("Cancel", theme::plain, Some(m(Msg::Cancel))));
+        }
+        bar = bar.push(btn_sm(
             "Save",
             theme::primary,
             (!st.saving && (changed || st.is_new) && st.conflict.is_none()).then_some(m(Msg::Save(None))),
         ));
     } else if st.content.is_some() {
-        head = head
-            .push(btn_sm("History", theme::plain, Some(m(Msg::Open(View::History(Some(path.to_string())))))))
-            .push(btn_sm("Delete", theme::plain, Some(m(Msg::Delete(path.to_string())))))
-            .push(btn_sm("Edit", theme::tonal, Some(m(Msg::Edit))));
+        bar = bar.push(btn_sm("Edit", theme::outlined, Some(m(Msg::Edit))));
     }
-    col = col.push(head);
+    let mut col = column![container(bar).padding([SP, GUTTER]), rule()];
+    if let Some(e) = &st.error {
+        col = col.push(container(error(e.as_str())).padding([SP_MD, GUTTER]));
+    }
     if let Some(c) = &st.conflict {
         col = col.push(
             container(
-                row![
-                    text("It changed while you were editing.").size(FS_MD).width(Length::Fill),
-                    btn_sm("Reload", theme::outlined, Some(m(Msg::Reload))),
-                    btn_sm("Overwrite", theme::danger, Some(m(Msg::Save(Some(c.sha.clone())))))
-                ]
-                .spacing(SP)
-                .align_y(Alignment::Center),
+                container(
+                    row![
+                        text("It changed while you were editing.").size(FS_MD).width(Length::Fill),
+                        btn_sm("Reload", theme::outlined, Some(m(Msg::Reload))),
+                        btn_sm("Overwrite", theme::danger, Some(m(Msg::Save(Some(c.sha.clone())))))
+                    ]
+                    .spacing(SP)
+                    .align_y(Alignment::Center),
+                )
+                .padding(SP_MD)
+                .width(Length::Fill)
+                .style(theme::attention),
             )
-            .padding(SP_MD)
-            .width(Length::Fill)
-            .style(theme::attention),
+            .padding([SP_MD, GUTTER]),
         );
     }
     if let Some(d) = &st.draft {
@@ -517,21 +525,54 @@ fn file<'a>(st: &'a State, path: &'a str, md: &'a markdown::Cache, dark: bool) -
             text_editor(d)
                 .on_action(|a| m(Msg::Editing(a)))
                 .font(theme::CODE)
-                .size(14)
-                .line_height(1.5)
-                .padding(SP_LG)
-                .min_height(400)
-                .style(theme::editor),
+                .size(FS_MD)
+                .line_height(1.65)
+                .padding([SP_LG, GUTTER])
+                .height(Length::Fill)
+                .style(theme::bare_editor),
         );
     } else if let Some(c) = &st.content {
-        col = col.push(match md.get(&c.content) {
+        let read = container(match md.get(&c.content) {
             Some(parsed) if path.ends_with(".md") => markdown::view(parsed, dark, Message::Link),
-            _ => container(text(c.content.as_str()).size(14).font(theme::CODE))
-                .padding(SP_LG)
-                .width(Length::Fill)
-                .style(theme::code_block)
-                .into(),
-        });
+            _ => iced_selection::text(c.content.as_str()).size(FS_MD).font(theme::CODE).style(theme::selectable).into(),
+        })
+        .padding([SP_LG, GUTTER]);
+        col = col.push(scrollable(read).style(theme::scroll).height(Length::Fill));
+    } else {
+        col = col.push(fill());
+    }
+    if let Some(l) = st.log.as_ref().filter(|l| !l.is_empty() && !st.is_new) {
+        let mut h = column![container(text("History").size(FS_LG)).padding([0.0, SP_MD])].spacing(SP);
+        for c in l {
+            h = h.push(
+                row![
+                    text(c.sha.chars().take(7).collect::<String>())
+                        .size(FS_SM)
+                        .font(theme::CODE)
+                        .style(tone(|c| c.muted))
+                        .width(70),
+                    row![
+                        text(c.message.as_str()).size(FS_MD),
+                        text(format::stamp(&c.date)).size(FS_MD).style(tone(|c| c.muted))
+                    ]
+                    .spacing(SP_XS)
+                    .width(Length::Fill),
+                    btn_sm("Diff", theme::link, Some(m(Msg::Open(View::Commit(c.clone()))))),
+                    btn_sm("Revert", theme::link, Some(m(Msg::Revert(c.sha.clone()))))
+                ]
+                .spacing(SP)
+                .align_y(Alignment::Center)
+                .padding([SP_SM, SP_MD]),
+            );
+        }
+        // The history keeps to the panel's lower part, the editor above it.
+        col = col.push(rule()).push(
+            container(
+                scrollable(container(h).padding(Padding { top: SP_MD, right: GUTTER, bottom: SP_XL, left: GUTTER }))
+                    .style(theme::scroll),
+            )
+            .max_height(280),
+        );
     }
     col.into()
 }

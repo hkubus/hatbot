@@ -29,25 +29,16 @@ pub fn time_text(iso: &str) -> String {
     date(iso).map(|d| fmt(&d, "%H:%M")).unwrap_or_default()
 }
 
-/// The label over a message that comes an hour or more after the one before it: "Today 14:05",
-/// "Yesterday 14:05", "Monday 14:05" within the week, "Mon 12 Oct at 14:05", "12 Oct 2025 at 14:05".
-pub fn pause(at: &Zoned, previous: Option<&Zoned>, now: &Zoned) -> Option<String> {
-    if previous.is_some_and(|p| at.timestamp().as_second() - p.timestamp().as_second() < 3600) {
-        return None;
-    }
-    let time = fmt(at, "%H:%M");
+/// The divider over a day's first message: "Today", "Yesterday", "Saturday 17 October", "17 October 2025".
+pub fn day(at: &Zoned, now: &Zoned) -> String {
     let (day, today) = (at.date(), now.date());
     if day == today {
-        return Some(format!("Today {time}"));
+        return "Today".into();
     }
     if today.yesterday().is_ok_and(|y| y == day) {
-        return Some(format!("Yesterday {time}"));
+        return "Yesterday".into();
     }
-    if today.checked_sub(jiff::Span::new().days(6)).is_ok_and(|w| day >= w) {
-        return Some(format!("{} {time}", fmt(at, "%A")));
-    }
-    let label = if day.year() == today.year() { fmt(at, "%a %-d %b") } else { fmt(at, "%-d %b %Y") };
-    Some(format!("{label} at {time}"))
+    if day.year() == today.year() { fmt(at, "%A %-d %B") } else { fmt(at, "%A %-d %B %Y") }
 }
 
 /// The time today, otherwise the day and time: "14:05", "14 Oct, 09:05".

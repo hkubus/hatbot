@@ -14,7 +14,7 @@ use crate::core::socket::{self, SocketEvent};
 use crate::core::{format, jpeg};
 use crate::ui::app::{Message, Route, Session, failed};
 use crate::ui::icons::{self, Icon};
-use crate::ui::theme::{self, FS_LG, FS_MD, SP, SP_LG, SP_MD};
+use crate::ui::theme::{self, FS_LG, FS_MD, SP, SP_LG, SP_MD, SP_XL};
 use crate::ui::widgets::{btn_icon, btn_sm, card, error, small, tiny, tone};
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -248,18 +248,20 @@ pub fn view(s: &Session) -> Element<'_, Message> {
     let mut col = column![].spacing(SP_LG);
 
     if let Some(d) = desktop.filter(|d| d.screens.len() > 1) {
-        let mut picker = row![].spacing(SP);
+        // The web's segmented control, across the page.
+        let mut picker = row![];
         let current = st.screen.clone().unwrap_or_else(|| d.screens[0].id.clone());
         for sc in &d.screens {
             let name = if sc.online { sc.name.clone() } else { format!("{} (offline)", sc.name) };
             picker = picker.push(
-                iced::widget::button(text(name).size(FS_MD).font(theme::MEDIUM))
-                    .padding([6, 14])
-                    .style(theme::chip(sc.id == current))
+                iced::widget::button(container(text(name).size(FS_MD).font(theme::MEDIUM)).center_y(Length::Fill))
+                    .height(theme::H)
+                    .padding([0.0, SP_LG])
+                    .style(theme::seg(sc.id == current))
                     .on_press(m(Msg::Screen(sc.id.clone()))),
             );
         }
-        col = col.push(picker.wrap());
+        col = col.push(container(picker).width(Length::Fill).style(theme::seg_track));
     }
 
     if control {
@@ -289,10 +291,18 @@ pub fn view(s: &Session) -> Element<'_, Message> {
     if let Some(id) = desktop.and_then(|d| d.active_task_id.or(d.request.as_ref().map(|r| r.task_id))) {
         col = col.push(task(s, id));
     }
-    container(iced::widget::scrollable(container(col).padding([SP_LG, 32.0])).style(theme::scroll))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    container(
+        iced::widget::scrollable(container(col).padding(iced::Padding {
+            top: theme::SP_PAGE,
+            right: SP_XL,
+            bottom: theme::SP_2XL,
+            left: SP_XL,
+        }))
+        .style(theme::scroll),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn banner<'a>(words: &str, action: &'a str, on: Message) -> Element<'a, Message> {
@@ -325,12 +335,7 @@ fn screen(st: &State, control: bool, online: bool) -> Element<'_, Message> {
     responsive(move |avail| {
         let w = avail.width.min(1600.0);
         let size = Size::new(w, w * ratio);
-        let mut layers = stack![
-            container(text(""))
-                .width(size.width)
-                .height(size.height)
-                .style(|_| container::Style { background: Some(Color::BLACK.into()), ..Default::default() })
-        ];
+        let mut layers = stack![container(text("")).width(size.width).height(size.height).style(theme::screen)];
         if let (Some(f), true) = (&frame, online) {
             layers = layers.push(image(f.clone()).width(size.width).height(size.height));
         }
@@ -360,14 +365,14 @@ fn screen(st: &State, control: bool, online: bool) -> Element<'_, Message> {
             })
             .interaction(if control { mouse::Interaction::Crosshair } else { mouse::Interaction::Idle });
         container(surface)
-            .padding(if control { 2 } else { 0 })
+            .padding(if control { 2 } else { 1 })
             .style(move |t| {
                 let c = theme::colors(t);
                 container::Style {
                     border: iced::Border {
                         color: if control { c.hue } else { c.line },
-                        width: 2.0,
-                        radius: 12.0.into(),
+                        width: if control { 2.0 } else { 1.0 },
+                        radius: theme::R_LG.into(),
                     },
                     ..Default::default()
                 }

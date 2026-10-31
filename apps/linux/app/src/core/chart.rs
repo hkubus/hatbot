@@ -924,9 +924,14 @@ fn number(v: f64, min: usize, max: usize) -> String {
 /// Round tick values covering [lo, hi], about `count` of them.
 pub fn nice_ticks(mut lo: f64, mut hi: f64, count: usize) -> Vec<f64> {
     if lo == hi {
-        let pad = if lo == 0.0 { 1.0 } else { lo.abs() / 10.0 };
-        lo -= pad;
-        hi += pad;
+        if lo == 0.0 {
+            // Nothing yet: an axis from nothing up, not one around it.
+            hi = 1.0;
+        } else {
+            let pad = lo.abs() / 10.0;
+            lo -= pad;
+            hi += pad;
+        }
     }
     let raw = (hi - lo) / count.max(1) as f64;
     let mag = 10f64.powf(raw.log10().floor());

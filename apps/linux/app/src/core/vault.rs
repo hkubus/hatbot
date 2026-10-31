@@ -39,6 +39,8 @@ pub struct Config {
     /// "Let Hatbot use this computer": only ever switched here.
     pub computer_enabled: bool,
     pub compact_sidebar: bool,
+    /// "light" or "dark"; anything else follows the system.
+    pub theme: String,
 }
 
 pub fn config_dir() -> PathBuf {

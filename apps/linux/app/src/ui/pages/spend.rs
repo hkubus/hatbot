@@ -1,25 +1,31 @@
 // What Hatbot has spent: today and this month against their limits, and where it went.
-use iced::widget::{column, row, text};
-use iced::{Element, Length, Task};
+use std::collections::HashSet;
+
+use iced::widget::{Space, column, container, row, text};
+use iced::{Alignment, Element, Length, Padding, Task, Theme};
 
 use super::Msg as PageMsg;
 use crate::core::chart::ChartSpec;
 use crate::core::models::*;
 use crate::core::{format, spend};
-use crate::ui::app::{Message, Session};
+use crate::ui::app::{Message, Route, Session};
 use crate::ui::chart;
-use crate::ui::theme::{self, FS_2XL, SP_LG, SP_MD, SP_XL};
-use crate::ui::widgets::{card, page, section, small, tone};
+use crate::ui::theme::{self, FS_MD, SP, SP_2XS, SP_LG, SP_MD, SP_PAGE, SP_SM, SP_XL, SP_XS};
+use crate::ui::widgets::{btn, fill, page, segmented, tone};
 
 #[derive(Debug, Clone)]
 pub enum Msg {
     Loaded(Box<SpendSummary>, Box<spend::SpendDetail>),
+    Table(&'static str, bool),
 }
 
 #[derive(Default)]
 pub struct State {
     summary: Option<SpendSummary>,
-    charts: Vec<(&'static str, ChartSpec)>,
+    /// Each chart's title and chart; None when nothing was spent on it.
+    charts: Vec<(&'static str, Option<ChartSpec>)>,
+    /// The charts shown as tables.
+    tables: HashSet<&'static str>,
 }
 
 pub fn opened(s: &mut Session) -> Task<Message> {
@@ -49,57 +55,148 @@ pub fn update(s: &mut Session, msg: Msg) -> Task<Message> {
             let d = *b;
             let bot_name = |id: &str| s.store.bots.get(id).map(|b| b.name.clone());
             let several_bots = d.by_bot.iter().filter(|b| b.usd > 0.0).count() > 1;
-            let all = [
+            let daily_limit = a.limits.as_ref().map(|l| l.daily_usd);
+            let mut charts = vec![
                 ("Last 24 hours", spend::hourly(&d.hourly)),
-                ("Last 30 days", spend::daily(&d.daily)),
-                ("By model", spend::by_model(&d.by_model)),
-                ("By bot", if several_bots { spend::by_bot(&d.by_bot, bot_name) } else { None }),
-                ("By purpose", spend::by_purpose(&d.by_purpose)),
+                ("Last 30 days", spend::daily(&d.daily).map(|c| spend::with_limit(c, daily_limit))),
+                ("By model, last 30 days", spend::by_model(&d.by_model)),
             ];
-            s.pages.spend.charts = all.into_iter().filter_map(|(n, c)| c.map(|c| (n, c))).collect();
+            if several_bots {
+                charts.push(("By bot, last 30 days", spend::by_bot(&d.by_bot, bot_name)));
+            }
+            if let Some(c) = spend::by_purpose(&d.by_purpose) {
+                charts.push(("By purpose, last 30 days", Some(c)));
+            }
+            s.pages.spend.charts = charts;
             s.pages.spend.summary = Some(*a);
+        }
+        Msg::Table(name, on) => {
+            if on {
+                s.pages.spend.tables.insert(name);
+            } else {
+                s.pages.spend.tables.remove(name);
+            }
         }
     }
     Task::none()
 }
 
-fn figure<'a>(name: &'a str, value: String, of: Option<String>) -> Element<'a, Message> {
-    let mut col = column![small(name), text(value).size(FS_2XL).font(theme::MEDIUM)].spacing(4);
+/// One figure on its tile, the web's `Kpi`; with a limit, how much of it is used.
+fn figure<'a>(name: &'a str, usd: f64, of: Option<f64>) -> Element<'a, Message> {
+    let mut value = row![text(format::money(usd)).size(28)].spacing(SP_SM).align_y(Alignment::End);
+    let mut col = column![text(name).size(FS_MD).style(tone(|c| c.text_2))].spacing(SP_SM);
     if let Some(of) = of {
-        col = col.push(text(of).size(theme::FS_MD).style(tone(|c| c.text_2)));
+        value = value.push(
+            container(
+                text(format!("of {}", format::money(of))).size(FS_MD).font(theme::MEDIUM).style(tone(|c| c.muted)),
+            )
+            .padding(Padding::default().bottom(4)),
+        );
     }
-    card(col).width(Length::Fill).into()
+    col = col.push(value);
+    // Tiles without a meter keep its room, so the row's tiles are one height.
+    col = col.push(match of.filter(|o| *o > 0.0) {
+        Some(of) => meter(usd / of),
+        None => Space::new().height(8).into(),
+    });
+    container(col).padding(SP_LG).width(Length::Fill).style(theme::tile(true, true)).into()
+}
+
+/// The web's `.meter`: the part used, a gap, and the rest with a dot at its end; red once it's all used.
+fn meter<'a>(share: f64) -> Element<'a, Message> {
+    let share = share.clamp(0.0, 1.0);
+    let hot = share >= 1.0;
+    let ink = move |t: &Theme| {
+        let c = theme::colors(t);
+        if hot { c.danger } else { c.hue }
+    };
+    let used = (share * 1000.0).round() as u16;
+    let mut r = row![].spacing(SP_XS).height(8);
+    if used > 0 {
+        r = r.push(container(Space::new()).width(Length::FillPortion(used)).height(8).style(move |t: &Theme| {
+            container::Style { background: Some(ink(t).into()), border: iced::border::rounded(4), ..Default::default() }
+        }));
+    }
+    if used < 1000 {
+        let dot = container(Space::new().width(4).height(4)).style(move |t: &Theme| container::Style {
+            background: Some(ink(t).into()),
+            border: iced::border::rounded(2),
+            ..Default::default()
+        });
+        r = r.push(
+            container(dot)
+                .width(Length::FillPortion(1000 - used))
+                .height(8)
+                .padding(Padding::default().right(2))
+                .align_right(Length::Fill)
+                .center_y(8)
+                .style(|t: &Theme| container::Style {
+                    background: Some(theme::colors(t).hue_soft.into()),
+                    border: iced::border::rounded(4),
+                    ..Default::default()
+                }),
+        );
+    }
+    r.into()
+}
+
+/// A chart on its card, the web's `SpendCard`: bar charts can show as a table instead.
+fn chart_card<'a>(
+    name: &'static str,
+    spec: Option<&'a ChartSpec>,
+    table: bool,
+    ctx: chart::Ctx<'a, Message>,
+) -> Element<'a, Message> {
+    let bars = spec.is_some_and(|c| matches!(&c.kind, crate::core::chart::Kind::Bar(s) if !s.horizontal));
+    let mut head = row![text(name).size(FS_MD).font(theme::MEDIUM).width(Length::Fill)].align_y(Alignment::Center);
+    if bars {
+        head = head.push(segmented(&[("Chart", false), ("Table", true)], table, move |t| {
+            Message::Page(PageMsg::Spend(Msg::Table(name, t)))
+        }));
+    }
+    let body: Element<'a, Message> = match spec {
+        None => text("Nothing spent yet.").size(FS_MD).style(tone(|c| c.muted)).into(),
+        Some(c) if bars && table => {
+            let mut col = column![].spacing(SP_2XS);
+            for (label, usd) in spend::rows(c) {
+                col = col.push(
+                    row![text(label).size(FS_MD).width(Length::Fill), text(format::money(usd)).size(FS_MD)]
+                        .padding([SP, SP_LG]),
+                );
+            }
+            col.into()
+        }
+        Some(c) => chart::view(c, ctx),
+    };
+    container(column![container(head).height(40).align_y(Alignment::Center), body].spacing(SP))
+        .padding([SP_LG, SP_XL])
+        .width(Length::Fill)
+        .style(theme::tile(true, true))
+        .into()
 }
 
 pub fn view(s: &Session, dark: bool) -> Element<'_, Message> {
     let st = &s.pages.spend;
-    let Some(sum) = &st.summary else { return page(column![]) };
+    let limits_btn = row![fill(), btn("Limits", theme::outlined, Some(Message::Go(Route::Settings)))];
+    let Some(sum) = &st.summary else { return page(column![limits_btn]) };
     let today = s.store.today_usd.unwrap_or(sum.today_usd);
     let month = s.store.month_usd.unwrap_or(sum.month_usd);
     let limits = sum.limits.as_ref();
-    let of = |v: Option<f64>| v.map(|l| format!("of {}", format::money(l)));
-    let mut figures = row![
-        figure("Today", format::money(today), of(limits.map(|l| l.daily_usd))),
-        figure("This month", format::money(month), of(limits.map(|l| l.monthly_usd))),
+    let mut kpis = row![
+        figure("Today", today, limits.map(|l| l.daily_usd)),
+        figure("This month", month, limits.map(|l| l.monthly_usd)),
     ]
-    .spacing(SP_LG);
-    if let Some(t) = sum.today_tokens {
-        figures = figures.push(figure("Tokens today", format::tokens(t), None));
-    }
-    let mut windows = row![].spacing(SP_LG);
+    .spacing(SP_MD)
+    .height(Length::Shrink);
     for (name, w) in [("Last hour", &sum.last_hour), ("Last minute", &sum.last_minute)] {
         if let Some(w) = w {
-            windows =
-                windows.push(figure(name, format::money(w.usd), Some(format!("{} tokens", format::tokens(w.tokens)))));
+            kpis = kpis.push(figure(name, w.usd, None));
         }
     }
-
-    let ctx = chart::Ctx { dark, photos: None, open: |_| Message::Nothing };
-    let mut col = column![figures, windows].spacing(SP_MD);
-    let mut charts = column![].spacing(SP_XL);
+    let ctx = chart::Ctx { dark, photos: None, open: |_| Message::Nothing, wide: true };
+    let mut col = column![limits_btn, kpis].spacing(SP_PAGE);
     for (name, spec) in &st.charts {
-        charts = charts.push(section(name, card(chart::view(spec, ctx))));
+        col = col.push(chart_card(name, spec.as_ref(), st.tables.contains(name), ctx));
     }
-    col = col.push(charts);
-    page(col.spacing(SP_XL))
+    page(col)
 }
