@@ -10,8 +10,8 @@ use crate::core::models::*;
 use crate::ui::app::{Message, Route, Session, failed};
 use crate::ui::theme::{self, FS_LG, FS_SM, SP, SP_LG, SP_MD, SP_XL};
 use crate::ui::widgets::{
-    Choice, area, btn, btn_sm, card, error, field, fill, input, list_row, page, picker, section, segmented, small,
-    switch_row, tone,
+    Choice, area, btn, btn_sm, card, error, field, fill, group, input, list_row, page, picker, section, segmented,
+    small, switch_row, tone,
 };
 
 pub fn bot_choices(s: &Session) -> Vec<Choice> {
@@ -452,16 +452,19 @@ fn item<'a>(
 
 fn built_in(s: &Session) -> Element<'_, Message> {
     let Some(a) = &s.settings else { return column![].into() };
-    let mut col = column![].spacing(SP_LG);
+    let mut col: Vec<Element<'_, Message>> = Vec::new();
     if let Some(h) = &a.heartbeat {
-        col = col.push(row![
-            text("Heartbeat").size(theme::FS_TEXT).width(Length::Fill),
-            small(if h.enabled { format::every(h.every_minutes) } else { "Off".into() })
-        ]);
+        col.push(
+            row![
+                text("Heartbeat").size(theme::FS_TEXT).width(Length::Fill),
+                small(if h.enabled { format::every(h.every_minutes) } else { "Off".into() })
+            ]
+            .into(),
+        );
     }
     if let Some(r) = &a.weekly_report {
         let r2 = r.clone();
-        col = col.push(switch_row(
+        col.push(switch_row(
             "Weekly report",
             None,
             r.enabled,
@@ -474,36 +477,35 @@ fn built_in(s: &Session) -> Element<'_, Message> {
         ));
         if r.enabled {
             let (r3, r4) = (r.clone(), r.clone());
-            col = col
-                .push(picker("Sent on", (0..7).map(Day).collect(), Some(Day(r.weekday)), move |d| {
-                    m(Msg::Setting(SettingsChange {
-                        weekly_report: Some(WeeklyReport { weekday: d.0, ..r3.clone() }),
-                        ..Default::default()
-                    }))
+            col.push(picker("Sent on", (0..7).map(Day).collect(), Some(Day(r.weekday)), move |d| {
+                m(Msg::Setting(SettingsChange {
+                    weekly_report: Some(WeeklyReport { weekday: d.0, ..r3.clone() }),
+                    ..Default::default()
                 }))
-                .push(picker("Sent at", hours(), Some(Hour(r.hour)), move |h| {
-                    m(Msg::Setting(SettingsChange {
-                        weekly_report: Some(WeeklyReport { hour: h.0, ..r4.clone() }),
-                        ..Default::default()
-                    }))
+            }));
+            col.push(picker("Sent at", hours(), Some(Hour(r.hour)), move |h| {
+                m(Msg::Setting(SettingsChange {
+                    weekly_report: Some(WeeklyReport { hour: h.0, ..r4.clone() }),
+                    ..Default::default()
                 }))
-                .push(row![btn_sm("Send now", theme::outlined, Some(m(Msg::SendReport)))]);
+            }));
+            col.push(row![btn_sm("Send now", theme::outlined, Some(m(Msg::SendReport)))].into());
         }
     }
     if let Some(h) = a.todo_hour {
-        col = col.push(picker("To-do reminder each morning at", hours(), Some(Hour(h)), |h| {
+        col.push(picker("To-do reminder each morning at", hours(), Some(Hour(h)), |h| {
             m(Msg::Setting(SettingsChange { todo_hour: Some(h.0), ..Default::default() }))
         }));
     }
     if let Some(t) = a.memory_tidy {
-        col = col.push(switch_row(
+        col.push(switch_row(
             "Propose a memory tidy-up weekly",
             None,
             t,
             Some(|on| m(Msg::Setting(SettingsChange { memory_tidy: Some(on), ..Default::default() }))),
         ));
     }
-    section("Built in", card(col))
+    group("Built in", col)
 }
 
 fn editor<'a>(s: &'a Session, f: &'a Form, st: &'a State) -> Element<'a, Message> {
