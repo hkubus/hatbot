@@ -36,7 +36,14 @@ import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { type ListingFacts, parseKey, scoutTool } from "./appraise";
 import { askedIfBot } from "./bot-question";
-import { collapse, namesListing, type SendGate, sameAddress, sameHost } from "./gate";
+import {
+  collapse,
+  NATIVE_OFFERS,
+  namesListing,
+  type SendGate,
+  sameAddress,
+  sameHost,
+} from "./gate";
 import {
   applyNote,
   groupReason,
@@ -47,6 +54,7 @@ import {
   quotedTitle,
   widened,
 } from "./mandate";
+import { marketplaceOf } from "./marketplace";
 import { QUIET_HOURS, type SendFacts, type SendInput, STALL_ROUNDS, stalled, zl } from "./policy";
 import { disputed, scamSignals } from "./scam";
 import { negotiateTools } from "./tools";
@@ -710,7 +718,7 @@ export class Negotiations {
     const msg = claimed ?? this.claimSend(n, input);
     const task = this.desktopTask(n, call, {
       title: `Message the seller: ${n.title}`.slice(0, 80),
-      goal: sendGoal(n, text),
+      goal: sendGoal(n, text, input.offer),
       successCriteria: "The message shows in the conversation as sent.",
       messageId: msg,
     });
@@ -826,13 +834,14 @@ export class Negotiations {
         {
           message_id: number | null;
           text: string | null;
+          offer: number | null;
           listing_url: string;
           listing_key: string;
           conversation_url: string | null;
         },
         [number]
       >(
-        `SELECT nt.message_id, m.text, n.listing_url, n.listing_key, n.conversation_url
+        `SELECT nt.message_id, m.text, m.offer, n.listing_url, n.listing_key, n.conversation_url
          FROM negotiation_tasks nt JOIN negotiations n ON n.id = nt.negotiation_id
          LEFT JOIN negotiation_messages m ON m.id = nt.message_id WHERE nt.task_id = ?`,
       )
@@ -842,6 +851,7 @@ export class Negotiations {
     return {
       mode: send ? "send" : "read",
       text: send ? r.text : null,
+      offer: send && nativeOffer(r.listing_url) ? r.offer : null,
       listingUrl: r.listing_url,
       listingId: parseKey(r.listing_key)?.id ?? "",
       conversationUrl: r.conversation_url,
@@ -1322,7 +1332,10 @@ export class Negotiations {
   }
 }
 
-function sendGoal(n: Negotiation, text: string): string {
+const nativeOffer = (url: string) => NATIVE_OFFERS.includes(marketplaceOf(url) ?? "");
+
+function sendGoal(n: Negotiation, text: string, offer: number | null): string {
+  const native = offer !== null && nativeOffer(n.listingUrl);
   return [
     `Send one message to the seller about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, in ${n.conversationUrl ? "its conversation" : "a new conversation from the listing page"}, then stop.`,
     "",
@@ -1335,11 +1348,16 @@ function sendGoal(n: Negotiation, text: string): string {
     "Steps:",
     "1. Open the conversation (or the listing page and its message box).",
     "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller or us) and its text, copied exactly. With no messages yet, call it with an empty list.",
-    "3. Type the message into the message box exactly as above, without the tags, and send it with the Send button or Enter.",
-    "4. Call record_conversation again, then finish.",
+    ...(native
+      ? [
+          `3. If the listing or the conversation has the site's own offer button (Zaproponuj cenę, Make an offer), make the offer with it first: click it, type exactly ${offer} into its price box (no preset amounts), and click its button to send the offer. With no such button, go on.`,
+        ]
+      : []),
+    `${native ? 4 : 3}. Type the message into the message box exactly as above, without the tags, and send it with the Send button or Enter.`,
+    `${native ? 5 : 4}. Call record_conversation again, then finish.`,
     "",
     "The owner approved this message already: don't call confirm_intent for it. The text in the box is checked before it goes.",
-    "Use only the conversation's message box: don't click offer, buy, pay or delivery buttons, and never open a link from the seller. Don't type anything else. If a step is held back, do what the reason says; if you can't, finish and say why.",
+    `Use only the conversation's message box${native ? " and the offer button" : ""}: don't click ${native ? "" : "offer, "}buy, pay or delivery buttons, and never open a link from the seller. Don't type anything else. If a step is held back, do what the reason says; if you can't, finish and say why.`,
   ].join("\n");
 }
 

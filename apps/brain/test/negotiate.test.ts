@@ -817,6 +817,73 @@ test("the send gate: exactly the approved text, once, after the conversation is 
   expect(t.negotiations.get(n.id)?.conversationUrl).toBe(CHAT_URL);
 });
 
+test("an offer goes through the site's offer button at exactly the approved price, once, before the message", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("type", { text: "1200" })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("key", { text: "ctrl+a BackSpace" })] },
+    { content: [computer("type", { text: "1060" })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  messageBox(t);
+  // Left of the message box, the listing's "Zaproponuj cenę"; once open, its form's price box.
+  let form = false;
+  let price: string[] = [];
+  let chat: string[] = [];
+  const el = (x?: number): AgentElement => ({
+    tag: x === 100 ? "button" : x === undefined ? (form ? "input" : "textarea") : "button",
+    role: null,
+    type: x === undefined ? null : "submit",
+    label: x === 100 ? (form ? "Zaproponuj" : "Zaproponuj cenę") : "Wyślij",
+    inForm: true,
+    url: t.agent.page.url ?? LISTING_URL,
+    editable: x === undefined,
+    fields: form ? price : chat,
+  });
+  t.agent.inspect = async (x?: number) => el(x);
+  t.agent.afterAction = (name, input) => {
+    const box = form ? price : chat;
+    if (name === "type") box.splice(0, box.length, `${box[0] ?? ""}${String(input.text)}`);
+    if (name === "key" && input.text === "ctrl+a BackSpace") box.splice(0);
+    if (name !== "left_click") return;
+    const x = (input.coordinate as number[])[0];
+    if (x === 100 && !form) form = true;
+    else if (x === 100) [form, price] = [false, []];
+    else chat = [];
+  };
+  const n = openNegotiation(t);
+  await t.negotiations.send(n, { text: TEXT, offer: 1060, agree: false, stated: null }, call());
+  await t.tasks.idle();
+
+  // The offer at 1200 and the second offer never reached the desktop.
+  expect(t.agent.actions.map((a) => (a.name === "type" ? a.input.text : a.name))).toEqual([
+    "left_click",
+    "1200",
+    "key",
+    "1060",
+    "left_click",
+    TEXT,
+    "left_click",
+  ]);
+  const notes = t.tasks
+    .steps(t.tasks.list()[0]?.id ?? 0)
+    .filter((s) => s.kind === "note")
+    .map((s) => s.name);
+  expect(notes.filter((s) => s !== "Held back")).toEqual([
+    "Made the approved offer",
+    "Sent the approved message",
+  ]);
+  expect(t.approvals.list(false)).toEqual([]);
+  expect(t.negotiations.messages(n.id)[0]).toMatchObject({ status: "sent", text: TEXT });
+});
+
 test("a conversation opened from the listing page is the negotiation's, and one opened by address isn't", async () => {
   const steps = [
     { content: [computer("left_click", { coordinate: [300, 500] })] },

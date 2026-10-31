@@ -36,6 +36,7 @@ import { listingCheck, listingRefused } from "../listings/gate";
 import { skillPath } from "../memory/skills";
 import { modelInfo, modelName } from "../models-known";
 import {
+  boxPrice,
   collapse,
   conversationPage,
   type GateState,
@@ -812,6 +813,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
     let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
+    let offering: "open" | "offer" | null = null;
     /** A message to a person, which waits for the owner to stop it first. */
     let toSend: string | null = null;
     /** What this step changes, as it was approved or reviewed. */
@@ -889,6 +891,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
         if (sending) toSend = changes = `Send "${clip(collapse(gate.text ?? ""), 300)}"`;
+        if (g.action === "open_offer") offering = "open";
+        if (g.action === "offer") {
+          offering = "offer";
+          toSend = changes = `Offer ${gate.offer} through the site's offer button`;
+        }
       }
       if (listing) {
         const l = listingCheck(listing, kind, el, hold);
@@ -979,6 +986,33 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
             : [...content, { type: "text", text: note }],
       };
     }
+    if (offering === "open" && gate) gateState.offering = true;
+    if (offering === "offer" && gate && inspectAgain) {
+      // Once, whether it went or not.
+      gateState.offered = true;
+      const amount = gate.offer;
+      const { went } = await sentFrom(
+        inspectAgain,
+        (fields) => !fields.some((f) => boxPrice(f) === amount),
+      );
+      const note = went
+        ? "The offer went. Now send the approved message in the conversation's message box, as the goal says."
+        : "The offer button was clicked, but the price is still in its box, so it may not have gone. Don't offer again: close the offer form and send the approved message.";
+      tasks.addStep(id, {
+        kind: "note",
+        name: went ? "Made the approved offer" : "Not sure the offer went",
+        detail: String(amount),
+        url: lastUrl,
+      });
+      const content = r.content ?? [];
+      r = {
+        ...r,
+        content:
+          typeof content === "string"
+            ? `${content}\n\n${note}`
+            : [...content, { type: "text", text: note }],
+      };
+    }
     if (sending && inspectAgain) {
       // One message, once: whether it went or not, nothing more goes from this task.
       gateState.sent = true;
@@ -1029,13 +1063,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   /** The address is the send's tab's, not whichever is on screen. */
   const sentFrom = async (
     inspectAgain: () => Promise<Inspected>,
+    gone = (fields: string[]) => !fields.map(collapse).includes(collapse(gate?.text ?? "")),
   ): Promise<{ went: boolean; url: string | null }> => {
-    const text = collapse(gate?.text ?? "");
     for (let i = 0; i < sendConfirm.tries; i++) {
       await Bun.sleep(sendConfirm.everyMs);
       const el = (await inspectAgain()) ?? (await screen.inspect().catch(() => null));
-      if (el?.fields && !el.fields.map(collapse).includes(text))
-        return { went: true, url: el.url ?? null };
+      if (el?.fields && gone(el.fields)) return { went: true, url: el.url ?? null };
     }
     return { went: false, url: null };
   };

@@ -18,6 +18,7 @@ const TEXT = "Dzień dobry, czy przyjmie Pan 1100 zł?";
 const gate: SendGate = {
   mode: "send",
   text: TEXT,
+  offer: null,
   listingUrl: LISTING,
   listingId: "1001abc",
   conversationUrl: "https://www.olx.pl/myaccount/answers/555?ad=1001abc",
@@ -45,6 +46,41 @@ test("the approved text on the listing or the conversation passes as the send", 
   expect(gateCheck(gate, ready, "click", spaced, null)).toEqual({ action: "send" });
   const there = send({ url: "https://olx.pl/myaccount/answers/555/?ad=1001abc&tab=1" });
   expect(gateCheck(gate, ready, "click", there, null)).toEqual({ action: "send" });
+});
+
+test("the site's offer button opens its form once, then sends only the approved price", () => {
+  const offering = { ...gate, offer: 1100 };
+  const at = (label: string, fields: string[], state: GateState = ready, url = LISTING) =>
+    gateCheck(offering, state, "click", send({ label, fields, url }), null).action;
+  expect(at("Zaproponuj cenę", [])).toBe("open_offer");
+  const open = { ...ready, offering: true };
+  for (const price of ["1100", "1 100,00 zł", "1100 zł"])
+    expect(at("Zaproponuj", [price], open)).toBe("offer");
+  expect(at("Make an offer", ["1100"], open)).toBe("offer");
+  // A preset amount, another price, more in the form, a price in the button, or elsewhere.
+  expect(at("Zaproponuj", [], open)).toBe("hold");
+  expect(at("Zaproponuj", ["1200"], open)).toBe("hold");
+  expect(at("Zaproponuj", ["1100", "rtx"], open)).toBe("hold");
+  expect(at("Zaproponuj", ["1100 + 50"], open)).toBe("hold");
+  expect(at("Zaproponuj 1200 zł", ["1100"], open)).toBe("hold");
+  expect(at("Zaproponuj", ["1100"], open, "https://www.olx.pl/d/oferta/inna-ID2002.html")).toBe(
+    "hold",
+  );
+  expect(at("Zaproponuj", ["1100"], { ...open, recorded: false })).toBe("hold");
+  // Once.
+  expect(at("Zaproponuj", ["1100"], { ...open, offered: true })).toBe("hold");
+  expect(at("Zaproponuj", ["1100"], { ...open, sent: true })).toBe("hold");
+});
+
+test("without an approved offer, or on buttons that accept or buy, the offer path doesn't apply", () => {
+  const check = (g: SendGate, label: string, fields: string[]) =>
+    gateCheck(g, ready, "click", send({ label, fields }), { label }).action;
+  expect(check(gate, "Zaproponuj cenę", [])).toBe("usual");
+  expect(check(gate, "Zaproponuj", ["1100"])).toBe("hold");
+  const offering = { ...gate, offer: 1100 };
+  for (const label of ["Akceptuj ofertę", "Kup za 1100 zł", "Moje oferty"])
+    expect(check(offering, label, [])).toBe("usual");
+  expect(check({ ...offering, mode: "read", text: null }, "Zaproponuj cenę", [])).toBe("usual");
 });
 
 test("other text, more text, or the wrong place is held", () => {

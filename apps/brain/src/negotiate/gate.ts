@@ -17,6 +17,8 @@ import {
 export type SendGate = {
   mode: "send" | "read";
   text: string | null;
+  /** The price the site's own offer button may send before the message: Vinted's and OLX's. */
+  offer: number | null;
   listingUrl: string;
   listingId: string;
   conversationUrl: string | null;
@@ -26,6 +28,9 @@ export type GateState = {
   /** record_conversation has been called, so a seller message that came meanwhile has been seen. */
   recorded: boolean;
   sent: boolean;
+  /** The site's offer form was opened, so an offer button with no price box is now its submit. */
+  offering?: boolean;
+  offered?: boolean;
   stopped?: string | null;
   /** From here a send needs a text box Hatbot can see. */
   typed?: boolean;
@@ -33,6 +38,9 @@ export type GateState = {
 
 export type GateCheck =
   | { action: "send" }
+  | { action: "offer" }
+  /** The click opens the site's offer form. */
+  | { action: "open_offer" }
   | { action: "pass" }
   | { action: "usual" }
   | { action: "hold"; why: string };
@@ -104,6 +112,67 @@ export function sendLabel(label: string): boolean {
   return rest !== l && !consequentialLabel(rest) && !NOT_A_MESSAGE.test(rest);
 }
 
+export const NATIVE_OFFERS = ["olx.pl", "vinted.pl"];
+
+// Not "ofert" alone: "Moje oferty" is a tab.
+const OFFER =
+  /(?<![\p{L}\p{N}])(?:zaproponuj|(?:wyslij|zloz|przeslij) (?:propozycj|ofert)|(?:make|send|submit) (?:an |a )?offer|offer$)/u;
+// Accepting the seller's offer, or buying at it, isn't ours to press.
+const NOT_OUR_OFFER =
+  /(?<![\p{L}\p{N}])(?:kup|zakup|zaplac|oplac|zamow|pay|buy|purchase|checkout|order|accept|akceptuj|zaakceptuj|przyjmij|przyjmuj|odrzuc|decline|reject|anuluj|cancel|wycofaj|withdraw)/u;
+
+export const offerLabel = (label: string) => {
+  const l = fold(collapse(label));
+  return OFFER.test(l) && !NOT_OUR_OFFER.test(l);
+};
+
+const PRICE_BOX =
+  /^(?:(?:zł|zl|pln|€|eur) ?)?(\d{1,3}(?: \d{3})+|\d+)(?:[.,](\d{1,2}))?(?: ?(?:zł|zl|pln|€|eur))?$/i;
+
+/** A price box's amount, read strictly: anything else in it is no price. */
+export function boxPrice(s: string): number | null {
+  const m = PRICE_BOX.exec(exact(s));
+  if (!m?.[1]) return null;
+  return Number(`${m[1].replace(/ /g, "")}.${m[2] ?? "0"}`);
+}
+
+function offerCheck(
+  gate: SendGate & { offer: number },
+  state: GateState,
+  kind: "click" | "enter",
+  el: AgentElement,
+  label: string,
+  fields: string[],
+): GateCheck {
+  if (!el.url || !onConversation(el.url, gate))
+    return {
+      action: "hold",
+      why: `This tab (${el.url || "unknown"}) isn't the negotiation's listing or conversation. Make the offer from ${gate.conversationUrl ?? gate.listingUrl}.`,
+    };
+  const priced = fields.map(boxPrice);
+  if (!fields.length) {
+    if (el.href && opensPage(el.href, el.url)) return { action: "usual" };
+    if (kind !== "click" || state.offering || /\d/.test(label))
+      return {
+        action: "hold",
+        why: `Type exactly ${gate.offer} into the offer's price box first: only that price is offered.`,
+      };
+    return { action: "open_offer" };
+  }
+  if (fields.length !== 1 || priced[0] !== gate.offer)
+    return {
+      action: "hold",
+      why: `The offer's price box must hold exactly ${gate.offer} and nothing else is typed: it holds "${(fields.find((_, i) => priced[i] !== gate.offer) ?? "").slice(0, 80)}". Fix it, or close the offer form and send the message alone.`,
+    };
+  // A price in the button's own label ("Zaproponuj 900 zł") must be the same one.
+  if (amountsInLabel(label).some((a) => a !== gate.offer))
+    return { action: "hold", why: `This button offers another price than ${gate.offer}.` };
+  return { action: "offer" };
+}
+
+const amountsInLabel = (label: string) =>
+  [...exact(label).matchAll(/\d[\d ]*(?:[.,]\d{1,2})?/g)].map((m) => boxPrice(m[0].trim()));
+
 function opensPage(href: string, here: string | undefined): boolean {
   try {
     const to = new URL(href);
@@ -149,6 +218,26 @@ export function gateCheck(
   if (kind === "click" && (el.editable || el.tag === "body")) return { action: "pass" };
   const text = gate.text ? exact(gate.text) : null;
   const fields = el.fields.map(exact).filter(Boolean);
+  const label = held && "label" in held ? held.label : el.label;
+  const { offer } = gate;
+  if (
+    gate.mode === "send" &&
+    offer !== null &&
+    !state.offered &&
+    !state.sent &&
+    offerLabel(label) &&
+    !(held && ("checkout" in held || "frame" in held)) &&
+    el.tag !== "iframe" &&
+    el.tag !== "frame"
+  ) {
+    if (state.stopped) return { action: "hold", why: state.stopped };
+    if (!state.recorded)
+      return {
+        action: "hold",
+        why: "Call record_conversation first, with the messages in the conversation, so a reply that came meanwhile isn't missed.",
+      };
+    return offerCheck({ ...gate, offer }, state, kind, el, label, fields);
+  }
   if (!fields.length) {
     // Typed text in a box Hatbot can't see into (a closed shadow root, another site's frame) would go
     // without being compared.
