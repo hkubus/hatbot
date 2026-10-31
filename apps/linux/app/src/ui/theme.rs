@@ -343,6 +343,14 @@ pub fn nav(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
+/// Around a compact rail's item: the pill in it shows the state, so this has none.
+pub fn bare(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, _| {
+        let c = colors(theme);
+        button::Style { text_color: if active { c.text } else { c.text_2 }, ..button::Style::default() }
+    }
+}
+
 /// A row in a list of cards, squared to the list's corners.
 pub fn row(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
@@ -499,6 +507,17 @@ pub fn dialog(theme: &Theme) -> container::Style {
         background: Some(c.surface_3.into()),
         text_color: Some(c.text),
         border: round(R_XL),
+        shadow: Shadow { color: c.shadow, offset: Vector::new(0.0, 4.0), blur_radius: 16.0 },
+        ..Default::default()
+    }
+}
+
+pub fn menu(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        background: Some(c.surface_2.into()),
+        text_color: Some(c.text),
+        border: round(R_MD),
         shadow: Shadow { color: c.shadow, offset: Vector::new(0.0, 4.0), blur_radius: 16.0 },
         ..Default::default()
     }

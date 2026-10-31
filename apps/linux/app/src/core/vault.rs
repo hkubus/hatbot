@@ -38,6 +38,7 @@ pub struct Config {
     pub server: Option<String>,
     /// "Let Hatbot use this computer": only ever switched here.
     pub computer_enabled: bool,
+    pub compact_sidebar: bool,
 }
 
 pub fn config_dir() -> PathBuf {

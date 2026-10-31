@@ -60,6 +60,8 @@ pub enum Message {
     WindowOpened(window::Id),
     WindowClosed(window::Id),
     Focused(bool),
+    Resized(f32),
+    ChatMenu(bool),
     Restored(Option<(String, String)>),
     Login(login::Msg),
     SignedIn(Result<(String, String), String>),
@@ -109,6 +111,7 @@ pub enum Phase {
 pub struct App {
     pub dark: bool,
     pub window: Option<window::Id>,
+    pub width: f32,
     pub phase: Phase,
     pub config: vault::Config,
     pub toast: Option<(u64, String)>,
@@ -134,6 +137,8 @@ pub struct Session {
     pub settings: Option<AppSettings>,
     pub chat: Chat,
     pub pages: Pages,
+    /// The chats' menu under the chat's name, where there's no sidebar.
+    pub chat_menu: bool,
     /// What's shown as notifications, by key.
     noticed: HashMap<String, Notice>,
     /// Approvals and questions already notified once: a snapshot after a reconnect doesn't show them again.
@@ -154,6 +159,7 @@ impl Session {
             settings: None,
             chat: Chat::default(),
             pages: Pages::default(),
+            chat_menu: false,
             noticed: HashMap::new(),
             seen: BTreeMap::new(),
         }
@@ -198,6 +204,7 @@ pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
     let app = App {
         dark: true,
         window: None,
+        width: 1280.0,
         phase: Phase::Starting,
         config: config.clone(),
         toast: None,
@@ -247,7 +254,7 @@ impl App {
             return window::gain_focus(id);
         }
         let (id, open) = window::open(window::Settings {
-            size: Size::new(1180.0, 820.0),
+            size: Size::new(1280.0, 820.0),
             min_size: Some(Size::new(720.0, 480.0)),
             platform_specific: window::settings::PlatformSpecific {
                 application_id: APP_ID.into(),
@@ -405,6 +412,16 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                 None => Task::none(),
             }
         }
+        Message::Resized(w) => {
+            app.width = w;
+            Task::none()
+        }
+        Message::ChatMenu(on) => {
+            if let Some(s) = app.session_mut() {
+                s.chat_menu = on;
+            }
+            Task::none()
+        }
         Message::Outside(o) => outside(app, o),
         Message::Restored(Some((server, token))) => app.signed_in(server, token),
         Message::Restored(None) => {
@@ -448,6 +465,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Go(route) => {
             let Phase::In(s) = &mut app.phase else { return Task::none() };
             s.route = route.clone();
+            s.chat_menu = false;
             pages::opened(s, &route)
         }
         Message::Chat(m) => {
@@ -816,6 +834,7 @@ pub fn subscription(app: &App) -> Subscription<Message> {
         window::events().filter_map(|(_, e)| match e {
             window::Event::Focused => Some(Message::Focused(true)),
             window::Event::Unfocused => Some(Message::Focused(false)),
+            window::Event::Opened { size, .. } | window::Event::Resized(size) => Some(Message::Resized(size.width)),
             _ => None,
         }),
     ];

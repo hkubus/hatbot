@@ -3,6 +3,7 @@ use iced::widget::{column, container, row, text};
 use iced::{Alignment, Element, Length, Task};
 
 use super::Msg as PageMsg;
+use crate::core::vault;
 use crate::ui::app::{App, Message};
 use crate::ui::theme::{self, FS_TEXT, SP, SP_LG, SP_MD, SP_XL};
 use crate::ui::widgets::{btn, btn_sm, group, labeled, page, section, small, switch_row, tiles};
@@ -21,6 +22,7 @@ pub enum Msg {
     Enabled(bool),
     Pause(bool),
     Stop,
+    CompactSidebar(bool),
 }
 
 pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
@@ -30,6 +32,10 @@ pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
             if let Some(a) = app.agent() {
                 if on { a.pause() } else { a.resume() }
             }
+        }
+        Msg::CompactSidebar(on) => {
+            app.config.compact_sidebar = on;
+            vault::save_config(&app.config);
         }
         Msg::Stop => {
             if let Some(a) = app.agent() {
@@ -88,6 +94,15 @@ pub fn view(app: &App) -> Element<'_, Message> {
         );
         col = col.push(group("Status", status));
     }
+    col = col.push(group(
+        "Window",
+        vec![switch_row(
+            "Always use the compact sidebar",
+            None,
+            app.config.compact_sidebar,
+            Some(|v| m(Msg::CompactSidebar(v))),
+        )],
+    ));
     col = col.push(section(
         "Keep passwords out of sight",
         column![
