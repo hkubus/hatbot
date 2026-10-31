@@ -450,7 +450,7 @@ private struct Composer: View {
       if waiting > 0 {
         VStack(alignment: .leading, spacing: 10) {
           if let a = store.pendingApprovals.first {
-            ApprovalBody(approval: a).id(a.id)
+            ApprovalBody(approval: a, compact: true).id(a.id)
           } else if let q = store.pendingQuestions.first {
             QuestionBody(question: q).id("q\(q.id)")
           }
@@ -1186,6 +1186,8 @@ private struct Spoken: ViewModifier {
 struct ApprovalBody: View {
   let approval: Approval
   var linksTask = true
+  /// The chat's, above the field: why it asks, the screenshot and the note wait behind More, as on the web.
+  var compact = false
   @Environment(AppStore.self) private var store
   @Environment(\.openRoute) private var router
   @State private var busy = false
@@ -1193,28 +1195,37 @@ struct ApprovalBody: View {
   @State private var note = ""
   @State private var decided: Decision?
   @State private var trusted = false
+  @State private var more = false
 
   var body: some View {
     let a = approval
-    // The summary can be a whole shell command: shown as written, not read as Markdown.
+    let shown = !compact || more
+    // When something it read may be steering the bot, why it asks is the warning, so it never folds.
+    let warns = a.kind == "injection_warning" || !a.sources.isEmpty
+    let shot = a.taskId != nil && a.screenshotStepId != nil
+    let folds = compact && ((!a.reason.isEmpty && !warns) || shot || a.takesNote)
+    let opens = linksTask && router != nil ? a.taskId : nil
+    // All of it as written, never Markdown: the summary can be a whole shell command.
     Text("\(Text("Can I go ahead?").bold()) \(a.summary)").textSelection(.enabled)
-    let text = [
-      a.reason,
-      a.sources.isEmpty ? "" : "_After reading \(a.sources.joined(separator: ", "))_",
-    ].filter { !$0.isEmpty }.joined(separator: "\n\n")
-    if !text.isEmpty { MarkdownText(text: text) }
-    if let taskId = a.taskId, let stepId = a.screenshotStepId {
+    if !a.reason.isEmpty && (shown || warns) { Text(a.reason).textSelection(.enabled) }
+    if !a.sources.isEmpty {
+      Text("After reading \(a.sources.joined(separator: ", "))").font(.footnote).foregroundStyle(.secondary)
+    }
+    if shown, let taskId = a.taskId, let stepId = a.screenshotStepId {
       Screenshot(taskId: taskId, stepId: stepId)
     }
-    if a.takesNote {
+    if shown && a.takesNote {
       TextField("Tell it what to do instead, or how to go ahead", text: $note, axis: .vertical)
         .lineLimit(1...6)
         .textFieldStyle(.roundedBorder)
     }
-    if linksTask, let taskId = a.taskId, let router {
-      Button("Open task") { router.open(.task(taskId)) }
-        .font(.subheadline)
-        .buttonStyle(.borderless)
+    if opens != nil || folds {
+      HStack(spacing: 16) {
+        if let taskId = opens { Button("Open task") { router?.open(.task(taskId)) } }
+        if folds { Button(more ? "Less" : "More") { withAnimation(.snappy) { more.toggle() } } }
+      }
+      .font(.subheadline)
+      .buttonStyle(.borderless)
     }
     if let error {
       Text(error).font(.footnote).foregroundStyle(.red)
