@@ -3,7 +3,7 @@ use iced::widget::{Space, button, column, container, pick_list, row, scrollable,
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 
 use super::icons::{self, Icon};
-use super::theme::{self, Colors, FS_MD, FS_SM, FS_TEXT, FS_XL, H, H_SM, ICON, MEASURE, SP, SP_LG, SP_MD, SP_XL};
+use super::theme::{self, Colors, FS_MD, FS_SM, FS_TEXT, FS_XL, H, H_SM, ICON, PAGE, SP, SP_LG, SP_MD, SP_XL};
 
 pub fn tone(f: fn(&Colors) -> Color) -> impl Fn(&Theme) -> text::Style {
     move |t| text::Style { color: Some(f(theme::colors(t))) }
@@ -136,9 +136,8 @@ pub fn card<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> container::Contain
 /// A page's body: centred at the reading width, scrolling.
 pub fn page<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
     scrollable(
-        container(container(content).max_width(MEASURE).width(Length::Fill))
-            .center_x(Length::Fill)
-            .padding([SP_LG, SP_XL]),
+        container(container(content).max_width(PAGE).width(Length::Fill).padding([SP_LG, SP_XL]))
+            .center_x(Length::Fill),
     )
     .style(theme::scroll)
     .height(Length::Fill)
@@ -204,6 +203,27 @@ pub fn labeled<'a, M: 'a>(name: &'a str, value: impl Into<Element<'a, M>>) -> El
 /// A titled group on a page.
 pub fn section<'a, M: 'a>(name: &'a str, content: impl Into<Element<'a, M>>) -> Element<'a, M> {
     column![heading(name), content.into()].spacing(SP_MD).into()
+}
+
+/// A titled list of setting rows, each on its own tile, as the web's `Group`.
+pub fn group<'a, M: 'a>(name: &'a str, rows: Vec<Element<'a, M>>) -> Element<'a, M> {
+    column![container(heading(name)).padding([0.0, SP_LG]), tiles(rows)].spacing(theme::SP_SM).into()
+}
+
+/// Setting rows, each on its own tile.
+pub fn tiles<'a, M: 'a>(rows: Vec<Element<'a, M>>) -> Element<'a, M> {
+    let n = rows.len();
+    let mut tiles = column![].spacing(theme::SP_2XS);
+    for (i, r) in rows.into_iter().enumerate() {
+        tiles = tiles.push(
+            // At least 56 tall, the web's `.row`.
+            container(row![Space::new().height(H), r].align_y(Alignment::Center))
+                .width(Length::Fill)
+                .padding([SP, SP_LG])
+                .style(theme::tile(i == 0, i + 1 == n)),
+        );
+    }
+    tiles.into()
 }
 
 /// A text field over several lines, for prompts and instructions.

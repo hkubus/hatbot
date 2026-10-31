@@ -281,7 +281,7 @@ fn tab(name: &str, active: bool, to: Route) -> Element<'_, Message> {
         let c = theme::colors(t);
         text::Style { color: Some(if active { c.hue } else { c.text_2 }) }
     });
-    let underline = container(Space::new().height(3).width(Length::Fill)).style(move |t: &Theme| {
+    let underline = container(Space::new()).width(Length::Fill).height(3).style(move |t: &Theme| {
         let c = theme::colors(t);
         container::Style {
             background: active.then(|| c.hue.into()),
@@ -289,7 +289,7 @@ fn tab(name: &str, active: bool, to: Route) -> Element<'_, Message> {
             ..Default::default()
         }
     });
-    button(column![container(label).center_y(Length::Fill), underline].width(Length::Shrink).align_x(Alignment::Center))
+    button(column![container(label).center_y(Length::Fill), underline].width(Length::Shrink).height(Length::Fill))
         .height(Length::Fill)
         .padding([0.0, SP_LG])
         .style(theme::plain_square)

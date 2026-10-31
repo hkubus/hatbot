@@ -36,6 +36,7 @@ pub const R_LG: f32 = 16.0;
 pub const R_XL: f32 = 28.0;
 pub const PILL: f32 = 999.0;
 
+pub const SP_2XS: f32 = 2.0;
 pub const SP_XS: f32 = 4.0;
 pub const SP_SM: f32 = 6.0;
 pub const SP: f32 = 8.0;
@@ -48,6 +49,8 @@ pub const H_SM: f32 = 32.0;
 pub const H: f32 = 40.0;
 pub const H_LG: f32 = 48.0;
 pub const MEASURE: f32 = 760.0;
+/// A page's width, its gutters included, as the web's `.page`.
+pub const PAGE: f32 = 980.0;
 pub const ICON: f32 = 20.0;
 pub const NAV_ICON: f32 = 24.0;
 
@@ -416,6 +419,22 @@ pub fn framed(theme: &Theme) -> container::Style {
 pub fn card(theme: &Theme) -> container::Style {
     let c = colors(theme);
     container::Style { background: Some(c.surface_1.into()), border: round(R_LG), ..Default::default() }
+}
+
+/// One row of a group: the web's segmented list, rounded more where the group starts and ends.
+pub fn tile(first: bool, last: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let c = colors(theme);
+        let (top, bottom) = (if first { R_LG } else { R_XS }, if last { R_LG } else { R_XS });
+        container::Style {
+            background: Some(c.surface_1.into()),
+            border: Border {
+                radius: Radius::default().top_left(top).top_right(top).bottom_left(bottom).bottom_right(bottom),
+                ..Border::default()
+            },
+            ..Default::default()
+        }
+    }
 }
 
 pub fn well(theme: &Theme) -> container::Style {

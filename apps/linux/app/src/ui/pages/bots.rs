@@ -10,7 +10,7 @@ use crate::ui::confirm;
 use crate::ui::icons;
 use crate::ui::theme::{self, FS_TEXT, R_MD, SP, SP_MD, SP_XL};
 use crate::ui::widgets::{
-    Choice, area, btn, card, error, field, fill, input, page, picker, section, segmented, small, switch_row,
+    Choice, area, btn, error, field, fill, group, input, page, picker, section, segmented, small, switch_row, tiles,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -424,7 +424,7 @@ fn bot_form<'a>(s: &'a Session, id: Option<&'a String>) -> Element<'a, Message> 
         let mut list = vec![Choice { id: String::new(), name: "None".into() }];
         list.extend(st.templates.iter().map(|t| Choice { id: t.id.clone(), name: t.name.clone() }));
         let sel = list.iter().find(|c| Some(&c.id) == st.template.as_ref()).cloned().or(list.first().cloned());
-        col = col.push(card(picker("Template", list, sel, |c| m(Msg::Template(c)))));
+        col = col.push(tiles(vec![picker("Template", list, sel, |c| m(Msg::Template(c)))]));
     }
     let name = if is_hatbot {
         Element::from(text(f.name.as_str()).size(FS_TEXT))
@@ -509,36 +509,34 @@ fn bot_form<'a>(s: &'a Session, id: Option<&'a String>) -> Element<'a, Message> 
     }];
     efforts.extend(CHAT_EFFORTS.iter().map(|e| Choice { id: e.to_string(), name: effort_name(e) }));
     let effort_sel = efforts.iter().find(|c| c.id == f.chat_effort.clone().unwrap_or_default()).cloned();
-    col = col.push(card(
-        column![
-            picker("Model", model_list, model_sel, |c| m(Msg::Model(c))),
-            picker("Effort", efforts, effort_sel, |c| m(Msg::Effort(c)))
-        ]
-        .spacing(SP_MD),
-    ));
+    col = col.push(tiles(vec![
+        picker("Model", model_list, model_sel, |c| m(Msg::Model(c))),
+        picker("Effort", efforts, effort_sel, |c| m(Msg::Effort(c))),
+    ]));
 
     if let Some(plugins) = s.plugins.as_ref().filter(|p| !p.is_empty()) {
         let mut p =
-            column![switch_row("Every plugin that's on", None, f.plugins.is_none(), Some(|v| m(Msg::AllPlugins(v))))]
-                .spacing(SP_MD);
+            vec![switch_row("Every plugin that's on", None, f.plugins.is_none(), Some(|v| m(Msg::AllPlugins(v))))];
         if let Some(on) = &f.plugins {
             let mut sorted: Vec<&PluginName> = plugins.iter().collect();
             sorted.sort_by(|a, b| a.name.cmp(&b.name));
             for pl in sorted {
                 if pl.enabled {
                     let id = pl.id.clone();
-                    p = p.push(switch_row(
+                    p.push(switch_row(
                         pl.name.as_str(),
                         None,
                         on.contains(&pl.id),
                         Some(move |v| m(Msg::Plugin(id.clone(), v))),
                     ));
                 } else {
-                    p = p.push(row![text(pl.name.as_str()).size(FS_TEXT).width(Length::Fill), small("Off in Plugins")]);
+                    p.push(
+                        row![text(pl.name.as_str()).size(FS_TEXT).width(Length::Fill), small("Off in Plugins")].into(),
+                    );
                 }
             }
         }
-        col = col.push(section("Plugins", card(p)));
+        col = col.push(group("Plugins", p));
     }
 
     let changed = match (&st.base, id) {
@@ -572,10 +570,10 @@ fn group_form(s: &Session, id: Option<i64>) -> Element<'_, Message> {
         col = col.push(error(e.as_str()));
     }
     col = col.push(field("Name", input("Name", &st.title, |v| m(Msg::Title(v)))));
-    let mut bots = column![].spacing(SP_MD);
+    let mut bots = Vec::new();
     for b in s.store.bot_ids.iter().filter_map(|id| s.store.bots.get(id)) {
         let id = b.id.clone();
-        bots = bots.push(
+        bots.push(
             row![
                 icons::bot(&b.icon, &b.color, 22.0, false),
                 switch_row(
@@ -586,10 +584,11 @@ fn group_form(s: &Session, id: Option<i64>) -> Element<'_, Message> {
                 )
             ]
             .spacing(SP_MD)
-            .align_y(Alignment::Center),
+            .align_y(Alignment::Center)
+            .into(),
         );
     }
-    col = col.push(section("Bots", card(bots)));
+    col = col.push(group("Bots", bots));
     let valid = (2..=MAX_GROUP_BOTS).contains(&st.members.len());
     let changed = stored.is_none_or(|c| st.title.trim() != c.title.as_deref().unwrap_or("") || st.members != c.bot_ids);
     let mut actions = row![].spacing(SP);
