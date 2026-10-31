@@ -10,3 +10,5 @@ dist/
 dist-types/
 
 target/
+
+/apps/brain/eval/results/

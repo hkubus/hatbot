@@ -39,13 +39,15 @@ const NOISE = {
   quote: "Noise level: 22.4 dB(A)",
   url: "https://www.synology.com/ds925+/spec",
   title: "DS925+ specifications",
-  date: "2025-04",
+  date: "2026-04",
+  kind: "primary",
 };
 const PRICE = {
   claim: "The DS925+ costs 2,399 zł at x-kom.",
   quote: "Synology DS925+ 2 399,00 zł",
   url: "https://www.x-kom.pl/p/ds925",
   title: "Synology DS925+ | x-kom",
+  kind: "primary",
 };
 
 const fetched = (url: string, data: string, id: string): Block[] => [
@@ -92,8 +94,8 @@ function helpers(model: FakeModel) {
   };
 }
 
-const finish = (answer: string, report: string, notify = true) => ({
-  content: [toolUse("finish_research", { outcome: "done", answer, report, notify })],
+const finish = (answer: string, report: string, unverified = "", notify = true) => ({
+  content: [toolUse("finish_research", { outcome: "done", answer, report, unverified, notify })],
 });
 const INVESTIGATE = {
   content: [
@@ -153,6 +155,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
     finish(
       "Get the **DS925+**: it's **2,399 zł** [2] and quiet [1].",
       "## Answer\n\nThe DS925+ [1, 2].\n\n| NAS | Noise |\n|---|---|\n| DS925+ | 22.4 dB(A) [1] |",
+      "- Its noise under load [1]: not on the page.",
     ),
   ]);
   helpers(work);
@@ -169,15 +172,16 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
 
   const findings = resultsIn(work.requests.at(-1));
   expect(findings).toContain(
-    '[1] "DS925+ specifications" https://www.synology.com/ds925+/spec "2025-04"',
+    '[1] "DS925+ specifications" https://www.synology.com/ds925+/spec "2026-04"',
   );
   expect(findings).toContain('[2] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925');
-  expect(findings.match(/Unconfirmed: the quote isn't in what the helper read/g)).toHaveLength(1);
+  // The price helper didn't read the maker's page, but the noise helper did, and the quote is on it.
+  expect(findings).not.toContain("Unconfirmed");
 
-  // The check reads the confirmed quotes only, as data.
+  // The check reads the question and the confirmed quotes only, as data.
   const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
   expect(String(check?.messages[0]?.content)).toStartWith(
-    '<sources trusted="false">\n[2] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[1] "DS925+ specifications"\n- "Noise level: 22.4 dB(A)"\n</sources>',
+    '<question trusted="false">\nWhich quiet four-bay NAS should I buy, under 3,000 zł?\n</question>\n\n<sources trusted="false">\n[2] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[1] "DS925+ specifications"\n- "Noise level: 22.4 dB(A)"\n</sources>',
   );
 
   // Renumbered as first cited, as links; saved in memory and attached.
@@ -188,7 +192,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   const report = await t.memory.read(REPORT_PATH);
   expect(report).toContain("| DS925+ | 22.4 dB(A) [[2]](https://www.synology.com/ds925+/spec) |");
   expect(report).toContain(
-    "## Sources\n\n1. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925)\n2. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2025-04",
+    "## Could not verify\n\n- Its noise under load [[2]](https://www.synology.com/ds925+/spec): not on the page.\n\n## Sources\n\n1. [Synology DS925+ | x-kom](https://www.x-kom.pl/p/ds925), undated, primary\n2. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2026-04, primary",
   );
   expect(t.attachments.forTask(task.id).map((f) => f.name)).toEqual([
     "quiet-nas-for-four-drives.md",
@@ -204,7 +208,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   expect(purposes.map((p) => p.purpose)).toEqual(["research", "task"]);
 });
 
-test("the number check runs once, on a finish it can check; citations that aren't sources always go back", async () => {
+test("the check runs once, on a finish it can check; citations that aren't sources always go back", async () => {
   const work = new FakeModel([
     INVESTIGATE,
     {
@@ -213,6 +217,7 @@ test("the number check runs once, on a finish it can check; citations that aren'
           outcome: "failed",
           answer: "Couldn't [9].",
           report: "",
+          unverified: "",
           notify: true,
         }),
       ],
@@ -242,7 +247,7 @@ test("the number check runs once, on a finish it can check; citations that aren'
   expect(checks).toBe(2);
   expect(task.status).toBe("done");
   expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
-  expect(await t.memory.read(task.reportPath as string)).not.toContain("weren't checked");
+  expect(await t.memory.read(task.reportPath as string)).not.toContain("wasn't checked");
 });
 
 test("a quote is found in what the helper read, whatever the spaces and number format, but not a number copied wrong", () => {
@@ -375,6 +380,138 @@ test("research's notes, read back, are untrusted and taint the reader; other not
   expect(tainted).toHaveLength(2);
 });
 
+/** A one-page PDF that says "Noise level: 22.4 dB(A)". */
+const SPEC_PDF = Buffer.from(
+  [
+    "%PDF-1.4",
+    "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj",
+    "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj",
+    "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj",
+    "4 0 obj<</Length 54>>stream",
+    "BT /F1 12 Tf 10 50 Td (Noise level: 22.4 dB\\(A\\)) Tj ET",
+    "endstream endobj",
+    "5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj",
+    "trailer<</Root 1 0 R>>",
+    "%%EOF",
+  ].join("\n"),
+).toString("base64");
+
+test("a report's sources say their date or that they have none, their kind, when they're old, and when their quotes weren't checked", async () => {
+  const LAUNCH = "https://www.synology.com/news/ds925";
+  const FORUM = "https://forum.example.com/ds925-noise";
+  const work = new FakeModel([
+    ONE_PART,
+    finish("Quiet [1], they say [2], or not [3].", "Quiet [1], they say [2], or not [3]."),
+  ]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...fetched(NOISE.url, SPEC_PAGE, "srvtoolu_spec"),
+            ...fetched(LAUNCH, "The quietest NAS we've made.", "srvtoolu_launch"),
+            toolUse("report_findings", {
+              findings: [
+                NOISE,
+                {
+                  claim: "Synology calls it its quietest.",
+                  quote: "The quietest NAS ever",
+                  url: LAUNCH,
+                  title: "Launch",
+                  date: "March 2024",
+                  kind: "maker",
+                },
+                { ...NOISE, claim: "Loud.", quote: "It's loud", url: FORUM, title: "Forum" },
+              ],
+              gaps: "",
+            }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+  expect(resultsIn(work.requests.findLast((r) => !isHelper(r)))).toContain(
+    '[2] "Launch" https://www.synology.com/news/ds925 "March 2024" (maker\'s claim; over a year old)',
+  );
+  expect(await t.memory.read(task.reportPath as string)).toContain(
+    [
+      "1. [DS925+ specifications](https://www.synology.com/ds925+/spec), 2026-04, primary",
+      "2. [Launch](https://www.synology.com/news/ds925), March 2024, maker's claim, over a year old, quotes not found on the page",
+      "3. [Forum](https://forum.example.com/ds925-noise), 2026-04, primary, search result only",
+    ].join("\n"),
+  );
+});
+
+test("read_source gives back a source's page as a helper fetched it, or the parts around some words", async () => {
+  const FORUM = "https://forum.example.com/ds925-noise";
+  const work = new FakeModel([
+    ONE_PART,
+    { content: [toolUse("read_source", { n: 1, find: "NOISE LEVEL" })] },
+    { content: [toolUse("read_source", { n: 1, find: "fan curve" })] },
+    { content: [toolUse("read_source", { n: 2 })] },
+    finish("Quiet [1].", "Quiet [1]."),
+  ]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...fetched(NOISE.url, `${"x".repeat(5000)}\n${SPEC_PAGE}`, "srvtoolu_spec"),
+            toolUse("report_findings", {
+              findings: [NOISE, { ...NOISE, url: FORUM, title: "Forum" }],
+              gaps: "",
+            }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  await startResearch(t);
+  const leads = work.requests.filter((r) => !isHelper(r));
+  const around = resultsIn(leads[2]);
+  expect(around).toStartWith(
+    '<page source="[1] https://www.synology.com/ds925+/spec" trusted="false">\n"xxx',
+  );
+  expect(around).toContain("Noise level: 22.4");
+  // Only the page around the words: not the 5,000 characters before them.
+  expect(around.length).toBeLessThan(2000);
+  expect(resultsIn(leads[3])).toBe("\"fan curve\" isn't on [1]'s page.");
+  expect(resultsIn(leads[4])).toStartWith("No helper fetched [2]'s page this run");
+});
+
+test("a quote from a fetched PDF is checked against the PDF's text", async () => {
+  const work = new FakeModel([ONE_PART, finish("It's **22.4 dB(A)** [1].", "Quiet [1].")]);
+  const OTHER = "https://www.synology.com/ds925+/datasheet";
+  const pdf = (url: string, data: string, id: string): Block[] => {
+    const [use, result] = fetched(url, "", id) as [Block, Block];
+    const r = result as unknown as { content: { content: { source: unknown } } };
+    r.content.content.source = { type: "base64", media_type: "application/pdf", data };
+    return [use, result];
+  };
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...pdf(NOISE.url, SPEC_PDF, "srvtoolu_pdf"),
+            ...pdf(OTHER, "bm90IGEgcGRm", "srvtoolu_bad"),
+            toolUse("report_findings", {
+              findings: [
+                NOISE,
+                { ...NOISE, claim: "Louder.", quote: "Noise level: 30 dB(A)", url: OTHER },
+              ],
+              gaps: "",
+            }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  await startResearch(t);
+  const findings = resultsIn(work.requests.findLast((r) => !isHelper(r)));
+  // The PDF read: the first quote is in it. One fetch wouldn't open, so the other is only unchecked.
+  expect(findings).toContain('Quote: "Noise level: 22.4 dB(A)"\n[2]');
+  expect(findings.match(/Unchecked:/g)).toHaveLength(1);
+});
+
 test("a finding's page is an http(s) link without tracking, one page is one source, and its text can't close the findings", async () => {
   const work = new FakeModel([ONE_PART, finish("It's **2,399 zł** [1].", "The DS925+ [1].")]);
   let tries = 0;
@@ -409,7 +546,9 @@ test("a finding's page is an http(s) link without tracking, one page is one sour
   // The shortcut link went back to the helper as invalid.
   expect(resultsIn(work.requests[2])).toContain("Invalid input");
   const findings = resultsIn(work.requests.at(-1));
-  expect(findings).toContain('[1] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925\n');
+  expect(findings).toContain(
+    '[1] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925 (undated; primary)\n',
+  );
   expect(findings).not.toContain("[2]");
   expect(findings.match(/<\/findings>/g)).toHaveLength(1);
   expect(findings.match(/<\/part>/g)).toHaveLength(1);
@@ -483,15 +622,15 @@ test("a brief or a desktop task may name only links the task already has, tracki
   expect(task.status).toBe("done");
 });
 
-test("a number check that would go over the task's limit doesn't run, and the report says it's unchecked", async () => {
+test("a check that would go over the task's limit doesn't run, and the report says it's unchecked", async () => {
   const work = new FakeModel([INVESTIGATE, finish("Get the DS925+ [1].", "Report [1].")]);
   helpers(work);
   work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
   const t = await testApp(new FakeModel(), work);
   const check = t.spend.check.bind(t.spend);
   t.spend.check = (usd, ...rest) => {
-    // Only the number check's own call is made from checkNumbers.
-    if (new Error().stack?.includes("checkNumbers"))
+    // Only the check's own call is made from checkReport.
+    if (new Error().stack?.includes("checkReport"))
       throw new BudgetError("task", "This task would go over its $3 limit.");
     return check(usd, ...rest);
   };
@@ -499,7 +638,7 @@ test("a number check that would go over the task's limit doesn't run, and the re
   expect(task.status).toBe("done");
   expect(work.creates.find((p) => p.system === RESEARCH_CHECK_PROMPT)).toBeUndefined();
   expect(await t.memory.read(task.reportPath as string)).toContain(
-    "The numbers weren't checked against their sources (a spending limit stopped it)._",
+    "It wasn't checked against its sources (a spending limit stopped it)._",
   );
 });
 

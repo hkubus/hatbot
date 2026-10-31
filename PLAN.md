@@ -106,6 +106,7 @@ Known gaps, kept because closing them costs more than they risk (the owner's cal
 - desktop-agent keeps its own list of payment hosts for Teach's card-frame check, apart from the brain's.
 - The mandate check works from word lists. It holds an IBAN written like a phone number as a phone number, and can't catch an acceptance in words it doesn't know while naming our price inside the mandate, new plain words for paying off the platform, or trades ("300 zł i moją starą kartę").
 - Research has no page reader that runs JavaScript (it could send out what the task has read; such pages go to `run_desktop_task`), and isn't started from schedules.
+- Research keeps the pages its helpers fetched only for the run: a refresh, or a run a restart cut short, fetches them again.
 - Settings → Plugins, Approvals and guardrails, and teach mode stay web-only; the iOS app has only the safety review's switch.
 - To-do items aren't handed to other bots with `@name`; ask the bot in the chat instead.
 - Your computers: what's on their screens isn't read or screened for prompt injection, only window titles are noted; the task is tainted by the first screenshot, so its consequential steps ask anyway. `computer_get_file` refuses private keys and password stores rather than asking.
