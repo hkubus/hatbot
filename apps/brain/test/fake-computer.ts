@@ -86,8 +86,12 @@ export class FakeComputer {
           op: "claim",
           screen: this.status.screen ?? { output: "", width: 0, height: 0, scale: 1 },
         };
-      case "screenshot":
       case "zoom":
+        // As the agent does: a region off the screen is refused.
+        if (r.x < 0 || r.y < 0 || r.x + r.width > 1280 || r.y + r.height > 800)
+          return { error: "The region must be inside the 1280x800 screen.", code: "failed" };
+        return { op: r.op, data: JPEG, width: 1280, height: 800 };
+      case "screenshot":
         return { op: r.op, data: JPEG, width: 1280, height: 800 };
       case "action":
         return { op: "action", result: {} };

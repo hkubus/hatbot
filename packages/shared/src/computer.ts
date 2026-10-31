@@ -35,6 +35,17 @@ export type ComputerHello = {
 /** The focused monitor, chosen when a task takes the screen and kept for it. In logical pixels. */
 export type ComputerScreen = { output: string; width: number; height: number; scale: number };
 
+/** Screenshots are shrunk to fit this, the size the model is used to (the agent's `scale.rs`). */
+export const SHOT_MAX = { width: 1280, height: 800 };
+
+/** A screen's screenshots' size: shrunk to fit SHOT_MAX, keeping its shape, never grown. */
+export function shotSize(s: { width: number; height: number }) {
+  const w = Math.max(1, s.width);
+  const h = Math.max(1, s.height);
+  const f = Math.min(SHOT_MAX.width / w, SHOT_MAX.height / h, 1);
+  return { width: Math.max(1, Math.round(w * f)), height: Math.max(1, Math.round(h * f)) };
+}
+
 export type ComputerStatus = {
   enabled: boolean;
   /** The session is locked: nothing can be done until the owner unlocks it. */

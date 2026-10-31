@@ -1,6 +1,6 @@
 //! Screenshots are shrunk to the size the model works at, and its coordinates mapped back.
 
-/// The desktop guest's screen: what the model is used to.
+/// The desktop guest's screen: what the model is used to. `SHOT_MAX` and `shotSize` in packages/shared mirror it.
 pub const MAX_WIDTH: u32 = 1280;
 pub const MAX_HEIGHT: u32 = 800;
 

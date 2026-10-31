@@ -148,6 +148,29 @@ test("on a computer, a click nothing can name is judged from a zoomed screenshot
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
 });
 
+test("on a computer, a click by the screen's corner is judged from a zoom inside the screen, not held as unseen", async () => {
+  const work = new FakeModel([
+    { content: [computer("left_click", { coordinate: [1250, 780] })] },
+    finish(),
+  ]);
+  work.onCreate = (p) =>
+    p.system === CLICK_CHECK_PROMPT ? '{"consequential": false, "label": "Close"}' : undefined;
+  const t = await testApp(new FakeModel(), work);
+  const { computer: laptop } = await connected(t);
+  const task = startOn(t, "m-laptop");
+  t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
+  expect((await ended(t, task.id)).status).toBe("done");
+
+  expect(laptop.requests.find((r) => r.op === "zoom")).toEqual({
+    op: "zoom",
+    x: 800,
+    y: 520,
+    width: 480,
+    height: 280,
+  });
+  expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
+});
+
 test("on a computer, Enter held from a screenshot goes once the review finds it safe, though the check words it differently the next time", async () => {
   const enter = () => computer("key", { text: "Return" });
   const work = new FakeModel([

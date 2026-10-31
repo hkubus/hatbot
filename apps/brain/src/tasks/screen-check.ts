@@ -17,6 +17,16 @@ const VERDICT = {
 /** Around the point, in the screenshot's pixels. */
 const HALF = { width: 240, height: 140 };
 
+/** How far into from..to `at` is: the zoom is enlarged, and off-centre at the screen's edges. */
+const where = (at: number, from: number, to: number) =>
+  `${Math.round(((at - from) / Math.max(1, to - from)) * 100)}%`;
+
+/** From..to around `at`, inside 0..`max` when it's known: the agent refuses a region off the screen. */
+const span = (at: number, half: number, max?: number) => {
+  const from = Math.max(0, max === undefined ? at - half : Math.min(at - half, max - 2 * half));
+  return [from, max === undefined ? at + half : Math.min(max, from + 2 * half)] as const;
+};
+
 export const mediaTypeOf = (b: Uint8Array) =>
   b[0] === 0xff && b[1] === 0xd8 ? ("image/jpeg" as const) : ("image/webp" as const);
 
@@ -28,18 +38,14 @@ export async function judgedHold(
   point: number[] | null,
   press: Press,
   reserve = false,
+  shot: { width: number; height: number } | null = null,
 ): Promise<Hold | null> {
   const act = press === "click" ? "click" : press === "space" ? "Space key" : "Enter key";
   try {
     const [x = 0, y = 0] = point ?? [];
-    const bytes = point
-      ? await screen.zoom([
-          Math.max(0, x - HALF.width),
-          Math.max(0, y - HALF.height),
-          x + HALF.width,
-          y + HALF.height,
-        ])
-      : await screen.screenshot();
+    const [x1, x2] = span(x, HALF.width, shot?.width);
+    const [y1, y2] = span(y, HALF.height, shot?.height);
+    const bytes = point ? await screen.zoom([x1, y1, x2, y2]) : await screen.screenshot();
     const out = await oneShot(
       d,
       {
@@ -63,7 +69,7 @@ export async function judgedHold(
               {
                 type: "text",
                 text: point
-                  ? `The ${act} lands near the middle of this picture.`
+                  ? `The ${act} lands ${where(x, x1, x2)} across and ${where(y, y1, y2)} down this picture.`
                   : `This is the whole screen; the ${act} goes to whatever has the keyboard.`,
               },
             ],

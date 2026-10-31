@@ -8,7 +8,13 @@ import {
   ScreenLane,
 } from "@hatbot/plugin-sdk";
 import type { ComputerInfo } from "@hatbot/shared";
-import type { ComputerHello, ComputerMessage, ComputerWindow } from "@hatbot/shared/computer";
+import {
+  type ComputerHello,
+  type ComputerMessage,
+  type ComputerWindow,
+  type ComputerScreen as Monitor,
+  shotSize,
+} from "@hatbot/shared/computer";
 import type { AgentAction } from "@hatbot/shared/desktop";
 import { ComputerError, Link } from "./link";
 
@@ -47,6 +53,8 @@ class Machine {
   readonly waiters = new Set<() => void>();
   /** Tasks and chats that may use it, as the owner approved. */
   readonly grants = new Set<string>();
+  /** The screen the task holding it was given. */
+  claimed: Monitor | null = null;
 
   constructor(
     readonly id: string,
@@ -79,6 +87,8 @@ export type ComputerScreen = {
   readonly lane: ScreenLane;
   readonly control: ScreenControl;
   info(): ComputerInfo;
+  /** Its screenshots' size, once it has said which screen it's on. */
+  shot(): { width: number; height: number } | null;
   /** Its requests end when `signal` aborts. */
   agent(signal?: AbortSignal): ScreenAgent;
   blocked(): Blocked | null;
@@ -306,6 +316,10 @@ export class Computers {
       lane: m.lane,
       control: m.control,
       info: () => self.get(id) as ComputerInfo,
+      shot: () => {
+        const s = m.claimed ?? m.link?.status.screen;
+        return s ? shotSize(s) : null;
+      },
       agent: (signal) => ({
         screenshot: async () =>
           decode((await link().request({ op: "screenshot" }, 30_000, signal)).data),
@@ -350,9 +364,12 @@ export class Computers {
           check();
         }),
       claim: async (taskId, signal) => {
-        await link().request({ op: "claim", taskId: String(taskId) }, 15_000, signal);
+        m.claimed = (
+          await link().request({ op: "claim", taskId: String(taskId) }, 15_000, signal)
+        ).screen;
       },
       release: async (taskId) => {
+        m.claimed = null;
         await m.link?.request({ op: "release", taskId: String(taskId) }, 15_000).catch(() => {});
       },
       windows: async (signal) => {

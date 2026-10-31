@@ -853,7 +853,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const holds = await Promise.all(
         els.map(async (e, i): Promise<Hold | null> => {
           if (machine && e === null)
-            return judgedHold(d, id, screen, points[i] ?? null, check.press, tasks.reserves(task));
+            return judgedHold(
+              d,
+              id,
+              screen,
+              points[i] ?? null,
+              check.press,
+              tasks.reserves(task),
+              machine.shot(),
+            );
           if (e === undefined) return { unseen: true };
           // The screen's keyboard goes where the desktop's focus is: with no page answering, or the
           // page saying it hasn't the keyboard, that's the address bar or another window.
