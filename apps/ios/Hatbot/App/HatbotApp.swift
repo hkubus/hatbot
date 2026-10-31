@@ -69,7 +69,7 @@ struct MainView: View {
     .onChange(of: tab) { _, t in
       opened.insert(t)
       // A field in the section you left mustn't keep the keyboard up over this one.
-      UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+      hideKeyboard()
     }
     // The event stream runs while the app is in front, and for the half minute or so iOS gives it to finish
     // up in the background: back by then, there's nothing to reconnect.

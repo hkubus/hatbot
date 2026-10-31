@@ -138,6 +138,8 @@ struct Sidebar<Content: View>: View {
       }
       .gesture(swipe(panelWidth), including: open && !docked ? .all : .subviews)
     }
+    // It would cover the drawer.
+    .onChange(of: open) { _, open in if open { hideKeyboard() } }
   }
 
   /// Follows the finger, then settles open or shut by where the throw would land. Measured on the

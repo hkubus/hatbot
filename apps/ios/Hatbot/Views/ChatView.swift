@@ -1,3 +1,4 @@
+import GameController
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -15,6 +16,7 @@ struct ChatView: View {
   /// So the rows' times are made again when the day changes: "Today" becomes "Yesterday".
   @State private var today = Calendar.current.startOfDay(for: .now)
   @State private var router = OpenRoute()
+  @FocusState private var writing: Bool
   private var name: String { store.chatName(store.currentChat) }
   private var thread: Conversation? { store.currentChat.flatMap { $0.isThread ? $0 : nil } }
   @State private var farFromBottom = false
@@ -199,6 +201,7 @@ struct ChatView: View {
             Task { try? await store.loadEarlier() }
           }
         }
+        .simultaneousGesture(TapGesture().onEnded { writing = false })
         .overlay(alignment: .bottom) {
           if farFromBottom {
             Button {
@@ -242,7 +245,10 @@ struct ChatView: View {
           .animation(.snappy, value: store.unreachable)
         }
         .edgeBar(.bottom) {
-          Composer(name: thread.map { store.botName($0.botIds.first) } ?? name, members: members, error: $error) {
+          Composer(
+            name: thread.map { store.botName($0.botIds.first) } ?? name, members: members, error: $error,
+            writing: $writing
+          ) {
             withAnimation { position.scrollTo(edge: .bottom) }
           }
         }
@@ -388,6 +394,7 @@ private struct Composer: View {
   let name: String
   let members: [Bot]?
   @Binding var error: String?
+  let writing: FocusState<Bool>.Binding
   let sent: () -> Void
   @Environment(AppStore.self) private var store
   @Environment(Drafts.self) private var drafts
@@ -407,6 +414,12 @@ private struct Composer: View {
   }
 
   private var uploading: Bool { files.contains { $0.attachment == nil && $0.error == nil } }
+
+  /// The approval or question shown above the field.
+  private var asking: String? {
+    if let a = store.pendingApprovals.first { return "a\(a.id)" }
+    return store.pendingQuestions.first.map { "q\($0.id)" }
+  }
 
   private var canSend: Bool {
     let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -477,6 +490,7 @@ private struct Composer: View {
           .padding(.horizontal, 16)
           .padding(.vertical, 11)
           .glassSurface(in: .rect(cornerRadius: 22), interactive: true)
+          .focused(writing)
         Button { send() } label: {
           RoundGlyph(name: "arrow.up").foregroundStyle(canSend ? Color.onBrand : .secondary)
         }
@@ -504,6 +518,8 @@ private struct Composer: View {
       drafts.texts[old] = draft
       draft = drafts.texts[new] ?? ""
     }
+    // The keyboard would leave it no room.
+    .onChange(of: asking) { _, asking in if asking != nil { writing.wrappedValue = false } }
     .onChange(of: photos) { _, picked in
       guard !picked.isEmpty else { return }
       photos = []
@@ -612,6 +628,8 @@ private struct Composer: View {
     draft = ""
     drafts.texts[key] = nil
     if command == nil { files = [] }
+    // The reply, and anything it asks, get the room; with a hardware keyboard you can type on.
+    if GCKeyboard.coalesced == nil { writing.wrappedValue = false }
     sent()
     Task {
       // The keyboard can commit an autocorrection into the field just after it's cleared.
@@ -1332,9 +1350,10 @@ struct QuestionBody: View {
           .controlSize(.large)
       }
       HStack(spacing: 8) {
-        TextField(q.choices.isEmpty ? "Your answer" : "Or write your own", text: $own, axis: .vertical)
-          .lineLimit(1...4)
+        TextField(q.choices.isEmpty ? "Your answer" : "Or write your own", text: $own)
           .textFieldStyle(.roundedBorder)
+          .submitLabel(.send)
+          .onSubmit { answer(own) }
         Button("Send") { answer(own) }
           .disabled(own.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
