@@ -88,6 +88,7 @@ export type ComputerScreen = {
   release(taskId: number): Promise<void>;
   /** Null without the "windows" feature, or when it can't say. */
   windows(signal?: AbortSignal): Promise<ComputerWindow[] | null>;
+  focusWindow(id: number, signal?: AbortSignal): Promise<void>;
   granted(key: string): boolean;
   grant(key: string): void;
 };
@@ -362,6 +363,9 @@ export class Computers {
         } catch {
           return null;
         }
+      },
+      focusWindow: async (windowId, signal) => {
+        await link().request({ op: "focus_window", id: windowId }, 10_000, signal);
       },
       granted: (key) => m.grants.has(key),
       grant: (key) => {

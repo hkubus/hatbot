@@ -182,3 +182,32 @@ test("on a computer, Enter held from a screenshot goes once the review finds it 
 
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
 });
+
+test("on a computer, focus_window brings a window up by its id; a blacked-out one is refused", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("focus_window", { id: 2 })] },
+    { content: [toolUse("focus_window", { id: 3 })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { computer: laptop } = await connected(t);
+  laptop.answer.windows = () => ({
+    op: "windows",
+    windows: [
+      { id: 1, title: "Files", appId: "nautilus", focused: true, x: 0, y: 0 },
+      { id: 2, title: "Discord", appId: "discord", focused: false, x: 0, y: 0 },
+      { id: 3, title: "Passwords", appId: "keepassxc", focused: false, hidden: true },
+    ],
+  });
+  const task = startOn(t, "m-laptop", "Open Discord");
+  t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
+  expect((await ended(t, task.id)).status).toBe("done");
+
+  expect(JSON.stringify(work.requests[0]?.messages[0]?.content)).toContain('2: \\"Discord\\"');
+  expect(laptop.requests.filter((r) => r.op === "focus_window")).toEqual([
+    { op: "focus_window", id: 2 },
+  ]);
+  const results = JSON.stringify(work.requests[2]?.messages);
+  expect(results).toContain('\\"Discord\\" has the keyboard now.');
+  expect(results).toContain("blacked out");
+});

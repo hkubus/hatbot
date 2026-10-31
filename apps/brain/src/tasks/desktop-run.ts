@@ -169,6 +169,7 @@ const SetFiles = z.object({
 const RecordListing = z.object({
   url: z.string().max(2000).describe("The new listing's address, as the browser shows it"),
 });
+const FocusWindow = z.object({ id: z.number().int().describe("The window's id, from the list") });
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
@@ -203,6 +204,18 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     name: "send_to_chat",
     description: SEND_TO_CHAT_DESCRIPTION,
     schema: DesktopSendToChat,
+  },
+  // Only on a computer.
+  {
+    name: "list_windows",
+    description: "List the computer's open windows, with their ids, and which has the keyboard.",
+    schema: z.object({}),
+  },
+  {
+    name: "focus_window",
+    description:
+      "Bring a window to the front and give it the keyboard, by its id from the window list. Use it instead of Alt+Tab or hunting for the window. Returns a screenshot.",
+    schema: FocusWindow,
   },
   {
     name: "finish_task",
@@ -323,7 +336,7 @@ const windowsText = (windows: ComputerWindow[]) =>
   windows
     .map(
       (w) =>
-        `- "${w.title}" (${w.appId})${w.focused ? " (focused)" : ""}${w.hidden ? " (blacked out: never type into it)" : ""}`,
+        `- ${w.id}: "${w.title}" (${w.appId})${w.focused ? " (focused)" : ""}${w.hidden ? " (blacked out: never type into it)" : ""}`,
     )
     .join("\n");
 
@@ -1367,8 +1380,67 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return textResult(call, await look("After takeover", "The owner handed the desktop back."));
   });
 
+  const listWindows = async (call: Anthropic.Beta.BetaToolUseBlock) => {
+    const windows = await machine?.windows(signal);
+    return windows?.length
+      ? textResult(call, windowsText(windows))
+      : textResult(call, "This computer can't list its windows; take a screenshot.", true);
+  };
+
+  const focusWindow = withInput(FocusWindow, async (call, input) => {
+    const m = machine;
+    if (!m) return textResult(call, "There are no windows to focus here.", true);
+    if (control.get().control === "owner") await waitForOwner();
+    const windows = await m.windows(signal);
+    const w = windows?.find((x) => x.id === input.id);
+    if (!w)
+      return textResult(
+        call,
+        windows?.length
+          ? `There's no window ${input.id}. The windows:\n${windowsText(windows)}`
+          : "This computer can't list its windows; take a screenshot.",
+        true,
+      );
+    if (w.hidden) return notRun(call, "That window is blacked out: the owner keeps it private.");
+    tasks.addStep(id, {
+      kind: "action",
+      name: "focus_window",
+      detail: w.title || w.appId,
+      url: null,
+    });
+    await whenFree();
+    try {
+      await m.focusWindow(w.id, signal);
+    } catch (err) {
+      if (err instanceof ComputerError) return textResult(call, err.message, true);
+      throw err;
+    }
+    await observeWindow();
+    const now = (await m.windows(signal))?.find((x) => x.id === w.id);
+    // niri focuses a window on another monitor there, where the task's screenshots don't reach.
+    const elsewhere =
+      now && now.x === undefined
+        ? " It's on another monitor, which your screenshots don't show. Ask the owner with request_takeover to move it to this one."
+        : "";
+    const bytes = await screen.screenshot();
+    await capture(bytes, "Screenshot");
+    return textResult(call, [
+      { type: "text", text: `"${w.title}" has the keyboard now.${elsewhere}` },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaTypeOf(bytes),
+          data: Buffer.from(bytes).toString("base64"),
+        },
+      },
+    ]);
+  });
+
   const handlers = new Map([
     ["confirm_intent", confirmIntent],
+    ["list_windows", listWindows],
+    ["focus_window", focusWindow],
     ["request_takeover", requestTakeover],
     ["desktop_shell", shellCall],
     ["send_file", sendFile],
@@ -1406,6 +1478,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       ...CUSTOM_TOOLS.filter(
         (t) =>
           (guest || (t.name !== "desktop_shell" && t.name !== "send_file")) &&
+          (machine || (t.name !== "list_windows" && t.name !== "focus_window")) &&
           (gate || t.name !== "record_conversation") &&
           (listing || (t.name !== "set_files" && t.name !== "record_listing")),
       ),
