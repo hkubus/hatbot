@@ -10,7 +10,7 @@ use super::chart;
 use super::icons::{self, Icon};
 use super::markdown;
 use super::theme::{self, FS_MD, FS_SM, FS_TEXT, H_LG, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
-use super::widgets::{body, btn, btn_sm, btn_wide, empty, error, input, small, strong, tiny, tone};
+use super::widgets::{body, btn, btn_sm, btn_wide, editor_keys, empty, error, input, small, strong, tiny, tone};
 use crate::core::api::ApiError;
 use crate::core::chart::{self as spec, ChartFile, ChartSpec, Kind, Part};
 use crate::core::format;
@@ -141,7 +141,7 @@ pub fn load_page(s: &Session) -> Task<Message> {
 
 /// The chats came: the open one may be gone, and a direct chat's threads are listed.
 pub fn chats_loaded(s: &mut Session) -> Task<Message> {
-    let mut t = vec![load_threads(s)];
+    let mut t = Vec::new();
     if !s.store.conversations.is_empty()
         && s.store.current_chat().is_none()
         && let Some(first) = s.store.conversations.first().map(|c| c.id)
@@ -149,6 +149,7 @@ pub fn chats_loaded(s: &mut Session) -> Task<Message> {
         s.store.open(first);
         t.push(load_page(s));
     }
+    t.push(load_threads(s));
     Task::batch(t)
 }
 
@@ -1518,7 +1519,7 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
             {
                 return Some(text_editor::Binding::Custom(Message::Chat(Msg::Send)));
             }
-            text_editor::Binding::from_key_press(k)
+            editor_keys(&s.chat.composer, k)
         })
         .size(FS_TEXT)
         .line_height(1.5)

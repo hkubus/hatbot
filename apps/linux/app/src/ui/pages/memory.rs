@@ -13,7 +13,7 @@ use crate::ui::confirm;
 use crate::ui::icons::{self, Icon};
 use crate::ui::markdown;
 use crate::ui::theme::{self, FS_LG, FS_MD, FS_SM, FS_XL, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
-use crate::ui::widgets::{btn, btn_sm, card, empty, error, fill, input, rule, small, tone};
+use crate::ui::widgets::{btn, btn_sm, card, editor_keys, empty, error, fill, input, rule, small, tone};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
@@ -524,6 +524,7 @@ fn file<'a>(st: &'a State, path: &'a str, md: &'a markdown::Cache, dark: bool) -
         col = col.push(
             text_editor(d)
                 .on_action(|a| m(Msg::Editing(a)))
+                .key_binding(|k| editor_keys(d, k))
                 .font(theme::CODE)
                 .size(FS_MD)
                 .line_height(1.65)
