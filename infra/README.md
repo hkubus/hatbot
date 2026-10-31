@@ -155,6 +155,22 @@ Env files in `/etc/hatbot/` on the brain still work, for ones written before or 
 | Scout | Scout's address on the plugin's page (one the brain and your browser both reach), then **Connect**: Scout asks you to let Hatbot in, and you're back, connected. Haggler gets it. Disconnect in Scout's settings, under Connected apps. Needs a Scout that can connect apps |
 | MCP | servers and the secrets they use are added on the plugin's page; a server's headers or environment use a secret as `${NAME}`. Names set in `/etc/hatbot/mcp.env` work too. A "Command" server runs inside the brain as the `hatbot` user, which can read the brain's other secrets, so only run servers you trust there; prefer HTTP servers running elsewhere |
 
+## The Linux app
+
+On Arch, add Hatbot's package repository once, and pacman updates the app with everything else:
+
+```sh
+curl -o hatbot.key https://git.gaycats.ovh/api/packages/kubus/arch/repository.key
+sudo pacman-key --add hatbot.key
+sudo pacman-key --lsign-key kubus@noreply.git.gaycats.ovh
+printf '\n[kubus.hatbot.git.gaycats.ovh]\nSigLevel = Required\nServer = %s\n' \
+  'https://git.gaycats.ovh/api/packages/kubus/arch/hatbot/$arch' | sudo tee -a /etc/pacman.conf
+sudo pacman -Syu hatbot
+systemctl --user enable --now hatbot
+```
+
+The GitHub mirror builds it from `apps/linux/packaging/PKGBUILD` on every push to `main` that changes the app, and `publish.sh` uploads it with the `FORGEJO_PACKAGES_TOKEN` secret, a Forgejo token that can write packages. Each Monday it rebuilds, and uploads only if Arch's libraries changed under it. Elsewhere, `apps/linux/packaging/install.sh` builds it and installs it for you.
+
 ## When the brain itself is down
 
 Check everything and the heartbeat run inside the brain, so they can't tell you it's down. Instead the brain pings a monitor outside it once a minute, and the monitor tells you when the pings stop. In Uptime Kuma:

@@ -12,3 +12,6 @@ dist-types/
 target/
 
 /apps/brain/eval/results/
+
+/apps/linux/packaging/src/
+/apps/linux/packaging/pkg/
