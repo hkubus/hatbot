@@ -49,3 +49,32 @@ pub fn groups<'a>(messages: &'a [ThreadMessage], episodes: &HashMap<i64, Episode
     }
     groups
 }
+
+pub struct Command {
+    pub name: &'static str,
+    pub args: &'static str,
+    pub description: &'static str,
+}
+
+/// Chat commands (CHAT_COMMANDS in packages/shared): the brain runs them itself.
+pub const COMMANDS: [Command; 5] = [
+    Command { name: "new", args: "", description: "Start a new conversation" },
+    Command { name: "stop", args: "[task number]", description: "Stop the reply, or a task" },
+    Command { name: "task", args: "<what to do>", description: "Run it as a background task" },
+    Command { name: "remember", args: "<fact>", description: "Save it to memory as written" },
+    Command { name: "todo", args: "[item]", description: "Add it to the to-do list, or show the list" },
+];
+
+/// The commands a draft's "/…" could mean, while you type the name. Incognito keeps nothing, so
+/// only those that don't outlast it.
+pub fn matching_commands(draft: &str, incognito: bool) -> Vec<&'static Command> {
+    let Some(typed) = draft.strip_prefix('/') else { return Vec::new() };
+    if !typed.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Vec::new();
+    }
+    let typed = typed.to_ascii_lowercase();
+    COMMANDS
+        .iter()
+        .filter(|c| c.name.starts_with(&typed) && (!incognito || c.name == "new" || c.name == "stop"))
+        .collect()
+}

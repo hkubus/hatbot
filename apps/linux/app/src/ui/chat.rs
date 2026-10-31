@@ -47,6 +47,10 @@ pub enum Msg {
     Threads(i64, Vec<Conversation>),
     Edit(At, text_editor::Action),
     Send(At),
+    /// The command menu's nth: one that needs more goes in the composer to finish; the rest run.
+    Command(At, usize),
+    MenuMove(At, isize),
+    CloseMenu(At),
     /// Whether it was the composer's: a choice leaves what's being written alone.
     Sent(At, Result<ThreadMessage, ApiError>, bool),
     Attach(At),
@@ -110,6 +114,9 @@ struct Writing {
     error: Option<String>,
     near_bottom: bool,
     earlier_asked: Option<i64>,
+    /// The command menu's highlighted row, and whether Escape closed it.
+    pick: usize,
+    menu_closed: bool,
 }
 
 #[derive(Default)]
@@ -162,6 +169,22 @@ fn scroll_id(at: At) -> iced::widget::Id {
         At::Chat => "chat",
         At::Side => "side",
     })
+}
+
+fn composer_id(at: At) -> iced::widget::Id {
+    iced::widget::Id::new(match at {
+        At::Chat => "chat-composer",
+        At::Side => "side-composer",
+    })
+}
+
+/// The commands the pane's composer offers, unless Escape closed its menu.
+fn commands(s: &Session, at: At) -> Vec<&'static thread::Command> {
+    let w = s.chat.at(at);
+    if w.menu_closed {
+        return Vec::new();
+    }
+    thread::matching_commands(&w.composer.text(), s.store.pane(at).is_some_and(|p| p.incognito))
 }
 
 /// The thread is anchored to its bottom, where iced counts offsets from, so its start is the newest message.
@@ -449,10 +472,38 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::Edit(at, action) => {
-            s.chat.at_mut(at).composer.perform(action);
+            let w = s.chat.at_mut(at);
+            if action.is_edit() {
+                w.pick = 0;
+                w.menu_closed = false;
+            }
+            w.composer.perform(action);
             Task::none()
         }
         Msg::Send(at) => send(s, at, None),
+        Msg::Command(at, i) => {
+            let Some(c) = commands(s, at).get(i).copied() else { return Task::none() };
+            let w = s.chat.at_mut(at);
+            if c.args.starts_with('<') {
+                w.composer = text_editor::Content::with_text(&format!("/{} ", c.name));
+                w.composer.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                return iced::widget::operation::focus(composer_id(at));
+            }
+            w.composer = text_editor::Content::with_text(&format!("/{}", c.name));
+            Task::batch([send(s, at, None), iced::widget::operation::focus(composer_id(at))])
+        }
+        Msg::MenuMove(at, by) => {
+            let n = commands(s, at).len();
+            let w = s.chat.at_mut(at);
+            if n > 0 {
+                w.pick = (w.pick as isize + by).rem_euclid(n as isize) as usize;
+            }
+            Task::none()
+        }
+        Msg::CloseMenu(at) => {
+            s.chat.at_mut(at).menu_closed = true;
+            Task::none()
+        }
         Msg::Sent(at, r, from_composer) => {
             let w = s.chat.at_mut(at);
             w.sending = false;
@@ -1667,14 +1718,42 @@ fn composer<'a>(s: &'a Session, at: At, name: &str, gutter: f32) -> Element<'a, 
         format!("Message {name}…")
     };
     let can_send = !w.sending && (!w.composer.text().trim().is_empty() || w.files.iter().any(|f| f.uploaded.is_some()));
+    let menu = commands(s, at);
+    let open = !menu.is_empty();
+    let pick = w.pick.min(menu.len().saturating_sub(1));
+    if open {
+        let mut list = column![].spacing(2);
+        for (i, c) in menu.iter().enumerate() {
+            let mut name = row![strong(format!("/{}", c.name))].spacing(SP_SM);
+            if !c.args.is_empty() {
+                name = name.push(text(c.args).size(FS_TEXT).style(tone(|c| c.muted)));
+            }
+            list = list.push(
+                button(row![name.width(Length::Fill), small(c.description)].spacing(SP_LG).align_y(Alignment::Center))
+                    .padding([SP_SM, SP_MD])
+                    .width(Length::Fill)
+                    .style(theme::row(i == pick))
+                    .on_press(Message::Chat(Msg::Command(at, i))),
+            );
+        }
+        col = col.push(container(list).padding(SP_XS).width(Length::Fill).style(theme::menu));
+    }
     let editor = text_editor(&w.composer)
+        .id(composer_id(at))
         .placeholder(placeholder)
         .on_action(move |a| Message::Chat(Msg::Edit(at, a)))
         .key_binding(move |k| {
-            if let keyboard::Key::Named(keyboard::key::Named::Enter) = k.key
-                && !k.modifiers.shift()
-            {
-                return Some(text_editor::Binding::Custom(Message::Chat(Msg::Send(at))));
+            use keyboard::key::Named;
+            let custom = |m| Some(text_editor::Binding::Custom(Message::Chat(m)));
+            if let keyboard::Key::Named(key) = k.key {
+                match key {
+                    Named::Enter | Named::Tab if open && !k.modifiers.shift() => return custom(Msg::Command(at, pick)),
+                    Named::ArrowUp if open => return custom(Msg::MenuMove(at, -1)),
+                    Named::ArrowDown if open => return custom(Msg::MenuMove(at, 1)),
+                    Named::Escape if open => return custom(Msg::CloseMenu(at)),
+                    Named::Enter if !k.modifiers.shift() => return custom(Msg::Send(at)),
+                    _ => {}
+                }
             }
             editor_keys(&w.composer, k)
         })
