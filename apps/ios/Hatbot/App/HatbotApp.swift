@@ -131,10 +131,14 @@ struct MainView: View {
           if store.incognito { await store.setIncognito(false) }
           // One that didn't load says so; the message isn't looked for in what was kept.
           // One the chat list doesn't have is a thread.
-          let opened =
-            store.conversations.contains(where: { $0.id == conversationId })
-            ? await store.openConversation(conversationId)
-            : conversationId == store.conversationId || (await store.openThread(conversationId))
+          let opened: Bool
+          if store.conversations.contains(where: { $0.id == conversationId }) {
+            opened = await store.openConversation(conversationId)
+          } else if conversationId == store.conversationId {
+            opened = true
+          } else {
+            opened = await store.openThread(conversationId)
+          }
           if !opened { return }
           focus = messageId
         }
