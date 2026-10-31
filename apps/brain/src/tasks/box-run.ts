@@ -10,6 +10,10 @@ import {
   MAX_BOX_SOURCE,
 } from "@hatbot/shared/hatbox";
 import { mayReview, safeToRun } from "../agent/review";
+import { ownerNote } from "../approvals";
+import { BoxError, type Made } from "../boxes";
+import { PluginError } from "../plugins/plugin";
+import { runStats, T3Error, type T3Result } from "../t3";
 import {
   BOX_FILES_RULES,
   BOX_PAGE_RULES,
@@ -17,11 +21,7 @@ import {
   NotChanged,
   type ToolContext,
   unsetSecrets,
-} from "../agent/tools";
-import { ownerNote } from "../approvals";
-import { BoxError, type Made } from "../boxes";
-import { PluginError } from "../plugins/plugin";
-import { runStats, T3Error, type T3Result } from "../t3";
+} from "../tools";
 import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
 

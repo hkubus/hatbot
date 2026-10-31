@@ -37,6 +37,8 @@ import {
   MAX_BOX_SOURCE,
 } from "@hatbot/shared/hatbox";
 import { z } from "zod";
+import type { Readable } from "../agent/screening";
+import { toolParam } from "../agent/tool-param";
 import type { Attachments } from "../attachments";
 import { type Bots, botFolder } from "../bots";
 import type { BoxFeed } from "../box-feeds";
@@ -62,8 +64,16 @@ import {
   type Watchers,
   watcherLine,
 } from "../watch/service";
-import type { Readable } from "./screening";
-import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE, untrustedBlock } from "./untrusted";
+
+export { toolParam };
+
+import {
+  messageTag,
+  TRUST_JOINS,
+  tagText,
+  UNTRUSTED_SOURCE,
+  untrustedBlock,
+} from "../agent/untrusted";
 
 export type ToolContext = {
   db: Db;
@@ -89,7 +99,8 @@ export type ToolContext = {
   proposals?: Proposals;
   /** What untrusted content was read first, or null; tasks it starts begin tainted. */
   tainted?: () => string | null;
-  taint?: (by: string, text?: string) => void;
+  /** `after`: its text was assembled from what it read, which has to be screened first. */
+  taint?: (by: string, text?: string, opts?: { after?: boolean }) => void;
   /**
    * Suspected prompt injection: work it starts is marked so, and Haiku's review doesn't let its
    * changes through.
@@ -1811,19 +1822,6 @@ export const TOOLS = [
 
 export const invalidInput = (error: z.ZodError) => `Invalid input: ${z.prettifyError(error)}`;
 
-export const toolParam = (t: {
-  name: string;
-  description: string;
-  schema: z.ZodType;
-  jsonSchema?: Record<string, unknown>;
-}): Anthropic.Beta.BetaTool => ({
-  name: t.name,
-  description: t.description,
-  input_schema: (t.jsonSchema ??
-    z.toJSONSchema(t.schema, { io: "input" })) as Anthropic.Beta.BetaTool.InputSchema,
-  eager_input_streaming: true,
-});
-
 /**
  * A call runs on the plugin's current instance and policy. A string says why not: it's gone, describes
  * itself differently, or (`onlyLooks`) changes things.
@@ -1848,18 +1846,37 @@ export function liveTool(
 export const TOOL_PARAMS: Anthropic.Beta.BetaTool[] = TOOLS.map(toolParam);
 
 /**
- * Chat tools that load only when the model searches for them: about a third of the prompt's tokens,
- * paid on every cold cache, for things most conversations never touch.
+ * Tools that don't belong in the tools each request is billed for: when the bot has no desktop or no
+ * boxes it can't use them, and most conversations never touch them. They are sent marked
+ * defer_loading, and tool_search_tool_regex loads one when the model searches for it.
  */
-const DEFERRED = /^(box|watch|trigger|schedule)_|^run_desktop_task$/;
-
 export const TOOL_SEARCH: Anthropic.Beta.BetaToolUnion = {
   type: "tool_search_tool_regex_20251119",
   name: "tool_search_tool_regex",
 };
 
+const DEFERRED = /^(box|watch|trigger|schedule)_|^run_desktop_task$/;
+
 export const deferRare = (t: Anthropic.Beta.BetaTool): Anthropic.Beta.BetaTool =>
   DEFERRED.test(t.name) ? { ...t, defer_loading: true } : t;
+
+/**
+ * Each re-marked, so joining two lists doesn't repeat one; `off` drops the ones the bot can't use, so
+ * a search doesn't find them either. The boxes and code bot rules are the caller's: they need it.
+ */
+export function loadThroughSearch<T extends { name: string } = { name: string }>(
+  tools: (T | false)[],
+  { deferred, off }: { deferred: RegExp; off?: (t: T) => boolean },
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const t of tools) {
+    if (!t || off?.(t) || seen.has(t.name)) continue;
+    seen.add(t.name);
+    out.push(deferred.test(t.name) ? { ...t, defer_loading: true } : { ...t });
+  }
+  return out;
+}
 
 /** Input is validated here: with eager input streaming the API doesn't. */
 export async function runTool(
@@ -1882,7 +1899,7 @@ export async function runTool(
     }
     if (plugin) {
       const r = await runPluginTool(plugin, input, { task: null, signal });
-      if (r.untrusted) ctx.taint?.(describeCall(plugin, input), r.text);
+      if (r.untrusted) ctx.taint?.(describeCall(plugin, input), r.text, { after: true });
       return r;
     }
     const names = [...TOOLS, ...offered].map((t) => t.name);

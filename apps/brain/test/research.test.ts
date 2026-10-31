@@ -6,12 +6,12 @@ import {
   RESEARCH_WORKER_PROMPT,
   SCREENING_PROMPT,
 } from "../src/agent/prompt";
-import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { definePlugin, ready, tool } from "../src/plugins/plugin";
 import { BudgetError } from "../src/spend";
 import { plain as plainRead, quoteFound } from "../src/tasks/research";
+import { runTool } from "../src/tools";
 import { FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 

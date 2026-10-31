@@ -1,6 +1,7 @@
 // Own code: Hatbot checks out its repository in the sandbox and proposes what changed as a pull request.
 // The sandbox is a real directory and the Forgejo repository a local bare one, so git really runs.
 import { beforeEach, expect, test } from "bun:test";
+import { verdictFor } from "../src/plugins/registry";
 import { testApp } from "./helpers";
 import {
   call,
@@ -129,6 +130,18 @@ test("a change in the sandbox becomes a branch on the commit it came from, and a
   expect(body.body).toStartWith("Ran bun test: all pass.");
   expect(body.body).toContain("- `infra/deploy.sh`");
   expect(body.body).not.toContain("- `README.md`");
+});
+
+test("pushing to its pull request waits for you, and asks again if it runs into untrusted content", async () => {
+  const { t } = await setup();
+  const update = toolOf(t, "self_update");
+  const input = { pull: 12, message: "Mine" };
+  expect(verdictFor(update, input, call)).toMatchObject({ action: "ask" });
+  expect(verdictFor(update, input, { ...call, task: { id: 1, tainted: true } })).toMatchObject({
+    action: "ask",
+  });
+  // Its own pull request is what it works on: two don't run at once.
+  expect(update.target?.(input)).toBe("12");
 });
 
 test("nothing changed, or a symlink, isn't proposed, and nothing is pushed", async () => {

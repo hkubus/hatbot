@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { webCalls, webReads } from "../src/agent/tools";
 import { costOf } from "../src/spend";
+import { webCalls, webReads } from "../src/tools";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { requested, testApp, toolNames } from "./helpers";
 

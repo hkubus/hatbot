@@ -8,6 +8,10 @@ import { cutOff, modelErrorText, oneShot } from "../agent/model";
 import { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "../agent/prompt";
 import type { Readable } from "../agent/screening";
 import { escapeRe, localStamp } from "../agent/thread";
+import { tagJson, untrustedFields } from "../agent/untrusted";
+import { botFolder, slugWords } from "../bots";
+import { MemoryConflict } from "../memory/store";
+import { BudgetError, estimateTokens, requestCeiling } from "../spend";
 import {
   containerOf,
   invalidInput,
@@ -16,11 +20,7 @@ import {
   webReads,
   webTexts,
   webTools,
-} from "../agent/tools";
-import { tagJson, untrustedFields } from "../agent/untrusted";
-import { botFolder, slugWords } from "../bots";
-import { MemoryConflict } from "../memory/store";
-import { BudgetError, estimateTokens, requestCeiling } from "../spend";
+} from "../tools";
 import { pathOf, TRACKING } from "./policy";
 import type { Tasks } from "./service";
 

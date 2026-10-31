@@ -26,9 +26,11 @@ type Parts = Pick<
 const UNREAD = `role = 'assistant' AND status != 'streaming' AND incognito = 0
   AND (seen_at IS NULL OR seen_at < coalesce(edited_at, created_at))`;
 
-export const LISTED_CHAT = `c.deleted_at IS NULL AND (c.kind = 'group' OR EXISTS (
-  SELECT 1 FROM conversation_bots cb JOIN bots b ON b.id = cb.bot_id
-  WHERE cb.conversation_id = c.id AND b.deleted_at IS NULL))`;
+/** Whether the chat `id` has a bot that's still there. A search asks it of every match, rowlessly. */
+export const listedQuery = (id: string) => `EXISTS (SELECT 1 FROM conversation_bots cb
+  JOIN bots b ON b.id = cb.bot_id WHERE cb.conversation_id = ${id} AND b.deleted_at IS NULL)`;
+
+export const LISTED_CHAT = `c.deleted_at IS NULL AND (c.kind = 'group' OR ${listedQuery("c.id")})`;
 
 type Row = {
   id: number;

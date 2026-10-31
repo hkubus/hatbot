@@ -36,7 +36,8 @@ test("search finds chat messages, tasks, memory and schedules, and leaves out a 
   // A prefix of the last word matches, so results come while you type.
   const r = await search("wiregu");
   expect(r.messages.map((m) => m.botId)).toEqual(expect.arrayContaining([null, "hatbot"]));
-  expect(r.messages.find((m) => m.botId === "hatbot")?.snippet).toBe(
+  // The bot's reply, not the task's card about it.
+  expect(r.messages.find((m) => m.id === 2)?.snippet).toBe(
     `The ${MATCH_START}WireGuard${MATCH_END} tunnel uses port 51820.`,
   );
   expect(r.tasks.map((x) => x.title)).toEqual(["Rotate WireGuard keys"]);

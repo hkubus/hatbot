@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { type AskResult, type ThreadMessage, threadGroups } from "@hatbot/shared";
 import type { StreamHandlers, StreamParams } from "../src/agent/model";
 import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
-import { runTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
+import { runTool } from "../src/tools";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, testApp, toolNames } from "./helpers";
 
@@ -268,9 +268,10 @@ test("each request marks where the last one ended, after the same system and too
     );
   const mark = { type: "ephemeral" } as const;
   expect(marks(0)).toEqual([]);
-  // The second request: on the opening message, where the first request ended.
+  // The second request: where the first request ended. A search's results are written with it, so
+  // there's nothing since for a third breakpoint to save.
   expect(marks(1)).toEqual([[0, true, mark]]);
-  // The third: on the tool results the second request ended with.
+  // The third: where the second request ended.
   expect(marks(2)).toEqual([[2, true, mark]]);
   expect(model.requests[2]?.messages[2]?.role).toBe("user");
   const stored = t.db.query<{ content: string }, []>("SELECT content FROM episode_turns").all();

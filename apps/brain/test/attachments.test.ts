@@ -429,3 +429,19 @@ test("a desktop task's browser download goes on the task; under a background tas
   const said = JSON.stringify(work.requests[4]?.messages.at(-1));
   expect(said).toContain(`It goes with task #${parent?.id}'s result.`);
 });
+
+test("a name that would climb out of a folder is made safe, whichever way it's sent", async () => {
+  const t = await testApp(new FakeModel());
+  const a = await t.attachments.save({
+    bytes: PNG,
+    name: "../../x.desktop",
+    mediaType: "",
+    from: "hatbot",
+  });
+  expect(a.name).toBe("______x.desktop");
+
+  const { cookie } = signIn(t);
+  const res = await upload(t, cookie, new File([PNG], "..\\..\\x.desktop", { type: "" }));
+  expect(res.status).toBe(201);
+  expect(((await res.json()) as Attachment).name).toBe("______x.desktop");
+});

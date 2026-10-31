@@ -77,6 +77,17 @@ test("a task reads the guests and reboots one; shutting one down waits for you",
   expect(t.plugins.guidance()).not.toContain("Hatbot");
 });
 
+test("a snapshot waits for you, as a power action does; each works on its own guest", async () => {
+  const t = await pluginApp(proxmoxPlugin, env());
+  const snapshot = t.tool("proxmox_snapshot");
+  const v = (vmid: number, ctx = call) =>
+    verdictFor(snapshot, { vmid, name: "before-upgrade" }, ctx);
+  expect(v(105)).toMatchObject({ action: "ask" });
+  expect(v(126, tainted)).toMatchObject({ action: "ask" });
+  expect(snapshot.target?.({ vmid: 105, name: "x" })).toBe("105");
+  expect(t.tool("proxmox_power").target?.({ vmid: 126, action: "start" })).toBe("126");
+});
+
 test("power: careful guests, shutdowns and the desktop ask; the brain is refused, by id or tag", async () => {
   const t = await pluginApp(proxmoxPlugin, env(), { config: { careful: [200] } });
   const power = t.tool("proxmox_power");

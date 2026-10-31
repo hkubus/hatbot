@@ -7,6 +7,20 @@ import { AGENT_PROMPT, CHART_GUESS, RESEARCH_ASK_BOT } from "../agent/prompt";
 import { mayReview, safeToRun, scopesFor } from "../agent/review";
 import { type Readable, Screener } from "../agent/screening";
 import { localStamp, memoryIndex } from "../agent/thread";
+import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
+import { ownerNote } from "../approvals";
+import type { Attachments } from "../attachments";
+import { promptFor } from "../bots";
+import { brokenChartsOf } from "../chart-data";
+import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
+import {
+  describeCall,
+  runPluginTool,
+  untrustedDefinitions,
+  untrustedOf,
+  verdictFor,
+} from "../plugins/registry";
+import { usesReserve } from "../spend";
 import {
   AskBotInput,
   containerOf,
@@ -24,21 +38,7 @@ import {
   WEB_TOOLS,
   webReads,
   webTexts,
-} from "../agent/tools";
-import { tagJson, tagText, untrustedBlock } from "../agent/untrusted";
-import { ownerNote } from "../approvals";
-import type { Attachments } from "../attachments";
-import { promptFor } from "../bots";
-import { brokenChartsOf } from "../chart-data";
-import type { CallContext, PluginTool, Verdict } from "../plugins/plugin";
-import {
-  describeCall,
-  runPluginTool,
-  untrustedDefinitions,
-  untrustedOf,
-  verdictFor,
-} from "../plugins/registry";
-import { usesReserve } from "../spend";
+} from "../tools";
 import { alertMessageSource, alertParts } from "../triggers";
 import { addNotes, askOwner, callsOf, endOf, requestsFor, Stop, thinkingFor } from "./loop";
 import {
@@ -511,6 +511,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       target: t.target?.(call.input as never) ?? null,
       taskId: id,
       taintOnly: verdict.tainted === true,
+      // What it has read by now: a scope given before a different page was read ends with it.
+      sources: [...sources],
     });
     if (granted) {
       tasks.addStep(id, {

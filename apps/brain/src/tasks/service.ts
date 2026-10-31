@@ -10,7 +10,6 @@ import {
 } from "@hatbot/shared";
 import type { Chats } from "../agent/chats";
 import type { ModelClient } from "../agent/model";
-import { type ToolContext, tickTodo } from "../agent/tools";
 import type { Approvals } from "../approvals";
 import type { Archive } from "../archive";
 import type { Attachments } from "../attachments";
@@ -31,7 +30,7 @@ import type { Spend } from "../spend";
 import type { T3Code } from "../t3";
 import type { Skills } from "../teach/skills";
 import { clip, head } from "../text";
-import { runAgentTask } from "./agent-run";
+import type { ToolContext } from "../tools";
 import { type BoxJob, runBoxTask } from "./box-run";
 import { runDesktopTask } from "./desktop-run";
 import { runHandoff } from "./handoff-run";
@@ -378,7 +377,7 @@ export class Tasks {
       });
     input.created?.(id);
     this.emit(id);
-    this.start(id);
+    void this.start(id);
     return this.get(id) as Task;
   }
 
@@ -495,7 +494,7 @@ export class Tasks {
         },
       );
     this.emit(id);
-    this.start(id);
+    void this.start(id);
     return this.get(id) as Task;
   }
 
@@ -724,13 +723,17 @@ export class Tasks {
     const abort = new AbortController();
     this.running.set(id, abort);
     const task = this.get(id);
+    // Agent runs come with tools.ts, which imports this module: a cycle resolved once at the first
+    // agent task instead of before everything else. The desktop and box runs are their own modules.
+    const agentTask = () =>
+      import("./agent-run").then(({ runAgentTask }) => runAgentTask(this, id, abort.signal));
     // A hand-off is answered in the other bot's chat; a box task is T3 Code's.
     const runner = task?.requestedBy
       ? runHandoff
       : this.boxJobOf(id)
         ? runBoxTask
         : task?.lane === "background"
-          ? runAgentTask
+          ? agentTask
           : runDesktopTask;
     const run = runner(this, id, abort.signal)
       .catch((err) => {
@@ -1004,12 +1007,17 @@ export class Tasks {
    */
   private tickTodo(task: Task, text: string) {
     const ctx = { ...this.toolContext(task, new AbortController().signal), tainted: () => null };
-    const run = tickTodo(ctx, text, (md) => todoAt(md, text) ?? "It isn't open any more.").then(
-      () => {},
-      (err) => {
-        if (!(err instanceof MemoryError)) console.error(`task ${task.id}'s to-do`, err);
-      },
-    );
+    // Loaded with the agent run: tools.ts imports this module.
+    const run = import("../tools")
+      .then(({ tickTodo }) =>
+        tickTodo(ctx, text, (md) => todoAt(md, text) ?? "It isn't open any more."),
+      )
+      .then(
+        () => {},
+        (err) => {
+          if (!(err instanceof MemoryError)) console.error(`task ${task.id}'s to-do`, err);
+        },
+      );
     this.runs.add(run);
     void run.finally(() => this.runs.delete(run));
   }

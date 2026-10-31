@@ -9,9 +9,9 @@ import {
   withTodo,
 } from "@hatbot/shared";
 import { type Context, Hono } from "hono";
-import { dueInput, tickTodo } from "../agent/tools";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
+import { dueInput, tickTodo } from "../tools";
 import { json } from "./util";
 
 const DONE_SHOWN_MS = 7 * 86400_000;
