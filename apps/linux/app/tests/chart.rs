@@ -309,6 +309,13 @@ fn ticks_are_round_and_cover_the_values() {
 }
 
 #[test]
+fn nothing_spent_yet_runs_the_axis_up_from_zero_not_below_it() {
+    let ticks = nice_ticks(0.0, 0.0, 4);
+    assert_eq!(ticks[0], 0.0);
+    assert!(*ticks.last().unwrap() > 0.0);
+}
+
+#[test]
 fn stacked_bars_go_up_from_zero_and_negatives_down() {
     let Kind::Bar(s) = kind(json!({"type": "bar", "stacked": true, "x": ["a", "b"], "series": [
         {"name": "In", "data": [3, null]}, {"data": [-2, 4]}, {"data": [1, 0]}

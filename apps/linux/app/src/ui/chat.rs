@@ -1,7 +1,7 @@
 // A chat with a bot or a group: its messages in folds, what waits on you, and the composer.
 use std::collections::{HashMap, HashSet};
 
-use iced::widget::{Space, button, column, container, image, mouse_area, row, scrollable, text, text_editor};
+use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_editor};
 use iced::{Alignment, Element, Length, Padding, Task, Theme, keyboard};
 use serde_json::json;
 
@@ -9,7 +9,7 @@ use super::app::{Message, Route, Session, failed, load_cards};
 use super::chart;
 use super::icons::{self, Icon};
 use super::markdown;
-use super::theme::{self, FS_MD, FS_SM, FS_TEXT, H, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
+use super::theme::{self, FS_MD, FS_SM, FS_TEXT, H_LG, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
 use super::widgets::{body, btn, btn_sm, btn_wide, empty, error, input, small, strong, tiny, tone};
 use crate::core::api::ApiError;
 use crate::core::chart::{self as spec, ChartFile, ChartSpec, Kind, Part};
@@ -757,19 +757,19 @@ pub fn view<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message
     let store = &s.store;
     let name = store.chat_name(store.current_chat());
     let group = store.current_chat().is_some_and(|c| c.kind == ConversationKind::Group);
-    let mut list = column![].spacing(0).width(Length::Fill);
+    let mut list = column![].spacing(SP_LG).width(Length::Fill);
     if store.has_earlier {
-        list = list.push(container(small("Loading earlier messages")).center_x(Length::Fill).padding(SP));
+        list = list.push(inset(container(small("Loading earlier messages")).center_x(Length::Fill).padding(SP)));
     }
     if store.thread_known && store.messages.is_empty() {
-        list = list.push(empty(if store.incognito {
+        list = list.push(inset(empty(if store.incognito {
             format!("{name} can't see earlier conversations here, and this one is deleted when you leave.")
         } else {
             format!("Say hello to {name}.")
-        }));
+        })));
     }
     let now = format::now();
-    let mut previous: Option<jiff::Zoned> = None;
+    let mut last_day = String::new();
     let mut last_sender: Option<String> = None;
     let last_id = store.messages.last().map(|m| m.id);
     let groups = thread::groups(&store.messages, &store.episodes);
@@ -777,47 +777,45 @@ pub fn view<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message
         let folded_id = g.fold.as_ref().and(g.episode_id);
         let open = folded_id.is_some_and(|id| s.chat.unfolded.contains(&id));
         if let (Some(fold), Some(id)) = (&g.fold, g.episode_id) {
-            list = list.push(fold_row(fold, g.messages[0], open, id));
+            list = list.push(inset(fold_row(fold, g.messages[0], open, id)));
             last_sender = None;
         }
         for m in &g.messages {
             if folded_id.is_some() && !open && !store.unread.contains(&m.id) {
                 continue;
             }
-            let at = format::date(&m.created_at);
-            if let Some(at) = &at {
-                if let Some(label) = format::pause(at, previous.as_ref(), &now) {
+            if let Some(at) = format::date(&m.created_at) {
+                let day = format::day(&at, &now);
+                if day != last_day {
                     list = list.push(
-                        container(tiny(label).font(theme::MEDIUM))
+                        container(tiny(day.clone()).font(theme::SEMIBOLD))
                             .center_x(Length::Fill)
-                            .padding(Padding::default().top(14).bottom(4)),
+                            .padding(Padding::default().top(SP).left(BAR)),
                     );
+                    last_day = day;
                     last_sender = None;
                 }
-                previous = Some(at.clone());
             }
             let sender = sender_key(m);
             let joined = last_sender.as_deref() == Some(sender.as_str()) && !m.is_note();
             last_sender = if m.is_note() { None } else { Some(sender) };
             if group && !joined && m.role == Role::Assistant && !m.is_note() && m.kind != MessageKind::Box {
                 let color = m.bot_id.as_ref().and_then(|b| store.bots.get(b)).map(|b| b.color.clone());
-                list = list.push(
-                    container(text(store.bot_name(m.bot_id.as_deref())).size(FS_SM).font(theme::SEMIBOLD).style(
+                list = list.push(inset(
+                    text(store.bot_name(m.bot_id.as_deref())).size(FS_SM).font(theme::SEMIBOLD).style(
                         move |t: &Theme| text::Style {
                             color: Some(color.as_deref().map_or(theme::colors(t).muted, |c| theme::bot_color(t, c))),
                         },
-                    ))
-                    .padding(Padding::default().top(10)),
-                );
+                    ),
+                ));
             }
-            let row = message(s, m, dark, Some(m.id) == last_id);
-            list = list.push(container(row).padding(Padding::default().top(if joined { 2 } else { 10 })));
+            list = list.push(message(s, m, dark, Some(m.id) == last_id));
         }
     }
     let thread = scrollable(
-        container(container(list.padding([SP_MD, 0.0])).max_width(MEASURE).width(Length::Fill))
+        container(container(list.padding([SP_LG + 4.0, 0.0])).max_width(MEASURE + BAR).width(Length::Fill))
             .center_x(Length::Fill)
-            .padding([0.0, SP_XL]),
+            .padding(Padding::from([0.0, SP_XL]).left(SP_XL - BAR)),
     )
     .id(scroll_id())
     .anchor_bottom()
@@ -825,6 +823,14 @@ pub fn view<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message
     .style(theme::scroll)
     .height(Length::Fill);
     column![thread, composer(s, &name)].into()
+}
+
+/// How far a bot's message reaches left of the column, for its unread bar.
+const BAR: f32 = 12.0;
+
+/// Everything but a bot's message starts at the column's edge, right of the bars.
+fn inset<'a>(e: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(e).padding(Padding::default().left(BAR)).width(Length::Fill).into()
 }
 
 fn sender_key(m: &ThreadMessage) -> String {
@@ -865,7 +871,7 @@ fn md<'a>(s: &'a Session, text: &'a str, dark: bool) -> Element<'a, Message> {
 /// A reply's Markdown, with the charts in it drawn.
 fn with_charts<'a>(s: &'a Session, id: i64, text: &'a str, dark: bool) -> Element<'a, Message> {
     let Some((_, parts)) = s.chat.parts.get(&id).filter(|(t, _)| t == text) else { return md(s, text, dark) };
-    let ctx = chart::Ctx { dark, photos: Some(&s.chat.images), open: Message::Link };
+    let ctx = chart::Ctx { dark, photos: Some(&s.chat.images), open: Message::Link, wide: false };
     let mut col = column![].spacing(SP_MD);
     for p in parts {
         col = col.push(match p {
@@ -885,7 +891,7 @@ fn with_charts<'a>(s: &'a Session, id: i64, text: &'a str, dark: bool) -> Elemen
 fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> Element<'a, Message> {
     let store = &s.store;
     if m.is_note() {
-        return container(small(m.text.as_str()).align_x(Alignment::Center)).center_x(Length::Fill).into();
+        return inset(container(small(m.text.as_str()).align_x(Alignment::Center)).center_x(Length::Fill));
     }
     if m.role == Role::User {
         let mut col = column![].spacing(SP_XS).align_x(Alignment::End);
@@ -893,12 +899,15 @@ fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> 
             col = col.push(files(s, &m.attachments));
         }
         if !m.text.is_empty() {
-            col = col.push(
-                mouse_area(container(body(m.text.as_str())).padding([10, 16]).max_width(560).style(theme::user_bubble))
-                    .on_right_press(Message::Copy(m.text.clone())),
-            );
+            col = col.push(container(body(m.text.as_str())).padding([12, 16]).max_width(560).style(theme::user_bubble));
         }
-        return container(col).align_right(Length::Fill).padding(Padding::default().left(56)).into();
+        let actions = (!m.text.is_empty()).then(|| vec![act(Icon::Copy, "Copy", Message::Copy(m.text.clone()))]);
+        let col = col.push(meta(m, true));
+        return inset(
+            container(with_actions(col, actions.unwrap_or_default(), m, true))
+                .align_right(Length::Fill)
+                .padding(Padding::default().left(56)),
+        );
     }
     let mut col = column![].spacing(SP);
     let task = m.task_id.and_then(|id| store.tasks.get(&id));
@@ -926,7 +935,7 @@ fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> 
         MessageKind::Box => {
             let title = m.box_id.and_then(|id| store.boxes.get(&id)).map_or("a box".to_string(), |b| b.title.clone());
             // As written, never Markdown: nobody read what the page sends.
-            col = col.push(text(format!("From {title}: {}", m.text)).size(FS_TEXT).line_height(1.5));
+            col = col.push(body(format!("From {title}: {}", m.text)));
         }
         MessageKind::Handoff => {
             col = col.push(strong(format!("From {}:", store.bot_name(m.bot_id.as_deref()))));
@@ -992,40 +1001,83 @@ fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> 
     if !m.attachments.is_empty() {
         col = col.push(files(s, &m.attachments));
     }
-    if m.status == MessageStatus::Error {
-        col = col.push(btn_sm("Try again", theme::outlined, Some(Message::Chat(Msg::Retry(m.id)))));
-    }
     let threadable = store.current_chat().is_some_and(|c| c.kind == ConversationKind::Direct)
         && !store.incognito
         && m.status == MessageStatus::Done
         && (m.kind == MessageKind::Text
             || (m.kind == MessageKind::Task && task.is_some_and(|t| t.finished_at.is_some())));
-    if m.status != MessageStatus::Streaming
-        && let Some(at) = &m.edited_at
-    {
-        col = col.push(text(format!("Edited {}", format::time_text(at))).size(FS_SM).style(tone(|c| c.hue)));
+    let streaming = m.status == MessageStatus::Streaming;
+    let mut actions = Vec::new();
+    let copy = store.text(m).to_string();
+    if !streaming && !copy.is_empty() {
+        actions.push(act(Icon::Copy, "Copy", Message::Copy(copy)));
+    }
+    if m.status == MessageStatus::Error {
+        actions.push(act(Icon::Retry, "Try again", Message::Chat(Msg::Retry(m.id))));
+    }
+    if threadable {
+        actions.push(act(Icon::Forum, "Reply in thread", Message::Chat(Msg::ReplyInThread(m.id))));
+    }
+    let mut col = column![col].spacing(SP_XS);
+    if !streaming {
+        col = col.push(meta(m, false));
     }
     let unread = store.unread.contains(&m.id);
     let mark = container(Space::new().width(3).height(Length::Fill)).style(move |t: &Theme| container::Style {
         background: unread.then(|| theme::colors(t).hue.into()),
-        border: iced::border::rounded(2),
         ..Default::default()
     });
-    let copy = store.text(m).to_string();
-    let content =
-        mouse_area(container(col).padding([SP_XS, 0.0]).width(Length::Fill)).on_right_press(Message::Copy(copy));
-    let mut r = row![mark, content].spacing(SP + 1.0);
-    if threadable {
-        r = r.push(iced::widget::tooltip(
-            button(icons::icon(Icon::Forum, 16.0, icons::muted))
-                .padding(6)
-                .style(theme::plain)
-                .on_press(Message::Chat(Msg::ReplyInThread(m.id))),
-            container(text("Reply in a thread").size(FS_SM)).padding([4, 8]).style(theme::toast),
-            iced::widget::tooltip::Position::Left,
-        ));
+    let r = row![mark, container(col).width(Length::Fill)].spacing(BAR - 3.0).height(Length::Shrink);
+    with_actions(r, actions, m, false)
+}
+
+/// The time under a message.
+fn meta<'a>(m: &ThreadMessage, user: bool) -> Element<'a, Message> {
+    let line = meta_line(m, |t| t.style(tone(|c| c.muted)));
+    let row = container(line).height(28).align_y(Alignment::Center);
+    if user { container(row).align_right(Length::Fill).into() } else { row.into() }
+}
+
+fn meta_line<'a>(m: &ThreadMessage, style: impl Fn(text::Text<'a>) -> text::Text<'a>) -> Element<'a, Message> {
+    let mut r = row![style(tiny(format::time_text(&m.created_at)))].spacing(SP_XS).align_y(Alignment::Center);
+    if m.status != MessageStatus::Streaming
+        && let Some(at) = &m.edited_at
+    {
+        r = r.push(style(tiny(format!("Edited {}", format::time_text(at)))));
     }
-    r.height(Length::Shrink).into()
+    r.into()
+}
+
+/// A message whose actions show beside its time while the pointer is over it.
+fn with_actions<'a>(
+    base: impl Into<Element<'a, Message>>,
+    actions: Vec<Element<'a, Message>>,
+    m: &ThreadMessage,
+    user: bool,
+) -> Element<'a, Message> {
+    let base = base.into();
+    if actions.is_empty() {
+        return base;
+    }
+    // The time again but invisible, so the actions line up after it.
+    let line = meta_line(m, |t| t.style(|_: &Theme| text::Style { color: Some(iced::Color::TRANSPARENT) }));
+    let mut top = row![].spacing(SP_XS).align_y(Alignment::Center).height(28);
+    if user {
+        top = top.extend(actions).push(line);
+    } else {
+        top = top.push(Space::new().width(BAR)).push(line).extend(actions);
+    }
+    let top = container(top).width(Length::Fill).height(Length::Fill).align_bottom(Length::Fill);
+    iced::widget::hover(base, if user { top.align_right(Length::Fill) } else { top }).into()
+}
+
+fn act<'a>(i: Icon, tip: &'a str, on: Message) -> Element<'a, Message> {
+    iced::widget::tooltip(
+        button(container(icons::icon(i, 18.0, icons::text_2)).center(28)).padding(0).style(theme::plain).on_press(on),
+        container(text(tip).size(FS_SM)).padding([4, 8]).style(theme::toast),
+        iced::widget::tooltip::Position::Top,
+    )
+    .into()
 }
 
 fn open_label(s: &Session, link: MessageLink) -> String {
@@ -1257,7 +1309,7 @@ fn pending<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
             .size(FS_SM)
             .font(theme::MEDIUM)
             .style(tone(|c| c.muted)),
-        text(format!("Can I go ahead? {}", a.summary)).size(theme::FS_TEXT).line_height(1.5)
+        body(format!("Can I go ahead? {}", a.summary))
     ]
     .spacing(SP);
     if !a.reason.is_empty() {
@@ -1332,7 +1384,7 @@ fn blocked<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
     let busy = s.chat.busy.contains(&format!("a{}", a.id));
     let id = a.id;
     let live = a.task_id.is_none_or(|t| s.store.tasks.get(&t).is_some_and(|t| t.status.is_active()));
-    let mut col = column![text(format!("Blocked: {}", a.summary)).size(theme::FS_TEXT).line_height(1.5)].spacing(SP);
+    let mut col = column![body(format!("Blocked: {}", a.summary))].spacing(SP);
     if !a.reason.is_empty() {
         col = col.push(body(a.reason.as_str()));
     }
@@ -1364,7 +1416,7 @@ fn sending<'a>(s: &'a Session, a: &'a Approval) -> Element<'a, Message> {
     let id = a.id;
     let left = format::seconds_left(&a.expires_at);
     column![
-        text(a.summary.as_str()).size(theme::FS_TEXT).line_height(1.5),
+        body(a.summary.as_str()),
         body(if left > 0 { format!("Sending in {left} s") } else { "Sending".into() }),
         row![btn_wide(
             "Stop",
@@ -1414,6 +1466,9 @@ pub fn question<'a>(s: &'a Session, q: &'a Question) -> Element<'a, Message> {
     col.into()
 }
 
+/// Pads one line of the composer's editor to the buttons' height, inside the box's own 4px.
+const PAD_Y: f32 = SP_XS + (H_LG - FS_TEXT * 1.5) / 2.0;
+
 fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
     let mut col = column![].spacing(SP);
     if let Some(w) = waiting(s) {
@@ -1450,7 +1505,10 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
         }
         col = col.push(r.wrap());
     }
-    let placeholder = if s.store.incognito { format!("Message {name}, incognito") } else { format!("Message {name}") };
+    let placeholder =
+        if s.store.incognito { format!("Message {name} incognito…") } else { format!("Message {name}…") };
+    let can_send = !s.chat.sending
+        && (!s.chat.composer.text().trim().is_empty() || s.chat.files.iter().any(|f| f.uploaded.is_some()));
     let editor = text_editor(&s.chat.composer)
         .placeholder(placeholder)
         .on_action(|a| Message::Chat(Msg::Edit(a)))
@@ -1464,33 +1522,32 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
         })
         .size(FS_TEXT)
         .line_height(1.5)
-        .padding([10, 8])
+        // The buttons sit over the editor's padding, so the whole box is the field and shows its focus.
+        .padding(Padding { top: PAD_Y, bottom: PAD_Y, left: SP_XS * 3.0 + H_LG, right: SP_XS * 2.0 + H_LG })
         // The editor adds its padding after the minimum.
-        .min_height(H - 20.0)
+        .min_height(FS_TEXT * 1.5)
         .max_height(240)
         .style(theme::composer_field);
-    let can_send = !s.chat.sending
-        && (!s.chat.composer.text().trim().is_empty() || s.chat.files.iter().any(|f| f.uploaded.is_some()));
-    let send = button(container(icons::icon(Icon::Up, 20.0, icons::on_hue)).center(Length::Fill))
-        .width(H)
-        .height(H)
-        .padding(0)
-        .style(theme::primary)
-        .on_press_maybe(can_send.then_some(Message::Chat(Msg::Send)));
-    let attach = button(container(icons::icon(Icon::Clip, 20.0, icons::text_2)).center(Length::Fill))
-        .width(H)
-        .height(H)
+    let send = button(
+        container(icons::icon(Icon::Up, 24.0, if can_send { icons::on_hue } else { theme::faint }))
+            .center(Length::Fill),
+    )
+    .width(H_LG)
+    .height(H_LG)
+    .padding(0)
+    .style(theme::send)
+    .on_press_maybe(can_send.then_some(Message::Chat(Msg::Send)));
+    let attach = button(container(icons::icon(Icon::Clip, 24.0, icons::text_2)).center(Length::Fill))
+        .width(H_LG)
+        .height(H_LG)
         .padding(0)
         .style(theme::plain)
         .on_press(Message::Chat(Msg::Attach));
-    let one_line = s.chat.composer.line_count() <= 1;
-    let well = container(row![attach, editor, send].spacing(SP_XS).align_y(if one_line {
-        Alignment::Center
-    } else {
-        Alignment::End
-    }))
-    .padding(SP_XS)
-    .style(theme::well);
+    let buttons = container(row![attach, Space::new().width(Length::Fill), send].align_y(Alignment::End))
+        .padding(SP_XS)
+        .height(Length::Fill)
+        .align_bottom(Length::Fill);
+    let well = iced::widget::stack![editor, buttons];
     col = col.push(well);
     container(container(col).max_width(MEASURE).width(Length::Fill))
         .center_x(Length::Fill)

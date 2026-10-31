@@ -25,6 +25,8 @@ pub struct Ctx<'a, M> {
     pub dark: bool,
     pub photos: Option<&'a HashMap<String, Option<image::Handle>>>,
     pub open: fn(String) -> M,
+    /// Fills the width it's given, as the spend page's charts do, instead of keeping to a message's.
+    pub wide: bool,
 }
 
 impl<M> Clone for Ctx<'_, M> {
@@ -36,6 +38,7 @@ impl<M> Clone for Ctx<'_, M> {
 impl<M> Copy for Ctx<'_, M> {}
 
 pub fn view<'a, M: Clone + 'a>(chart: &'a ChartSpec, ctx: Ctx<'a, M>) -> Element<'a, M> {
+    let max = if ctx.wide { f32::INFINITY } else { WIDTH };
     let (legend, body): (Vec<(String, Mark, Ink)>, Element<'a, M>) = match &chart.kind {
         Kind::Line(s) | Kind::Bar(s) => {
             let bar = matches!(chart.kind, Kind::Bar(_));
@@ -45,7 +48,7 @@ pub fn view<'a, M: Clone + 'a>(chart: &'a ChartSpec, ctx: Ctx<'a, M>) -> Element
             } else {
                 vec![]
             };
-            let body = if bar && s.horizontal { plot(Rows { s }) } else { plot(Columns { s, bar }) };
+            let body = if bar && s.horizontal { plot(max, Rows { s }) } else { plot(max, Columns { s, bar }) };
             (legend, body)
         }
         Kind::Scatter(s) => {
@@ -54,7 +57,7 @@ pub fn view<'a, M: Clone + 'a>(chart: &'a ChartSpec, ctx: Ctx<'a, M>) -> Element
             } else {
                 vec![]
             };
-            (legend, plot(Scatter { s }))
+            (legend, plot(max, Scatter { s }))
         }
         Kind::Range(r) => {
             let legend = if r.rows.iter().any(|row| row.mark.is_some()) {
@@ -62,17 +65,17 @@ pub fn view<'a, M: Clone + 'a>(chart: &'a ChartSpec, ctx: Ctx<'a, M>) -> Element
             } else {
                 vec![]
             };
-            (legend, plot(Range { r }))
+            (legend, plot(max, Range { r }))
         }
-        Kind::Timeline(t) => (vec![], plot(Timeline { t })),
-        Kind::Calendar(c) => (vec![], plot(Calendar::new(c))),
-        Kind::Treemap(t) => (vec![], plot(Treemap { t })),
+        Kind::Timeline(t) => (vec![], plot(max, Timeline { t })),
+        Kind::Calendar(c) => (vec![], plot(max, Calendar::new(c))),
+        Kind::Treemap(t) => (vec![], plot(max, Treemap { t })),
         Kind::Offers(o) => {
             let legend = vec![
                 ("You".to_string(), Mark::Key, Ink::Series(0)),
                 (o.them_name().to_string(), Mark::Key, Ink::Series(1)),
             ];
-            (legend, plot(Offers { o }))
+            (legend, plot(max, Offers { o }))
         }
         Kind::Matrix(m) => (vec![], matrix(m)),
         Kind::Compare(c) => (vec![], compare(c)),
@@ -80,7 +83,7 @@ pub fn view<'a, M: Clone + 'a>(chart: &'a ChartSpec, ctx: Ctx<'a, M>) -> Element
         Kind::Listings(l) => (vec![], listings(l, ctx)),
         Kind::Gallery(g) => (vec![], gallery(g, ctx)),
     };
-    let wide = matches!(chart.kind, Kind::Listings(_) | Kind::Gallery(_));
+    let wide = ctx.wide || matches!(chart.kind, Kind::Listings(_) | Kind::Gallery(_));
     column![]
         .push(chart.title.as_deref().filter(|t| !t.is_empty()).map(|t| text(t).size(FS_MD).font(theme::SEMIBOLD)))
         .push((!legend.is_empty()).then(|| legend_row(legend)))
@@ -199,9 +202,9 @@ impl<M, P: Plot> canvas::Program<M> for Program<P> {
     }
 }
 
-fn plot<'a, M: 'a, P: Plot + Clone + 'a>(p: P) -> Element<'a, M> {
+fn plot<'a, M: 'a, P: Plot + Clone + 'a>(max: f32, p: P) -> Element<'a, M> {
     responsive(move |size| {
-        let w = size.width.clamp(80.0, WIDTH);
+        let w = size.width.clamp(80.0, max);
         let h = p.height(w);
         iced::widget::canvas(Program(p.clone())).width(w).height(h).into()
     })
@@ -573,16 +576,19 @@ impl Plot for Columns<'_> {
         for r in &s.refs {
             let y = a.y(r.value);
             dashed(f, Point::new(a.left, y), Point::new(a.left + a.plot_w, y), c.text_2);
-            f.fill_text(right(words(r.label.clone(), a.left + a.plot_w, y - 7.0, c.text_2)));
+            let ly = if y - 14.0 < 0.0 { y + 8.0 } else { y - 7.0 };
+            f.fill_text(right(words(r.label.clone(), a.left + a.plot_w, ly, c.text_2)));
         }
 
         // Bars label every category, cut to fit its band, while that leaves a word; otherwise every
         // step-th x, as many as fit.
         let band = a.band(n);
         let room = ((band - 8.0) / (0.55 * FS_XS)).floor().max(0.0) as usize;
-        let every = bar && room >= 4;
+        // Short labels such as hours aren't cut, only left out; long names may be cut to a word or two.
+        let full = s.x.iter().map(|l| l.chars().count()).max().unwrap_or(1);
+        let every = bar && room >= full.min(8);
         let cut = if every { room.min(12) } else { 12 };
-        let longest = s.x.iter().map(|l| l.chars().count()).max().unwrap_or(1).min(cut);
+        let longest = full.min(cut);
         let label_w = longest as f32 * 0.55 * FS_XS + 10.0;
         let step = if every { 1 } else { n.div_ceil(((a.plot_w / label_w).floor() as usize).max(1)) };
         for i in (0..n).step_by(step.max(1)) {

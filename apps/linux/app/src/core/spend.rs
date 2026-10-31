@@ -85,8 +85,24 @@ fn spend(x: Vec<String>, usd: Vec<f64>, horizontal: bool) -> ChartSpec {
     }
 }
 
+/// Shown even when nothing was spent, as the web shows them.
 fn bars(x: Vec<String>, usd: Vec<f64>) -> Option<ChartSpec> {
-    usd.iter().any(|v| *v > 0.0).then(|| spend(x, usd, false))
+    (!usd.is_empty()).then(|| spend(x, usd, false))
+}
+
+/// A bar chart's bars as rows, newest first, for its table.
+pub fn rows(chart: &ChartSpec) -> Vec<(String, f64)> {
+    let super::chart::Kind::Bar(s) = &chart.kind else { return vec![] };
+    let data = s.series.first().map(|l| l.data.clone()).unwrap_or_default();
+    s.x.iter().cloned().zip(data.into_iter().map(|v| v.unwrap_or(0.0))).rev().collect()
+}
+
+/// The daily limit, drawn across the chart of days.
+pub fn with_limit(mut chart: ChartSpec, usd: Option<f64>) -> ChartSpec {
+    if let (super::chart::Kind::Bar(s), Some(v)) = (&mut chart.kind, usd) {
+        s.refs.push(super::chart::Ref { value: v, label: format!("Limit {}", format::money(v)) });
+    }
+    chart
 }
 
 /// Biggest first; ones that cost nothing left out.
