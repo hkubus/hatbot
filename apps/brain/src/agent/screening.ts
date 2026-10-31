@@ -96,7 +96,8 @@ export class Screener {
     private opts: { reserve?: boolean } = {},
   ) {}
 
-  add(source: string, text: Readable) {
+  /** `after`: a verdict that comes after the ones queued now, for text assembled from them. */
+  add(source: string, text: Readable, { after = false }: { after?: boolean } = {}) {
     if (typeof text === "string" ? !text.trim() : !text.pdf) return;
     const key = createHash("sha256")
       .update(typeof text === "string" ? text : `pdf:${text.pdf}`)
@@ -118,7 +119,11 @@ export class Screener {
           cache.set(key, v);
           return v;
         });
-    const done: Promise<void> = verdict
+    // A verdict joins the queue now, so settled() waits for it too: it comes after what's queued.
+    const queued: Promise<Screening> = after
+      ? Promise.all([...this.pending]).then(() => verdict)
+      : verdict;
+    const done: Promise<void> = queued
       .then((v) => {
         if (v.suspected || v.failed) this.suspect(source, v);
       })

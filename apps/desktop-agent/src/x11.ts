@@ -113,8 +113,9 @@ async function shrink(exact: Uint8Array): Promise<Uint8Array> {
   return lossy.length < exact.length ? lossy : exact;
 }
 
-/** Any image ffmpeg reads as a screenshot's WebP: lossless unless that's large. */
-export const webp = async (image: Uint8Array) => shrink(await encode(image, LOSSLESS));
+/** Any image ffmpeg reads as a screenshot's WebP: lossless unless that's large. A Buffer, to send. */
+export const webp = async (image: Uint8Array): Promise<Buffer> =>
+  Buffer.from(await shrink(await encode(image, LOSSLESS)));
 
 export function screenshot(size: { width: number; height: number }) {
   return grab([
@@ -370,10 +371,9 @@ export class LiveCapture {
   setFps(fps: number) {
     if (fps === this.fps) return;
     this.fps = fps;
-    if (this.proc) {
-      this.stop();
-      this.start();
-    }
+    // ffmpeg takes its frame rate when it starts; a capture without one has no watcher to wait for.
+    if (this.proc) this.stop();
+    if (this.subscribers.size) this.start();
   }
 
   private start() {
@@ -398,7 +398,7 @@ export class LiveCapture {
         "mpjpeg",
         "-",
       ],
-      { stdout: "pipe", stderr: "ignore" },
+      { stdout: "pipe", stderr: "ignore", env: { ...process.env } },
     );
     this.proc = proc;
     void this.read(proc);
@@ -410,45 +410,60 @@ export class LiveCapture {
     if (!this.subscribers.size) this.last = null;
   }
 
+  /**
+   * Frames out as they come. Each chunk's frames are read where they lie, not copied out of the buffer
+   * and the rest of it moved down first: that was a megabyte or two of copying a second per watcher.
+   */
   private async read(proc: ReturnType<typeof Bun.spawn>) {
     let buf = new Uint8Array(0);
     const stdout = proc.stdout as ReadableStream<Uint8Array>;
-    for await (const chunk of stdout) {
-      const next = new Uint8Array(buf.length + chunk.length);
-      next.set(buf);
-      next.set(chunk, buf.length);
-      buf = next;
-      for (;;) {
-        const frame = takeFrame(buf);
-        if (!frame) break;
-        buf = buf.slice(frame.end);
-        if (this.last && Buffer.from(frame.jpeg).equals(this.last)) continue;
-        this.last = frame.jpeg;
-        for (const fn of this.subscribers) fn(frame.jpeg);
+    try {
+      for await (const chunk of stdout) {
+        const next = new Uint8Array(buf.length + chunk.length);
+        next.set(buf);
+        next.set(chunk, buf.length);
+        buf = next;
+        let from = 0;
+        for (;;) {
+          const frame = takeFrame(buf, from);
+          if (!frame) break;
+          from = frame.end;
+          const jpeg = buf.subarray(frame.start, frame.end);
+          if (this.last?.length === jpeg.length && Buffer.from(jpeg).equals(this.last)) continue;
+          this.last = Buffer.from(jpeg);
+          for (const fn of this.subscribers) fn(this.last);
+        }
+        buf = buf.slice(from);
       }
+    } catch {
+      // The stream ended under it.
     }
     // ffmpeg died while someone was watching (the display restarted, say): start again.
     if (this.proc === proc && this.subscribers.size)
-      setTimeout(() => this.proc === proc && this.start(), 1000);
+      setTimeout(() => this.proc === proc && this.start(), 1000).unref();
   }
 }
 
 const HEADER_END = new TextEncoder().encode("\r\n\r\n");
+/** A part's headers are a few lines; longer than this isn't a part, and reading it as one would copy. */
+const MAX_HEADERS = 4096;
 
-/** One part of a multipart MJPEG stream: headers, then Content-length bytes. */
-export function takeFrame(buf: Uint8Array): { jpeg: Uint8Array; end: number } | null {
-  const headerEnd = indexOf(buf, HEADER_END);
+/** One part of a multipart MJPEG stream: headers, then Content-length bytes, starting at `from`. */
+export function takeFrame(buf: Uint8Array, from = 0): { start: number; end: number } | null {
+  const headerEnd = indexOf(buf, HEADER_END, from, from + MAX_HEADERS);
   if (headerEnd < 0) return null;
-  const headers = new TextDecoder().decode(buf.subarray(0, headerEnd));
+  const headers = new TextDecoder().decode(buf.subarray(from, headerEnd));
   const length = Number(/content-length:\s*(\d+)/i.exec(headers)?.[1]);
   if (!length) throw new Error("mpjpeg part without a Content-length");
   const start = headerEnd + HEADER_END.length;
   if (buf.length < start + length) return null;
-  return { jpeg: buf.slice(start, start + length), end: start + length };
+  return { start, end: start + length };
 }
 
-function indexOf(hay: Uint8Array, needle: Uint8Array): number {
-  outer: for (let i = 0; i <= hay.length - needle.length; i++) {
+/** Where `needle` first is in `hay` between `from` and `to`, or -1. */
+export function indexOf(hay: Uint8Array, needle: Uint8Array, from = 0, to = hay.length): number {
+  const last = Math.min(to, hay.length) - needle.length;
+  outer: for (let i = from; i <= last; i++) {
     for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
     return i;
   }

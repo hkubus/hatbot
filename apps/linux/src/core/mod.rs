@@ -2,6 +2,7 @@ pub mod address;
 pub mod boxes;
 pub mod chart;
 pub mod delta;
+pub mod files;
 pub mod format;
 pub mod links;
 pub mod looking;

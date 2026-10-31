@@ -208,7 +208,7 @@ fn open(store: &Store, a: &Attachment, b: &gtk::Button) {
         .join("hatbot")
         .join("files")
         .join(a.id.to_string());
-    let path = dir.join(a.name.replace('/', "_"));
+    let path = dir.join(hatbot::core::files::safe_file_name(&a.name));
     let api = store.api().clone();
     let (store, id) = (store.clone(), a.id);
     let b = b.downgrade();

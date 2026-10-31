@@ -1,6 +1,7 @@
 import {
   type Approval,
   type Attachment,
+  type Bot,
   type MessageLink,
   matchingCommands,
   type Source,
@@ -35,7 +36,7 @@ import { plainText, time, tokens } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
-import { AssistantBody, isMarkdownFile } from "../markdown";
+import { AssistantBody, isMarkdownFile, markdownLoaded } from "../markdown";
 import { touchScreen } from "../media";
 import { negotiationText } from "../negotiations";
 import { navigate, useRoute } from "../router";
@@ -599,6 +600,37 @@ function Files({ list }: { list: Attachment[] }) {
 
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
+/** What a message shows, worked out once per change: a streamed delta redraws only its own row. */
+type RowProps = {
+  m: ThreadMessage;
+  day: string | null;
+  sender: { id: string; bot: Bot | undefined } | null;
+  progress: string | undefined;
+  animate: boolean;
+  /** A folded conversation's own first row leaves its day to the fold. */
+  showsDay: boolean;
+  unread: boolean;
+  retryable: boolean;
+  answerable: boolean;
+};
+
+const Row = memo(function Row({ day, showsDay, sender, ...m }: RowProps) {
+  return (
+    <Fragment>
+      {day && showsDay && <div className="day">{day}</div>}
+      {sender && (
+        <div
+          className="msg-sender"
+          style={sender.bot ? { color: `var(--bot-${sender.bot.color})` } : undefined}
+        >
+          {sender.bot?.name ?? sender.id}
+        </div>
+      )}
+      <Message {...m} />
+    </Fragment>
+  );
+});
+
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
 export const Message = memo(function Message({
   m,
@@ -827,7 +859,9 @@ export function Chat({ id }: { id: number }) {
     void openConversation(id);
     setReady(false);
     setLoadError("");
-    loaded.current = loadThread().then(
+    // The thread and its parser load side by side, so the messages draw parsed.
+    const thread = Promise.all([loadThread(), markdownLoaded.then(() => {})]);
+    loaded.current = thread.then(
       () => {
         animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
         setReady(true);
@@ -947,43 +981,40 @@ export function Chat({ id }: { id: number }) {
       ? spoken(lastReply, botName(getState(), lastReply.botId))
       : "";
 
-  let lastDay = "";
-  const now = new Date();
-  const dayBefore = (m: ThreadMessage) => {
-    const day = dayLabel(m.createdAt, now);
-    const show = day !== lastDay;
-    lastDay = day;
-    return show ? <div className="day">{day}</div> : null;
+  // The day, to re-read "Today" as "Yesterday" once the clock passes midnight.
+  const today = new Date().getDate();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: today only says when to look again
+  const rows = useMemo(() => {
+    let day = "";
+    let sender: string | null = null;
+    const now = new Date();
+    return messages.map((m) => {
+      const label = dayLabel(m.createdAt, now);
+      const showDay = label !== day;
+      day = label;
+      // A box's note isn't its bot's words.
+      const from = m.role === "assistant" && m.kind !== "box" ? m.botId : null;
+      const showSender = !!members && !!from && from !== sender && m.kind !== "command";
+      sender = from;
+      return {
+        m,
+        day: showDay ? label : null,
+        sender: showSender && from ? { id: from, bot: bots[from] } : null,
+        progress: progress[m.id],
+        animate: m.id >= animateFrom.current,
+        showsDay: showDay,
+        unread: unread.includes(m.id),
+        retryable: m.id === retryableId,
+        answerable: m.id === answerableId,
+      };
+    });
+  }, [messages, today, members, bots, progress, unread, retryableId, answerableId]);
+  const rowOf = useMemo(() => new Map(rows.map((r, i) => [r.m, i])), [rows]);
+  const row = (m: ThreadMessage) => {
+    const i = rowOf.get(m) as number;
+    const r = rows[i] as RowProps;
+    return <Row key={r.m.id} {...r} />;
   };
-  let lastSender: string | null = null;
-  const senderBefore = (m: ThreadMessage) => {
-    // A box's note isn't its bot's words.
-    const sender = m.role === "assistant" && m.kind !== "box" ? m.botId : null;
-    const show = members && sender && sender !== lastSender && m.kind !== "command";
-    lastSender = sender;
-    return show ? (
-      <div
-        className="msg-sender"
-        style={bots[sender] ? { color: `var(--bot-${bots[sender].color})` } : undefined}
-      >
-        {bots[sender]?.name ?? sender}
-      </div>
-    ) : null;
-  };
-  const row = (m: ThreadMessage) => (
-    <Fragment key={m.id}>
-      {dayBefore(m)}
-      {senderBefore(m)}
-      <Message
-        m={m}
-        progress={progress[m.id]}
-        animate={m.id >= animateFrom.current}
-        unread={unread.includes(m.id)}
-        retryable={m.id === retryableId}
-        answerable={m.id === answerableId}
-      />
-    </Fragment>
-  );
   const toggle = (id: number) =>
     setUnfolded((s) => {
       const next = new Set(s);
@@ -1024,9 +1055,10 @@ export function Chat({ id }: { id: number }) {
               const open = unfolded.has(id);
               // A message you haven't seen stays in view.
               const waiting = g.messages.filter((m) => unread.includes(m.id));
+              const first = rows[rowOf.get(g.messages[0] as ThreadMessage) as number];
               return (
                 <Fragment key={`fold-${id}`}>
-                  {dayBefore(g.messages[0] as ThreadMessage)}
+                  {first?.day && <div className="day">{first.day}</div>}
                   <Fold
                     messages={g.messages}
                     text={g.fold}
@@ -1044,7 +1076,7 @@ export function Chat({ id }: { id: number }) {
                       deleteEpisode(id).catch((err) => setError(errorText(err)));
                     }}
                   />
-                  {open ? g.messages.map(row) : waiting.map(row)}
+                  {(open ? g.messages : waiting).map(row)}
                 </Fragment>
               );
             })}
@@ -1086,7 +1118,7 @@ export function Chat({ id }: { id: number }) {
           </div>
         )}
         {error && <div className="form-error composer-error">{error}</div>}
-        <Composer key={chatKey} chat={chatKey} onSend={onSend} />
+        <Composer key={chatKey} chat={chatKey} onSend={onSend} disabled={!ready} />
       </div>
       <div className="sr-only" aria-live="polite">
         {said}
@@ -1113,7 +1145,15 @@ const randomId = () =>
   ).join("");
 
 /** Apart from the thread, so typing redraws only this. */
-export function Composer({ chat, onSend }: { chat: string; onSend: () => void }) {
+export function Composer({
+  chat,
+  onSend,
+  disabled = false,
+}: {
+  chat: string;
+  onSend: () => void;
+  disabled?: boolean;
+}) {
   const incognito = useStore((s) => s.incognito);
   const name = useStore((s) => chatName(s, currentChat(s)));
   const members = useStore(groupMembers);
@@ -1204,7 +1244,7 @@ export function Composer({ chat, onSend }: { chat: string; onSend: () => void })
 
   const send = async (command?: string) => {
     const text = (command ?? draft).trim();
-    if ((!text && !ready.length) || sending || uploading || failed.length) return;
+    if ((!text && !ready.length) || sending || uploading || failed.length || disabled) return;
     // Offline it surely won't go, so it isn't tried and stays in the composer.
     if (!navigator.onLine) return setError("You're offline. It wasn't sent.");
     setSending(true);

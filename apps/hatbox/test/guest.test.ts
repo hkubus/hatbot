@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BoxBuild, BoxFile } from "@hatbot/shared/hatbox";
@@ -210,6 +210,59 @@ test("a backend reaches only box.json's hosts, through the agent, and never a lo
     await expect(publicAddress("api.test", async () => ["10.1.2.3"])).rejects.toThrow(
       "local address",
     );
+  } finally {
+    site.stop(true);
+  }
+}, 60_000);
+
+test("a box's app tells every fetch which hosts it may reach, as it last said", async () => {
+  const site = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response("hello"),
+  });
+  try {
+    const a = agent();
+    await a.put(4, [
+      ...PAGE,
+      { path: "box.json", content: JSON.stringify({ hosts: ["api.test"] }) },
+      {
+        path: "server.ts",
+        content: `export default {
+  async fetch(req: Request) {
+    try {
+      return new Response(await (await fetch(new URL(req.url).searchParams.get("u")!)).text());
+    } catch (err) {
+      return new Response((err as Error).message, { status: 502 });
+    }
+  },
+};`,
+      },
+    ]);
+    expect((await a.build(4)).ok).toBe(true);
+    const via = (host: string) =>
+      a.send(`/boxes/4/http/?u=${encodeURIComponent(`http://${host}:${site.port}/`)}`);
+    expect(await (await via("api.test")).text()).toBe("hello");
+
+    // The app sent again, with another host: the next fetch goes by that one.
+    const file = join(a.state, "boxes", "4", "app", "box.json");
+    writeFileSync(file, JSON.stringify({ hosts: ["other.test"] }));
+    expect(await (await via("other.test")).text()).toBe("hello");
+    const gone = await via("api.test");
+    expect([gone.status, await gone.text()]).toEqual([502, "api.test isn't in box.json's hosts."]);
+
+    // Nothing has been asked of it since: the sweep it's due stops it, once.
+    a.clock.now += IDLE_MS * 10;
+    let stops = 0;
+    const guest = a.guest as unknown as { o: { units: { stop(id: number): Promise<void> } } };
+    const original = guest.o.units.stop.bind(guest.o.units);
+    guest.o.units.stop = async (id: number) => {
+      stops++;
+      await original(id);
+    };
+    await a.guest.sweep();
+    await a.guest.sweep();
+    expect(stops).toBe(1);
   } finally {
     site.stop(true);
   }

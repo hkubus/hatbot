@@ -83,6 +83,8 @@ export class Guest {
   /** Each box's secrets as the brain last sent them. Not on disk: the brain sends them again. */
   private secrets = new Map<number, BoxSecrets>();
   private builds: Promise<unknown> = Promise.resolve();
+  /** A box's config as its app last wrote it: read on every request it fetches on, otherwise. */
+  private configs = new Map<number, { stamp: string; config: BoxConfig }>();
   private clock: () => number;
 
   constructor(private o: GuestOptions) {
@@ -110,11 +112,25 @@ export class Guest {
   }
 
   config(id: number): BoxConfig {
+    const file = this.dir("boxes", id, "app", BOX_CONFIG);
+    let stamp: string;
     try {
-      return boxConfig(readFileSync(this.dir("boxes", id, "app", BOX_CONFIG), "utf8"));
+      const { mtimeMs, size } = statSync(file);
+      stamp = `${mtimeMs}:${size}`;
+    } catch {
+      this.configs.delete(id);
+      return { hosts: [], packages: {}, secrets: [] };
+    }
+    const cached = this.configs.get(id);
+    if (cached?.stamp === stamp) return cached.config;
+    let config: BoxConfig;
+    try {
+      config = boxConfig(readFileSync(file, "utf8"));
     } catch {
       return { hosts: [], packages: {}, secrets: [] };
     }
+    this.configs.set(id, { stamp, config });
+    return config;
   }
 
   /** Keeps a version's files to build: plain files the agent writes itself, only inside the box. */
@@ -443,6 +459,25 @@ export class Guest {
     await this.o.units.stop(id);
   }
 
+  /**
+   * Every `everyMs`, the backends that have been idle long enough are stopped. One at a time: a stop
+   * that's slow can't start another sweep on top of it, and there's nothing to sweep when there are
+   * none, which is most of the time.
+   */
+  sweepEvery(everyMs = 60_000) {
+    const timer = setInterval(() => {
+      if (!this.running.size) return;
+      this.sweeping ??= this.sweep()
+        .catch((err) => console.error("sweep:", err))
+        .finally(() => {
+          this.sweeping = null;
+        });
+    }, everyMs);
+    timer.unref();
+    return timer;
+  }
+  private sweeping: Promise<void> | null = null;
+
   async sweep() {
     const now = this.clock();
     for (const [id, r] of this.running) if (now - r.used >= IDLE_MS) await this.stop(id);
@@ -455,6 +490,7 @@ export class Guest {
 
   async remove(id: number) {
     this.secrets.delete(id);
+    this.configs.delete(id);
     await this.stop(id);
     await this.o.units.clean(id);
     for (const path of [this.dir("boxes", id), this.dir("build", id), join(this.o.run, String(id))])
