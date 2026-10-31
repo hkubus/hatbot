@@ -1,5 +1,5 @@
 // Automations: schedules, watchers and triggers, and the jobs built in.
-use iced::widget::{column, row, text, text_editor};
+use iced::widget::{column, container, row, text, text_editor};
 use iced::{Alignment, Element, Length, Task};
 use serde_json::{Value, json};
 
@@ -8,10 +8,11 @@ use crate::core::format;
 use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
 use crate::ui::app::{Message, Route, Session, failed};
-use crate::ui::theme::{self, FS_LG, FS_SM, SP, SP_LG, SP_MD, SP_XL};
+use crate::ui::icons::{self, Icon};
+use crate::ui::theme::{self, FS_LG, FS_MD, SP, SP_LG, SP_PAGE, SP_SM, SP_XS};
 use crate::ui::widgets::{
-    Choice, area, btn, btn_sm, card, error, field, fill, group, input, list_row, page, picker, section, segmented,
-    small, switch_row, tone,
+    Choice, area, btn, btn_icon, btn_sm, empty_tile, error, field, fill, group, heading, icon_btn_sized, input,
+    link_line, link_tiles_with, page, picker, segmented, select, small, switch, switch_row, tiles, tone,
 };
 
 pub fn bot_choices(s: &Session) -> Vec<Choice> {
@@ -307,7 +308,7 @@ fn apply(a: &mut AppSettings, c: &SettingsChange) {
     );
 }
 
-fn hours() -> Vec<Hour> {
+pub fn hours() -> Vec<Hour> {
     (0..24).map(Hour).collect()
 }
 
@@ -334,133 +335,103 @@ pub fn view(s: &Session) -> Element<'_, Message> {
     if let Some(f) = &st.form {
         return editor(s, f, st);
     }
-    let mut col = column![].spacing(SP_XL);
+    let mut col =
+        column![row![fill(), btn_icon(Icon::Plus, "Schedule", theme::outlined, icons::text, Some(m(Msg::New)))]]
+            .spacing(SP_PAGE);
     if let Some(e) = &st.error {
         col = col.push(error(e.as_str()));
     }
     col = col.push(built_in(s));
+    if !st.loaded {
+        return page(col);
+    }
 
-    let mut list = column![].spacing(2);
-    if st.loaded && s.store.schedules.is_empty() {
-        list = list.push(small("No schedules. Ask Hatbot in the chat, or add one."));
-    }
-    for x in s.store.schedules.values() {
-        let id = x.id;
-        list = list.push(item(
-            x.name.as_str(),
-            if x.enabled { format::when(x.cron.as_deref(), x.run_at.as_deref()) } else { "Off".into() },
-            x.enabled,
-            Some(m(Msg::Edit(id))),
-            move |on| m(Msg::ScheduleOn(id, on)),
-        ));
-    }
-    col = col.push(
-        column![
-            row![
-                text("Schedules").size(theme::FS_MD).font(theme::MEDIUM).style(tone(|c| c.hue)),
-                fill(),
-                btn_sm("New schedule", theme::tonal, Some(m(Msg::New)))
-            ]
-            .align_y(Alignment::Center),
-            list
-        ]
-        .spacing(SP_MD),
-    );
-
-    let mut watchers = column![].spacing(2);
-    if st.loaded && s.store.watchers.is_empty() {
-        watchers = watchers.push(small("No watchers. Ask Hatbot in the chat to watch a page or a value."));
-    }
-    for w in s.store.watchers.values() {
-        let id = w.id;
-        let line = if !w.enabled {
-            "Off".to_string()
-        } else if let Some(e) = &w.last_error {
-            e.clone()
+    let mut schedules: Vec<&Schedule> = s.store.schedules.values().collect();
+    schedules.sort_by(|a, b| a.name.cmp(&b.name));
+    let rows = schedules
+        .into_iter()
+        .map(|x| {
+            let id = x.id;
+            let value = if x.enabled { format::when(x.cron.as_deref(), x.run_at.as_deref()) } else { "Off".into() };
+            (
+                link_line(x.name.as_str(), Some(value)),
+                m(Msg::Edit(id)),
+                Some(switch(x.enabled, Some(m(Msg::ScheduleOn(id, !x.enabled))))),
+            )
+        })
+        .collect::<Vec<_>>();
+    col = col.push(titled(
+        "Schedules",
+        if rows.is_empty() {
+            empty_tile("None yet. Add one here, or ask Hatbot in chat.")
         } else {
-            match &w.last_value {
-                Some(v) => format!("{}. Last: {v}", format::every(w.every_minutes)),
-                None => format::every(w.every_minutes),
-            }
-        };
-        watchers = watchers.push(
-            card(
-                column![
-                    switch_row(w.name.as_str(), None, w.enabled, Some(move |on| m(Msg::WatcherOn(id, on)))),
-                    text(line).size(FS_SM).style(tone(if w.last_error.is_some() { |c| c.danger } else { |c| c.muted })),
-                    row![
-                        btn_sm("Check now", theme::outlined, Some(m(Msg::Check(id)))),
-                        btn_sm("Delete", theme::plain, Some(m(Msg::DeleteWatcher(id))))
-                    ]
-                    .spacing(SP)
-                ]
-                .spacing(SP),
-            )
-            .padding(SP_MD),
-        );
-    }
-    col = col.push(section("Watchers", watchers));
+            link_tiles_with(rows)
+        },
+    ));
 
-    let mut triggers = column![].spacing(2);
-    if st.loaded && s.store.triggers.is_empty() {
-        triggers = triggers.push(small("No triggers. Set up webhooks and Uptime Kuma on the web."));
-    }
-    for t in s.store.triggers.values() {
-        let id = t.id;
-        triggers = triggers.push(
-            card(
-                column![
-                    switch_row(
-                        t.name.as_str(),
-                        Some(if t.kind == TriggerKind::Kuma { "Uptime Kuma" } else { "Webhook" }),
-                        t.enabled,
-                        Some(move |on| m(Msg::TriggerOn(id, on)))
-                    ),
-                    row![btn_sm("Delete", theme::plain, Some(m(Msg::DeleteTrigger(id))))]
-                ]
-                .spacing(SP),
-            )
-            .padding(SP_MD),
-        );
-    }
-    col = col.push(section("Triggers", triggers));
+    let mut watchers: Vec<&Watcher> = s.store.watchers.values().collect();
+    watchers.sort_by(|a, b| a.name.cmp(&b.name));
+    let rows: Vec<Element<'_, Message>> = watchers
+        .into_iter()
+        .map(|w| {
+            let id = w.id;
+            let value = match (&w.last_error, w.enabled) {
+                (Some(e), _) => e.clone(),
+                (None, true) => w.last_value.clone().unwrap_or_default(),
+                (None, false) => "Off".into(),
+            };
+            row![
+                text(w.name.as_str()).size(FS_LG).width(Length::Fill),
+                text(value).size(FS_MD).style(tone(if w.last_error.is_some() { |c| c.danger } else { |c| c.text_2 })),
+                icon_btn_sized(Icon::Retry, "Check now", Some(m(Msg::Check(id))), 20.0),
+                icon_btn_sized(Icon::Trash, "Delete", Some(m(Msg::DeleteWatcher(id))), 20.0),
+                switch(w.enabled, Some(m(Msg::WatcherOn(id, !w.enabled))))
+            ]
+            .spacing(SP_XS)
+            .align_y(Alignment::Center)
+            .into()
+        })
+        .collect();
+    col = col.push(titled(
+        "Watchers",
+        if rows.is_empty() { empty_tile("None yet. Ask Hatbot in chat.") } else { tiles(rows) },
+    ));
+
+    let mut triggers: Vec<&Trigger> = s.store.triggers.values().collect();
+    triggers.sort_by(|a, b| a.name.cmp(&b.name));
+    let rows: Vec<Element<'_, Message>> = triggers
+        .into_iter()
+        .map(|t| {
+            let id = t.id;
+            let kind = if t.kind == TriggerKind::Kuma { "Uptime Kuma" } else { "Webhook" };
+            row![
+                text(t.name.as_str()).size(FS_LG).width(Length::Fill),
+                text(if t.enabled { kind } else { "Off" }).size(FS_MD).style(tone(|c| c.text_2)),
+                icon_btn_sized(Icon::Trash, "Delete", Some(m(Msg::DeleteTrigger(id))), 20.0),
+                switch(t.enabled, Some(m(Msg::TriggerOn(id, !t.enabled))))
+            ]
+            .spacing(SP_XS)
+            .align_y(Alignment::Center)
+            .into()
+        })
+        .collect();
+    col = col.push(titled(
+        "Triggers",
+        if rows.is_empty() { empty_tile("None yet. Add them on the web.") } else { tiles(rows) },
+    ));
     page(col)
 }
 
-fn item<'a>(
-    name: &'a str,
-    detail: String,
-    on: bool,
-    open: Option<Message>,
-    toggle: impl Fn(bool) -> Message + 'a,
-) -> Element<'a, Message> {
-    row![
-        list_row(
-            column![
-                text(name).size(FS_LG).style(tone(if on { |c| c.text } else { |c| c.muted })),
-                text(detail).size(FS_SM).style(tone(|c| c.muted))
-            ]
-            .spacing(2),
-            open
-        ),
-        iced::widget::toggler(on).size(24).style(theme::switch).on_toggle(toggle)
-    ]
-    .spacing(SP_MD)
-    .align_y(Alignment::Center)
-    .into()
+/// A group's title over its tiles, as the web's `Group`.
+fn titled<'a>(name: &'a str, tiles: Element<'a, Message>) -> Element<'a, Message> {
+    column![container(heading(name)).padding([0.0, SP_LG]), tiles].spacing(SP_SM).into()
 }
 
 fn built_in(s: &Session) -> Element<'_, Message> {
     let Some(a) = &s.settings else { return column![].into() };
     let mut col: Vec<Element<'_, Message>> = Vec::new();
     if let Some(h) = &a.heartbeat {
-        col.push(
-            row![
-                text("Heartbeat").size(theme::FS_TEXT).width(Length::Fill),
-                small(if h.enabled { format::every(h.every_minutes) } else { "Off".into() })
-            ]
-            .into(),
-        );
+        col.push(link_line("Heartbeat", Some(if h.enabled { format::every(h.every_minutes) } else { "Off".into() })));
     }
     if let Some(r) = &a.weekly_report {
         let r2 = r.clone();
@@ -477,33 +448,28 @@ fn built_in(s: &Session) -> Element<'_, Message> {
         ));
         if r.enabled {
             let (r3, r4) = (r.clone(), r.clone());
-            col.push(picker("Sent on", (0..7).map(Day).collect(), Some(Day(r.weekday)), move |d| {
-                m(Msg::Setting(SettingsChange {
-                    weekly_report: Some(WeeklyReport { weekday: d.0, ..r3.clone() }),
-                    ..Default::default()
-                }))
-            }));
-            col.push(picker("Sent at", hours(), Some(Hour(r.hour)), move |h| {
-                m(Msg::Setting(SettingsChange {
-                    weekly_report: Some(WeeklyReport { hour: h.0, ..r4.clone() }),
-                    ..Default::default()
-                }))
-            }));
-            col.push(row![btn_sm("Send now", theme::outlined, Some(m(Msg::SendReport)))].into());
+            col.push(
+                row![
+                    text("Sent on").size(FS_LG).width(Length::Fill),
+                    select((0..7).map(Day).collect(), Some(Day(r.weekday)), move |d| {
+                        m(Msg::Setting(SettingsChange {
+                            weekly_report: Some(WeeklyReport { weekday: d.0, ..r3.clone() }),
+                            ..Default::default()
+                        }))
+                    }),
+                    select(hours(), Some(Hour(r.hour)), move |h| {
+                        m(Msg::Setting(SettingsChange {
+                            weekly_report: Some(WeeklyReport { hour: h.0, ..r4.clone() }),
+                            ..Default::default()
+                        }))
+                    }),
+                    btn_sm("Send now", theme::outlined, Some(m(Msg::SendReport)))
+                ]
+                .spacing(SP_LG)
+                .align_y(Alignment::Center)
+                .into(),
+            );
         }
-    }
-    if let Some(h) = a.todo_hour {
-        col.push(picker("To-do reminder each morning at", hours(), Some(Hour(h)), |h| {
-            m(Msg::Setting(SettingsChange { todo_hour: Some(h.0), ..Default::default() }))
-        }));
-    }
-    if let Some(t) = a.memory_tidy {
-        col.push(switch_row(
-            "Propose a memory tidy-up weekly",
-            None,
-            t,
-            Some(|on| m(Msg::Setting(SettingsChange { memory_tidy: Some(on), ..Default::default() }))),
-        ));
     }
     group("Built in", col)
 }

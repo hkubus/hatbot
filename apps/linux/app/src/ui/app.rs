@@ -82,6 +82,8 @@ pub enum Message {
     Retry,
     DownCheck(u64),
     SetPaused(bool),
+    /// The theme: "system", "light" or "dark".
+    Appearance(String),
     SignOut,
     Unauthorized,
     Nothing,
@@ -110,6 +112,8 @@ pub enum Phase {
 
 pub struct App {
     pub dark: bool,
+    /// What the system asks for, kept for when the theme goes back to following it.
+    system_dark: bool,
     pub window: Option<window::Id>,
     pub width: f32,
     pub phase: Phase,
@@ -203,6 +207,7 @@ pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
     let config = vault::load_config();
     let app = App {
         dark: true,
+        system_dark: true,
         window: None,
         width: 1280.0,
         phase: Phase::Starting,
@@ -386,10 +391,25 @@ impl App {
     }
 }
 
+fn dark(app: &App) -> bool {
+    match app.config.theme.as_str() {
+        "light" => false,
+        "dark" => true,
+        _ => app.system_dark,
+    }
+}
+
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::Mode(mode) => {
-            app.dark = mode != Mode::Light;
+            app.system_dark = mode != Mode::Light;
+            app.dark = dark(app);
+            Task::none()
+        }
+        Message::Appearance(choice) => {
+            app.config.theme = choice;
+            vault::save_config(&app.config);
+            app.dark = dark(app);
             Task::none()
         }
         Message::WindowOpened(_) => Task::none(),

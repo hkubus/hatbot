@@ -80,7 +80,7 @@ pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
         Route::Todo => todo::view(s),
         Route::Boxes => boxes::view(s),
         Route::Search => search::view(s, app.dark),
-        Route::Settings => settings::view(s),
+        Route::Settings => settings::view(app, s),
         Route::Spend => spend::view(s, app.dark),
         Route::Computer => computer::view(app),
         r @ (Route::Bot(_) | Route::NewBot | Route::Group(_)) => bots::view(s, r),
