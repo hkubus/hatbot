@@ -209,7 +209,11 @@ export async function appraise(
 
   walkAway = roundPrice(walkAway, "down");
   target = Math.min(walkAway, roundPrice(target, "down"));
-  const opening = Math.min(target, roundPrice(target * 0.85, "down"));
+  // Sellers ignore offers far below their price, so the opening is pinned to the asking price.
+  const opening = Math.min(
+    target,
+    roundPrice(asking !== null ? asking * 0.9 : target * 0.85, "down"),
+  );
 
   const first = listing.history[0];
   const last = listing.history.at(-1);
