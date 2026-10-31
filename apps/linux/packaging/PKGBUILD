@@ -14,7 +14,7 @@ optdepends=('vulkan-icd-loader: draws the window on the GPU'
   'at-spi2-core: lets Hatbot read what is on screen in apps that support it')
 makedepends=('cargo' 'git')
 install=hatbot.install
-options=(!debug)
+options=(!debug !lto)
 
 build() {
   cd "$_app"
