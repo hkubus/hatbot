@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 struct SpendView: View {
   @Environment(AppStore.self) private var store
@@ -113,9 +112,7 @@ struct LimitsView: View {
       // The decimal pad has no Return to put it away.
       ToolbarItemGroup(placement: .keyboard) {
         Spacer()
-        Button("Done") {
-          UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        }
+        Button("Done") { hideKeyboard() }
       }
     }
     .task { await load() }

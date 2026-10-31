@@ -107,6 +107,12 @@ func message(for error: Error) -> String {
   (error as? APIError)?.message ?? "Couldn't reach Hatbot."
 }
 
+/// Puts the keyboard away, whichever field has it.
+@MainActor
+func hideKeyboard() {
+  UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+}
+
 /// Does `work`, then shows in `error` what went wrong, or clears it if nothing did. An earlier error
 /// stays up while it works, rather than going and coming back. A page given `missing` sets it instead
 /// when what it shows isn't there.
