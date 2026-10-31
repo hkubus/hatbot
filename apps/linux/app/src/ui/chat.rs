@@ -9,38 +9,50 @@ use super::app::{Message, Route, Session, failed, load_cards};
 use super::chart;
 use super::icons::{self, Icon};
 use super::markdown;
-use super::theme::{self, FS_MD, FS_SM, FS_TEXT, H_LG, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
-use super::widgets::{body, btn, btn_sm, btn_wide, empty, error, input, small, strong, tiny, tone};
+use super::theme::{self, FS_LG, FS_MD, FS_SM, FS_TEXT, H_LG, MEASURE, SP, SP_LG, SP_MD, SP_SM, SP_XL, SP_XS};
+use super::widgets::{
+    body, btn, btn_sm, btn_wide, editor_keys, empty, error, icon_btn, input, small, strong, tiny, tone,
+};
 use crate::core::api::ApiError;
 use crate::core::chart::{self as spec, ChartFile, ChartSpec, Kind, Part};
 use crate::core::format;
 use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
+use crate::core::store::{At, Store};
 use crate::core::thread;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
+    /// A chat, or a thread beside its chat.
     Open(i64),
+    /// A chat or thread the app hadn't heard of, for `Open`.
+    Found(Result<Conversation, ApiError>),
+    /// The threads beside the chat, or not.
+    ShowThreads(bool),
+    /// From a thread back to the list of them.
+    AllThreads,
     Page {
+        at: At,
         conversation: i64,
         incognito: bool,
         result: Result<Vec<ThreadMessage>, ApiError>,
     },
     Earlier {
+        at: At,
         conversation: i64,
         first: i64,
         result: Result<Vec<ThreadMessage>, ApiError>,
     },
     Episodes(Vec<Episode>),
     Threads(i64, Vec<Conversation>),
-    Edit(text_editor::Action),
-    Send,
+    Edit(At, text_editor::Action),
+    Send(At),
     /// Whether it was the composer's: a choice leaves what's being written alone.
-    Sent(Result<ThreadMessage, ApiError>, bool),
-    Attach,
-    Picked(Vec<(String, String, Vec<u8>)>),
-    Uploaded(u64, Result<Attachment, ApiError>),
-    Unattach(u64),
+    Sent(At, Result<ThreadMessage, ApiError>, bool),
+    Attach(At),
+    Picked(At, Vec<(String, String, Vec<u8>)>),
+    Uploaded(At, u64, Result<Attachment, ApiError>),
+    Unattach(At, u64),
     Incognito(bool),
     Resolve(i64),
     Resolved(Result<Conversation, ApiError>),
@@ -65,18 +77,18 @@ pub enum Msg {
     Answered(i64, Result<Question, ApiError>),
     Trust(i64, i64),
     Trusted(i64, Result<(), ApiError>),
-    Choose(String),
+    Choose(At, String),
     Pick {
         message: i64,
         list: usize,
         choice: String,
     },
-    SendPicked(i64),
+    SendPicked(At, i64),
     Fold(i64),
-    Retry(i64),
+    Retry(At, i64),
     ReplyInThread(i64),
     Threaded(Result<Conversation, ApiError>),
-    Scrolled(scrollable::Viewport),
+    Scrolled(At, scrollable::Viewport),
     Image(String, Option<Vec<u8>>),
     ChartFile(String, Option<ChartSpec>),
     Download(Attachment),
@@ -89,13 +101,24 @@ struct ComposerFile {
     failed: bool,
 }
 
+/// What's being written in a pane, and where it's scrolled to.
 #[derive(Default)]
-pub struct Chat {
+struct Writing {
     composer: text_editor::Content,
     files: Vec<ComposerFile>,
-    next_file: u64,
     sending: bool,
-    pub error: Option<String>,
+    error: Option<String>,
+    near_bottom: bool,
+    earlier_asked: Option<i64>,
+}
+
+#[derive(Default)]
+pub struct Chat {
+    main: Writing,
+    side: Writing,
+    /// The threads beside the chat: the list of them, or the one `Store::side` holds.
+    pub threads_open: bool,
+    next_file: u64,
     md: markdown::Cache,
     unfolded: HashSet<i64>,
     notes: HashMap<i64, String>,
@@ -103,8 +126,6 @@ pub struct Chat {
     busy: HashSet<String>,
     picked: HashMap<i64, Vec<String>>,
     trusted: HashSet<i64>,
-    near_bottom: bool,
-    earlier_asked: Option<i64>,
     images: HashMap<String, Option<image::Handle>>,
     /// Replies with charts in them, cut into parts, as of the text they were cut from.
     parts: HashMap<i64, (String, Vec<Part>)>,
@@ -120,35 +141,66 @@ enum Loading {
     Failed,
 }
 
-fn scroll_id() -> iced::widget::Id {
-    iced::widget::Id::new("chat")
+impl Chat {
+    fn at(&self, at: At) -> &Writing {
+        match at {
+            At::Chat => &self.main,
+            At::Side => &self.side,
+        }
+    }
+
+    fn at_mut(&mut self, at: At) -> &mut Writing {
+        match at {
+            At::Chat => &mut self.main,
+            At::Side => &mut self.side,
+        }
+    }
+}
+
+fn scroll_id(at: At) -> iced::widget::Id {
+    iced::widget::Id::new(match at {
+        At::Chat => "chat",
+        At::Side => "side",
+    })
 }
 
 /// The thread is anchored to its bottom, where iced counts offsets from, so its start is the newest message.
-fn to_latest() -> Task<Message> {
-    iced::widget::operation::snap_to(scroll_id(), iced::widget::scrollable::RelativeOffset::START)
+fn to_latest(at: At) -> Task<Message> {
+    iced::widget::operation::snap_to(scroll_id(at), iced::widget::scrollable::RelativeOffset::START)
 }
 
-pub fn load_page(s: &Session) -> Task<Message> {
-    let conversation = s.store.conversation_id;
-    let incognito = s.store.incognito;
-    let path = s.store.page_path(None);
+pub fn load_page(s: &Session, at: At) -> Task<Message> {
+    let Some(p) = s.store.pane(at) else { return Task::none() };
+    let (conversation, incognito) = (p.conversation_id, p.incognito);
+    let path = s.store.page_path(at, None);
     s.call(
         move |api| async move { api.get::<Vec<ThreadMessage>>(&path).await },
-        move |result| Message::Chat(Msg::Page { conversation, incognito, result }),
+        move |result| Message::Chat(Msg::Page { at, conversation, incognito, result }),
     )
+}
+
+/// The chat's latest page, and the thread's beside it.
+pub fn reload(s: &Session) -> Task<Message> {
+    Task::batch([load_page(s, At::Chat), load_page(s, At::Side)])
+}
+
+/// What both panes show.
+fn on_screen(store: &Store) -> impl Iterator<Item = &ThreadMessage> {
+    store.chat.messages.iter().chain(store.side.iter().flat_map(|p| &p.messages))
 }
 
 /// The chats came: the open one may be gone, and a direct chat's threads are listed.
 pub fn chats_loaded(s: &mut Session) -> Task<Message> {
-    let mut t = vec![load_threads(s)];
+    let mut t = Vec::new();
     if !s.store.conversations.is_empty()
         && s.store.current_chat().is_none()
         && let Some(first) = s.store.conversations.first().map(|c| c.id)
     {
         s.store.open(first);
-        t.push(load_page(s));
+        s.chat.threads_open = false;
+        t.push(load_page(s, At::Chat));
     }
+    t.push(load_threads(s));
     Task::batch(t)
 }
 
@@ -173,7 +225,7 @@ pub fn after_event(s: &mut Session) -> Task<Message> {
 fn keep(s: &mut Session) {
     let store = &s.store;
     let mut texts: Vec<&str> = Vec::new();
-    for m in &store.messages {
+    for m in on_screen(store) {
         if m.role == Role::Assistant {
             texts.push(store.text(m));
         }
@@ -184,9 +236,7 @@ fn keep(s: &mut Session) {
             texts.push(&t.title);
         }
     }
-    let owned: Vec<String> = store
-        .messages
-        .iter()
+    let owned: Vec<String> = on_screen(store)
         .filter_map(|m| m.task_id.and_then(|id| store.tasks.get(&id)))
         .flat_map(|t| {
             [format!("**{}**", t.title), format!("**Didn't finish.** {}", t.summary.clone().unwrap_or_default())]
@@ -194,8 +244,8 @@ fn keep(s: &mut Session) {
         .collect();
     texts.extend(owned.iter().map(String::as_str));
     let parts = &mut s.chat.parts;
-    parts.retain(|id, _| store.messages.iter().any(|m| m.id == *id));
-    for m in store.messages.iter().filter(|m| m.role == Role::Assistant) {
+    parts.retain(|id, _| on_screen(store).any(|m| m.id == *id));
+    for m in on_screen(store).filter(|m| m.role == Role::Assistant) {
         let shown = store.text(m);
         if !shown.contains("```chart") && !shown.contains("~~~chart") {
             parts.remove(&m.id);
@@ -216,10 +266,7 @@ fn sync(s: &mut Session) -> Task<Message> {
     keep(s);
     let mut t = Vec::new();
     // Task cards the messages point at.
-    let missing: Vec<i64> = s
-        .store
-        .messages
-        .iter()
+    let missing: Vec<i64> = on_screen(&s.store)
         .filter_map(|m| m.task_id)
         .filter(|id| !s.store.tasks.contains_key(id))
         .collect::<HashSet<_>>()
@@ -228,7 +275,7 @@ fn sync(s: &mut Session) -> Task<Message> {
     t.push(load_cards(s, missing));
     // Pictures and approval screenshots.
     let mut wanted: Vec<String> = Vec::new();
-    for m in &s.store.messages {
+    for m in on_screen(&s.store) {
         for a in &m.attachments {
             if a.is_picture() {
                 wanted.push(format!("/attachments/{}?w=640", a.id));
@@ -307,10 +354,15 @@ pub fn shown(s: &mut Session) -> Task<Message> {
 }
 
 fn mark_seen(s: &mut Session) -> Task<Message> {
-    if !s.chat.visible || s.route != Route::Chat || !s.chat.near_bottom {
+    if !s.chat.visible || s.route != Route::Chat {
         return Task::none();
     }
-    let shown: Vec<i64> = s.store.messages.iter().map(|m| m.id).collect();
+    let mut shown: Vec<i64> = Vec::new();
+    for at in [At::Chat, At::Side] {
+        if let Some(p) = s.store.pane(at).filter(|_| s.chat.at(at).near_bottom) {
+            shown.extend(p.messages.iter().map(|m| m.id));
+        }
+    }
     let seen = s.store.mark_seen(&shown);
     if seen.is_empty() {
         return Task::none();
@@ -322,33 +374,64 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
     let t = match m {
         Msg::Open(id) => {
             s.route = Route::Chat;
-            if id == s.store.conversation_id {
+            if let Some(parent) = s.store.threads.get(&id).and_then(|t| t.parent_id) {
+                let chat = update(s, Msg::Open(parent));
+                return Task::batch([chat, open_thread(s, id)]);
+            }
+            if !s.store.conversations.is_empty() && !s.store.conversations.iter().any(|c| c.id == id) {
+                return s.call(
+                    move |api| async move { api.get::<Conversation>(&format!("/conversations/{id}")).await },
+                    |r| Message::Chat(Msg::Found(r)),
+                );
+            }
+            if id == s.store.chat.conversation_id {
                 return Task::none();
             }
-            let left = s.store.chat_path();
-            let was_incognito = s.store.incognito;
+            let left = s.store.chat_path(At::Chat);
+            let was_incognito = s.store.chat.incognito;
             s.store.open(id);
+            s.chat.threads_open = false;
             s.chat.unfolded.clear();
-            s.chat.near_bottom = true;
-            s.chat.earlier_asked = None;
-            let mut t = vec![load_page(s), load_threads(s), to_latest()];
+            s.chat.main.near_bottom = true;
+            s.chat.main.earlier_asked = None;
+            let mut t = vec![load_page(s, At::Chat), load_threads(s), to_latest(At::Chat)];
             if was_incognito {
                 t.push(s.fire(move |api| async move { api.delete(&format!("{left}/incognito")).await }));
             }
             Task::batch(t)
         }
-        Msg::Page { conversation, incognito, result } => match result {
-            Ok(list) => {
-                s.store.loading_page();
-                s.store.take_page(conversation, incognito, list);
-                load_episodes(s)
+        Msg::Found(r) => match r {
+            Ok(c) => {
+                let id = c.id;
+                let known = if c.kind == ConversationKind::Thread { c.parent_id.is_some() } else { true };
+                s.store.put_conversation(c);
+                if known { update(s, Msg::Open(id)) } else { Task::none() }
             }
             Err(e) => Task::done(failed(e)),
         },
-        Msg::Earlier { conversation, first, result } => match result {
+        Msg::ShowThreads(on) => {
+            s.chat.threads_open = on;
+            if !on {
+                s.store.open_side(None);
+            }
+            Task::none()
+        }
+        Msg::AllThreads => {
+            s.store.open_side(None);
+            Task::none()
+        }
+        Msg::Page { at, conversation, incognito, result } => match result {
             Ok(list) => {
-                s.store.take_earlier(conversation, first, list);
-                load_episodes(s)
+                s.store.loading_page(at);
+                s.store.take_page(at, conversation, incognito, list);
+                load_episodes(s, at)
+            }
+            Err(e) => Task::done(failed(e)),
+        },
+        Msg::Earlier { at, conversation, first, result } => match result {
+            Ok(list) => {
+                s.store.take_earlier(at, conversation, first, list);
+                load_episodes(s, at)
             }
             Err(_) => Task::none(),
         },
@@ -365,71 +448,77 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             }
             Task::none()
         }
-        Msg::Edit(action) => {
-            s.chat.composer.perform(action);
+        Msg::Edit(at, action) => {
+            s.chat.at_mut(at).composer.perform(action);
             Task::none()
         }
-        Msg::Send => send(s, None),
-        Msg::Sent(r, from_composer) => {
-            s.chat.sending = false;
+        Msg::Send(at) => send(s, at, None),
+        Msg::Sent(at, r, from_composer) => {
+            let w = s.chat.at_mut(at);
+            w.sending = false;
             match r {
                 Ok(m) => {
                     if from_composer {
-                        s.chat.composer = text_editor::Content::new();
-                        s.chat.files.clear();
+                        w.composer = text_editor::Content::new();
+                        w.files.clear();
                     }
-                    if m.incognito == s.store.incognito && m.conversation_id == s.store.conversation_id {
+                    if s.store
+                        .pane(at)
+                        .is_some_and(|p| m.incognito == p.incognito && m.conversation_id == p.conversation_id)
+                    {
                         s.store.apply(Event::MessageCreated { message: m });
                     }
-                    to_latest()
+                    to_latest(at)
                 }
                 Err(e) if e.is_unauthorized() => Task::done(Message::Unauthorized),
                 Err(e) => {
-                    s.chat.error = Some(e.message);
+                    w.error = Some(e.message);
                     Task::none()
                 }
             }
         }
-        Msg::Attach => Task::perform(pick_files(), |l| Message::Chat(Msg::Picked(l))),
-        Msg::Picked(list) => {
+        Msg::Attach(at) => Task::perform(pick_files(), move |l| Message::Chat(Msg::Picked(at, l))),
+        Msg::Picked(at, list) => {
             let mut t = Vec::new();
             for (name, media_type, data) in list {
                 s.chat.next_file += 1;
                 let id = s.chat.next_file;
-                s.chat.files.push(ComposerFile { id, name: name.clone(), uploaded: None, failed: false });
+                s.chat.at_mut(at).files.push(ComposerFile { id, name: name.clone(), uploaded: None, failed: false });
                 t.push(s.call(
                     move |api| async move { api.upload::<Attachment>("/attachments", &name, &media_type, data).await },
-                    move |r| Message::Chat(Msg::Uploaded(id, r)),
+                    move |r| Message::Chat(Msg::Uploaded(at, id, r)),
                 ));
             }
             Task::batch(t)
         }
-        Msg::Uploaded(id, r) => {
-            if let Some(f) = s.chat.files.iter_mut().find(|f| f.id == id) {
+        Msg::Uploaded(at, id, r) => {
+            let w = s.chat.at_mut(at);
+            if let Some(f) = w.files.iter_mut().find(|f| f.id == id) {
                 match r {
                     Ok(a) => f.uploaded = Some(a),
                     Err(e) => {
                         f.failed = true;
-                        s.chat.error = Some(e.message);
+                        w.error = Some(e.message);
                     }
                 }
             }
             Task::none()
         }
-        Msg::Unattach(id) => {
-            s.chat.files.retain(|f| f.id != id);
+        Msg::Unattach(at, id) => {
+            s.chat.at_mut(at).files.retain(|f| f.id != id);
             Task::none()
         }
         Msg::Incognito(on) => {
-            if on == s.store.incognito {
+            if on == s.store.chat.incognito {
                 return Task::none();
             }
-            let path = s.store.chat_path();
-            s.store.incognito = on;
-            s.store.messages.clear();
-            s.store.has_earlier = false;
-            s.store.thread_known = false;
-            let mut t = vec![load_page(s)];
+            let path = s.store.chat_path(At::Chat);
+            let p = &mut s.store.chat;
+            p.incognito = on;
+            p.messages.clear();
+            p.has_earlier = false;
+            p.thread_known = false;
+            let mut t = vec![load_page(s, At::Chat)];
             if !on {
                 t.push(s.fire(move |api| async move { api.delete(&format!("{path}/incognito")).await }));
             }
@@ -487,8 +576,9 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             match r {
                 // A chat's blocked reply runs on its next turn, so ask for it.
                 Ok(a) if a.task_id.is_none() => {
+                    let in_side = s.store.side.as_ref().is_some_and(|p| a.conversation_id == Some(p.conversation_id));
                     s.store.approvals.insert(a.id, a);
-                    send(s, Some("Run it anyway.".into()))
+                    send(s, if in_side { At::Side } else { At::Chat }, Some("Run it anyway.".into()))
                 }
                 Ok(a) => {
                     s.store.approvals.insert(a.id, a);
@@ -555,16 +645,16 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             }
             Err(e) => Task::done(failed(e)),
         },
-        Msg::Choose(text) => send(s, Some(text)),
+        Msg::Choose(at, text) => send(s, at, Some(text)),
         Msg::Pick { message, list, choice } => {
-            let lists = s.store.messages.iter().find(|m| m.id == message).map_or(0, |m| m.choices.len());
+            let lists = on_screen(&s.store).find(|m| m.id == message).map_or(0, |m| m.choices.len());
             let picked = s.chat.picked.entry(message).or_insert_with(|| vec![String::new(); lists]);
             if list < picked.len() {
                 picked[list] = choice;
             }
             Task::none()
         }
-        Msg::SendPicked(message) => {
+        Msg::SendPicked(at, message) => {
             let Some(picked) = s.chat.picked.remove(&message) else { return Task::none() };
             let text = picked
                 .iter()
@@ -572,7 +662,7 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
                 .map(|(i, a)| format!("{}. {}", i + 1, a.trim()))
                 .collect::<Vec<_>>()
                 .join("\n");
-            send(s, Some(text))
+            send(s, at, Some(text))
         }
         Msg::Fold(id) => {
             if !s.chat.unfolded.remove(&id) {
@@ -580,8 +670,8 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             }
             Task::none()
         }
-        Msg::Retry(id) => {
-            let path = format!("{}/messages/{id}/retry", s.store.chat_path());
+        Msg::Retry(at, id) => {
+            let path = format!("{}/messages/{id}/retry", s.store.chat_path(at));
             s.call(
                 move |api| async move { api.post_empty(&path).await },
                 |r| match r {
@@ -592,7 +682,7 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             )
         }
         Msg::ReplyInThread(id) => {
-            let chat = s.store.conversation_id;
+            let chat = s.store.chat.conversation_id;
             s.call(
                 move |api| async move {
                     api.post::<Conversation, _>(&format!("/conversations/{chat}/threads"), &json!({ "messageId": id }))
@@ -605,25 +695,27 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
             Ok(c) => {
                 let id = c.id;
                 s.store.put_conversation(c);
-                update(s, Msg::Open(id))
+                open_thread(s, id)
             }
             Err(e) => Task::done(failed(e)),
         },
-        Msg::Scrolled(v) => {
-            s.chat.near_bottom = v.absolute_offset_reversed().y < 60.0;
+        Msg::Scrolled(at, v) => {
+            let w = s.chat.at_mut(at);
+            w.near_bottom = v.absolute_offset_reversed().y < 60.0;
             let top = v.absolute_offset().y;
             let mut t = Vec::new();
             if top < v.bounds().height * 1.5
-                && s.store.has_earlier
-                && let Some(first) = s.store.messages.first().map(|m| m.id)
-                && s.chat.earlier_asked != Some(first)
+                && let Some(p) = s.store.pane(at)
+                && p.has_earlier
+                && let Some(first) = p.messages.first().map(|m| m.id)
+                && w.earlier_asked != Some(first)
             {
-                s.chat.earlier_asked = Some(first);
-                let conversation = s.store.conversation_id;
-                let path = s.store.page_path(Some(first));
+                w.earlier_asked = Some(first);
+                let conversation = p.conversation_id;
+                let path = s.store.page_path(at, Some(first));
                 t.push(s.call(
                     move |api| async move { api.get::<Vec<ThreadMessage>>(&path).await },
-                    move |result| Message::Chat(Msg::Earlier { conversation, first, result }),
+                    move |result| Message::Chat(Msg::Earlier { at, conversation, first, result }),
                 ));
             }
             t.push(mark_seen(s));
@@ -654,9 +746,9 @@ pub fn update(s: &mut Session, m: Msg) -> Task<Message> {
     Task::batch([t, sync(s)])
 }
 
-fn load_episodes(s: &Session) -> Task<Message> {
-    let ids: Vec<i64> = s
-        .store
+fn load_episodes(s: &Session, at: At) -> Task<Message> {
+    let Some(p) = s.store.pane(at) else { return Task::none() };
+    let ids: Vec<i64> = p
         .messages
         .iter()
         .filter_map(|m| m.episode_id)
@@ -669,7 +761,7 @@ fn load_episodes(s: &Session) -> Task<Message> {
     }
     let path = format!(
         "{}/episodes?ids={}",
-        s.store.chat_path(),
+        s.store.chat_path(at),
         ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
     );
     s.call(
@@ -678,26 +770,39 @@ fn load_episodes(s: &Session) -> Task<Message> {
     )
 }
 
-fn send(s: &mut Session, text: Option<String>) -> Task<Message> {
+fn send(s: &mut Session, at: At, text: Option<String>) -> Task<Message> {
+    let Some(incognito) = s.store.pane(at).map(|p| p.incognito) else { return Task::none() };
+    let path = format!("{}/messages", s.store.chat_path(at));
+    let w = s.chat.at_mut(at);
     let from_composer = text.is_none();
-    let text = text.unwrap_or_else(|| s.chat.composer.text()).trim().to_string();
+    let text = text.unwrap_or_else(|| w.composer.text()).trim().to_string();
     let ids: Vec<i64> = if from_composer {
-        s.chat.files.iter().filter_map(|f| f.uploaded.as_ref().map(|a| a.id)).collect()
+        w.files.iter().filter_map(|f| f.uploaded.as_ref().map(|a| a.id)).collect()
     } else {
         Vec::new()
     };
-    let uploading = s.chat.files.iter().any(|f| f.uploaded.is_none() && !f.failed);
-    if s.chat.sending || (text.is_empty() && ids.is_empty()) || (from_composer && uploading) {
+    let uploading = w.files.iter().any(|f| f.uploaded.is_none() && !f.failed);
+    if w.sending || (text.is_empty() && ids.is_empty()) || (from_composer && uploading) {
         return Task::none();
     }
-    s.chat.sending = true;
-    s.chat.error = None;
-    let path = format!("{}/messages", s.store.chat_path());
-    let body = json!({ "text": text, "attachmentIds": ids, "incognito": s.store.incognito });
+    w.sending = true;
+    w.error = None;
+    let body = json!({ "text": text, "attachmentIds": ids, "incognito": incognito });
     s.call(
         move |api| async move { api.post::<ThreadMessage, _>(&path, &body).await },
-        move |r| Message::Chat(Msg::Sent(r, from_composer)),
+        move |r| Message::Chat(Msg::Sent(at, r, from_composer)),
     )
+}
+
+/// A thread beside its chat, which must be the one open.
+fn open_thread(s: &mut Session, id: i64) -> Task<Message> {
+    s.chat.threads_open = true;
+    if s.store.side.as_ref().is_some_and(|p| p.conversation_id == id) {
+        return Task::none();
+    }
+    s.store.open_side(Some(id));
+    s.chat.side = Writing { near_bottom: true, ..Writing::default() };
+    Task::batch([load_page(s, At::Side), to_latest(At::Side)])
 }
 
 async fn pick_files() -> Vec<(String, String, Vec<u8>)> {
@@ -750,19 +855,64 @@ fn save_and_open(name: &str, data: &[u8]) -> Result<(), String> {
 // Views
 
 pub fn view<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message> {
-    if s.route == Route::Threads {
-        return threads(s);
+    let chat = pane(app, s, At::Chat);
+    if !s.chat.threads_open {
+        return chat;
     }
+    // As on the web: the panel takes the chat's place where the window is narrow.
+    if app.width < 900.0 {
+        return panel(app, s);
+    }
+    let width = if app.width < 1200.0 { 380.0 } else { 440.0 };
+    let line = container(Space::new()).width(1).height(Length::Fill).style(theme::line);
+    row![chat, line, container(panel(app, s)).width(width)].into()
+}
+
+/// The threads beside the chat: one of them, or the list.
+fn panel<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message> {
+    let thread = s.store.side.as_ref().map(|p| (p.conversation_id, s.store.side_thread()));
+    let mut head = row![].spacing(SP_XS).align_y(Alignment::Center).height(56);
+    if thread.is_some() {
+        head = head.push(icon_btn(Icon::Back, "All threads", Some(Message::Chat(Msg::AllThreads))));
+    } else {
+        head = head.push(Space::new().width(SP_MD));
+    }
+    let title = match thread {
+        Some((_, t)) => s.store.chat_name(t),
+        None => "Threads".into(),
+    };
+    head = head.push(text(title).size(FS_LG).font(theme::MEDIUM).wrapping(text::Wrapping::None).width(Length::Fill));
+    if let Some((id, t)) = thread
+        && t.is_none_or(|t| t.resolved_at.is_none())
+    {
+        head = head.push(btn_sm("Resolve", theme::outlined, Some(Message::Chat(Msg::Resolve(id)))));
+    }
+    head = head.push(icon_btn(Icon::X, "Close", Some(Message::Chat(Msg::ShowThreads(false)))));
+    let head = container(head).padding(Padding::default().left(SP).right(SP));
+    let body = match thread {
+        Some(_) => pane(app, s, At::Side),
+        None => threads(s),
+    };
+    column![head, body].into()
+}
+
+fn pane<'a>(app: &'a super::app::App, s: &'a Session, at: At) -> Element<'a, Message> {
     let dark = app.dark;
     let store = &s.store;
-    let name = store.chat_name(store.current_chat());
-    let group = store.current_chat().is_some_and(|c| c.kind == ConversationKind::Group);
+    let Some(p) = store.pane(at) else { return Space::new().into() };
+    let (name, group) = match at {
+        At::Chat => {
+            let c = store.current_chat();
+            (store.chat_name(c), c.is_some_and(|c| c.kind == ConversationKind::Group))
+        }
+        At::Side => (store.bot_name(store.side_thread().and_then(|t| t.bot_ids.first()).map(String::as_str)), false),
+    };
     let mut list = column![].spacing(SP_LG).width(Length::Fill);
-    if store.has_earlier {
+    if p.has_earlier {
         list = list.push(inset(container(small("Loading earlier messages")).center_x(Length::Fill).padding(SP)));
     }
-    if store.thread_known && store.messages.is_empty() {
-        list = list.push(inset(empty(if store.incognito {
+    if p.thread_known && p.messages.is_empty() {
+        list = list.push(inset(empty(if p.incognito {
             format!("{name} can't see earlier conversations here, and this one is deleted when you leave.")
         } else {
             format!("Say hello to {name}.")
@@ -771,8 +921,8 @@ pub fn view<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message
     let now = format::now();
     let mut last_day = String::new();
     let mut last_sender: Option<String> = None;
-    let last_id = store.messages.last().map(|m| m.id);
-    let groups = thread::groups(&store.messages, &store.episodes);
+    let last_id = p.messages.last().map(|m| m.id);
+    let groups = thread::groups(&p.messages, &store.episodes);
     for g in &groups {
         let folded_id = g.fold.as_ref().and(g.episode_id);
         let open = folded_id.is_some_and(|id| s.chat.unfolded.contains(&id));
@@ -809,20 +959,22 @@ pub fn view<'a>(app: &'a super::app::App, s: &'a Session) -> Element<'a, Message
                     ),
                 ));
             }
-            list = list.push(message(s, m, dark, Some(m.id) == last_id));
+            list = list.push(message(s, at, m, dark, Some(m.id) == last_id));
         }
     }
-    let thread = scrollable(
+    // Beside the chat there's no room for the chat's margins.
+    let gutter = if at == At::Side { SP_LG } else { SP_XL };
+    let list = scrollable(
         container(container(list.padding([SP_LG + 4.0, 0.0])).max_width(MEASURE + BAR).width(Length::Fill))
             .center_x(Length::Fill)
-            .padding(Padding::from([0.0, SP_XL]).left(SP_XL - BAR)),
+            .padding(Padding::from([0.0, gutter]).left(gutter - BAR)),
     )
-    .id(scroll_id())
+    .id(scroll_id(at))
     .anchor_bottom()
-    .on_scroll(|v| Message::Chat(Msg::Scrolled(v)))
+    .on_scroll(move |v| Message::Chat(Msg::Scrolled(at, v)))
     .style(theme::scroll)
     .height(Length::Fill);
-    column![thread, composer(s, &name)].into()
+    column![list, composer(s, at, &name, gutter)].into()
 }
 
 /// How far a bot's message reaches left of the column, for its unread bar.
@@ -888,7 +1040,7 @@ fn with_charts<'a>(s: &'a Session, id: i64, text: &'a str, dark: bool) -> Elemen
     col.into()
 }
 
-fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> Element<'a, Message> {
+fn message<'a>(s: &'a Session, at: At, m: &'a ThreadMessage, dark: bool, last: bool) -> Element<'a, Message> {
     let store = &s.store;
     if m.is_note() {
         return inset(container(small(m.text.as_str()).align_x(Alignment::Center)).center_x(Length::Fill));
@@ -996,13 +1148,14 @@ fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> 
         col = col.push(links);
     }
     if last && m.status != MessageStatus::Streaming && !m.choices.is_empty() {
-        col = col.push(choices(s, m));
+        col = col.push(choices(s, at, m));
     }
     if !m.attachments.is_empty() {
         col = col.push(files(s, &m.attachments));
     }
-    let threadable = store.current_chat().is_some_and(|c| c.kind == ConversationKind::Direct)
-        && !store.incognito
+    let threadable = at == At::Chat
+        && store.current_chat().is_some_and(|c| c.kind == ConversationKind::Direct)
+        && !store.chat.incognito
         && m.status == MessageStatus::Done
         && (m.kind == MessageKind::Text
             || (m.kind == MessageKind::Task && task.is_some_and(|t| t.finished_at.is_some())));
@@ -1013,7 +1166,7 @@ fn message<'a>(s: &'a Session, m: &'a ThreadMessage, dark: bool, last: bool) -> 
         actions.push(act(Icon::Copy, "Copy", Message::Copy(copy)));
     }
     if m.status == MessageStatus::Error {
-        actions.push(act(Icon::Retry, "Try again", Message::Chat(Msg::Retry(m.id))));
+        actions.push(act(Icon::Retry, "Try again", Message::Chat(Msg::Retry(at, m.id))));
     }
     if threadable {
         actions.push(act(Icon::Forum, "Reply in thread", Message::Chat(Msg::ReplyInThread(m.id))));
@@ -1119,7 +1272,7 @@ fn reply<'a>(
             if shown.is_empty() && (m.task_id.is_none() || is_ended) {
                 col = col.push(small("…"));
             }
-            if let Some(r) = store.replies.get(&m.id) {
+            if let Some(r) = store.reply(m.id) {
                 if let Some(note) = format::last_line(&r.progress) {
                     col = col.push(small(note.to_string()));
                 }
@@ -1229,12 +1382,12 @@ fn files<'a>(s: &'a Session, list: &'a [Attachment]) -> Element<'a, Message> {
     column![pictures, r.wrap()].spacing(SP).into()
 }
 
-fn choices<'a>(s: &'a Session, m: &'a ThreadMessage) -> Element<'a, Message> {
-    let busy = s.chat.sending;
+fn choices<'a>(s: &'a Session, at: At, m: &'a ThreadMessage) -> Element<'a, Message> {
+    let busy = s.chat.at(at).sending;
     if m.choices.len() == 1 {
         let mut r = row![].spacing(SP);
         for c in &m.choices[0] {
-            r = r.push(btn_sm(c.as_str(), theme::outlined, (!busy).then(|| Message::Chat(Msg::Choose(c.clone())))));
+            r = r.push(btn_sm(c.as_str(), theme::outlined, (!busy).then(|| Message::Chat(Msg::Choose(at, c.clone())))));
         }
         return r.wrap().into();
     }
@@ -1265,24 +1418,26 @@ fn choices<'a>(s: &'a Session, m: &'a ThreadMessage) -> Element<'a, Message> {
         col = col.push(opts.wrap());
     }
     let ready = picked.is_some_and(|p| p.len() == m.choices.len() && p.iter().all(|a| !a.trim().is_empty()));
-    col.push(btn_sm("Send", theme::primary, (ready && !busy).then_some(Message::Chat(Msg::SendPicked(m.id))))).into()
+    col.push(btn_sm("Send", theme::primary, (ready && !busy).then_some(Message::Chat(Msg::SendPicked(at, m.id)))))
+        .into()
 }
 
 /// The first thing waiting on you, above the composer, in plain text.
-fn waiting(s: &Session) -> Option<Element<'_, Message>> {
-    let chat = s.store.conversation_id;
-    // What the review blocked shows only in its own chat; a task's shows on the task.
+fn waiting(s: &Session, at: At) -> Option<Element<'_, Message>> {
+    let chat = s.store.pane(at)?.conversation_id;
+    // What the review blocked shows only in its own chat; a task's shows on the task. The rest waits in the chat.
+    let side = at == At::Side;
     let approvals: Vec<&Approval> = s
         .store
         .approvals
         .values()
         .filter(|a| match a.status {
-            ApprovalStatus::Pending | ApprovalStatus::Sending => true,
+            ApprovalStatus::Pending | ApprovalStatus::Sending => !side,
             ApprovalStatus::Blocked => a.task_id.is_none() && a.conversation_id == Some(chat),
             _ => false,
         })
         .collect();
-    let questions = s.store.pending_questions();
+    let questions = if side { Vec::new() } else { s.store.pending_questions() };
     let count = approvals.len() + questions.len();
     let body: Element<'_, Message> =
         if let Some(a) = approvals.first() { approval(s, a) } else { question(s, questions.first()?) };
@@ -1469,17 +1624,18 @@ pub fn question<'a>(s: &'a Session, q: &'a Question) -> Element<'a, Message> {
 /// Pads one line of the composer's editor to the buttons' height, inside the box's own 4px.
 const PAD_Y: f32 = SP_XS + (H_LG - FS_TEXT * 1.5) / 2.0;
 
-fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
+fn composer<'a>(s: &'a Session, at: At, name: &str, gutter: f32) -> Element<'a, Message> {
+    let w = s.chat.at(at);
     let mut col = column![].spacing(SP);
-    if let Some(w) = waiting(s) {
+    if let Some(w) = waiting(s, at) {
         col = col.push(w);
     }
-    if let Some(e) = &s.chat.error {
+    if let Some(e) = &w.error {
         col = col.push(error(e.as_str()));
     }
-    if !s.chat.files.is_empty() {
+    if !w.files.is_empty() {
         let mut r = row![].spacing(SP);
-        for f in &s.chat.files {
+        for f in &w.files {
             let state = if f.failed {
                 " (didn't upload)"
             } else if f.uploaded.is_none() {
@@ -1494,7 +1650,7 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
                         button(icons::icon(Icon::X, 16.0, icons::muted))
                             .padding(2)
                             .style(theme::plain)
-                            .on_press(Message::Chat(Msg::Unattach(f.id)))
+                            .on_press(Message::Chat(Msg::Unattach(at, f.id)))
                     ]
                     .spacing(SP_SM)
                     .align_y(Alignment::Center),
@@ -1505,20 +1661,22 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
         }
         col = col.push(r.wrap());
     }
-    let placeholder =
-        if s.store.incognito { format!("Message {name} incognito…") } else { format!("Message {name}…") };
-    let can_send = !s.chat.sending
-        && (!s.chat.composer.text().trim().is_empty() || s.chat.files.iter().any(|f| f.uploaded.is_some()));
-    let editor = text_editor(&s.chat.composer)
+    let placeholder = if s.store.pane(at).is_some_and(|p| p.incognito) {
+        format!("Message {name} incognito…")
+    } else {
+        format!("Message {name}…")
+    };
+    let can_send = !w.sending && (!w.composer.text().trim().is_empty() || w.files.iter().any(|f| f.uploaded.is_some()));
+    let editor = text_editor(&w.composer)
         .placeholder(placeholder)
-        .on_action(|a| Message::Chat(Msg::Edit(a)))
-        .key_binding(|k| {
+        .on_action(move |a| Message::Chat(Msg::Edit(at, a)))
+        .key_binding(move |k| {
             if let keyboard::Key::Named(keyboard::key::Named::Enter) = k.key
                 && !k.modifiers.shift()
             {
-                return Some(text_editor::Binding::Custom(Message::Chat(Msg::Send)));
+                return Some(text_editor::Binding::Custom(Message::Chat(Msg::Send(at))));
             }
-            text_editor::Binding::from_key_press(k)
+            editor_keys(&w.composer, k)
         })
         .size(FS_TEXT)
         .line_height(1.5)
@@ -1536,13 +1694,13 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
     .height(H_LG)
     .padding(0)
     .style(theme::send)
-    .on_press_maybe(can_send.then_some(Message::Chat(Msg::Send)));
+    .on_press_maybe(can_send.then_some(Message::Chat(Msg::Send(at))));
     let attach = button(container(icons::icon(Icon::Clip, 24.0, icons::text_2)).center(Length::Fill))
         .width(H_LG)
         .height(H_LG)
         .padding(0)
         .style(theme::plain)
-        .on_press(Message::Chat(Msg::Attach));
+        .on_press(Message::Chat(Msg::Attach(at)));
     let buttons = container(row![attach, Space::new().width(Length::Fill), send].align_y(Alignment::End))
         .padding(SP_XS)
         .height(Length::Fill)
@@ -1551,17 +1709,21 @@ fn composer<'a>(s: &'a Session, name: &str) -> Element<'a, Message> {
     col = col.push(well);
     container(container(col).max_width(MEASURE).width(Length::Fill))
         .center_x(Length::Fill)
-        .padding(Padding::default().left(SP_XL).right(SP_XL).bottom(SP_LG).top(SP))
+        .padding(Padding::default().left(gutter).right(gutter).bottom(SP_LG).top(SP))
         .into()
 }
 
 fn threads(s: &Session) -> Element<'_, Message> {
     let parent = s.store.current_chat().map(|c| c.id).unwrap_or(0);
     let mut list: Vec<&Conversation> = s.store.threads.values().filter(|t| t.parent_id == Some(parent)).collect();
-    list.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+    list.sort_by(|a, b| {
+        (a.resolved_at.is_some(), !s.store.thread_needs_you(a))
+            .cmp(&(b.resolved_at.is_some(), !s.store.thread_needs_you(b)))
+            .then_with(|| b.last_message_at.cmp(&a.last_message_at))
+    });
     let mut col = column![].spacing(SP_SM);
     if list.is_empty() {
-        col = col.push(empty("No threads yet. Reply to a message in a thread to start one."));
+        col = col.push(empty("No threads yet. A bot opens one when something needs a conversation of its own."));
     }
     for t in list {
         let needs = s.store.thread_needs_you(t);
@@ -1586,5 +1748,8 @@ fn threads(s: &Session) -> Element<'_, Message> {
                 .on_press(Message::Chat(Msg::Open(t.id))),
         );
     }
-    super::widgets::page(col)
+    scrollable(container(col).padding(Padding::from([SP, SP_LG]).bottom(SP_LG)))
+        .style(theme::scroll)
+        .height(Length::Fill)
+        .into()
 }

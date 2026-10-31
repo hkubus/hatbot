@@ -1,5 +1,7 @@
 // The small pieces every page is built from, in the web's sizes.
-use iced::widget::{Space, button, column, container, pick_list, row, scrollable, text, text_input, tooltip};
+use iced::widget::{
+    Space, button, column, container, pick_list, row, scrollable, text, text_editor, text_input, tooltip,
+};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 
 use super::icons::{self, Icon};
@@ -352,15 +354,34 @@ pub fn table<'a, M: Clone + 'a>(cols: &[Column<'a>], rows: Vec<(Vec<Element<'a, 
     column![head, body].spacing(theme::SP_2XS).into()
 }
 
+/// iced's editor keys, and Ctrl+Backspace and Ctrl+Delete take a word as a single-line field's do.
+pub fn editor_keys<M>(content: &text_editor::Content, k: text_editor::KeyPress) -> Option<text_editor::Binding<M>> {
+    use iced::keyboard::{Key, key::Named};
+    use text_editor::{Binding, Motion};
+    if k.modifiers.jump() && content.cursor().selection.is_none() {
+        match k.key {
+            Key::Named(Named::Backspace) => {
+                return Some(Binding::Sequence(vec![Binding::Select(Motion::WordLeft), Binding::Backspace]));
+            }
+            Key::Named(Named::Delete) => {
+                return Some(Binding::Sequence(vec![Binding::Select(Motion::WordRight), Binding::Delete]));
+            }
+            _ => {}
+        }
+    }
+    Binding::from_key_press(k)
+}
+
 /// A text field over several lines, for prompts and instructions.
 pub fn area<'a, M: Clone + 'a>(
-    content: &'a iced::widget::text_editor::Content,
+    content: &'a text_editor::Content,
     placeholder: &'a str,
-    on: impl Fn(iced::widget::text_editor::Action) -> M + 'a,
-) -> iced::widget::TextEditor<'a, iced::advanced::text::highlighter::PlainText, M> {
-    iced::widget::text_editor(content)
+    on: impl Fn(text_editor::Action) -> M + 'a,
+) -> text_editor::TextEditor<'a, iced::advanced::text::highlighter::PlainText, M> {
+    text_editor(content)
         .placeholder(placeholder)
         .on_action(on)
+        .key_binding(move |k| editor_keys(content, k))
         .size(FS_TEXT)
         .line_height(1.5)
         .padding([10, 14])

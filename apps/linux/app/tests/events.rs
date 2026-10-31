@@ -1,5 +1,5 @@
 use hatbot::core::models::*;
-use hatbot::core::store::{Effect, Store};
+use hatbot::core::store::{At, Effect, Store};
 
 const SNAPSHOT: &str = r#"{"type":"snapshot","paused":false,
  "bots":[{"id":"hatbot","name":"Hatbot","icon":"hat","color":"amber","instructions":"","chatModel":null,"chatEffort":null,"plugins":null,"createdAt":"2026-10-01T00:00:00.000Z","brief":true}],
@@ -10,8 +10,12 @@ const SNAPSHOT: &str = r#"{"type":"snapshot","paused":false,
  "unread":[12]}"#;
 
 fn message(id: i64, status: &str, text: &str) -> String {
+    message_in(1, id, status, text)
+}
+
+fn message_in(chat: i64, id: i64, status: &str, text: &str) -> String {
     format!(
-        r#"{{"type":"message.created","message":{{"id":{id},"role":"assistant","conversationId":1,"botId":"hatbot","kind":"text","text":"{text}","status":"{status}","createdAt":"2026-10-29T10:00:00.000Z","taskId":null,"scheduleId":null,"negotiationId":null,"boxId":null,"episodeId":null,"editedAt":null,"seenAt":null}}}}"#
+        r#"{{"type":"message.created","message":{{"id":{id},"role":"assistant","conversationId":{chat},"botId":"hatbot","kind":"text","text":"{text}","status":"{status}","createdAt":"2026-10-29T10:00:00.000Z","taskId":null,"scheduleId":null,"negotiationId":null,"boxId":null,"episodeId":null,"editedAt":null,"seenAt":null}}}}"#
     )
 }
 
@@ -59,24 +63,24 @@ fn a_reply_streams_into_the_open_chat_and_ends_unread() {
     store.apply(Event::parse(&message(20, "streaming", "")));
     store.apply(Event::parse(r#"{"type":"message.delta","id":20,"text":"Hel","at":0}"#));
     store.apply(Event::parse(r#"{"type":"message.delta","id":20,"text":"lo","at":3}"#));
-    assert_eq!(store.text(&store.messages[0]), "Hello");
+    assert_eq!(store.text(&store.chat.messages[0]), "Hello");
     store.apply(Event::parse(r#"{"type":"message.done","id":20,"text":"Hello.","status":"done"}"#));
-    assert_eq!(store.messages[0].text, "Hello.");
-    assert!(store.replies.is_empty());
+    assert_eq!(store.chat.messages[0].text, "Hello.");
+    assert!(store.chat.replies.is_empty());
     assert_eq!(store.unread, vec![20]);
 }
 
 #[test]
 fn a_page_read_before_events_that_came_during_its_load_gets_them_again() {
     let mut store = Store::new();
-    store.loading_page();
+    store.loading_page(At::Chat);
     store.apply(Event::parse(&message(31, "done", "after")));
     let page: Vec<ThreadMessage> = vec![serde_json::from_str(
         r#"{"id":30,"role":"user","conversationId":1,"kind":"text","text":"before","status":"done","createdAt":"2026-10-29T10:00:00.000Z"}"#,
     )
     .unwrap()];
-    store.take_page(1, false, page);
-    let ids: Vec<i64> = store.messages.iter().map(|m| m.id).collect();
+    store.take_page(At::Chat, 1, false, page);
+    let ids: Vec<i64> = store.chat.messages.iter().map(|m| m.id).collect();
     assert_eq!(ids, vec![30, 31]);
 }
 
@@ -85,7 +89,24 @@ fn messages_from_another_chat_stay_out_of_the_open_one() {
     let mut store = Store::new();
     store.open(2);
     store.apply(Event::parse(&message(40, "done", "elsewhere")));
-    assert!(store.messages.is_empty());
+    assert!(store.chat.messages.is_empty());
+}
+
+#[test]
+fn a_thread_beside_the_chat_streams_its_own_replies_and_the_chat_keeps_its_own() {
+    let mut store = Store::new();
+    store.open_side(Some(7));
+    store.apply(Event::parse(&message_in(7, 50, "streaming", "")));
+    store.apply(Event::parse(&message(51, "streaming", "")));
+    store.apply(Event::parse(r#"{"type":"message.delta","id":50,"text":"In the thread","at":0}"#));
+    store.apply(Event::parse(r#"{"type":"message.delta","id":51,"text":"In the chat","at":0}"#));
+    let side = store.side.as_ref().unwrap();
+    assert_eq!(side.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![50]);
+    assert_eq!(store.chat.messages.iter().map(|m| m.id).collect::<Vec<_>>(), vec![51]);
+    assert_eq!(store.text(&side.messages[0]), "In the thread");
+    assert_eq!(store.text(&store.chat.messages[0]), "In the chat");
+    store.open(2);
+    assert!(store.side.is_none());
 }
 
 #[test]
@@ -128,6 +149,6 @@ fn deleting_the_open_chat_goes_back_to_another() {
     ));
     store.open(5);
     let fx = store.apply(Event::parse(r#"{"type":"conversation.deleted","id":5}"#));
-    assert_eq!(store.conversation_id, 1);
+    assert_eq!(store.chat.conversation_id, 1);
     assert_eq!(fx, vec![Effect::LoadThread]);
 }

@@ -17,7 +17,7 @@ use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
 use crate::core::notify::{Notice, Reply, Target};
 use crate::core::socket::{self, SocketEvent};
-use crate::core::store::{Effect, Store};
+use crate::core::store::{At, Effect, Store};
 use crate::core::{notify, vault};
 use crate::desk::banner;
 use crate::desk::inbox::{self, Outside};
@@ -28,7 +28,6 @@ pub const APP_ID: &str = "ovh.gaycats.Hatbot";
 #[derive(Debug, Clone, PartialEq)]
 pub enum Route {
     Chat,
-    Threads,
     Bot(String),
     NewBot,
     Group(Option<i64>),
@@ -352,7 +351,7 @@ impl App {
         self.sync_tray();
         let start = self.start.take();
         let s = self.session().unwrap();
-        let mut t = vec![load_chats(s), load_plugins(s), load_settings(s), chat::load_page(s)];
+        let mut t = vec![load_chats(s), load_plugins(s), load_settings(s), chat::reload(s)];
         t.extend(start.iter().flat_map(|p| pages::link(p)).flatten().map(Task::done));
         Task::batch(t)
     }
@@ -604,7 +603,7 @@ fn streamed(app: &mut App, ev: Streamed) -> Task<Message> {
             s.store.connected = true;
             s.unreachable = false;
             s.awaiting_snapshot = true;
-            let mut t = vec![chat::load_page(s)];
+            let mut t = vec![chat::reload(s)];
             if reconnected {
                 t.push(pages::reconnected(s));
             }
@@ -661,7 +660,7 @@ fn task_before(s: &Session, e: &Event) -> Option<Option<AgentTask>> {
 fn notice_task(s: &mut Session, before: Option<AgentTask>, e: &Event, window_open: bool) {
     let Event::TaskUpdated { task } = e else { return };
     // Its own chat, open in front of you, already shows it.
-    let in_view = window_open && s.route == Route::Chat && task.conversation_id == Some(s.store.conversation_id);
+    let in_view = window_open && s.route == Route::Chat && task.conversation_id == Some(s.store.chat.conversation_id);
     if notify::task_ended(before.as_ref(), task) && !in_view {
         let n = Notice::TaskEnded(task.clone());
         notices::show(n.shown(&s.store.bot_name(Some(&task.bot_id))), false);
@@ -704,7 +703,7 @@ fn sync_notices(app: &mut App) {
 fn effect(s: &mut Session, fx: Effect) -> Task<Message> {
     match fx {
         Effect::RefreshConversations => load_chats(s),
-        Effect::LoadThread => chat::load_page(s),
+        Effect::LoadThread => chat::load_page(s, At::Chat),
         Effect::RefreshTasks => refresh_tasks(s),
         Effect::Toast(t) => Task::done(Message::Toast(t)),
     }
@@ -881,6 +880,15 @@ pub fn subscription(app: &App) -> Subscription<Message> {
                     {
                         Some(Message::Shortcut(c.to_string()))
                     }
+                    _ => None,
+                }));
+            }
+            if s.chat.threads_open && s.route == Route::Chat {
+                subs.push(iced::keyboard::listen().filter_map(|e| match e {
+                    iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    } => Some(Message::Chat(chat::Msg::ShowThreads(false))),
                     _ => None,
                 }));
             }
