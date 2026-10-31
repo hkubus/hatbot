@@ -299,7 +299,7 @@ export type ListingStatus = "queued" | "posting" | "listed" | "failed" | "declin
  */
 export type ApprovalScope = "always" | "schedule";
 
-/** The kinds Safety settings choose for; budget, mandates and injection warnings have their own. */
+/** The kinds Safety settings choose for; budget and injection warnings have their own. */
 export const SAFETY_KINDS = [
   "send",
   "submit_personal_data",
@@ -310,6 +310,8 @@ export const SAFETY_KINDS = [
   "account_security",
   "access",
   "computer",
+  /** Starting a negotiation: asks or goes ahead, never reviewed. */
+  "mandate",
 ] as const satisfies readonly ApprovalKind[];
 export type SafetyKind = (typeof SAFETY_KINDS)[number];
 /** Ask you; let the safety review answer first; or go ahead. */

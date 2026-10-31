@@ -22,12 +22,14 @@ const KINDS: readonly (readonly [SafetyKind, string])[] = [
   ["account_security", "Accounts, passwords and keys"],
   ["access", "Doors, locks and the alarm"],
   ["computer", "Using your computers"],
+  ["mandate", "Starting negotiations"],
 ];
 const LEVELS: readonly (readonly [ApprovalLevel, string])[] = [
   ["ask", "Ask me"],
   ["review", "Review first"],
   ["allow", "Don't ask"],
 ];
+const MANDATE_LEVELS = LEVELS.filter(([level]) => level !== "review");
 const RISKY: SafetyKind[] = ["purchase", "payment", "account_security", "access", "computer"];
 
 export const TOOL_LEVELS = [
@@ -94,7 +96,7 @@ export function SafetyPage({ toast }: { toast: Toast }) {
               <Select
                 label={label}
                 value={safety.kinds[kind]}
-                options={LEVELS}
+                options={kind === "mandate" ? MANDATE_LEVELS : LEVELS}
                 onChange={(level) => setKind(kind, label, level)}
               />
             </Row>

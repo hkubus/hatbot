@@ -98,6 +98,7 @@ export const DEFAULT_SETTINGS: Settings = {
       account_security: "ask",
       access: "ask",
       computer: "ask",
+      mandate: "allow",
     },
     untrusted: true,
     tools: {},

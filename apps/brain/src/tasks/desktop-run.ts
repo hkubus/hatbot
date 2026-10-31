@@ -1161,7 +1161,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         "Not asked: this task only reads the conversation. Record it and finish.",
         true,
       );
-    // The message was approved with its mandate, and the gate checks the box before it goes. Nothing
+    // The message is covered by its mandate, and the gate checks the box before it goes. Nothing
     // else is for this task to do, so nothing is asked and nothing is armed.
     if (gate)
       return textResult(

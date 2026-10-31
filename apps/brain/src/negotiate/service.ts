@@ -530,6 +530,12 @@ export class Negotiations {
     return approval;
   }
 
+  /** Started without asking: its mandate stands as the bot set it. */
+  begin(ns: Negotiation[]) {
+    for (const n of ns) this.update(n.id, { status: "open", next_follow_up_at: this.nextSendAt() });
+    this.due();
+  }
+
   async mandateDecided(a: Approval) {
     if (a.kind !== "mandate" || this.applying.has(a.id) || a.status === "pending") return;
     const ns = this.negotiations(

@@ -6,7 +6,7 @@ import type { Tasks } from "../tasks/service";
 
 const HOW = `How Hatbot works
 - Hatbot is a brain on the owner's server (a Proxmox guest, or a Debian machine reached over SSH) with plugins, each switched on per bot. Optional guests of its own: the desktop (Chromium and a terminal, which desktop tasks drive) and the boxes guest (the small apps it builds). It never builds or runs code it didn't ship: code runs in the desktop's sandbox, on the boxes guest, or on the owner's computer through T3 Code.
-- Every tool either looks or changes something. A change asks the owner only for money (purchases, payments, mandates, offers outside one), account security, home access (locks, the alarm, garage doors, gates), using the owner's own computers (once a task), tools the owner marked "Always ask" or careful, and Haggler's holds. Settings → Safety sets each kind. Every other change goes to the safety review (the small model), which lets it through or blocks it instead of asking; the owner can run a blocked step anyway, once or always. A task stops after 3 blocks in a row or 20 in all.
+- Every tool either looks or changes something. A change asks the owner only for money (purchases, payments, offers outside a negotiation's mandate), account security, home access (locks, the alarm, garage doors, gates), using the owner's own computers (once a task), tools the owner marked "Always ask" or careful, and Haggler's holds. Starting a negotiation asks only when its mandate allows contact details. Settings → Safety sets each kind. Every other change goes to the safety review (the small model), which lets it through or blocks it instead of asking; the owner can run a blocked step anyway, once or always. A task stops after 3 blocks in a row or 20 in all.
 - Untrusted content is anything from outside: web pages, forge text, command and log output, MCP output, attachments, what boxes give back. Reading it taints the task or conversation; from then on its changes are reviewed with that in mind, and what it reports is marked as data, not instructions.
 - An approval nobody answers expires after 24 hours and the task stops. "Always" approvals are kept as rules the owner can see and remove in Settings. A desktop task's message to a person that the safety review let through can wait a few seconds for the owner to stop it, if Safety settings say so; by default it goes at once.
 - Pause all (in Settings, or a notification's button) stops running tasks and replies and starts nothing new until resumed.
@@ -26,6 +26,7 @@ const KINDS: Record<SafetyKind, string> = {
   account_security: "account security",
   access: "home access",
   computer: "using your computers",
+  mandate: "starting negotiations",
 };
 const LEVELS = { ask: "asks you", review: "the safety review decides", allow: "goes ahead" };
 

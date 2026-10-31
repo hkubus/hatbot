@@ -193,7 +193,7 @@ test("the chat can haggle only while Scout is connected", async () => {
   expect(await haggling()).toEqual([]);
 });
 
-test("a negotiation starts once you approve its mandate, then sends inside it without asking", async () => {
+test("a negotiation starts without asking, and sends inside its mandate", async () => {
   const chat = new FakeModel([
     { content: [toolUse("negotiate_appraise", { listing: "OLX:1001" })] },
     {
@@ -206,8 +206,7 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
         }),
       ],
     },
-    { content: [toolUse("negotiate_send", { negotiation: 1, text: TEXT, offer: 1060 })] },
-    { content: [text("It waits for your approval.")] },
+    { content: [text("Started.")] },
     { content: [text("Sent the opening offer.")] },
   ]);
   const work = new FakeModel([
@@ -244,30 +243,19 @@ test("a negotiation starts once you approve its mandate, then sends inside it wi
   await t.thread.idle();
 
   expect(results(chat, 1)).toContain('trusted=\\"false\\"');
-  // The chat doesn't wait: the mandate waits in the negotiation's own thread, and nothing goes before
-  // it's approved.
   const [thread] = t.chats.threads(t.thread.conversationId);
   expect(thread?.title).toBe("an RTX 3070 for the media PC");
-  const approval = t.approvals.list(true)[0] as Approval;
-  expect(approval).toMatchObject({ kind: "mandate", taskId: null, conversationId: thread?.id });
-  expect(approval.summary).toContain("pay at most 1,450 zł");
   expect(t.negotiations.get(1)).toMatchObject({
-    status: "awaiting_mandate",
-    approvalId: approval.id,
     mandate: { opening: 1060, target: 1250, limit: 1450 },
   });
-  expect(t.negotiations.messages(1)).toEqual([]);
-  expect(t.tasks.list()).toEqual([]);
-
-  t.approvals.decide(approval.id, "approve", "web");
-  await waitFor(() => t.negotiations.get(1)?.status === "open");
+  await waitFor(() => t.negotiations.messages(1).length > 0);
   await t.tasks.idle();
   await t.thread.idle();
 
-  // The opening task sent through its desktop task, in the thread, and nothing else asked.
+  // The opening task sent through its desktop task, in the thread, and nothing asked.
   expect(t.tasks.get(1)).toMatchObject({ status: "done", conversationId: thread?.id });
   expect(t.tasks.get(2)?.parentId).toBe(1);
-  expect(t.approvals.list(false).map((a) => [a.kind, a.status])).toEqual([["mandate", "approved"]]);
+  expect(t.approvals.list(false)).toEqual([]);
   expect(clicks(t)).toBe(1);
   // The seller wrote the listing's title: it isn't in the desktop task's brief.
   expect(t.tasks.get(2)?.goal).toContain(`<message>${TEXT}</message>`);
@@ -293,7 +281,7 @@ test("closing a negotiation resolves its thread with what came of it", async () 
 });
 
 test("the limit comes from the owner or Scout, never the model, and its errors don't name it", async () => {
-  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  const t = await testApp(new FakeModel(), new FakeModel([later, later]), {}, [mcpPlugin], {});
   await withScout(t);
   const start = named(negotiateTools(t, t.plugins.tools()), "negotiate_start");
   const tryIt = (listing: string, mandate: Record<string, number>) =>
@@ -378,7 +366,7 @@ test("a Scout tool that asks isn't called by the negotiate tools", async () => {
   await t.plugins.stopAll();
 });
 
-test("several sellers at once: one approval opens them all, and the first agreement ends the others", async () => {
+test("several sellers at once: contact details in one mandate ask for all, one approval opens them, and the first agreement ends the others", async () => {
   const t = await testApp(new FakeModel(), new FakeModel([later, later]), {}, [mcpPlugin], {});
   await withScout(t);
   const haggler = t.bots.create({
@@ -400,7 +388,13 @@ test("several sellers at once: one approval opens them all, and the first agreem
       alongside: [
         {
           listing: "Vinted:2002",
-          mandate: { opening: 220, target: 260, owner_max: 400, delivery: "Vinted shipping" },
+          mandate: {
+            opening: 220,
+            target: 260,
+            owner_max: 400,
+            delivery: "Vinted shipping",
+            allow: ["phone"],
+          },
         },
       ],
       want: "a warm jacket",
@@ -452,6 +446,21 @@ test("several sellers at once: one approval opens them all, and the first agreem
   expect(await t.memory.read("negotiations.md")).toContain(
     `Agreed with another seller, in negotiation #${first.id}.`,
   );
+  await t.plugins.stopAll();
+});
+
+test("starting a negotiation asks when Safety settings say so", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  await withScout(t);
+  t.settings.update({ safety: { kinds: { mandate: "ask" } } });
+  const start = named(negotiateTools(t, t.plugins.tools()), "negotiate_start");
+  await runPluginTool(
+    start,
+    { listing: "OLX:1001", mandate: { opening: 1060, target: 1250, delivery: "OLX delivery" } },
+    call(),
+  );
+  expect(t.approvals.list(true).map((a) => a.kind)).toEqual(["mandate"]);
+  expect(t.negotiations.get(1)?.status).toBe("awaiting_mandate");
   await t.plugins.stopAll();
 });
 

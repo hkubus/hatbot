@@ -141,7 +141,7 @@ export function negotiateTools(
 
     tool({
       name: "negotiate_start",
-      description: `Start negotiating for a listing, inside a mandate: the opening offer, the target, delivery terms and how long it lasts. Use negotiate_appraise first and base the numbers on it and on what the owner said. The most to pay is set from Scout's appraisal, or from owner_max when the owner named one, and you aren't told it: negotiate_send holds you to it. It makes the negotiation's record, which shows under your reply, and asks the owner to approve the mandate. Once they do, a task sends the opening message on its own; don't send anything before. When the owner asks you to haggle with several sellers at once, put up to ${MAX_ALONGSIDE} more listings for the same thing in alongside, each appraised and with its own mandate: the owner approves them together, and the first agreement ends the others.`,
+      description: `Start negotiating for a listing, inside a mandate: the opening offer, the target, delivery terms and how long it lasts. Use negotiate_appraise first and base the numbers on it and on what the owner said. The most to pay is set from Scout's appraisal, or from owner_max when the owner named one, and you aren't told it: negotiate_send holds you to it. It makes the negotiation's record, which shows under your reply, and a task sends the opening message on its own; don't send anything yourself. A mandate that allows contact details waits for the owner to approve it first. When the owner asks you to haggle with several sellers at once, put up to ${MAX_ALONGSIDE} more listings for the same thing in alongside, each appraised and with its own mandate; the first agreement ends the others.`,
       schema: z.object({
         listing: ListingKey,
         mandate: StartInput,
@@ -169,7 +169,7 @@ export function negotiateTools(
           .map((x) => one(x.listing, x.mandate))
           .join("; ")}`;
       },
-      policy: () => covered("It only makes a record; you approve its mandate"),
+      policy: () => covered("Anything past its mandate asks you"),
       run: async (i, call) => {
         const items = [{ listing: i.listing, mandate: i.mandate }, ...(i.alongside ?? [])];
         if (new Set(items.map((x) => x.listing)).size < items.length)
@@ -216,7 +216,11 @@ export function negotiateTools(
             messageId: call.messageId,
           }),
         );
-        neg.askMandates(made, undefined, conversationId);
+        const asks =
+          neg.d.settings.get().safety.kinds.mandate === "ask" ||
+          made.some((n) => n.mandate.allow.length > 0);
+        if (asks) neg.askMandates(made, undefined, conversationId);
+        else neg.begin(made);
         const ids = made.map((n) => `#${n.id}`);
         const threads = made.flatMap((n) =>
           n.conversationId !== null && neg.d.chats.get(n.conversationId)?.kind === "thread"
@@ -227,11 +231,16 @@ export function negotiateTools(
           threads.length === made.length
             ? several
               ? ` Each has its own thread with the owner (${threads.join(", ")}), where what comes of it is told.`
-              : ` It has its own thread with the owner, ${threads[0]}: they approve the mandate there, and what comes of it is told there.`
+              : ` It has its own thread with the owner, ${threads[0]}, where what comes of it is told${asks ? " and where they approve the mandate" : ""}.`
             : "";
-        return several
-          ? `Negotiations ${ids.join(", ")} are made, for want #${wantId}, and wait for the owner to approve their mandates together.${told} Once they do, a task sends each opening message; until then nothing goes to the sellers. The first agreement ends the others. Don't call negotiate_send for them now.`
-          : `Negotiation ${ids[0]} is made, for want #${wantId}, and waits for the owner to approve its mandate.${told} Once they do, a task sends the opening message; until then nothing goes to the seller. Don't call negotiate_send for it now.`;
+        const head = several
+          ? `Negotiations ${ids.join(", ")} are made, for want #${wantId}.`
+          : `Negotiation ${ids[0]} is made, for want #${wantId}.`;
+        const each = several ? "each opening message" : "the opening message";
+        const after = asks
+          ? `${several ? "They wait for the owner to approve their mandates together" : "It waits for the owner to approve its mandate"}. Once they do, a task sends ${each}; until then nothing goes to ${several ? "the sellers" : "the seller"}.`
+          : `A task sends ${each} on its own.`;
+        return `${head}${told} ${after}${several ? " The first agreement ends the others." : ""} Don't call negotiate_send for ${several ? "them" : "it"} now.`;
       },
     }),
 

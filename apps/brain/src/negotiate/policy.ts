@@ -72,7 +72,7 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
     );
 
   const why = outside(n, input, f);
-  if (!why.length) return covered("Within the mandate you approved");
+  if (!why.length) return covered("Within the mandate");
   // Money and terms past the mandate are approved in the app, as the mandate is; a message that only
   // carries a link or contact details can be approved from the lock screen. The model isn't told the
   // limit, so no Safety setting lets this through: the owner's answer is the only thing that holds it.
