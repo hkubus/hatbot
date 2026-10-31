@@ -277,3 +277,20 @@ test("an approval covers the step it was asked for, on its page; one from the lo
     "not this step",
   );
 });
+
+test("on a computer, an approval covers the held step the small model judged, however it words it, but not a buy", () => {
+  const ahead = {
+    page: null,
+    kind: "send" as const,
+    summary: "Press Enter to send it",
+    hold: null,
+  };
+  const enter = { label: "Enter key with unclear focus", judged: true } as const;
+  expect(notCovered(ahead, enter, null)).toBeNull();
+  expect(notCovered(ahead, { label: "Buy now", judged: true }, null)).toContain("kind purchase");
+  const held = { ...ahead, hold: enter };
+  expect(
+    notCovered(held, { label: "Enter in the focused chat box", judged: true }, null),
+  ).toBeNull();
+  expect(notCovered(held, { label: "Pay now", judged: true }, null)).toContain("not this one");
+});

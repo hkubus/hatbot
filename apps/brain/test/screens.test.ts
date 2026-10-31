@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { StreamParams } from "@hatbot/plugin-sdk";
-import { CLICK_CHECK_PROMPT } from "../src/agent/prompt";
+import { CLICK_CHECK_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeComputer, withComputer } from "./fake-computer";
 import { computer, FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
@@ -146,4 +146,67 @@ test("on a computer, a click nothing can name is judged from a zoomed screenshot
   expect(JSON.stringify(work.requests[1]?.messages.at(-1)?.content)).toContain("Delete forever");
   expect(laptop.requests.filter((r) => r.op === "zoom")).toHaveLength(2);
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
+});
+
+test("on a computer, Enter held from a screenshot goes once the review finds it safe, though the check words it differently the next time", async () => {
+  const enter = () => computer("key", { text: "Return" });
+  const work = new FakeModel([
+    { content: [enter()] },
+    {
+      content: [
+        toolUse("confirm_intent", {
+          kind: "send",
+          summary: 'Press Enter to send "Hi" to Sam on Discord',
+        }),
+      ],
+    },
+    { content: [enter()] },
+    finish(),
+  ]);
+  const verdicts = [
+    '{"consequential": true, "label": "Enter key with unclear focus; may send a message"}',
+    '{"consequential": true, "label": "Enter in the focused chat input"}',
+  ];
+  work.onCreate = (p) =>
+    p.system === CLICK_CHECK_PROMPT
+      ? verdicts.shift()
+      : p.system === REVIEW_PROMPT
+        ? JSON.stringify({ safe: true, why: "The owner asked for it." })
+        : undefined;
+  const t = await testApp(new FakeModel(), work);
+  const { computer: laptop } = await connected(t);
+  const task = startOn(t, "m-laptop", "Send Sam hi on Discord");
+  t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
+  expect((await ended(t, task.id)).status).toBe("done");
+
+  expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
+});
+
+test("on a computer, focus_window brings a window up by its id; a blacked-out one is refused", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("focus_window", { id: 2 })] },
+    { content: [toolUse("focus_window", { id: 3 })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const { computer: laptop } = await connected(t);
+  laptop.answer.windows = () => ({
+    op: "windows",
+    windows: [
+      { id: 1, title: "Files", appId: "nautilus", focused: true, x: 0, y: 0 },
+      { id: 2, title: "Discord", appId: "discord", focused: false, x: 0, y: 0 },
+      { id: 3, title: "Passwords", appId: "keepassxc", focused: false, hidden: true },
+    ],
+  });
+  const task = startOn(t, "m-laptop", "Open Discord");
+  t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
+  expect((await ended(t, task.id)).status).toBe("done");
+
+  expect(JSON.stringify(work.requests[0]?.messages[0]?.content)).toContain('2: \\"Discord\\"');
+  expect(laptop.requests.filter((r) => r.op === "focus_window")).toEqual([
+    { op: "focus_window", id: 2 },
+  ]);
+  const results = JSON.stringify(work.requests[2]?.messages);
+  expect(results).toContain('\\"Discord\\" has the keyboard now.');
+  expect(results).toContain("blacked out");
 });

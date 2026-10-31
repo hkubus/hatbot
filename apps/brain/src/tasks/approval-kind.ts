@@ -63,14 +63,17 @@ const holdKey = (h: Hold) => ("label" in h ? `label:${fold(h.label)}` : JSON.str
 export function notCovered(armed: Armed, hold: Hold, page: string | null): string | null {
   if (armed.page !== null && !samePage(page, armed.page))
     return `The owner's approval was for a step on ${armed.page}, not this page.`;
+  // The small model words what it sees afresh each time it looks, so its words can't be matched.
+  const judged = "judged" in hold;
   if (armed.hold)
-    return holdKey(armed.hold) === holdKey(hold)
+    return holdKey(armed.hold) === holdKey(hold) ||
+      (judged && "judged" in armed.hold && (!buysOrPays(hold) || buysOrPays(armed.hold)))
       ? null
       : `The owner's approval was for the step ${heldWhat(armed.hold)}, not this one. Call confirm_intent for this step.`;
   if (approvableFromNotification(armed.kind) && buysOrPays(hold))
     return "The owner's approval wasn't for buying or paying, and this step may do either. Call confirm_intent for this step, with kind purchase or payment.";
   // The owner saw which control it would press; an icon has no label to check that against.
-  if ("unlabelled" in hold && armed.control) return null;
+  if (("unlabelled" in hold && armed.control) || judged) return null;
   // Anything else with no label to go by could be anything on the page.
   const label = "label" in hold ? fold(hold.label) : "";
   if (!label || ![armed.summary, armed.control ?? ""].some((s) => fold(s).includes(label)))

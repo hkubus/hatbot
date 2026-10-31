@@ -5,7 +5,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
-import { bot, letSend, signIn, type TestApp, testApp, waitFor } from "./helpers";
+import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
   content: [toolUse("finish_task", { outcome: "done", summary })],
@@ -470,7 +470,6 @@ test("each line break in typed text is checked on its own: one send the review a
       ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
       : undefined;
   const task = startTask(t, "Write to Ann");
-  await letSend(t);
   await t.tasks.idle();
   // The approved Enter, then the text after it; the next Enter waits for another approval.
   expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
@@ -478,13 +477,11 @@ test("each line break in typed text is checked on its own: one send the review a
   expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku 5.5 found it safe")).toBe(
     true,
   );
-  expect(t.approvals.list(false)).toMatchObject([
-    { status: "approved", summary: "Send Ann a hello" },
-  ]);
+  expect(t.approvals.list(false)).toEqual([]);
   expect(t.tasks.get(task.id)?.summary).toEndWith("Changed outside Hatbot:\n- Send Ann a hello");
 });
 
-test("a message the review lets through waits for you to stop it, and stopped, it doesn't go", async () => {
+test("with a wait set, a message the review lets through waits for you to stop it, and stopped, it doesn't go", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "Hi Ann" })] },
     { content: [toolUse("confirm_intent", { kind: "send", summary: "Send Ann a hello" })] },
@@ -508,6 +505,7 @@ test("a message the review lets through waits for you to stop it, and stopped, i
     p.system === REVIEW_PROMPT
       ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
       : undefined;
+  t.settings.update({ safety: { sendWaitS: 30 } });
   startTask(t, "Write to Ann");
   const sending = await waitFor(() => t.approvals.list(true).find((a) => a.status === "sending"));
   t.approvals.decide(sending.id, "deny", "web");

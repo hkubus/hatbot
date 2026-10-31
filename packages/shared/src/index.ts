@@ -325,6 +325,8 @@ export type SafetySettings = {
   tools: Record<string, "ask" | "allow">;
   /** Commands one chat reply runs itself before the work has to go to a task. */
   chatCommands: number;
+  /** Seconds a message to a person that the review let through waits for you to stop it; 0 sends at once. */
+  sendWaitS: number;
 };
 
 export type Approval = {

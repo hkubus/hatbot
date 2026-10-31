@@ -264,7 +264,7 @@ struct Out {
     name: String,
     logical: Option<(i32, i32, i32, i32)>,
     mode: Option<(i32, i32)>,
-    transform_swaps: bool,
+    transform: wl_output::Transform,
 }
 
 impl Out {
@@ -272,7 +272,7 @@ impl Out {
         let (x, y, w, h) = self.logical?;
         let scale = self
             .mode
-            .map(|(mw, mh)| if self.transform_swaps { mh } else { mw })
+            .map(|(mw, mh)| if swaps(self.transform) { mh } else { mw })
             .map_or(1.0, |pw| pw as f64 / w.max(1) as f64);
         Some(OutputInfo { name: self.name.clone(), x, y, width: w as u32, height: h as u32, scale })
     }
@@ -299,6 +299,8 @@ struct Capture {
     format: Option<(wl_shm::Format, u32, u32, u32)>,
     buffer: Option<(WlBuffer, WlShmPool, Shm)>,
     y_invert: bool,
+    /// The monitor's: the capture comes as its panel scans out, and is turned upright after.
+    transform: wl_output::Transform,
 }
 
 /// What the agent's own clipboard offer holds, and who to tell once it's been read.
@@ -347,7 +349,7 @@ impl State {
             name: String::new(),
             logical: None,
             mode: None,
-            transform_swaps: false,
+            transform: wl_output::Transform::Normal,
         });
     }
 
@@ -438,7 +440,9 @@ impl State {
         self.last_pointer = Some(output.to_owned());
         // A hundredth of a pixel, so scaled monitors get their in-between positions.
         let (px, py, w, h) = if bound {
-            (x, y, info.width as f64, info.height as f64)
+            let t =
+                self.outputs.iter().find(|o| o.name == output).map_or(wl_output::Transform::Normal, |o| o.transform);
+            unturned(t, x, y, info.width as f64, info.height as f64)
         } else {
             // A pointer not tied to a monitor spans all of them.
             let x0 = infos.iter().map(|o| o.x).min().unwrap_or(0);
@@ -463,8 +467,10 @@ impl State {
             let _ = reply.send(Err("Can't capture that monitor.".into()));
             return;
         };
+        let transform = o.transform;
         let frame = sc.capture_output(1, &o.output, &self.qh, ());
-        self.captures.insert(frame.id(), Capture { reply: Some(reply), format: None, buffer: None, y_invert: false });
+        self.captures
+            .insert(frame.id(), Capture { reply: Some(reply), format: None, buffer: None, y_invert: false, transform });
         let _ = self.flush();
     }
 
@@ -588,8 +594,7 @@ impl Dispatch<WlOutput, ()> for State {
                 o.mode = Some((width, height));
             }
             wl_output::Event::Geometry { transform: WEnum::Value(t), .. } => {
-                use wl_output::Transform as T;
-                o.transform_swaps = matches!(t, T::_90 | T::_270 | T::Flipped90 | T::Flipped270);
+                o.transform = t;
             }
             _ => {}
         }
@@ -745,7 +750,55 @@ fn read_pixels(c: &Capture) -> Result<Frame> {
             }
         }
     }
-    Ok(Frame { width: w, height: h, rgb })
+    Ok(upright(Frame { width: w, height: h, rgb }, c.transform))
+}
+
+fn swaps(t: wl_output::Transform) -> bool {
+    use wl_output::Transform as T;
+    matches!(t, T::_90 | T::_270 | T::Flipped90 | T::Flipped270)
+}
+
+/// A point on a turned monitor, and its size, as the panel is before turning: how niri and wlroots read
+/// a bound pointer's absolute positions.
+fn unturned(t: wl_output::Transform, x: f64, y: f64, w: f64, h: f64) -> (f64, f64, f64, f64) {
+    use wl_output::Transform as T;
+    let (px, py) = match t {
+        T::_90 => (y, w - x),
+        T::_180 => (w - x, h - y),
+        T::_270 => (h - y, x),
+        T::Flipped => (w - x, y),
+        T::Flipped90 => (y, x),
+        T::Flipped180 => (x, h - y),
+        T::Flipped270 => (h - y, w - x),
+        _ => (x, y),
+    };
+    if swaps(t) { (px, py, h, w) } else { (px, py, w, h) }
+}
+
+/// A capture of a rotated or flipped monitor, as it shows on it.
+fn upright(f: Frame, t: wl_output::Transform) -> Frame {
+    use wl_output::Transform as T;
+    if t == T::Normal {
+        return f;
+    }
+    let (w, h) = (f.width, f.height);
+    let (nw, nh) = if swaps(t) { (h, w) } else { (w, h) };
+    let flipped = matches!(t, T::Flipped | T::Flipped90 | T::Flipped180 | T::Flipped270);
+    let mut rgb = vec![0; f.rgb.len()];
+    for y in 0..nh {
+        for x in 0..nw {
+            let fx = if flipped { nw - 1 - x } else { x };
+            let (sx, sy) = match t {
+                T::_90 | T::Flipped90 => (y, h - 1 - fx),
+                T::_180 | T::Flipped180 => (w - 1 - fx, h - 1 - y),
+                T::_270 | T::Flipped270 => (w - 1 - y, fx),
+                _ => (fx, y),
+            };
+            let (src, dst) = (((sy * w + sx) * 3) as usize, ((y * nw + x) * 3) as usize);
+            rgb[dst..dst + 3].copy_from_slice(&f.rgb[src..src + 3]);
+        }
+    }
+    Frame { width: nw, height: nh, rgb }
 }
 
 impl Dispatch<ExtIdleNotificationV1, Idle> for State {

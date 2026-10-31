@@ -294,7 +294,8 @@ export function checkoutHost(url: string | undefined): string | null {
  * `frame`: a frame Hatbot couldn't get into, named by its title.
  */
 export type Hold =
-  | { label: string }
+  /** `judged`: the small model's words for what a screenshot shows, not a label on the screen. */
+  | { label: string; judged?: true }
   | { unlabelled: "button" | "beside" }
   | { checkout: string }
   | { frame: string }
