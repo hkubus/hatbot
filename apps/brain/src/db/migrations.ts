@@ -861,4 +861,10 @@ export const migrations: string[] = [
   ALTER TABLE spend_ledger ADD COLUMN ended_at TEXT;
   ALTER TABLE spend_ledger ADD COLUMN prefix TEXT;
   `,
+  // 52: everything untrusted a conversation has read, not only the first: a scope you gave ends at
+  // the next new one.
+  `
+  ALTER TABLE episodes ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';
+  UPDATE episodes SET sources = json_array(tainted_by) WHERE tainted_by IS NOT NULL;
+  `,
 ];

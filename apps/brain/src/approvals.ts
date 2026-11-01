@@ -80,24 +80,11 @@ export function canonical(value: unknown): string {
 }
 
 /**
- * Whether what a task or conversation has read by now could be what an approval was given for: one
- * of the same untrusted sources, the same page or the same tool on the same things, or one from the
- * same place. A page read after it, from somewhere else, isn't covered by a scope given then.
+ * Whether an approval given after reading `then` covers what's been read by now: every source since
+ * was one of those. One page read after it, from anywhere, could be what asks next.
  */
-const matches = (readByNow: string[] | undefined, claimed: string) => {
-  if (!readByNow?.length) return true;
-  const split = (s: string) => {
-    const [name, detail = ""] = s.split(": (", 2);
-    return { name, detail: detail.replace(/\)$/, "") };
-  };
-  const then = split(claimed);
-  return readByNow.some((r) => {
-    if (r === claimed) return true;
-    const now = split(r);
-    if (now.name === then.name) return !now.detail || then.detail.includes(now.detail);
-    return then.detail.length > 3 && now.detail.startsWith(then.detail);
-  });
-};
+const covers = (then: string[], readByNow: string[] | undefined) =>
+  (readByNow ?? []).every((s) => then.includes(s));
 
 export type NewApproval = {
   taskId: number | null;
@@ -289,8 +276,7 @@ export class Approvals {
   /**
    * Why a call that would ask goes ahead on what you approved before, or null: this exact call is
    * one you always allow, or, where only untrusted content asks, you allowed the tool on the same
-   * thing for the rest of this task or conversation, and what it had read then comes from the same
-   * place as what it has read now.
+   * thing for the rest of this task or conversation, and it has read nothing new since.
    */
   granted(q: Granted): string | null {
     const input = canonical(q.input);
@@ -310,12 +296,8 @@ export class Approvals {
          ORDER BY id DESC`,
       )
       .all(...[q.botId, q.tool, q.target ?? "", q.taskId ?? -1, q.episodeId ?? -1]);
-    const covered = session.some((r) =>
-      ((r.sources ? (JSON.parse(r.sources) as string[]) : []) as string[]).some((s) =>
-        matches(q.sources, s),
-      ),
-    );
-    if (!covered) return null;
+    if (!session.some((r) => covers(r.sources ? JSON.parse(r.sources) : [], q.sources)))
+      return null;
     return `You allowed ${q.tool}${q.target ? ` on ${q.target}` : ""} for the rest of this ${q.taskId !== undefined ? "task" : "conversation"}.`;
   }
 

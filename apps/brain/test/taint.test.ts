@@ -4,11 +4,11 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT, SCREENING_PROMPT } from "../src/agent/prompt";
-import { runTool } from "../src/agent/tools";
 import { tagJson, untrustedBlock, untrustedFields } from "../src/agent/untrusted";
 import { EventBus } from "../src/events";
 import { definePlugin, PluginError, ready, tool } from "../src/plugins/plugin";
 import { runPluginTool } from "../src/plugins/registry";
+import { runTool } from "../src/tools";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
@@ -72,7 +72,7 @@ function labPlugin(said: () => string, restarted: string[]) {
           name: "lab_issue",
           description: "",
           access: "read",
-          schema: z.object({}),
+          schema: z.object({ n: z.number().optional() }),
           untrusted: true,
           run: async () => said(),
         }),
@@ -621,6 +621,8 @@ test("an approval for the rest of a task covers what only untrusted content asks
     read,
     restart("jellyfin"),
     restart("immich"),
+    { content: [toolUse("lab_issue", { n: 2 })] },
+    restart("plex"),
     finish("1"),
     read,
     restart("jellyfin"),
@@ -631,6 +633,7 @@ test("an approval for the rest of a task covers what only untrusted content asks
     finish("3"),
   ]);
   const t = await testApp(new FakeModel(), work, {}, [labPlugin(() => "Issue", restarted)]);
+
   await t.plugins.update("lab", { enabled: true });
   t.settings.update({ reviewChanges: false });
   const run = async (scope?: "session" | "always", deny = false) => {
@@ -638,13 +641,19 @@ test("an approval for the rest of a task covers what only untrusted content asks
     const asked = await waitFor(() => t.approvals.list(true)[0]);
     expect(asked.scopes).toEqual(["session", "always"]);
     t.approvals.decide(asked.id, deny ? "deny" : "approve", "web", undefined, scope);
+    if (scope === "session") {
+      const again = await waitFor(() => t.approvals.list(true)[0]);
+      expect(again.summary).toContain("plex");
+      t.approvals.decide(again.id, "deny", "web");
+    }
     await waitFor(() => t.tasks.get(task?.id ?? 0)?.finishedAt);
     return t.tasks.steps(task?.id ?? 0).filter((s) => s.name === "Not asking: you allowed it");
   };
-  // For the rest of the task: the same tool, here on anything, while only untrusted content asks.
+  // For the rest of the task: the same tool on the same thing, while only untrusted content asks, so
+  // long as it hasn't read a page since. Not in the next task, which asks again; that one for this
+  // exact call, from now on, runs it without asking.
   expect(await run("session")).toHaveLength(1);
   expect(restarted).toEqual(["jellyfin", "immich"]);
-  // Not in the next task; always allowing covers that exact call, in every task after.
   expect(await run("always")).toHaveLength(0);
   expect(await run(undefined, true)).toHaveLength(1);
   expect(restarted).toEqual(["jellyfin", "immich", "jellyfin", "jellyfin"]);

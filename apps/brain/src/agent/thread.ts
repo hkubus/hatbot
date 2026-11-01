@@ -497,7 +497,12 @@ export class Thread {
    */
   private taint(episodeId: number, by: string) {
     this.d.db
-      .query("UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?) WHERE id = ?")
+      .query(
+        `UPDATE episodes SET tainted = 1, tainted_by = coalesce(tainted_by, ?1),
+           sources = CASE WHEN ?1 IN (SELECT value FROM json_each(sources)) THEN sources
+             ELSE json_insert(sources, '$[#]', ?1) END
+         WHERE id = ?2`,
+      )
       .run(by, episodeId);
   }
 
@@ -629,11 +634,14 @@ export class Thread {
   /** What this conversation has read, and been suspected of reading, as its approvals record them. */
   private read(episodeId: number): string[] {
     const e = this.d.db
-      .query<{ by: string | null; suspected: string | null }, [number]>(
-        "SELECT tainted_by AS by, injection_suspected AS suspected FROM episodes WHERE id = ?",
+      .query<{ by: string | null; sources: string; suspected: string | null }, [number]>(
+        "SELECT tainted_by AS by, sources, injection_suspected AS suspected FROM episodes WHERE id = ?",
       )
       .get(episodeId);
-    return [e?.by, e?.suspected].filter((s): s is string => Boolean(s));
+    const read = new Set<string>(
+      [e?.by ?? [], JSON.parse(e?.sources ?? "[]"), e?.suspected ?? []].flat(),
+    );
+    return [...read];
   }
 
   private async approve(
@@ -1473,7 +1481,7 @@ export class Thread {
     if (!this.ownEpisode(episodeId)) return false;
     this.d.db
       .query(
-        "UPDATE episodes SET tainted = 0, tainted_by = NULL, injection_suspected = NULL, read_suspected = NULL WHERE id = ?",
+        "UPDATE episodes SET tainted = 0, tainted_by = NULL, sources = '[]', injection_suspected = NULL, read_suspected = NULL WHERE id = ?",
       )
       .run(episodeId);
     return true;
