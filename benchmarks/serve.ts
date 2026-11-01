@@ -10,12 +10,12 @@ import { loadConfig } from "../apps/brain/src/config";
 import { openDb } from "../apps/brain/src/db";
 import { EventBus } from "../apps/brain/src/events";
 import { MemoryStore } from "../apps/brain/src/memory/store";
-import { Proxmox } from "../apps/brain/src/proxmox";
 import { Secrets } from "../apps/brain/src/secrets";
 import { createServices } from "../apps/brain/src/services";
 import { FakeDesktop } from "../apps/brain/test/fake-desktop";
 import { FakeHatbox } from "../apps/brain/test/fake-hatbox";
 import { FakeModel } from "../apps/brain/test/fake-model";
+import { Proxmox } from "../plugins/proxmox/src/client";
 
 const port = Number(process.argv[2] ?? 8099);
 const ORIGIN = `http://127.0.0.1:${port}`;
