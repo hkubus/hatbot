@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { installDom, settle } from "./dom";
+import { msg } from "./fixtures";
 
-installDom();
-const { Composer, fileDrops, follows, sendError } = await import("../src/pages/Chat");
+const dom = installDom();
+const { Chat, Composer, fileDrops, follows, sendError } = await import("../src/pages/Chat");
+const store = await import("../src/store");
 const { ApiError } = await import("../src/api");
 const drafts = await import("../src/drafts");
 
@@ -131,4 +133,19 @@ test("a send that failed on the way says it may have gone; only the brain's no s
     expect(sendError(err, true)).toBe("It may not have been sent.");
     expect(sendError(err, false)).toBe("Can't reach Hatbot. It may not have been sent.");
   }
+});
+
+test("a folded conversation that ran into the next day still has that day shown after it", async () => {
+  const at = (d: string) => ({ createdAt: `2026-10-${d}.000Z`, seenAt: `2026-10-${d}.000Z` });
+  const thread = [
+    msg(1, { role: "user", episodeId: 1, ...at("15T10:00:00") }),
+    msg(2, { episodeId: 1, ...at("16T09:00:00") }),
+    msg(3, { role: "user", episodeId: 2, ...at("16T12:00:00") }),
+    msg(4, { episodeId: 2, ...at("16T12:01:00") }),
+  ];
+  dom.answer((r) => (r.path.includes("/messages") ? thread : []));
+  await store.openConversation(1);
+  await store.loadThread();
+  const html = renderToStaticMarkup(<Chat id={1} />);
+  expect(html.match(/class="day"/g)?.length).toBe(2);
 });

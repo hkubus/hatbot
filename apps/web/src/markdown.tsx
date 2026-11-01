@@ -101,18 +101,24 @@ export const isMarkdownFile = (a: { name: string; mediaType: string }) =>
   a.mediaType === "text/markdown" || /\.md$/i.test(a.name);
 
 type Parser = React.ComponentType<{ text: string; components: Components }>;
-export const markdownLoaded = import("./md-parse").then((m) => m.default);
+let parser: { P: Parser } | undefined;
+export const markdownLoaded = import("./md-parse").then((m) => {
+  parser = { P: m.default };
+  return m.default;
+});
 
 const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
   // Wrapped in an object: React would call a bare ComponentType as an updater, handing it the value.
-  const [Parser, setParser] = useState<{ P: Parser }>();
+  // Once it has loaded, a new block draws parsed from the start instead of plain for a frame.
+  const [Parser, setParser] = useState(parser);
   // Loading it again after a reload's missing chunk is the reload's job, not a loop here.
   useEffect(() => {
+    if (Parser) return;
     void markdownLoaded.then(
       (P) => setParser({ P }),
       () => {},
     );
-  }, []);
+  }, [Parser]);
   return Parser ? (
     <Parser.P text={text} components={MD_COMPONENTS} />
   ) : (

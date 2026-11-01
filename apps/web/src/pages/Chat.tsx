@@ -603,27 +603,34 @@ type Option = { key: string; label: React.ReactNode; desc: string; choose: () =>
 /** What a message shows, worked out once per change: a streamed delta redraws only its own row. */
 type RowProps = {
   m: ThreadMessage;
-  day: string | null;
-  sender: { id: string; bot: Bot | undefined } | null;
+  /** Its day, shown above it when the row shown before it is on another. */
+  label: string;
+  /** Who wrote it, in a group, when the message before is someone else's. */
+  senderId: string | null;
+  senderBot: Bot | undefined;
   progress: string | undefined;
   animate: boolean;
-  /** A folded conversation's own first row leaves its day to the fold. */
-  showsDay: boolean;
   unread: boolean;
   retryable: boolean;
   answerable: boolean;
 };
 
-const Row = memo(function Row({ day, showsDay, sender, ...m }: RowProps) {
+const Row = memo(function Row({
+  label: _,
+  day,
+  senderId,
+  senderBot,
+  ...m
+}: RowProps & { day: string | null }) {
   return (
     <Fragment>
-      {day && showsDay && <div className="day">{day}</div>}
-      {sender && (
+      {day && <div className="day">{day}</div>}
+      {senderId && (
         <div
           className="msg-sender"
-          style={sender.bot ? { color: `var(--bot-${sender.bot.color})` } : undefined}
+          style={senderBot ? { color: `var(--bot-${senderBot.color})` } : undefined}
         >
-          {sender.bot?.name ?? sender.id}
+          {senderBot?.name ?? senderId}
         </div>
       )}
       <Message {...m} />
@@ -859,8 +866,9 @@ export function Chat({ id }: { id: number }) {
     void openConversation(id);
     setReady(false);
     setLoadError("");
-    // The thread and its parser load side by side, so the messages draw parsed.
-    const thread = Promise.all([loadThread(), markdownLoaded.then(() => {})]);
+    // The thread and its parser load side by side, so the messages draw parsed; without the parser
+    // they draw as plain text.
+    const thread = Promise.all([loadThread(), markdownLoaded.catch(() => {})]);
     loaded.current = thread.then(
       () => {
         animateFrom.current = (getState().messages.at(-1)?.id ?? 0) + 1;
@@ -985,24 +993,20 @@ export function Chat({ id }: { id: number }) {
   const today = new Date().getDate();
   // biome-ignore lint/correctness/useExhaustiveDependencies: today only says when to look again
   const rows = useMemo(() => {
-    let day = "";
     let sender: string | null = null;
     const now = new Date();
-    return messages.map((m) => {
-      const label = dayLabel(m.createdAt, now);
-      const showDay = label !== day;
-      day = label;
+    return messages.map((m): RowProps => {
       // A box's note isn't its bot's words.
       const from = m.role === "assistant" && m.kind !== "box" ? m.botId : null;
       const showSender = !!members && !!from && from !== sender && m.kind !== "command";
       sender = from;
       return {
         m,
-        day: showDay ? label : null,
-        sender: showSender && from ? { id: from, bot: bots[from] } : null,
+        label: dayLabel(m.createdAt, now),
+        senderId: showSender ? from : null,
+        senderBot: showSender && from ? bots[from] : undefined,
         progress: progress[m.id],
         animate: m.id >= animateFrom.current,
-        showsDay: showDay,
         unread: unread.includes(m.id),
         retryable: m.id === retryableId,
         answerable: m.id === answerableId,
@@ -1010,10 +1014,16 @@ export function Chat({ id }: { id: number }) {
     });
   }, [messages, today, members, bots, progress, unread, retryableId, answerableId]);
   const rowOf = useMemo(() => new Map(rows.map((r, i) => [r.m, i])), [rows]);
+  // The day last shown, over the rows on screen: a closed fold's rows don't move it on.
+  let shownDay = "";
+  const dayOf = (label: string) => {
+    if (label === shownDay) return null;
+    shownDay = label;
+    return label;
+  };
   const row = (m: ThreadMessage) => {
-    const i = rowOf.get(m) as number;
-    const r = rows[i] as RowProps;
-    return <Row key={r.m.id} {...r} />;
+    const r = rows[rowOf.get(m) as number] as RowProps;
+    return <Row key={r.m.id} {...r} day={dayOf(r.label)} />;
   };
   const toggle = (id: number) =>
     setUnfolded((s) => {
@@ -1056,9 +1066,10 @@ export function Chat({ id }: { id: number }) {
               // A message you haven't seen stays in view.
               const waiting = g.messages.filter((m) => unread.includes(m.id));
               const first = rows[rowOf.get(g.messages[0] as ThreadMessage) as number];
+              const day = first ? dayOf(first.label) : null;
               return (
                 <Fragment key={`fold-${id}`}>
-                  {first?.day && <div className="day">{first.day}</div>}
+                  {day && <div className="day">{day}</div>}
                   <Fold
                     messages={g.messages}
                     text={g.fold}

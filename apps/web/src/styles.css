@@ -948,9 +948,10 @@ dialog.ask,
 }
 
 .composer-wrap {
+  --composer-top: var(--sp);
   position: relative;
   flex: none;
-  padding: var(--sp) var(--gutter) var(--sp-md);
+  padding: var(--composer-top) var(--gutter) var(--sp-md);
   background: linear-gradient(to bottom, transparent, var(--surface) 30%);
 }
 .composer {
@@ -1496,7 +1497,8 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
     padding-top: var(--sp-md);
   }
   .composer-wrap {
-    padding: var(--sp-sm) var(--gutter) var(--sp);
+    --composer-top: var(--sp-sm);
+    padding: var(--composer-top) var(--gutter) var(--sp);
   }
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2430,8 +2432,8 @@ pre.payload {
   max-width: calc(var(--measure) + 2 * var(--sp-md));
   max-height: min(40vh, 340px);
   overflow-y: auto;
-  /* Room for the cards' shadows, which the scroller would clip. */
-  margin: calc(-1 * var(--sp-md)) auto 0;
+  /* Room for the cards' shadows, which the scroller would clip, up to the thread and not over it. */
+  margin: calc(-1 * var(--composer-top)) auto 0;
   padding: var(--sp-md);
   display: grid;
   gap: var(--sp);
