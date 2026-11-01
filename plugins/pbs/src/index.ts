@@ -197,6 +197,8 @@ export const pbsPlugin = definePlugin({
           type && id
             ? `Verify ${time ? snapName({ type, id, time }) : `${type}/${id}`} in ${store}`
             : `Verify datastore ${store}`,
+        target: ({ store }) => store,
+        policy: () => ask("Verifying reads every chunk it checks, which can take a while."),
         run: async ({ store: s, type, id, time }) => {
           const form: Record<string, string> = {};
           if (type && id) {
@@ -216,6 +218,12 @@ export const pbsPlugin = definePlugin({
         label: "Starting garbage collection",
         schema: z.object({ store: Store }),
         describe: ({ store }) => `Garbage collect ${store}`,
+        target: ({ store }) => store,
+        policy: () =>
+          ask(
+            "Garbage collection removes the chunks no snapshot uses, and its list of them can't be undone.",
+            "delete",
+          ),
         run: async ({ store: s }) => {
           const upid = await pinnedRequest(pbs, "POST", `${store(s)}/gc`);
           return `Started garbage collection (task ${String(upid)}).`;
@@ -229,6 +237,7 @@ export const pbsPlugin = definePlugin({
         schema: z.object({ store: Store, type: Type, id: Id, time: Time }),
         describe: ({ store, type, id, time }) =>
           `Delete backup ${snapName({ type, id, time })} from ${store}`,
+        target: ({ store }) => store,
         policy: () => ask("Deleting a backup can't be undone.", "delete"),
         run: async ({ store: s, type, id, time }) => {
           await pinnedRequest(pbs, "DELETE", `${store(s)}/snapshots?${snapQuery(type, id, time)}`);

@@ -36,8 +36,9 @@ echo "$rel"
 
 say "Install and build"
 (cd "$rel" && as_hatbot bun install --frozen-lockfile)
-# --bun runs Vite on Bun; the brain has no Node.
-(cd "$rel/apps/web" && as_hatbot bun --bun run build)
+# --bun runs Vite on Bun; the brain has no Node. A release has no source maps: they doubled the
+# built app, and only DevTools, which never reaches the brain, reads them.
+(cd "$rel/apps/web" && as_hatbot bun --bun run build:release)
 
 say "Service unit"
 cat >/etc/systemd/system/hatbot-brain.service <<'EOF'
@@ -74,6 +75,12 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/hatbot /archive
+# The brain has 2 GB, and a run that gets away from it must stop with it, not take the guest down.
+TasksMax=512
+MemoryHigh=1200M
+MemoryMax=1600M
+# Under memory pressure the kernel kills a runaway task before the brain's services.
+OOMScoreAdjust=500
 
 [Install]
 WantedBy=multi-user.target

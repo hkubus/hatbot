@@ -1,10 +1,10 @@
 // Pages that fill in with JavaScript, for watchers: hatbot-render, its own systemd DynamicUser, loads one
 // page at a time in a headless Chromium and gives back the DOM once the scripts ran. It isn't the bots'
 // browser: a throwaway profile per page, so no logins, and no DevTools port. desktop-agent relays
-// POST /render to its Unix socket. Chromium follows redirects and loads subresources itself, so only the
-// address asked for is checked here, as /fetch checks it. What keeps a page off the LAN is the host
-// firewall, and off Chromium's DevTools and desktop-agent the loopback rule for the DynamicUser range
-// (plugins/desktop/infra/desktop-deploy.sh).
+// POST /render to its Unix socket. Chromium follows redirects and loads subresources itself, so the
+// name is resolved once, checked there, and Chromium is given that address and nothing that resolves
+// (as /fetch pins it). What keeps a page off the LAN is the host firewall, and off Chromium's DevTools
+// and desktop-agent the loopback rule for the DynamicUser range (plugins/desktop/infra/desktop-deploy.sh).
 //
 // It also draws boxes' pages for box_look (POST /box), from the page the brain sends and
 // with no network at all: CSP doesn't stop a page leaving itself (location.href = "https://…/?" + data),
@@ -13,6 +13,7 @@
 // and DevTools (a pipe, not a port) serves the page and stops it leaving before any of that is reached.
 import { chmodSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { isIP } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -51,15 +52,36 @@ export type RenderOptions = {
   timeoutMs?: number;
 };
 
-/** The page at `target` after its scripts ran. Throws FetchError. */
+/**
+ * The page at `target` after its scripts ran. Throws FetchError. Chromium resolves the name again
+ * on its own, and a second answer can be somewhere else (DNS rebinding): so it resolves nothing at
+ * all, and goes to the one address that was checked.
+ */
 export async function renderPage(target: string, opts: RenderOptions = {}): Promise<RenderResult> {
   const url = webUrl(target);
-  await (opts.check ?? ((host: string) => resolveHost(host, ownAddresses())))(url.hostname);
-  const html = await dumpDom(url.href, opts);
+  const checked = await (opts.check ?? ((host: string) => resolveHost(host, ownAddresses())))(
+    url.hostname,
+  );
+  const html = await dumpDom(
+    url.href,
+    opts,
+    resolver(url.hostname, typeof checked === "string" ? checked : undefined),
+  );
   const failed = loadError(html);
   if (failed) throw new FetchError(`Couldn't load it: ${failed}.`, 502);
   return { html };
 }
+
+/**
+ * Chromium's resolver for one page: its name goes to the address checked, and nothing else resolves.
+ * The URL keeps the name, which the certificate and the Host header are for.
+ */
+const resolver = (host: string, address?: string) => {
+  const literal = (a: string) => (isIP(a) === 6 && !a.startsWith("[") ? `[${a}]` : a);
+  return address && !isIP(host.replace(/^\[|\]$/g, ""))
+    ? `MAP ${host} ${literal(address)}, MAP * ~NOTFOUND`
+    : `MAP * ~NOTFOUND, EXCLUDE ${literal(address ?? host)}`;
+};
 
 /** Renders a page of its own whose script writes its text: whether Chromium starts and runs scripts. */
 export async function selfTest(opts: RenderOptions = {}): Promise<{ ok: true }> {
@@ -88,7 +110,7 @@ function ownAddresses(): string[] {
 }
 
 /** Loads the page with its timers run ahead, so one that fills in after a wait is read at once. */
-async function dumpDom(url: string, opts: RenderOptions): Promise<string> {
+async function dumpDom(url: string, opts: RenderOptions, resolve?: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "hatbot-render-"));
   const limit = opts.timeoutMs ?? KILL_AFTER_MS;
   const proc = Bun.spawn(
@@ -107,6 +129,8 @@ async function dumpDom(url: string, opts: RenderOptions): Promise<string> {
       "--log-level=3",
       `--user-agent=${USER_AGENT}`,
       "--lang=en-GB",
+      // Set for a page from the internet: nothing but its address resolves.
+      ...(resolve ? [`--host-resolver-rules=${resolve}`] : []),
       // Chromium's sandbox refuses root (tests, a dev machine); the service runs as its own user.
       ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
       url,

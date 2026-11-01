@@ -1,6 +1,7 @@
 import {
   type Approval,
   type Attachment,
+  type Bot,
   type Conversation,
   type MessageLink,
   matchingCommands,
@@ -38,7 +39,7 @@ import { plainText, time, tokens } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError } from "../load";
-import { AssistantBody, isMarkdownFile } from "../markdown";
+import { AssistantBody, isMarkdownFile, markdownLoaded } from "../markdown";
 import { touchScreen } from "../media";
 import { useModels } from "../models";
 import { negotiationText } from "../negotiations";
@@ -686,6 +687,44 @@ function Files({ list }: { list: Attachment[] }) {
 
 type Option = { key: string; label: React.ReactNode; desc: string; choose: () => void };
 
+/** What a message shows, worked out once per change: a streamed delta redraws only its own row. */
+type RowProps = {
+  m: ThreadMessage;
+  /** Its day, shown above it when the row shown before it is on another. */
+  label: string;
+  /** Who wrote it, in a group, when the message before is someone else's. */
+  senderId: string | null;
+  senderBot: Bot | undefined;
+  progress: string | undefined;
+  animate: boolean;
+  unread: boolean;
+  retryable: boolean;
+  answerable: boolean;
+};
+
+const Row = memo(function Row({
+  label: _,
+  day,
+  senderId,
+  senderBot,
+  ...m
+}: RowProps & { day: string | null }) {
+  return (
+    <Fragment>
+      {day && <div className="day">{day}</div>}
+      {senderId && (
+        <div
+          className="msg-sender"
+          style={senderBot ? { color: `var(--bot-${senderBot.color})` } : undefined}
+        >
+          {senderBot?.name ?? senderId}
+        </div>
+      )}
+      <Message {...m} />
+    </Fragment>
+  );
+});
+
 // Memoized: while a reply streams only its own message redraws, not the whole thread's markdown.
 export const Message = memo(function Message({
   m,
@@ -1080,7 +1119,10 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
     setReady(false);
     setLoadError("");
     void loadThreads(side ? (getState().threads[id]?.parentId ?? id) : id).catch(() => {});
-    loaded.current = loadThread(side).then(
+    // The thread and its parser load side by side, so the messages draw parsed; without the parser
+    // they draw as plain text.
+    const thread = Promise.all([loadThread(side), markdownLoaded.catch(() => {})]);
+    loaded.current = thread.then(
       () => {
         animateFrom.current = (listed(side).at(-1)?.id ?? 0) + 1;
         setReady(true);
@@ -1201,43 +1243,42 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
       ? spoken(lastReply, botName(getState(), lastReply.botId))
       : "";
 
-  let lastDay = "";
-  const now = new Date();
-  const dayBefore = (m: ThreadMessage) => {
-    const day = dayLabel(m.createdAt, now);
-    const show = day !== lastDay;
-    lastDay = day;
-    return show ? <div className="day">{day}</div> : null;
+  // The day, to re-read "Today" as "Yesterday" once the clock passes midnight.
+  const today = new Date().getDate();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: today only says when to look again
+  const rows = useMemo(() => {
+    let sender: string | null = null;
+    const now = new Date();
+    return messages.map((m): RowProps => {
+      // A box's note isn't its bot's words.
+      const from = m.role === "assistant" && m.kind !== "box" ? m.botId : null;
+      const showSender = !!members && !!from && from !== sender && m.kind !== "command";
+      sender = from;
+      return {
+        m,
+        label: dayLabel(m.createdAt, now),
+        senderId: showSender ? from : null,
+        senderBot: showSender && from ? bots[from] : undefined,
+        progress: progress[m.id],
+        animate: m.id >= animateFrom.current,
+        unread: unread.includes(m.id),
+        retryable: m.id === retryableId,
+        answerable: m.id === answerableId,
+      };
+    });
+  }, [messages, today, members, bots, progress, unread, retryableId, answerableId]);
+  const rowOf = useMemo(() => new Map(rows.map((r, i) => [r.m, i])), [rows]);
+  // The day last shown, over the rows on screen: a closed fold's rows don't move it on.
+  let shownDay = "";
+  const dayOf = (label: string) => {
+    if (label === shownDay) return null;
+    shownDay = label;
+    return label;
   };
-  let lastSender: string | null = null;
-  const senderBefore = (m: ThreadMessage) => {
-    // A box's note isn't its bot's words.
-    const sender = m.role === "assistant" && m.kind !== "box" ? m.botId : null;
-    const show = members && sender && sender !== lastSender && m.kind !== "command";
-    lastSender = sender;
-    return show ? (
-      <div
-        className="msg-sender"
-        style={bots[sender] ? { color: `var(--bot-${bots[sender].color})` } : undefined}
-      >
-        {bots[sender]?.name ?? sender}
-      </div>
-    ) : null;
+  const row = (m: ThreadMessage) => {
+    const r = rows[rowOf.get(m) as number] as RowProps;
+    return <Row key={r.m.id} {...r} day={dayOf(r.label)} />;
   };
-  const row = (m: ThreadMessage) => (
-    <Fragment key={m.id}>
-      {dayBefore(m)}
-      {senderBefore(m)}
-      <Message
-        m={m}
-        progress={progress[m.id]}
-        animate={m.id >= animateFrom.current}
-        unread={unread.includes(m.id)}
-        retryable={m.id === retryableId}
-        answerable={m.id === answerableId}
-      />
-    </Fragment>
-  );
   const toggle = (id: number) =>
     setUnfolded((s) => {
       const next = new Set(s);
@@ -1287,9 +1328,11 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
               const open = unfolded.has(id);
               // A message you haven't seen stays in view.
               const waiting = g.messages.filter((m) => unread.includes(m.id));
+              const first = rows[rowOf.get(g.messages[0] as ThreadMessage) as number];
+              const day = first ? dayOf(first.label) : null;
               return (
                 <Fragment key={`fold-${id}`}>
-                  {dayBefore(g.messages[0] as ThreadMessage)}
+                  {day && <div className="day">{day}</div>}
                   <Fold
                     messages={g.messages}
                     text={g.fold}
@@ -1307,7 +1350,7 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
                       deleteEpisode(id, chat?.id).catch((err) => setError(errorText(err)));
                     }}
                   />
-                  {open ? g.messages.map(row) : waiting.map(row)}
+                  {(open ? g.messages : waiting).map(row)}
                 </Fragment>
               );
             })}

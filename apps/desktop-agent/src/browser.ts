@@ -40,12 +40,29 @@ type Inspected = AgentElement & { frame?: { x: number; y: number } | { focused: 
 
 type Json = Record<string, unknown>;
 type Pending = {
+  id: number;
   method: string;
   resolve: (v: Json) => void;
   reject: (e: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
 type Listener = (method: string, params: Json, sessionId?: string) => void;
+/**
+ * What event() reads. A target's own changes (a page's console, its network: thousands a second on a
+ * scripted page) never come through, so they never cost a tab's state being asked again either.
+ */
+const EVENTS = new Set([
+  "closed",
+  "Target.targetCreated",
+  "Target.targetInfoChanged",
+  "Target.targetDestroyed",
+  "Target.detachedFromTarget",
+  "Page.lifecycleEvent",
+  "Page.frameStartedLoading",
+  "Page.javascriptDialogOpening",
+  "Browser.downloadWillBegin",
+  "Browser.downloadProgress",
+]);
 type TargetInfo = { targetId: string; type: string; url: string; title: string };
 type WindowBounds = {
   left?: number;
@@ -57,7 +74,7 @@ type WindowBounds = {
 type Lifecycle = { seq: number; sessionId: string; name: string; loaderId?: string };
 
 /** One WebSocket to the browser endpoint; tab commands carry their session id (flat mode). */
-class Connection {
+export class Connection {
   constructor(private endpoint: string) {}
 
   private ws: WebSocket | null = null;
@@ -93,11 +110,7 @@ class Connection {
     ws.onmessage = (e) => this.receive(String(e.data));
     ws.onclose = () => {
       if (this.ws === ws) this.ws = null;
-      for (const [id, p] of this.pending) {
-        this.pending.delete(id);
-        clearTimeout(p.timer);
-        p.reject(new BrowserError(`${p.method} failed: the browser connection closed.`));
-      }
+      this.failPending(new BrowserError("The browser connection closed."));
       for (const fn of this.listeners) fn("closed", {});
     };
     this.ws = ws;
@@ -118,12 +131,17 @@ class Connection {
         this.pending.delete(id);
         reject(new BrowserError(`${method} timed out after ${timeoutMs / 1000} s.`));
       }, timeoutMs);
-      this.pending.set(id, { method, resolve: resolve as (v: Json) => void, reject, timer });
+      this.pending.set(id, { id, method, resolve: resolve as (v: Json) => void, reject, timer });
       ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }
 
+  /** Two at once, whatever it's listening for; a page's download comes as many at a time. */
+  private static readonly MAX_LISTENERS = 2;
+
   on(fn: Listener) {
+    if (this.listeners.size >= Connection.MAX_LISTENERS)
+      throw new Error("Only two listeners on the DevTools connection.");
     this.listeners.add(fn);
   }
 
@@ -131,7 +149,33 @@ class Connection {
     this.listeners.delete(fn);
   }
 
+  private failPending(err: BrowserError) {
+    for (const [id, p] of this.pending) {
+      this.pending.delete(id);
+      clearTimeout(p.timer);
+      p.reject(new BrowserError(`${p.method} failed: ${err.message.toLowerCase()}`));
+    }
+  }
+
+  /**
+   * A frame's answers and events. A screenshot's answer (megabytes in one frame) is read for its id and
+   * its picture, not parsed: the picture is base64, which has no quotes or escapes to decode.
+   */
   private receive(raw: string) {
+    const p = raw.length < LARGE ? undefined : this.waitingFor(raw);
+    const data = p?.method === "Page.captureScreenshot" ? shotData(raw) : undefined;
+    if (!p || data === undefined) return this.dispatch(raw);
+    this.pending.delete(p.id);
+    clearTimeout(p.timer);
+    p.resolve({ data });
+  }
+
+  private waitingFor(raw: string) {
+    const id = /^\{"id":(\d+),/.exec(raw);
+    return id ? this.pending.get(Number(id[1])) : undefined;
+  }
+
+  private dispatch(raw: string) {
     const msg = JSON.parse(raw) as {
       id?: number;
       method?: string;
@@ -153,6 +197,22 @@ class Connection {
       p.reject(new BrowserError(`${p.method} failed: ${msg.error.message ?? "unknown error"}`));
     else p.resolve(msg.result ?? {});
   }
+}
+
+/** Changes kept for the next state report: a page that never asks for one can't grow them forever. */
+const MAX_CHANGES = 100;
+/** The downloads whose names are kept: the model asks for the ones it just saw. */
+const KEPT_DOWNLOADS = 20;
+/** A frame past this is read for what it is before it's parsed. */
+const LARGE = 64 * 1024;
+
+/** A screenshot's picture, from its answer's frame; undefined when the frame isn't just that. */
+export function shotData(raw: string): string | undefined {
+  const key = '"result":{"data":"';
+  const start = raw.indexOf(key);
+  if (start < 0) return undefined;
+  const end = raw.indexOf('"', start + key.length);
+  return end > 0 && raw[end + 1] === "}" ? raw.slice(start + key.length, end) : undefined;
 }
 
 // Keys: DOM key names, codes and Windows virtual key codes, as Chromium's input pipeline expects them, by
@@ -306,9 +366,9 @@ export class Browser {
   /** Tabs in the last state report: a tab that's new since then was opened by the last call. */
   private reported = new Set<string>();
   private changes: BrowserStateChange[] = [];
-  private downloads = new Map<string, { id: string; url: string }>();
+  private downloads = new Map<string, { id: string; url: string; name: string }>();
+  /** A download's name and file, oldest first: KEPT_DOWNLOADS of them. */
   private saved = new Map<string, { name: string; path: string }>();
-  private names = new Map<string, string>();
   private nextDownload = 1;
   private lifecycle: Lifecycle[] = [];
   private seq = 0;
@@ -326,7 +386,9 @@ export class Browser {
     private endpoint = CDP,
   ) {
     this.cdp = new Connection(endpoint);
-    this.cdp.on((method, p, sessionId) => this.event(method, p, sessionId));
+    this.cdp.on((method, p, sessionId) => {
+      if (EVENTS.has(method)) this.event(method, p, sessionId);
+    });
   }
 
   async devToolsUp(timeoutMs = 2000): Promise<boolean> {
@@ -348,8 +410,8 @@ export class Browser {
     } catch {
       // Closing drops the connection, sometimes before the answer.
     }
+    this.forget(null);
     this.targets.clear();
-    this.tabIds.clear();
     this.active = null;
   }
 
@@ -372,6 +434,9 @@ export class Browser {
     this.worlds.clear();
     const { targetInfos } = await this.cdp.send<{ targetInfos: TargetInfo[] }>("Target.getTargets");
     for (const t of targetInfos) this.targets.set(t.targetId, t);
+    // A tab still open keeps its name and its refs over a dropped connection; the rest are gone.
+    for (const id of [...this.tabIds.keys(), ...this.nextRef.keys(), ...this.pointers.keys()])
+      if (!this.targets.has(id)) this.forget(id);
     await this.cdp.send("Target.setDiscoverTargets", { discover: true });
     await this.cdp
       .send(
@@ -402,10 +467,7 @@ export class Browser {
       case "Target.targetDestroyed": {
         this.touches++;
         const id = p.targetId as string;
-        this.targets.delete(id);
-        this.sessions.delete(id);
-        this.worlds.delete(id);
-        if (this.active === id) this.active = null;
+        this.forget(id);
         return;
       }
       case "Target.detachedFromTarget":
@@ -415,8 +477,7 @@ export class Browser {
       case "Page.frameStartedLoading":
         if (!sessionId) return;
         // Only the top frame's: its frame id is the target id.
-        if (p.frameId && ![...this.sessions].some(([t, s]) => s === sessionId && t === p.frameId))
-          return;
+        if (p.frameId && this.sessions.get(p.frameId as string) !== sessionId) return;
         this.lifecycle.push({
           seq: ++this.seq,
           sessionId,
@@ -433,7 +494,7 @@ export class Browser {
         void this.cdp
           .send("Page.handleJavaScriptDialog", { accept: type === "beforeunload" }, sessionId)
           .catch(() => {});
-        this.changes.push({
+        this.record({
           type: "dialog_dismissed",
           kind: type,
           message: sanitize(String(p.message ?? ""), 300),
@@ -443,21 +504,24 @@ export class Browser {
       case "Browser.downloadWillBegin": {
         const id = `dl-${this.nextDownload++}`;
         const url = sanitize(String(p.url ?? "").split("?")[0] ?? "", 2000);
-        this.downloads.set(p.guid as string, { id, url });
-        this.names.set(id, sanitize(String(p.suggestedFilename ?? "download"), 200));
-        this.changes.push({ type: "download_started", download_id: id, url });
+        this.downloads.set(p.guid as string, {
+          id,
+          url,
+          name: sanitize(String(p.suggestedFilename ?? "download"), 200),
+        });
+        this.record({ type: "download_started", download_id: id, url });
         return;
       }
       case "Browser.downloadProgress": {
         const d = this.downloads.get(p.guid as string);
         if (!d || p.state === "inProgress") return;
         this.downloads.delete(p.guid as string);
-        if (p.state === "completed" && this.downloadDir)
-          this.saved.set(d.id, {
-            name: this.names.get(d.id) ?? "download",
-            path: join(this.downloadDir, p.guid as string),
-          });
-        this.changes.push(
+        if (p.state === "completed" && this.downloadDir) {
+          this.saved.set(d.id, { name: d.name, path: join(this.downloadDir, p.guid as string) });
+          while (this.saved.size > KEPT_DOWNLOADS)
+            this.saved.delete(this.saved.keys().next().value as string);
+        }
+        this.record(
           p.state === "completed"
             ? {
                 type: "download_completed",
@@ -470,6 +534,33 @@ export class Browser {
         return;
       }
     }
+  }
+
+  /** What happened for the next state report, the oldest dropped past a hundred: one may never come. */
+  private record(change: BrowserStateChange) {
+    this.changes.push(change);
+    if (this.changes.length > MAX_CHANGES) this.changes.shift();
+  }
+
+  /** Everything kept by a tab's id, for one that's gone, or every one when `targetId` is null. */
+  forget(targetId: string | null) {
+    const gone = (id: string) => targetId === null || id === targetId;
+    for (const id of [...this.tabIds.keys(), ...this.nextRef.keys(), ...this.pointers.keys()])
+      if (gone(id)) {
+        this.tabIds.delete(id);
+        this.nextRef.delete(id);
+        this.pointers.delete(id);
+      }
+    if (targetId === null) return;
+    this.targets.delete(targetId);
+    this.sessions.delete(targetId);
+    this.worlds.delete(targetId);
+    if (this.active === targetId) this.active = null;
+  }
+
+  /** The tabs it has a name for: each one it opened, until it's closed or forgotten. */
+  knownTabs(): string[] {
+    return [...this.tabIds.values()];
   }
 
   /** Connected, with titles and URLs fresh and the active tab the one on screen. */
@@ -597,18 +688,15 @@ export class Browser {
       }>("Page.getFrameTree", {}, s);
       let world = this.worlds.get(targetId);
       if (!world || world.loaderId !== frameTree.frame.loaderId) {
-        const { executionContextId } = await this.cdp.send<{ executionContextId: number }>(
-          "Page.createIsolatedWorld",
-          { frameId: frameTree.frame.id, worldName: "hatbot" },
-          s,
-        );
-        world = { loaderId: frameTree.frame.loaderId, contextId: executionContextId };
+        world = await this.isolatedWorld(s, frameTree.frame.id, frameTree.frame.loaderId);
         this.worlds.set(targetId, world);
       }
       try {
         return await this.evaluate<T>(s, world.contextId, script, arg);
       } catch (err) {
-        // The document changed under us (a navigation): make a new world once.
+        // The document changed under us (a navigation): make a new world once. A world is made in the
+        // document the command arrives in, not the one the tree was read in, so it's made just before
+        // the command: a frame still loading would otherwise lose its answer every time.
         if (attempt === 0 && err instanceof BrowserError && /context/i.test(err.message)) {
           this.worlds.delete(targetId);
           continue;
@@ -616,6 +704,16 @@ export class Browser {
         throw err;
       }
     }
+  }
+
+  /** Hatbot's world in a frame's document: the one the next command gets unless the document changes. */
+  private async isolatedWorld(session: string, frameId: string, loaderId: string) {
+    const { executionContextId } = await this.cdp.send<{ executionContextId: number }>(
+      "Page.createIsolatedWorld",
+      { frameId, worldName: "hatbot" },
+      session,
+    );
+    return { loaderId, contextId: executionContextId };
   }
 
   private async evaluate<T>(session: string, contextId: number, script: string, arg: unknown) {
@@ -901,7 +999,7 @@ export class Browser {
       s,
     );
     const image = await webp(Buffer.from(data, "base64"));
-    return { kind: "image", data: Buffer.from(image).toString("base64"), mediaType: "image/webp" };
+    return { kind: "image", data: image.toString("base64"), mediaType: "image/webp" };
   }
 
   private async read(targetId: string, opts: Json) {
@@ -1137,8 +1235,6 @@ export class Browser {
       case "close_tab": {
         const t = this.targetOf(input.tab_id);
         await this.cdp.send("Target.closeTarget", { targetId: t });
-        this.targets.delete(t);
-        if (this.active === t) this.active = null;
         await sleep(200);
         await this.syncActive();
         return { kind: "none" };
@@ -1199,7 +1295,7 @@ export class Browser {
     for (const t of this.pages()) {
       if (t.targetId === keep) continue;
       await this.cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
-      this.targets.delete(t.targetId);
+      this.forget(t.targetId);
       closed++;
     }
     if (keep) await this.cdp.send("Target.activateTarget", { targetId: keep }).catch(() => {});

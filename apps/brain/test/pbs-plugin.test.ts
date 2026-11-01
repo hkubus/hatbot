@@ -46,9 +46,10 @@ const env = {
 };
 const names = (t: TestApp) => pluginTools(t).map((x) => x.name);
 
-test("a task verifies right away; deleting a backup, with the review off, waits for approval and names the snapshot", async () => {
+test("a verify and a garbage collection ask before they run, and so does deleting a backup, which names the snapshot", async () => {
   const work = new FakeModel([
     { content: [toolUse("pbs_verify", { store: "main", type: "vm", id: "105" })] },
+    { content: [toolUse("pbs_garbage_collect", { store: "main" })] },
     {
       content: [
         toolUse("pbs_delete_snapshot", { store: "main", type: "vm", id: "105", time: 1790000000 }),
@@ -59,12 +60,22 @@ test("a task verifies right away; deleting a backup, with the review off, waits 
   const t = await pluginApp(pbsPlugin, env, { work });
   t.settings.update({ reviewChanges: false });
   const task = scheduled(t);
+  // Nothing has run yet: the verify waits for you too.
+  const asked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(asked.summary).toBe("Verify vm/105 in main");
+  expect(api.seen.some((s) => s.method === "POST")).toBe(false);
+  t.approvals.decide(asked.id, "approve", "web");
+  const collecting = await waitFor(() => t.approvals.list(true)[0]);
+  expect(collecting).toMatchObject({ kind: "delete", summary: "Garbage collect main" });
+  t.approvals.decide(collecting.id, "approve", "web");
   const approval = await waitFor(() => t.approvals.list(true)[0]);
   expect(approval.kind).toBe("delete");
-  expect(api.seen.find((s) => s.path === "/api2/json/admin/datastore/main/verify")).toMatchObject({
+  const verified = api.seen.find((s) => s.path === "/api2/json/admin/datastore/main/verify");
+  expect(verified).toMatchObject({
     auth: "PBSAPIToken=hatbot@pbs!brain:s3cret",
     body: "backup-type=vm&backup-id=105",
   });
+  expect(api.seen.some((s) => s.path === "/api2/json/admin/datastore/main/gc")).toBe(true);
   expect(api.seen.some((s) => s.method === "DELETE")).toBe(false);
   t.approvals.decide(approval.id, "approve", "web");
   await ended(t, task.id);

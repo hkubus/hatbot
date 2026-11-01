@@ -1108,4 +1108,11 @@ export const migrations: string[] = [
     'as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits.',
     'as a polite private buyer asking them to sell ("sprzeda pan za 140 zł?", not "weźmie pan dysk za 140 zł?", which is what a seller asks): in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits. Use pan or pani only when the seller''s gender is plain, never both.');
   `,
+  // 73: what a chat request left in the cache, under which system prompt and tools, and when it
+  // ended: its entry's five minutes start then, not at the first token, and only a request with the
+  // same prompt and tools reads it.
+  `
+  ALTER TABLE spend_ledger ADD COLUMN ended_at TEXT;
+  ALTER TABLE spend_ledger ADD COLUMN prefix TEXT;
+  `,
 ];

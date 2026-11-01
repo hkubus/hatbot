@@ -150,17 +150,23 @@ export class Spend {
     /** The bot it was for; a task's when left out. */
     botId?: string;
     extraUsd?: number;
+    /** When the request ended, for a chat request: its cache entry's five minutes start then. */
+    endedAt?: number;
+    /** The system prompt and tools it was sent with, for what its cache entry holds. */
+    prefix?: string;
   }): number {
     const t = tokensOf(entry.usage);
     const cost = costOf(entry.model, t) + (entry.extraUsd ?? 0);
     this.db
       .query(
-        `INSERT INTO spend_ledger (created_at, model, purpose, episode_id, task_id, bot_id, input_tokens, cache_write_5m_tokens,
-           cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd)
-         VALUES (?, ?, ?, ?, ?, coalesce(?, (SELECT bot_id FROM tasks WHERE id = ?)), ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO spend_ledger (created_at, ended_at, prefix, model, purpose, episode_id, task_id, bot_id, input_tokens,
+           cache_write_5m_tokens, cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd)
+         VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, (SELECT bot_id FROM tasks WHERE id = ?)), ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         new Date(this.clock()).toISOString(),
+        entry.endedAt === undefined ? null : new Date(entry.endedAt).toISOString(),
+        entry.prefix ?? null,
         entry.model,
         entry.purpose,
         entry.episodeId ?? null,

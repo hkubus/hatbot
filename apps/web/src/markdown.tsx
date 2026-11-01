@@ -1,9 +1,9 @@
 // Raw HTML is never rendered (react-markdown's default), other sites open in a new tab, and only
-// the app's own pictures load.
+// the app's own pictures load. Streaming a block at a time as it is here re-parses from the block's
+// start on each delta, but only that block: showing the text as it arrives either way.
 import { API_PREFIX } from "@hatbot/shared";
-import { createContext, memo, useContext, useRef } from "react";
-import Markdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { createContext, lazy, memo, useContext, useEffect, useRef, useState } from "react";
+import type { Components } from "react-markdown";
 import { Chart, ChartPending, FileChart } from "./chart";
 import { parseChart, parseChartFile } from "./chartspec";
 import { useCopy } from "./copy";
@@ -97,17 +97,45 @@ export const MD_COMPONENTS: Components = {
   },
 };
 
-export const REMARK = [remarkGfm];
-
 export const isMarkdownFile = (a: { name: string; mediaType: string }) =>
   a.mediaType === "text/markdown" || /\.md$/i.test(a.name);
 
+type Parser = React.ComponentType<{ text: string; components: Components }>;
+let parser: { P: Parser } | undefined;
+export const markdownLoaded = import("./md-parse").then((m) => {
+  parser = { P: m.default };
+  return m.default;
+});
+
 const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
-  return (
-    <Markdown remarkPlugins={REMARK} components={MD_COMPONENTS}>
-      {text}
-    </Markdown>
+  // Wrapped in an object: React would call a bare ComponentType as an updater, handing it the value.
+  // Once it has loaded, a new block draws parsed from the start instead of plain for a frame.
+  const [Parser, setParser] = useState(parser);
+  // Loading it again after a reload's missing chunk is the reload's job, not a loop here.
+  useEffect(() => {
+    if (Parser) return;
+    void markdownLoaded.then(
+      (P) => setParser({ P }),
+      () => {},
+    );
+  }, [Parser]);
+  return Parser ? (
+    <Parser.P text={text} components={MD_COMPONENTS} />
+  ) : (
+    <div className="md-plain">{text}</div>
   );
+});
+
+/** A whole file, as the reader shows one, once its parser has come. */
+export const MarkdownArticle = lazy(async () => {
+  const Parser = await markdownLoaded;
+  return {
+    default: ({ text, components }: { text: string; components: Components }) => (
+      <article className="md">
+        <Parser text={text} components={components} />
+      </article>
+    ),
+  };
 });
 
 export const AssistantBody = memo(function AssistantBody({
@@ -123,7 +151,7 @@ export const AssistantBody = memo(function AssistantBody({
         {/* While it streams, only the block still growing is parsed again. */}
         {streaming ? (
           splitBlocks(text).map((block, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: blocks only grow at the end
+            // biome-ignore lint/suspicious/noArrayIndexKey: a reply's blocks only grow at the end
             <MarkdownBlock key={i} text={block} />
           ))
         ) : (

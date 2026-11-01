@@ -32,7 +32,7 @@ const guest = new Guest({
   units: local ? new LocalUnits(state, run) : new SystemdUnits(),
 });
 await guest.stopAll();
-setInterval(() => guest.sweep().catch((err) => console.error("sweep:", err)), 60_000);
+guest.sweepEvery();
 
 Bun.serve({
   hostname: host,

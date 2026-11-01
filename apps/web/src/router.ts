@@ -39,7 +39,7 @@ window.addEventListener("popstate", (e) => {
 export type Route = { path: string; params: URLSearchParams };
 
 export function useRoute(): Route {
-  const url = useSyncExternalStore(subscribe, snapshot);
+  const url = useSyncExternalStore(subscribe, snapshot, snapshot);
   const u = new URL(url, location.origin);
   return { path: u.pathname, params: u.searchParams };
 }
