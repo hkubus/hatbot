@@ -8,6 +8,7 @@ import { BotPage } from "./pages/Bot";
 import { Chat } from "./pages/Chat";
 import { GroupPage } from "./pages/Group";
 import { Login, Setup } from "./pages/Login";
+import { Onboarding, setupLater } from "./pages/Onboarding";
 import { Search } from "./pages/Search";
 import { TaskDetail, Tasks } from "./pages/Tasks";
 import { navigate, useRoute } from "./router";
@@ -140,6 +141,8 @@ function subTitle(s: ReturnType<typeof getState>, path: string) {
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
+  const { path } = useRoute();
+  const [later, setLater] = useState(setupLater);
   const [unreachable, setUnreachable] = useState(false);
   // Only a 401 means you're signed out; anything else is the brain or the network being down.
   const refresh = useCallback(() => {
@@ -194,6 +197,16 @@ export function App() {
       );
   } else if (!me.setupDone) return <Setup onDone={refresh} />;
   if (!me.authenticated) return <Login onDone={refresh} />;
+  if (path === "/welcome" || (me.onboarded === false && !later))
+    return (
+      <Onboarding
+        onDone={() => {
+          navigate("/", true);
+          refresh();
+        }}
+        onLater={me.onboarded === false ? () => setLater(true) : undefined}
+      />
+    );
   return <Shell onSignOut={refresh} />;
 }
 

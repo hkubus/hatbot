@@ -716,7 +716,9 @@ export class Onboarding {
         const was = bots.active(id);
         if (!was) return { error: `No bot "${id}".` };
         const bot = bots.update(id, patch);
-        const what = Object.keys(patch).join(", ");
+        const what = Object.keys(patch)
+          .map((k) => (k === "color" ? "colour" : k))
+          .join(", ");
         change(`Changed ${was.name}: ${what}`);
         return { text: `Changed ${bot?.name ?? was.name}.` };
       }
@@ -813,22 +815,73 @@ export class Onboarding {
 const stateText = (state: string, message: string | null) =>
   state === "ready" ? "ready" : `${state.replace("_", " ")}${message ? `: ${message}` : ""}`;
 
-/** One plain line for each value that changed, such as "limits.dailyUsd: 10 → 20". */
+const LABELS: Record<string, string> = {
+  "owner.name": "Your name",
+  timezone: "Timezone",
+  chatModel: "Chat model",
+  chatEffort: "Chat effort",
+  taskModel: "Background tasks' model",
+  desktopModel: "Desktop tasks' model",
+  smallModel: "Quick jobs' model",
+  expertModel: "Hard parts' model",
+  desktopEscalate: "Hard desktop tasks go to the expert",
+  "limits.dailyUsd": "Daily limit",
+  "limits.monthlyUsd": "Monthly limit",
+  "limits.researchUsd": "Limit per research task",
+  "limits.alertReserveUsd": "Kept for alerts",
+  "limits.boxesUsd": "Boxes' daily limit",
+  reviewChanges: "Safety review of changes",
+  "safety.untrusted": "Ask after untrusted content",
+  "safety.chatCommands": "Commands the chat runs before asking",
+  "safety.sendWaitS": "Seconds a message waits before it goes",
+  "safety.tools": "Tools that always ask or are allowed",
+  notificationsOpen: "Tapping a notification opens",
+  "heartbeat.enabled": "Heartbeat",
+  "heartbeat.everyMinutes": "Heartbeat every (minutes)",
+  "heartbeat.botId": "Heartbeat's bot",
+  "heartbeat.instructions": "Heartbeat's instructions",
+  memoryTidy: "Weekly memory tidy",
+  "weeklyReport.enabled": "Weekly report",
+  "weeklyReport.weekday": "Weekly report's day",
+  "weeklyReport.hour": "Weekly report's hour",
+  todoHour: "To-do reminder's hour",
+};
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function labelOf(path: string): string {
+  const kind = /^safety\.kinds\.(.+)$/.exec(path)?.[1];
+  return kind ? `Approvals for ${kind.replaceAll("_", " ")}` : (LABELS[path] ?? path);
+}
+
+/** One plain line for each value that changed, such as "Daily limit: $10 → $20". */
 export function settingsLines(before: Settings, after: Settings): string[] {
   const flat = (v: unknown, at = ""): [string, unknown][] =>
     v && typeof v === "object" && !Array.isArray(v) && !(at === "safety.tools")
       ? Object.entries(v).flatMap(([k, x]) => flat(x, at ? `${at}.${k}` : k))
       : [[at, v]];
   const was = new Map(flat(before));
-  const show = (v: unknown) =>
+  const show = (path: string, v: unknown) =>
     typeof v === "boolean"
       ? v
         ? "on"
         : "off"
-      : typeof v === "string"
-        ? v || "none"
-        : JSON.stringify(v);
+      : path === "timezone" && !v
+        ? "the computer's"
+        : path === "weeklyReport.weekday"
+          ? (DAYS[v as number] ?? String(v))
+          : path.endsWith("Usd")
+            ? `$${v}`
+            : typeof v === "string"
+              ? v
+              : JSON.stringify(v);
   return flat(after)
     .filter(([k, v]) => JSON.stringify(was.get(k)) !== JSON.stringify(v))
-    .map(([k, v]) => `${k}: ${show(was.get(k))} → ${show(v)}`);
+    .map(([k, v]) => {
+      const from = show(k, was.get(k));
+      const to = show(k, v);
+      return from.length + to.length > 80
+        ? `Changed ${labelOf(k).toLowerCase()}`
+        : `${labelOf(k)}: ${from} → ${to}`;
+    });
 }
