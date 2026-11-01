@@ -109,8 +109,9 @@ const RULES: Rule[] = [
     re: /\b(iptables|ip6tables)(-legacy|-nft)?\b[^|;&\n]*\s(-[AIDRPFX]\b|--(append|insert|delete|replace|policy|flush|delete-chain)\b)|\b(iptables|ip6tables)(-legacy|-nft)?-restore\b|\bnft\b[^|;&\n]*\s(add|insert|delete|flush|replace|destroy|-f)\b|\bufw\s+(--?\S+\s+)*(allow|deny|reject|limit|delete|insert|prepend|disable|enable|reset|default|route|reload)\b/,
     why: "changes the firewall",
   },
+  // Options can come before the object (ip -4 addr flush), and ip takes abbreviations (ip a flush).
   {
-    re: /\bip\s+(link\s+set\s+\S+\s+down|addr\s+(del|flush)|route\s+(del|flush))\b|\b(ifdown|nmcli\s+\S+\s+(down|delete))\b/,
+    re: /\bip\s+(-\S+\s+)*(l|link)\s+set\b[^|;&\n]*\sdown\b|\bip\s+(-\S+\s+)*(a|addr|address|r|ro|route|n|neigh)\s+([^\s|;&]+\s+)*?(del|delete|flush)\b|\b(ifdown|nmcli\s+\S+\s+(down|delete))\b/,
     why: "takes the network down",
   },
   { re: /\bcrontab\s+(-\S*\s+)*-r\b/, why: "deletes a crontab", kind: "delete" },
@@ -120,9 +121,15 @@ const RULES: Rule[] = [
     why: "rewrites or discards git history",
     kind: "delete",
   },
+  // | /bin/sh, | busybox sh, | env sh.
   {
-    re: /\|\s*(sudo\s+)?((ba|z|da|k)?sh|python[\d.]*|perl|ruby|node)\b/,
+    re: /\|\s*((sudo|env|busybox|nice|nohup|exec|command|timeout\s+\S+)\s+(-\S+\s+)*)*(\S*\/)?((ba|z|da|k|a)?sh|python[\d.]*|perl|ruby|node)\b/,
     why: "runs what it reads as a script",
+  },
+  // bash -c "$(echo … | base64 -d)", eval "$(…)".
+  {
+    re: /\b((ba|z|da|k|a)?sh\s+(-\S+\s+)*-\S*c\s+["']?|eval\s+["']?)(\$\(|`)/,
+    why: "runs a script it builds as it goes",
   },
   // bash <(curl …), sh -c "$(curl …)", source <(wget …)
   {
@@ -144,16 +151,16 @@ const RULES: Rule[] = [
     why: "deletes files",
     kind: "delete",
   },
-  // install -m 4755 bash /tmp/x: a binary with permissions of its own.
-  // install -m 4755 bash /tmp/x: a binary, or a program, set up with permissions of its own.
+  // install -m 4755 bash /tmp/x, --mode=u+s: setuid or setgid, or a program put on root's PATH.
   {
-    re: /\binstall\b[^|;&\n]*\s-[mgo]\s*\S*[sS7]|\binstall\b[^|;&\n]*\s\S*\/usr\/local\/(s?bin)\//,
+    re: /\binstall\b[^|;&\n]*\s(-m\s*|--mode[=\s]\s*)(0?[2-7][0-7]{3}\b|\S*s)|\binstall\b[^|;&\n]*\s\S*\/usr\/local\/(s?bin)\//,
     why: "installs a program that runs with privileges of its own",
     kind: "other",
   },
-  // Writes to a system file, which changes what the machine does: printed out, tee'd or sed -i.
+  // Writes to a system file, which changes what the machine does: printed out, tee'd, edited in place
+  // with sed or perl, or any of those from inside a system folder (cd /etc && echo x > hosts).
   {
-    re: />>?\s*(?!\/dev\/)\/(etc|boot|usr|lib|lib64|sbin|bin|opt)\/|\btee\b[^|;&\n]*\s(-a\s+)?\/(etc|boot|usr|lib|sbin|bin)\/|\bsed\b[^|;&\n]*\s-[^-\s]*i[^-\s]*\s[^|;&\n]*\/(etc|boot|usr|lib|sbin|bin)\//,
+    re: />>?\s*(?!\/dev\/)\/(etc|boot|usr|lib|lib64|sbin|bin|opt|var\/spool\/cron)\/|\btee\b[^|;&\n]*\s(-a\s+)?\/(etc|boot|usr|lib|sbin|bin|var\/spool\/cron)\/|\b(sed|perl)\b[^|;&\n]*\s(-[^-\s]*i\S*|--in-place\S*)\s[^|;&\n]*\/(etc|boot|usr|lib|sbin|bin|var\/spool\/cron)\/|\bcd\s+["']?\/(etc|boot|usr|lib|lib64|sbin|bin|opt|var\/spool\/cron)\b[^\n]*(>>?\s*[^\s&/]|\btee\s+(-a\s+)?[^\s/-]|\b(sed|perl)\b[^|;&\n]*\s(-[^-\s]*i|--in-place))/,
     why: "changes a system file",
   },
   {
@@ -239,6 +246,8 @@ const READERS: Record<string, string[] | null> = {
   journalctl: null,
   dmesg: null,
   date: null,
+  df: null,
+  ip: ["a", "addr", "address", "r", "ro", "route", "l", "link", "n", "neigh"],
   pct: ["list", "status", "config", "listsnapshot", "df", "pending"],
   qm: ["list", "status", "config", "listsnapshot", "pending"],
   pvesh: ["get", "ls"],
@@ -317,12 +326,10 @@ const STATUS: Record<string, string[] | null> = {
   id: null,
   sleep: null,
   echo: null,
-  // df -h alone: without a path, a device or a label of someone's own.
-  df: [""],
-  // The object with nothing else: what it prints then carries no name anyone else picks (ip -br
-  // prints a container's veth name as its ifname).
-  ip: ["a", "addr", "address", "r", "ro", "route", "l", "link", "n", "neigh"],
-  systemctl: ["", "is-active", "is-enabled", "is-failed", "is-system-running", "list-units"],
+  // Routes, not interfaces: an address's label, a link's alias and a FUSE mount's name (df) are
+  // anyone's, as are the descriptions list-units and --failed print beside a unit.
+  ip: ["r", "ro", "route"],
+  systemctl: ["is-active", "is-enabled", "is-failed", "is-system-running"],
   qm: ["list", "status"],
   zfs: ["list"],
 };
@@ -332,20 +339,6 @@ const STATUS: Record<string, string[] | null> = {
  * (systemctl -p is-active status nginx) or read elsewhere (ip -b FILE, docker -H HOST).
  */
 const FLAGS: Record<string, string[]> = {
-  // Clusters of these (-Hl): df's other options take a value.
-  df: [
-    "-h",
-    "-H",
-    "-l",
-    "-i",
-    "-hH",
-    "-hl",
-    "-Hl",
-    "-hHl",
-    "--human-readable",
-    "--local",
-    "--inodes",
-  ],
   ip: ["-c"],
   systemctl: ["--no-pager", "--plain", "--no-legend", "--all", "-a", "--failed", "-q", "--full"],
 };
@@ -354,8 +347,6 @@ const FLAGS: Record<string, string[]> = {
  * picks: a unit, a container, a guest, an interface, a pool, a device or a label.
  */
 const SAYS: Record<string, RegExp> = {
-  // -h rather than -x, whose file system type is someone's own and shows in a note.
-  df: /^-[^-]*[hHl]|^--(human-readable|local|inodes)/,
   // -c only colours it.
   ip: /^-c$/,
   // A failed unit's name is a unit file's: without --no-legend one named as the legend reads as it.
@@ -436,7 +427,7 @@ function changes(words: string[]): boolean {
   // Options between the object and its verb come with a value of their own (dev eth0).
   for (const arg of args.slice(at + 1)) {
     if (arg.startsWith("-")) continue;
-    return !["show", "list", "ls", "lst", "flush"].includes(arg);
+    return !["show", "list", "ls", "lst"].includes(arg);
   }
   return false;
 }
