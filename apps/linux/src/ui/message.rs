@@ -140,8 +140,7 @@ pub struct Live {
 impl Live {
     pub fn update(&self, st: &State, id: i64) {
         let Some(r) = st.replies.get(&id) else { return };
-        // Read as it comes in: only what's new of it since the last redraw.
-        self.md.grow(&r.text);
+        self.md.set(&r.text);
         self.md.root.set_visible(!r.text.is_empty());
         self.dots
             .set_visible(r.text.is_empty() && self.dots_allowed);

@@ -1,17 +1,14 @@
 // A message's Markdown as widgets (core/markdown.rs reads it). Setting new text keeps the blocks
-// that didn't change, so a streaming reply doesn't lose your selection or flicker. A reply that streams
-// in goes through `grow`, which reads only what came since the last time.
+// that didn't change, so a streaming reply doesn't lose your selection or flicker.
 use std::cell::RefCell;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
-use hatbot::core::markdown::{Block, Streaming, blocks, opens};
+use hatbot::core::markdown::{Block, blocks, opens};
 
 pub struct Markdown {
     pub root: gtk::Box,
     shown: RefCell<Vec<(Block, gtk::Widget)>>,
-    /// The reply so far, read as it comes in: None while it's just a message's text.
-    stream: RefCell<Option<Streaming>>,
 }
 
 impl Markdown {
@@ -23,40 +20,19 @@ impl Markdown {
         let md = Markdown {
             root,
             shown: RefCell::default(),
-            stream: RefCell::default(),
         };
-        md.show(blocks(text));
+        md.set(text);
         md
     }
 
     pub fn set(&self, text: &str) {
-        self.stream.replace(None);
-        self.show(blocks(text));
-    }
-
-    /// A reply's text as far as it's come; each call reads only what's new of it.
-    pub fn grow(&self, text: &str) {
-        let blocks = {
-            let mut stream = self.stream.borrow_mut();
-            let stream = stream.get_or_insert_with(Streaming::new);
-            stream.add(text);
-            stream.finish()
-        };
-        self.show(blocks);
-    }
-
-    /// The blocks on screen as they are now: the widgets of the ones that didn't change are kept.
-    fn show(&self, new: Vec<Block>) {
+        let new = blocks(text);
         let mut shown = self.shown.borrow_mut();
         let same = shown
             .iter()
             .zip(&new)
             .take_while(|((a, _), b)| a == *b)
             .count();
-        if same < shown.len() {
-            // What's left is read again from its start: the next reply's text is read from scratch.
-            self.stream.replace(None);
-        }
         for (_, w) in shown.drain(same..) {
             self.root.remove(&w);
         }
