@@ -82,6 +82,9 @@ test("a task's MCP call asks first, then runs, its output marked untrusted", asy
   expect(approval.summary).toBe('fix: echo {"text":"from a task"}');
   t.approvals.decide(approval.id, "approve", "web");
   await ended(t, task.id);
+  // The model sees the server's own schema, not the stand-in that only checks it's an object.
+  const echo = work.requests[0]?.tools?.find((x) => "name" in x && x.name === "mcp_fix_echo");
+  expect(echo && "input_schema" in echo && echo.input_schema.properties).toHaveProperty("text");
   const sent = JSON.stringify(work.requests[1]?.messages);
   expect(sent).toContain("echo: from a task");
   expect(sent).toContain('trusted=\\"false\\"');
