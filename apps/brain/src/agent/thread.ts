@@ -85,7 +85,6 @@ import {
   type ModelClient,
   modelErrorText,
   oneShot,
-  RequestTiming,
 } from "./model";
 import {
   CHART_GUESS,
@@ -270,7 +269,8 @@ export class Thread {
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
   /** When each bot's last chat request or keep-warm was sent, and in which episode: its cache entry's five minutes run from then. */
-  private sentAt = new Map<string, { episodeId: number; at: number; endsAt?: number }>();
+  /** When each bot's last request ended, which its cache entry's five minutes run from; Infinity while it runs. */
+  private sentAt = new Map<string, { episodeId: number; at: number }>();
   /** Each bot's last chat request, sent again to keep it cached for half an hour after it. */
   private warm = new Map<
     string,
@@ -1213,7 +1213,7 @@ export class Thread {
          FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
       )
       .get(episodeId, botId);
-    const at = process.env.OLD_TTL ? 0 : last?.ended_at ? Date.parse(last.ended_at) : 0;
+    const at = last?.ended_at ? Date.parse(last.ended_at) : 0;
     // Its own prefix only, and only while its five minutes last from the end it recorded.
     if (!last || !at || this.clock() - at >= CACHE_MS || last.prefix !== prefix || !last.left)
       return { tokens: 0, prefix };
@@ -1280,11 +1280,9 @@ export class Thread {
       const open = db
         .query<{ id: number }, [number]>("SELECT id FROM episodes WHERE id = ? AND summarized = 0")
         .get(w.episodeId);
-      // A read is a cache hit: written tokens the API read back aren't written again.
       const r = db
         .query<{ written: number; spent: number }, [number, string]>(
-          `SELECT coalesce(sum(CASE WHEN purpose = 'thread'
-             THEN max(0, cache_write_5m_tokens - cache_read_tokens) END), 0) AS written,
+          `SELECT coalesce(sum(CASE WHEN purpose = 'thread' THEN cache_write_5m_tokens END), 0) AS written,
              coalesce(sum(CASE WHEN purpose = 'keep-warm' THEN cost_usd END), 0) AS spent
            FROM spend_ledger WHERE episode_id = ? AND bot_id = ?`,
         )
@@ -1309,17 +1307,11 @@ export class Thread {
         );
         try {
           const res = await model.create({ ...w.params, max_tokens: 0 });
-          // The entry the ping keeps is this one, and it lasts to when it ends.
-          const threads = db
-            .query<{ id: number }, [number, string]>(
-              "SELECT id FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1",
-            )
-            .get(w.episodeId, botId);
-          if (threads)
-            db.query("UPDATE spend_ledger SET ended_at = ? WHERE id = ?").run(
-              this.now(),
-              threads.id,
-            );
+          // The entry the ping kept lasts from now: the last request's, if it's the one the ping sent again.
+          db.query(
+            `UPDATE spend_ledger SET ended_at = ? WHERE prefix = ? AND id = (SELECT id FROM spend_ledger
+               WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1)`,
+          ).run(this.now(), w.prefix, w.episodeId, botId);
           spend.recordResponse({
             model: w.params.model,
             purpose: "keep-warm",
@@ -2340,16 +2332,11 @@ export class Thread {
             ? turnsBreakpoint(messages, opening.at, opening.block)
             : markPrevious(messages),
         };
-        const sentAt = this.clock();
-        // The ledger says when the request ended, which is when its entry's five minutes start.
-        this.sentAt.set(bot.id, {
-          episodeId: episode.id,
-          at: sentAt,
-          endsAt: (this.d.model.timing ?? new RequestTiming()).endsBy(sentAt, `${chatModel}:true`),
-        });
+        // No keep-warm while it runs: its entry's five minutes start when it ends.
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: Number.POSITIVE_INFINITY });
         // A keep-warm's cost is held at what this request sends, which the next one reads only if it
         // has the same system prompt and tools.
-        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: sentAt });
+        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: this.clock() });
         const res = await model.stream(params, {
           onText: say,
           onThinking: (delta) => events.emit({ type: "message.progress", id: out.id, text: delta }),
@@ -2366,6 +2353,7 @@ export class Thread {
           signal: abort.signal,
         });
         held();
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
         container = containerOf(res, container);
