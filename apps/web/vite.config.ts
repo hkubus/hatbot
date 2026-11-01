@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 export default defineConfig({
-  plugins: [react(), precompress()],
+  plugins: [react(), preloadParser(), precompress()],
   // @hatbot/shared's schemas would bring all of zod; the web checks nothing with them (zod-stub.ts).
   resolve: { alias: { zod: fileURLToPath(new URL("src/zod-stub.ts", import.meta.url)) } },
   server: {
@@ -14,6 +14,34 @@ export default defineConfig({
   },
   build: { outDir: "dist", sourcemap: true },
 });
+
+/**
+ * The Markdown parser's chunk, fetched with the entry rather than once the entry has run and asked
+ * for it (markdown.tsx), since every chat waits for it.
+ */
+function preloadParser(): Plugin {
+  return {
+    name: "hatbot-preload-parser",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html, { bundle }) {
+        const chunks = Object.values(bundle ?? {});
+        const parser = chunks.find(
+          (c) => c.type === "chunk" && c.facadeModuleId?.endsWith("/md-parse.tsx"),
+        );
+        if (parser?.type !== "chunk") return [];
+        return [parser.fileName, ...parser.imports]
+          .filter((f) => !html.includes(`/${f}"`))
+          .map((f) => ({
+            tag: "link",
+            attrs: { rel: "modulepreload", crossorigin: true, href: `/${f}` },
+            injectTo: "head",
+          }));
+      },
+    },
+  };
+}
 
 /**
  * A .br and a .gz beside each text file, at the highest levels, for the brain to send as they are
