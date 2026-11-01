@@ -36,7 +36,8 @@ test("search finds chat messages, tasks, memory and schedules, and leaves out a 
   // A prefix of the last word matches, so results come while you type.
   const r = await search("wiregu");
   expect(r.messages.map((m) => m.botId)).toEqual(expect.arrayContaining([null, "hatbot"]));
-  expect(r.messages.find((m) => m.botId === "hatbot")?.snippet).toBe(
+  // The bot's reply, not the task's card about it.
+  expect(r.messages.find((m) => m.id === 2)?.snippet).toBe(
     `The ${MATCH_START}WireGuard${MATCH_END} tunnel uses port 51820.`,
   );
   expect(r.tasks.map((x) => x.title)).toEqual(["Rotate WireGuard keys"]);
@@ -47,16 +48,18 @@ test("search finds chat messages, tasks, memory and schedules, and leaves out a 
   expect((await search("%25")).tasks).toEqual([]);
   expect((await t.call("GET", "/search?q=x")).status).toBe(401);
 
-  // A bot's chat goes away with the bot; a group with it stays until it's deleted.
+  // A bot's chat goes away with the bot; a group stays until it's deleted, even with all its bots gone.
   bot(t, "Chef");
+  bot(t, "Baker");
   await t.chats.direct("chef").post("wireguard keys?").done;
-  const res = await t.call("POST", "/conversations", { botIds: ["chef", "hatbot"] }, { cookie });
+  const res = await t.call("POST", "/conversations", { botIds: ["chef", "baker"] }, { cookie });
   const group = (await res.json()) as { id: number };
   await t.chats.thread(group.id)?.post("wireguard or tailscale?").done;
   const found = async () =>
     new Set((await search("wireguard")).messages.map((m) => m.conversationId));
   expect(await found()).toEqual(new Set([1, 2, group.id]));
   await t.call("DELETE", "/bots/chef", undefined, { cookie });
+  await t.call("DELETE", "/bots/baker", undefined, { cookie });
   expect(await found()).toEqual(new Set([1, group.id]));
   await t.call("DELETE", `/conversations/${group.id}`, undefined, { cookie });
   expect(await found()).toEqual(new Set([1]));
