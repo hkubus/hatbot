@@ -171,6 +171,16 @@ systemctl --user enable --now hatbot
 
 The GitHub mirror builds it from `apps/linux/packaging/PKGBUILD` on every push to `main` that changes the app, and `publish.sh` uploads it with the `FORGEJO_PACKAGES_TOKEN` secret, a Forgejo token that can write packages. Each Monday it rebuilds, and uploads only if Arch's libraries changed under it. Elsewhere, `apps/linux/packaging/install.sh` builds it and installs it for you.
 
+### Hatbot on your computer alone
+
+Without a server, the app's first start offers **Run it here**. It downloads Bun (checked against the checksum the app ships with) and the brain at the app's own commit, from the GitHub mirror or, failing that, Forgejo, then builds it under `~/.local/share/hatbot` and runs it as the systemd user service `hatbot-brain`, which starts when you log in. It needs `git`, `tar` and a systemd user session. Its settings are in `~/.config/hatbot/brain.env`, and its data, with the token the app signs in with (`app-token`), is in `~/.local/share/hatbot/data`.
+
+- There's no password: the brain listens only on 127.0.0.1, and Settings → Hatbot on this computer → Web app opens the web app signed in. The Desktop and Boxes plugins start off, since there's no guest for them.
+- **Reach it from other devices** first has you set a password and an authenticator in the web app, then listens on the network over plain http, so keep it to a network you trust.
+- When the app is updated, its next start brings the brain to the same commit. The database is copied first, and if the new version doesn't start in 90 seconds, the old one and the copy go back; that version isn't tried again.
+- A build of the app at a commit that isn't pushed can't fetch its brain; `HATBOT_SOURCE=http://…` makes it fetch `<commit>.tar.gz` from somewhere else.
+- Logs: `journalctl --user -u hatbot-brain`.
+
 ## When the brain itself is down
 
 Check everything and the heartbeat run inside the brain, so they can't tell you it's down. Instead the brain pings a monitor outside it once a minute, and the monitor tells you when the pings stop. In Uptime Kuma:

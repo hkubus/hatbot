@@ -28,5 +28,7 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal", "w
 jiff = "0.2"
 resvg = { version = "0.45", default-features = false }
 iced_selection = { version = "0.5", features = ["markdown"] }
+zip = { version = "9.2.1", default-features = false, features = ["deflate"] }
+ring = "0.17"
 
 [dev-dependencies]

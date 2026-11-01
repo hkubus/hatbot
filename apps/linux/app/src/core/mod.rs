@@ -3,6 +3,7 @@ pub mod chart;
 pub mod delta;
 pub mod format;
 pub mod jpeg;
+pub mod local;
 pub mod models;
 pub mod notify;
 pub mod session;

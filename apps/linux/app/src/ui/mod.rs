@@ -12,4 +12,5 @@ pub mod markdown;
 pub mod pages;
 pub mod shell;
 pub mod theme;
+pub mod welcome;
 pub mod widgets;

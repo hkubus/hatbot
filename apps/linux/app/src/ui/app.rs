@@ -11,14 +11,14 @@ use iced::{Element, Length, Size, Subscription, Task, Theme, window};
 
 use super::chat::{self, Chat};
 use super::pages::{self, Pages};
-use super::{confirm, focus, login, shell, theme};
+use super::{confirm, focus, login, shell, theme, welcome};
 use crate::core::api::{Api, ApiError};
 use crate::core::models::Task as AgentTask;
 use crate::core::models::*;
 use crate::core::notify::{Notice, Reply, Target};
 use crate::core::socket::{self, SocketEvent};
 use crate::core::store::{At, Effect, Store};
-use crate::core::{notify, vault};
+use crate::core::{local, notify, vault};
 use crate::desk::banner;
 use crate::desk::inbox::{self, Outside};
 use crate::desk::{notices, tray};
@@ -63,6 +63,9 @@ pub enum Message {
     ChatMenu(bool),
     Restored(Option<(String, String)>),
     Login(login::Msg),
+    Welcome(welcome::Msg),
+    /// The brain on this computer brought to this app's version: whether it changed.
+    LocalUpdated(Result<bool, String>),
     SignedIn(Result<(String, String), String>),
     Kept(Result<(), String>),
     Stream(Streamed),
@@ -108,6 +111,7 @@ pub enum Loaded {
 
 pub enum Phase {
     Starting,
+    Welcome(welcome::Welcome),
     Out(login::Login),
     In(Box<Session>),
 }
@@ -133,6 +137,8 @@ pub struct App {
 
 pub struct Session {
     pub api: Api,
+    /// The brain this app set up on this computer.
+    pub local: bool,
     pub store: Store,
     pub route: Route,
     /// Bumped to drop the stream and connect again at once.
@@ -156,6 +162,7 @@ impl Session {
     fn new(server: &str, token: String) -> Self {
         Session {
             api: Api::new(server, Some(token)),
+            local: false,
             store: Store::new(),
             route: Route::Chat,
             generation: 0,
@@ -226,6 +233,10 @@ pub fn boot(open_window: bool, page: Option<String>) -> (App, Task<Message>) {
     };
     let restore = Task::perform(
         async move {
+            if config.local {
+                let p = local::paths();
+                return Some((local::server(&p)?, local::token(&p)?));
+            }
             let server = config.server?;
             let token = vault::load(&server).await?;
             Some((server, token))
@@ -356,7 +367,9 @@ impl App {
     }
 
     fn signed_in(&mut self, server: String, token: String) -> Task<Message> {
-        self.phase = Phase::In(Box::new(Session::new(&server, token)));
+        let mut session = Session::new(&server, token);
+        session.local = self.config.local;
+        self.phase = Phase::In(Box::new(session));
         self.config.server = Some(server);
         vault::save_config(&self.config);
         self.start_agent();
@@ -378,10 +391,20 @@ impl App {
                 notices::close(key);
             }
         }
+        self.agent_state = Default::default();
+        // The brain on this computer keeps running; Run it here signs in to it again.
+        if self.config.local {
+            self.config.local = false;
+            self.config.server = None;
+            vault::save_config(&self.config);
+            self.phase = Phase::Welcome(welcome::Welcome::new());
+            self.sync_banner();
+            self.sync_tray();
+            return Task::none();
+        }
         let l = login::Login::new(server.clone().unwrap_or_default());
         let focus = l.focus();
         self.phase = Phase::Out(l);
-        self.agent_state = Default::default();
         self.sync_banner();
         self.sync_tray();
         match server {
@@ -459,7 +482,18 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             if on { focus::moved(focus::Move::Enter).map(Message::FocusFrom) } else { app.focus_back() }
         }
         Message::Outside(o) => outside(app, o),
-        Message::Restored(Some((server, token))) => app.signed_in(server, token),
+        Message::Restored(Some((server, token))) => {
+            let t = app.signed_in(server, token);
+            if !app.config.local {
+                return t;
+            }
+            Task::batch([t, Task::perform(local::update(), Message::LocalUpdated)])
+        }
+        Message::Restored(None) if app.config.server.is_none() || app.config.local => {
+            app.phase = Phase::Welcome(welcome::Welcome::new());
+            app.sync_tray();
+            Task::none()
+        }
         Message::Restored(None) => {
             let l = login::Login::new(app.config.server.clone().unwrap_or_default());
             let focus = l.focus();
@@ -467,6 +501,33 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.sync_tray();
             focus
         }
+        Message::Welcome(welcome::Msg::Server) => {
+            let l = login::Login::new(String::new());
+            let focus = l.focus();
+            app.phase = Phase::Out(l);
+            focus
+        }
+        Message::Welcome(welcome::Msg::Done(Ok((server, token)))) => {
+            let key = match &app.phase {
+                Phase::Welcome(w) => w.key.trim().to_string(),
+                _ => String::new(),
+            };
+            app.config.local = true;
+            let t = app.signed_in(server, token);
+            let Some(s) = app.session().filter(|_| !key.is_empty()) else { return t };
+            let save = s.fire(move |api| async move {
+                let values = serde_json::json!({ "values": { "ANTHROPIC_API_KEY": key } });
+                api.put::<serde_json::Value, _>("/plugins/anthropic/secrets", &values).await.map(|_| ())
+            });
+            Task::batch([t, save])
+        }
+        Message::Welcome(m) => match &mut app.phase {
+            Phase::Welcome(w) => welcome::update(w, m),
+            _ => Task::none(),
+        },
+        Message::LocalUpdated(Ok(true)) => app.toast("Hatbot on this computer is updated.".into()),
+        Message::LocalUpdated(Ok(false)) => Task::none(),
+        Message::LocalUpdated(Err(e)) => app.toast(e),
         Message::Login(m) => match &mut app.phase {
             Phase::Out(l) => login::update(l, m),
             _ => Task::none(),
@@ -978,6 +1039,7 @@ pub fn title(app: &App, _: window::Id) -> String {
 pub fn view(app: &App, _: window::Id) -> Element<'_, Message> {
     let body: Element<'_, Message> = match &app.phase {
         Phase::Starting => container(text("")).into(),
+        Phase::Welcome(w) => welcome::view(w).map(Message::Welcome),
         Phase::Out(l) => login::view(l).map(Message::Login),
         Phase::In(s) => shell::view(app, s),
     };

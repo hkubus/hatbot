@@ -20,6 +20,13 @@ pub struct Me {
     pub setup_done: bool,
     #[serde(default)]
     pub authenticated: bool,
+    #[serde(default)]
+    pub local: bool,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LocalLink {
+    pub url: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]

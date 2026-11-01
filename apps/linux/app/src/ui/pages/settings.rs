@@ -4,8 +4,8 @@ use iced::{Alignment, Element, Length, Task};
 
 use super::Msg as PageMsg;
 use super::schedules::{Hour, hours, save_setting};
-use crate::core::format;
 use crate::core::models::*;
+use crate::core::{format, local};
 use crate::ui::app::{App, Message, Session, failed};
 use crate::ui::button::button;
 use crate::ui::confirm;
@@ -47,6 +47,12 @@ pub enum Msg {
     Revoke(i64),
     RevokeSure(i64),
     SignOut,
+    Lan(bool),
+    /// Whether a password is set, asked again before other devices may reach this computer's Hatbot.
+    LanAfter(bool),
+    LanSet(Result<Option<String>, String>),
+    SetPassword,
+    OpenWeb,
 }
 
 #[derive(Default)]
@@ -57,14 +63,30 @@ pub struct State {
     /// Limits as typed, until saved.
     typed: Vec<(Limit, String)>,
     more_limits: bool,
+    /// The web app's address on the network, while the brain on this computer can be reached there.
+    lan: Option<String>,
 }
 
 fn m(msg: Msg) -> Message {
     Message::Page(PageMsg::Settings(msg))
 }
 
+/// The web app, signed in, from the brain on this computer; `to` "setup" sets a password up.
+fn open_web(s: &Session, to: &'static str) -> Task<Message> {
+    s.call(
+        |api| async move { api.post::<LocalLink, _>("/auth/link", &serde_json::json!({})).await },
+        move |r| match r {
+            Ok(l) => Message::Link(if to.is_empty() { l.url } else { format!("{}?to={to}", l.url) }),
+            Err(e) => failed(e),
+        },
+    )
+}
+
 pub fn opened(s: &mut Session) -> Task<Message> {
     s.pages.settings.typed.clear();
+    if s.local {
+        s.pages.settings.lan = local::lan();
+    }
     Task::batch([
         s.call(
             |api| async move { api.get::<Vec<ModelOption>>("/models").await },
@@ -164,6 +186,29 @@ pub fn update(s: &mut Session, msg: Msg) -> Task<Message> {
                 |r| r.err().map(failed).unwrap_or(Message::Nothing),
             );
         }
+        Msg::Lan(true) => {
+            return s.call(
+                |api| async move { api.get::<Me>("/auth/me").await },
+                |r| match r {
+                    Ok(me) => m(Msg::LanAfter(me.setup_done)),
+                    Err(e) => failed(e),
+                },
+            );
+        }
+        Msg::LanAfter(false) => {
+            return confirm::ask(
+                "Set a password first?",
+                "Other devices sign in with a password and an authenticator code.",
+                "Set a password",
+                m(Msg::SetPassword),
+            );
+        }
+        Msg::LanAfter(true) => return Task::perform(local::set_lan(true), |r| m(Msg::LanSet(r))),
+        Msg::Lan(false) => return Task::perform(local::set_lan(false), |r| m(Msg::LanSet(r))),
+        Msg::LanSet(Ok(lan)) => st.lan = lan,
+        Msg::LanSet(Err(e)) => return Task::done(Message::Toast(e)),
+        Msg::SetPassword => return open_web(s, "setup"),
+        Msg::OpenWeb => return open_web(s, ""),
         Msg::SignOut => {
             return confirm::ask(
                 "Sign out?",
@@ -410,6 +455,30 @@ pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
         .into(),
     );
     col = col.push(group("Account", account));
+
+    if s.local {
+        let mut here =
+            vec![switch_row("Reach it from other devices", None, st.lan.is_some(), Some(|v| m(Msg::Lan(v))))];
+        if let Some(url) = &st.lan {
+            here.push(
+                row![
+                    text("Address").size(FS_LG).width(Length::Fill),
+                    text(url.as_str()).size(FS_MD).style(tone(|c| c.muted))
+                ]
+                .align_y(Alignment::Center)
+                .into(),
+            );
+        }
+        here.push(
+            row![
+                text("Web app").size(FS_LG).width(Length::Fill),
+                btn_sm("Open", theme::outlined, Some(m(Msg::OpenWeb)))
+            ]
+            .align_y(Alignment::Center)
+            .into(),
+        );
+        col = col.push(group("Hatbot on this computer", here));
+    }
 
     let chosen = match app.config.theme.as_str() {
         t @ ("light" | "dark") => t,

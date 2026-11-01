@@ -36,6 +36,8 @@ pub async fn clear(server: &str) {
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub server: Option<String>,
+    /// The brain is the one this app set up on this computer (`core::local`).
+    pub local: bool,
     /// "Let Hatbot use this computer": only ever switched here.
     pub computer_enabled: bool,
     pub compact_sidebar: bool,

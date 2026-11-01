@@ -11,7 +11,8 @@ url="https://git.gaycats.ovh/kubus/hatbot"
 license=('MIT')
 depends=('libxkbcommon' 'wayland' 'dbus' 'gcc-libs' 'glibc')
 optdepends=('vulkan-icd-loader: draws the window on the GPU'
-  'at-spi2-core: lets Hatbot read what is on screen in apps that support it')
+  'at-spi2-core: lets Hatbot read what is on screen in apps that support it'
+  'git: runs Hatbot on this computer without a server')
 makedepends=('cargo' 'git')
 install=hatbot.install
 options=(!debug !lto)
