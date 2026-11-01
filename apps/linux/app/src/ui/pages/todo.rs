@@ -7,6 +7,7 @@ use super::Msg as PageMsg;
 use crate::core::format;
 use crate::core::models::*;
 use crate::ui::app::{Message, Route, Session, failed};
+use crate::ui::button::reach;
 use crate::ui::theme::{self, FS_LG, FS_MD, H, SP, SP_LG};
 use crate::ui::widgets::{btn_sm, empty_tile, error, group, input, page_narrow, tiles, tone};
 
@@ -125,7 +126,12 @@ pub fn view(s: &Session) -> Element<'_, Message> {
             .map(|t| {
                 let tick = {
                     let t = t.clone();
-                    checkbox(false).size(18).style(theme::check).on_toggle(move |_| m(Msg::Tick(t.clone())))
+                    let tick = m(Msg::Tick(t.clone()));
+                    reach(
+                        checkbox(false).size(18).style(theme::check).on_toggle(move |_| tick.clone()),
+                        m(Msg::Tick(t)),
+                        theme::R_XS,
+                    )
                 };
                 let mut r = row![tick, text(t.text.as_str()).size(FS_LG).width(Length::Fill)]
                     .spacing(SP_LG)

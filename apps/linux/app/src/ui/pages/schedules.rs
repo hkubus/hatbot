@@ -280,7 +280,7 @@ pub fn save_setting(s: &mut Session, change: SettingsChange) -> Task<Message> {
         apply(cur, &change);
     }
     s.call(
-        move |api| async move { api.patch::<AppSettings, _>("/settings", &change).await },
+        move |api| async move { api.put::<AppSettings, _>("/settings", &change).await },
         |r| match r {
             Ok(a) => Message::Loaded(crate::ui::app::Loaded::Settings(a)),
             Err(e) => failed(e),

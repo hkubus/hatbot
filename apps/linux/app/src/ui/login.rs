@@ -34,6 +34,11 @@ impl Login {
         self.error = Some(e);
     }
 
+    /// Where typing starts: the address, or the password when the address is known.
+    pub fn focus<T>(&self) -> Task<T> {
+        iced::widget::operation::focus(if self.address.is_empty() { "login-address" } else { "login-password" })
+    }
+
     fn ready(&self) -> bool {
         !self.busy && !self.address.trim().is_empty() && !self.password.is_empty() && !self.code.trim().is_empty()
     }
@@ -68,8 +73,14 @@ pub fn view(l: &Login) -> Element<'_, Msg> {
         row![icons::hat(36.0, false, |t: &Theme| theme::colors(t).hue), text("Sign in to Hatbot").size(FS_2XL)]
             .spacing(SP + 4.0)
             .align_y(Alignment::Center),
-        field("Address", input("hatbot.example.com", &l.address, Msg::Address).on_submit_maybe(submit.clone())),
-        field("Password", input("", &l.password, Msg::Password).secure(true).on_submit_maybe(submit.clone())),
+        field(
+            "Address",
+            input("hatbot.example.com", &l.address, Msg::Address).id("login-address").on_submit_maybe(submit.clone())
+        ),
+        field(
+            "Password",
+            input("", &l.password, Msg::Password).id("login-password").secure(true).on_submit_maybe(submit.clone())
+        ),
         field("Code from your authenticator", input("123456", &l.code, Msg::Code).on_submit_maybe(submit.clone())),
     ]
     .push(l.error.as_deref().map(error))

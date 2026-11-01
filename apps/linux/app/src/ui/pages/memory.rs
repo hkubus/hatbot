@@ -423,7 +423,7 @@ fn folder<'a>(name: impl text::IntoFragment<'a>, i: Icon) -> Element<'a, Message
 }
 
 fn entry<'a>(i: Icon, name: String, lit: bool, on: Message) -> Element<'a, Message> {
-    iced::widget::button(
+    crate::ui::button::button(
         row![icons::icon(i, 18.0, if lit { |c| c.text } else { |c| c.text_2 }), text(name).size(FS_MD)]
             .spacing(SP_SM)
             .align_y(Alignment::Center)

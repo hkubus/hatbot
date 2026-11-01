@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use iced::alignment::Vertical;
 use iced::widget::canvas::{self, Frame, Geometry, LineDash, Path, Stroke, Text};
 use iced::widget::text::Alignment as Align;
-use iced::widget::{Space, button, column, container, image, responsive, row, scrollable, text};
+use iced::widget::{Space, column, container, image, responsive, row, scrollable, text};
 use iced::{Alignment, Border, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
+use super::button::{self, button};
 use super::theme::{self, Colors, FS_MD, FS_SM, FS_XS, PILL, R_MD, R_XS, SP, SP_MD, SP_SM, alpha};
 use super::widgets::tone;
 use crate::core::chart::{self as spec, ChartSpec, Kind, Side, format, nice_ticks};

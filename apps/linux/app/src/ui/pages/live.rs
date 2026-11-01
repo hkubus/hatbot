@@ -254,7 +254,7 @@ pub fn view(s: &Session) -> Element<'_, Message> {
         for sc in &d.screens {
             let name = if sc.online { sc.name.clone() } else { format!("{} (offline)", sc.name) };
             picker = picker.push(
-                iced::widget::button(container(text(name).size(FS_MD).font(theme::MEDIUM)).center_y(Length::Fill))
+                crate::ui::button::button(container(text(name).size(FS_MD).font(theme::MEDIUM)).center_y(Length::Fill))
                     .height(theme::H)
                     .padding([0.0, SP_LG])
                     .style(theme::seg(sc.id == current))
@@ -386,7 +386,7 @@ fn screen(st: &State, control: bool, online: bool) -> Element<'_, Message> {
 fn task(s: &Session, id: i64) -> Element<'_, Message> {
     let Some(t) = s.store.tasks.get(&id) else { return column![].into() };
     let mut col = column![
-        iced::widget::button(text(t.title.as_str()).size(FS_LG).font(theme::MEDIUM))
+        crate::ui::button::button(text(t.title.as_str()).size(FS_LG).font(theme::MEDIUM))
             .padding(0)
             .style(theme::link)
             .on_press(Message::Go(Route::Task(id))),

@@ -1,5 +1,5 @@
 // Settings, in the web's order: models, routines, spending, safety, the account, the theme and pausing.
-use iced::widget::{button, column, container, row, text, text_input};
+use iced::widget::{column, container, row, text, text_input};
 use iced::{Alignment, Element, Length, Task};
 
 use super::Msg as PageMsg;
@@ -7,6 +7,7 @@ use super::schedules::{Hour, hours, save_setting};
 use crate::core::format;
 use crate::core::models::*;
 use crate::ui::app::{App, Message, Session, failed};
+use crate::ui::button::button;
 use crate::ui::confirm;
 use crate::ui::icons::{self, Icon};
 use crate::ui::theme::{self, FS_LG, FS_MD, H, SP, SP_LG, SP_MD, SP_PAGE, SP_XS};

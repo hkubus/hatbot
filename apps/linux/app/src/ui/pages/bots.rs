@@ -1,11 +1,12 @@
 // A bot's settings and a group's, and making new ones.
-use iced::widget::{Space, button, column, container, row, text, text_editor, text_input};
+use iced::widget::{Space, column, container, row, text, text_editor, text_input};
 use iced::{Alignment, Element, Length, Task};
 
 use super::Msg as PageMsg;
 use crate::core::format;
 use crate::core::models::*;
 use crate::ui::app::{self, Message, Route, Session, failed};
+use crate::ui::button::button;
 use crate::ui::confirm;
 use crate::ui::icons;
 use crate::ui::theme::{self, FS_MD, R_MD, SP, SP_LG, SP_MD, SP_SM, SP_XS};

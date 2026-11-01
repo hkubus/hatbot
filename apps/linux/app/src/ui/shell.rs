@@ -1,14 +1,15 @@
 // The window's frame, as the web's: the rail with the chats and sections, the top bar, the banners.
-use iced::widget::{Space, button, column, container, hover, mouse_area, opaque, row, scrollable, stack, text};
+use iced::widget::{Space, column, container, hover, mouse_area, opaque, row, scrollable, stack, text};
 use std::f32::consts::FRAC_PI_2;
 
 use iced::{Alignment, Element, Length, Padding, Radians, Theme};
 
 use super::app::{App, Message, Route, Session};
+use super::button::{self, button};
 use super::icons::{self, Icon};
 use super::theme::{self, FS_LG, FS_MD, FS_SM, FS_XL, ICON, NAV_ICON, SP, SP_LG, SP_MD, SP_XS};
 use super::widgets::{btn_sm, count, fill, icon_btn, icon_btn_sized, icon_btn_styled};
-use super::{chat, pages};
+use super::{chat, focus, pages};
 use crate::core::models::{Conversation, ConversationKind};
 
 const RAIL: f32 = 272.0;
@@ -91,14 +92,16 @@ fn nav(app: &App) -> Nav {
 
 pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
     let nav = nav(app);
-    let main = column![toolbar(s, nav)]
+    // In a column of their own, so a banner coming or going doesn't move the page and reset its focus and scrolling.
+    let banners = column![]
         .push(
             s.unreachable
                 .then(|| banner("Can't reach Hatbot.", btn_sm("Retry", theme::outlined, Some(Message::Retry)).into())),
         )
         .push(s.store.paused.then(|| {
             banner("All activity is paused.", btn_sm("Resume", theme::primary, Some(Message::SetPaused(false))).into())
-        }))
+        }));
+    let main = column![toolbar(s, nav), banners]
         .push(
             container(match &s.route {
                 Route::Chat => chat::view(app, s),
@@ -106,6 +109,7 @@ pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
             })
             .width(Length::Fill)
             .height(Length::Fill)
+            .id(focus::MAIN)
             .style(if nav == Nav::Tabs { theme::page } else { theme::framed }),
         )
         .width(Length::Fill);
@@ -113,18 +117,16 @@ pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
         Nav::Full => row![sidebar(s), main].into(),
         Nav::Compact => row![rail(s), main].into(),
         Nav::Tabs => {
-            let body = column![main, tab_bar(s)];
+            let mut layers = stack![column![main, tab_bar(s)]];
             if s.chat_menu && s.route == Route::Chat {
-                stack![
-                    body,
-                    mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                        .on_press(Message::ChatMenu(false)),
-                    chat_menu(s)
-                ]
-                .into()
-            } else {
-                body.into()
+                layers = layers
+                    .push(
+                        mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                            .on_press(Message::ChatMenu(false)),
+                    )
+                    .push(chat_menu(s));
             }
+            layers.into()
         }
     }
 }
@@ -256,7 +258,7 @@ fn sidebar(s: &Session) -> Element<'_, Message> {
     let rail =
         column![brand, Space::new().height(SP), nav_scroll(column![chats, Space::new().height(SP_MD), sections])]
             .padding(Padding::default().left(SP_MD).right(SP_MD));
-    container(rail).width(RAIL).height(Length::Fill).into()
+    container(rail).width(RAIL).height(Length::Fill).id(focus::NAV).into()
 }
 
 fn rail(s: &Session) -> Element<'_, Message> {
@@ -269,7 +271,7 @@ fn rail(s: &Session) -> Element<'_, Message> {
     let list = |v: Vec<Entry>| column(v.into_iter().map(rail_item)).spacing(2);
     let items = column![list(chats(s)), Space::new().height(SP_MD), list(sections(s))];
     let rail = column![brand, nav_scroll(items)].padding(Padding::default().left(SP_XS).right(SP_XS));
-    container(rail).width(COMPACT_RAIL).height(Length::Fill).into()
+    container(rail).width(COMPACT_RAIL).height(Length::Fill).id(focus::NAV).into()
 }
 
 /// The sections along the bottom, chats first as one.
@@ -284,7 +286,12 @@ fn tab_bar(s: &Session) -> Element<'_, Message> {
         about: None,
     };
     let tabs = std::iter::once(chat).chain(sections(s)).map(|e| container(rail_item(e)).width(Length::Fill).into());
-    container(row(tabs).align_y(Alignment::Center)).height(72).padding([0.0, SP_XS]).width(Length::Fill).into()
+    container(row(tabs).align_y(Alignment::Center))
+        .height(72)
+        .padding([0.0, SP_XS])
+        .width(Length::Fill)
+        .id(focus::NAV)
+        .into()
 }
 
 /// The chats, under the chat's name where there's no sidebar to list them.
@@ -302,14 +309,14 @@ fn chat_menu(s: &Session) -> Element<'_, Message> {
     let list = column(items.chain(std::iter::once(new)).map(nav_item));
     let menu =
         container(scrollable(list).style(theme::scroll)).padding(SP_XS).width(300).max_height(480).style(theme::menu);
-    container(opaque(menu)).padding(Padding::default().top(60).left(SP_LG)).into()
+    container(opaque(menu)).padding(Padding::default().top(60).left(SP_LG)).id(focus::MODAL).into()
 }
 
 fn nav_item<'a>(e: Entry) -> Element<'a, Message> {
-    nav_button(&e, true)
+    nav_button(&e, true).into()
 }
 
-fn nav_button<'a>(e: &Entry, with_badge: bool) -> Element<'a, Message> {
+fn nav_button<'a>(e: &Entry, with_badge: bool) -> button::Button<'a, Message> {
     let mut r = row![e.glyph(), text(e.name.clone()).size(FS_MD).font(theme::MEDIUM).width(Length::Fill)]
         .spacing(SP_MD)
         .align_y(Alignment::Center);
@@ -322,7 +329,6 @@ fn nav_button<'a>(e: &Entry, with_badge: bool) -> Element<'a, Message> {
         .width(Length::Fill)
         .style(theme::nav(e.lit))
         .on_press(e.on.clone())
-        .into()
 }
 
 /// A chat's row: under the pointer, its settings' button takes the count's place, as on the web.
@@ -332,7 +338,7 @@ fn chat_item<'a>(_: &'a Session, e: Entry) -> Element<'a, Message> {
     let lit = e.lit;
     let over = stack![
         // The rail's colour under the row, so the count beneath doesn't show through.
-        container(nav_button(&e, false)).style(move |t: &Theme| {
+        container(nav_button(&e, false).unfocusable()).style(move |t: &Theme| {
             let c = theme::colors(t);
             container::Style {
                 background: (!lit).then(|| c.bar.into()),
@@ -445,7 +451,7 @@ fn toolbar(s: &Session, nav: Nav) -> Element<'_, Message> {
     bar = bar.push(icon_btn_styled(Icon::Search, "Search", Some(Message::Go(Route::Search)), s.route == Route::Search));
     // The gutter, less a tab's padding, so the first tab's name lines up with a title.
     let left = if tabbed { GUTTER - SP_LG } else { GUTTER };
-    container(bar).padding(Padding::default().left(left).right(SP_MD)).width(Length::Fill).into()
+    container(bar).padding(Padding::default().left(left).right(SP_MD)).width(Length::Fill).id(focus::BAR).into()
 }
 
 /// The tab a page belongs to.
