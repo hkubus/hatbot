@@ -171,7 +171,7 @@ The GitHub mirror builds it from `apps/linux/packaging/PKGBUILD` on every push t
 
 ### Hatbot on your computer alone
 
-Without a server, the app's first start offers **Run it here**. It downloads Bun (checked against the checksum the app ships with) and the brain at the app's own commit, from the GitHub mirror or, failing that, Forgejo, then builds it under `~/.local/share/hatbot` and runs it as the systemd user service `hatbot-brain`, which starts when you log in. It needs `git`, `tar` and a systemd user session. Its settings are in `~/.config/hatbot/brain.env`, and its data, with the token the app signs in with (`app-token`), is in `~/.local/share/hatbot/data`.
+Without a server, the app's first start offers **Run it here**. It downloads Bun (checked against the checksum the app ships with) and the brain at the app's own commit, from the GitHub mirror or, failing that, Forgejo, then builds it under `~/.local/share/hatbot` and runs it as the systemd user service `hatbot-brain`, which starts when you log in. It needs `git`, `tar` and a systemd user session. Its settings are in `~/.config/hatbot/brain.env`, and its data, with the token the app signs in with (`app-token`), is in `~/.local/share/hatbot/data`. Then it opens the web app's guided setup, which asks for the model provider's key; the app waits until the setup is finished.
 
 - There's no password: the brain listens only on 127.0.0.1, and Settings → Hatbot on this computer → Web app opens the web app signed in. The Desktop and Boxes plugins start off, since there's no guest for them.
 - **Reach it from other devices** first has you set a password and an authenticator in the web app, then listens on the network over plain http, so keep it to a network you trust.
