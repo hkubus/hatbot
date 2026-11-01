@@ -1,9 +1,9 @@
 import { type ReactNode, useEffect, useState } from "react";
-import Markdown, { type Components } from "react-markdown";
+import type { Components } from "react-markdown";
 import { ApiError, api, attachmentUrl } from "../api";
 import { Link } from "../link";
 import { LoadError } from "../load";
-import { MD_COMPONENTS, type Node, REMARK, textOf } from "../markdown";
+import { MarkdownArticle, MD_COMPONENTS, type Node, textOf } from "../markdown";
 import { useStore } from "../store";
 import { BackButton, Empty } from "../ui";
 
@@ -151,11 +151,7 @@ export function Reader({ path, file }: { path: string; file: number }) {
             }}
           />
         ) : ready ? (
-          <article className="md">
-            <Markdown remarkPlugins={REMARK} components={COMPONENTS}>
-              {ready.text}
-            </Markdown>
-          </article>
+          <MarkdownArticle text={ready.text} components={COMPONENTS} />
         ) : null}
       </div>
     </section>
