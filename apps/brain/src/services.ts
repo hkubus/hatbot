@@ -44,6 +44,7 @@ import { modelName } from "./models-known";
 import { Logins } from "./negotiate/logins";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier } from "./notify";
+import { Onboarding } from "./onboarding/service";
 import { DeadManPing } from "./ping";
 import { Installer } from "./plugins/installer";
 import { Plugins } from "./plugins/registry";
@@ -319,8 +320,26 @@ export async function createServices(o: Outside) {
     }),
   };
 
+  const onboarding = new Onboarding({
+    db,
+    settings,
+    events,
+    spend,
+    model,
+    models,
+    plugins,
+    bots,
+    chats,
+    memory,
+    checks,
+    secrets,
+    local: config.local,
+    modelsReady: model === models ? undefined : () => true,
+  });
+
   const services = {
     ...core,
+    onboarding,
     models,
     auth,
     loginLimits,

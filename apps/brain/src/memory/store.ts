@@ -66,6 +66,26 @@ function bestLine(marked: string, first: number): { line: number; text: string }
   return { line: first + best, text: `${from ? "…" : ""}${text.slice(from, from + 300)}` };
 }
 
+const FIRST_FILES: Record<string, string> = {
+  "INDEX.md": `# Memory index
+
+Always in context. One line per file or folder: what it holds. Keep it current.
+
+- about-you.md: facts about you
+- preferences.md: how you like things done
+- homelab.md: hosts, services, what healthy looks like, runbooks
+- projects/: one file per project
+- skills/: reusable procedures
+- journal/: notable events, one file per month
+`,
+  "about-you.md": "# About you\n",
+  "preferences.md": "# Preferences\n",
+  "homelab.md": "# Homelab\n",
+  "projects/.gitkeep": "",
+  "skills/.gitkeep": "",
+  "journal/.gitkeep": "",
+};
+
 export class MemoryStore {
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -88,8 +108,12 @@ export class MemoryStore {
     // write failed).
     if (!existsSync(join(this.dir, ".git"))) {
       await this.git(["init", "-q", "-b", "main"]);
-      const index = join(this.dir, "INDEX.md");
-      if (!existsSync(index)) await writeFile(index, "# Memory index\n");
+      for (const [path, content] of Object.entries(FIRST_FILES)) {
+        const abs = join(this.dir, path);
+        if (existsSync(abs)) continue;
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, content);
+      }
       await this.git(["add", "-A"]);
       await this.commitAs(HATBOT, "Start memory");
     }

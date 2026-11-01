@@ -11,6 +11,7 @@ export * from "./box";
 export * from "./chart";
 export * from "./checks";
 export * from "./negotiate";
+export * from "./onboarding";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./search";
@@ -47,8 +48,16 @@ export const CreateToken = z.object({ name: z.string().min(1).max(100) });
 export type ApiToken = { id: number; name: string; createdAt: string; lastUsedAt: string | null };
 export type CreateTokenResponse = ApiToken & { token: string };
 
-/** `local`: the brain runs on the owner's computer, set up by the Linux app. */
-export type Me = { setupDone: boolean; authenticated: boolean; local?: boolean };
+/**
+ * `local`: the brain runs on the owner's computer, set up by the Linux app. `onboarded`: the guided
+ * setup is finished; only when signed in.
+ */
+export type Me = {
+  setupDone: boolean;
+  authenticated: boolean;
+  local?: boolean;
+  onboarded?: boolean;
+};
 export type LocalLink = { url: string };
 
 export const ConfirmOwner = z.object({
@@ -814,6 +823,8 @@ export type AppSettings = {
   weeklyReport: WeeklyReportSettings;
   /** The local hour the to-do list's morning reminder goes out. */
   todoHour: number;
+  /** An IANA name, such as Europe/Warsaw; "" for the machine's. */
+  timezone: string;
 };
 
 /**

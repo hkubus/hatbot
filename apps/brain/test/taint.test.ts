@@ -182,7 +182,11 @@ test("with the review off, tainted work asks before rewriting homelab.md, the ma
     finish("Saved."),
     {
       content: [
-        toolUse("memory_write", { path: "homelab.md", content: "# Homelab\n", reason: "r" }),
+        toolUse("memory_write", {
+          path: "homelab.md",
+          content: "# Homelab\n- CT 105: Jellyfin\n",
+          reason: "r",
+        }),
       ],
     },
     finish("Saved."),
@@ -200,12 +204,12 @@ test("with the review off, tainted work asks before rewriting homelab.md, the ma
   expect(ask.summary).toContain("homelab.md");
   t.approvals.decide(ask.id, "deny", "web");
   await t.tasks.idle();
-  expect(await t.memory.exists("homelab.md")).toBe(false);
+  expect(await t.memory.read("homelab.md")).toBe("# Homelab\n");
 
   // Untainted work writes it directly.
   t.tasks.createBackgroundTask({ title: "Map", goal: "Start the map", origin: "schedule" });
   await t.tasks.idle();
-  expect(await t.memory.read("homelab.md")).toBe("# Homelab\n");
+  expect(await t.memory.read("homelab.md")).toBe("# Homelab\n- CT 105: Jellyfin\n");
 });
 
 test("what code ran, in the sandbox or with the web tools, is untrusted and taints the chat", async () => {

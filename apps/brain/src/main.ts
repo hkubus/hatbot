@@ -6,7 +6,7 @@ import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Secrets } from "./secrets";
 import { createServices } from "./services";
-import { getSetting, setSetting } from "./settings";
+import { applyTimezone, getSetting, setSetting } from "./settings";
 import { webHandler } from "./web";
 
 const config = loadConfig();
@@ -39,6 +39,10 @@ const brain = await createServices({
 const { app, auth, approvals, chats, negotiations, plugins, tasks } = brain;
 const { proposals, storage, ping } = brain;
 if (config.local) auth.localToken(join(config.dataDir, "app-token"));
+applyTimezone(brain.settings.get().timezone);
+brain.events.on((e) => {
+  if (e.type === "settings.updated") applyTimezone(e.settings.timezone);
+});
 await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
 const pluginsStarted = plugins

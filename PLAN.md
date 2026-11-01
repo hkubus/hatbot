@@ -27,6 +27,16 @@ Left:
 - Only a desktop task's sends wait 30 s. A plugin's writes that reach people (forge comments, MCP tools) go at once, after the review.
 - Face ID approval only works with Settings → Notifications → "Tapping one opens" set to the iOS app; with the web app, Approve just shows the approval. Not tried on a device: the iOS views compile only in CI.
 
+## 0.2 Guided setup (decided 2026-11-01)
+Like `hermes setup`, but the bot interviews you. It opens by itself on a fresh brain (after the password page, or the Linux app's one-time link in local mode) until it's finished; "Finish later" closes it until the next visit. Existing installs that already work are marked finished.
+
+- **Models first, as a form** that can't be skipped: Anthropic or OpenAI-compatible (with base URL) and its key, checked live before it's saved. The five roles are filled in for that provider. `deploy.sh` and the Linux app's first start no longer ask for the key; `deploy.sh` no longer asks for ntfy either.
+- **Then an interview** on its own full-screen chat, on the Hard parts model, with a topic list beside it (You, Bots, Plugins and connections, Notifications, Safety and spending, Heartbeat), each marked done or skipped, and Skip on each. The bot changes settings directly, without approvals or the review, even after it searches the web (the owner's call): each change is a plain line, and the last screen lists them all. Its tools: settings, plugins, bots, memory (`about-you.md`, `preferences.md`), plugin tests, Check everything and web search. Secrets go through inline fields that never reach the model; OAuth is a Connect button that comes back to the setup. The transcript is thrown away at the end.
+- **You:** a new timezone setting, from the browser; the language for replies goes in memory. Local mode seeds the same memory files as a server install.
+- **Plugins:** it asks what you use and suggests plugins, and checks the desktop and boxes guests, offering to turn their plugins off when they aren't there.
+- **Rerun:** Settings → Account → Run setup again starts a new interview with every topic unmarked; setup stays finished.
+- **Apps:** the iOS app, and the Linux app connected to a brain, wait until setup is finished ("Finish setting up Hatbot in the web app"; the Linux app has a button that opens it). `Me.onboarded` says so.
+
 ## 1. Deploy and try live
 Built, but not yet deployed or tried live:
 - **Boxes** (2026-10-18 and 2026-10-19). Not tried yet: a real `hatbot-boxes` guest under systemd (the units, polkit, DynamicUser, the firewall, and the runner reading its secrets inside `hatbox@`'s sandbox); `boxes_look` drawn by `hatbot-render` under systemd; boxes in the iOS app on a device; `hatbox.ask` and `hatbox.feed` against a brain; and the model making a box, a server box, or one that uses ask, send, feed, notifications or secrets.

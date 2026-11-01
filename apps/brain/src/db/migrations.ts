@@ -1098,4 +1098,8 @@ export const migrations: string[] = [
   ALTER TABLE approval_rules_new RENAME TO approval_rules;
   CREATE UNIQUE INDEX approval_rules_key ON approval_rules (bot_id, tool, input, coalesce(schedule_id, 0));
   `,
+  // 71: the guided setup opens by itself only on a new brain, not one that's already in use.
+  `INSERT OR IGNORE INTO settings (key, value)
+   SELECT 'onboarding', '{"finished":true}'
+   WHERE EXISTS (SELECT 1 FROM owner) OR EXISTS (SELECT 1 FROM messages);`,
 ];

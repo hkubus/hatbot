@@ -30,8 +30,18 @@ export const retryAfterMs = (err: unknown, now = Date.now()) =>
 const rules = { retryable, retryAfterMs };
 
 /** The cheapest call that needs a working key. */
-export async function checkKey(key: string) {
-  await new Anthropic({ apiKey: key, maxRetries: 0, timeout: 15_000 }).models.list({ limit: 1 });
+export async function checkKey(
+  key: string,
+  fetch?: (url: string, init?: RequestInit) => Promise<Response>,
+) {
+  await new Anthropic({
+    apiKey: key,
+    maxRetries: 0,
+    timeout: 15_000,
+    fetch: fetch as typeof globalThis.fetch | undefined,
+  }).models.list({
+    limit: 1,
+  });
 }
 
 export class AnthropicModelClient implements ModelProvider {

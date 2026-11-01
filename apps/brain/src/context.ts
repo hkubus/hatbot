@@ -15,6 +15,7 @@ import type { ListingPhotos } from "./listing-photos";
 import type { Proposals } from "./memory/proposals";
 import type { MemoryStore } from "./memory/store";
 import type { Negotiations } from "./negotiate/service";
+import type { Onboarding } from "./onboarding/service";
 import type { Installer } from "./plugins/installer";
 import type { Plugins } from "./plugins/registry";
 import type { Questions } from "./questions";
@@ -56,6 +57,7 @@ export type Deps = {
   negotiations: Negotiations;
   secrets: Secrets;
   models: Models;
+  onboarding: Onboarding;
 };
 
 export type AppEnv = {
