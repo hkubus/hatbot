@@ -12,10 +12,12 @@ beforeAll(async () => {
   chromium = started.path;
 });
 
+let host: string | null = null;
 const server = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   fetch(req) {
+    host = req.headers.get("host");
     if (new URL(req.url).pathname === "/price.json") return Response.json({ price: "€1,299" });
     // Empty as sent: the price is written by a script, after a fetch and a wait.
     return new Response(
@@ -57,6 +59,8 @@ test.skipIf(!withChromium)(
     );
     expect(r.status).toBe(200);
     expect(r.body.html).toContain('<p id="price">€1,299</p>');
+    // Asked for by its name, which an https page's certificate is checked against.
+    expect(host).toBe(`shop.example:${server.port}`);
     // Where the check names no address (the loopback server here), the name is left to Chromium.
     const named = await call(
       { url: `http://127.0.0.1:${server.port}/shop` },

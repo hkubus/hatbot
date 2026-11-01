@@ -62,23 +62,26 @@ export async function renderPage(target: string, opts: RenderOptions = {}): Prom
   const checked = await (opts.check ?? ((host: string) => resolveHost(host, ownAddresses())))(
     url.hostname,
   );
-  const address = typeof checked === "string" ? checked : url.hostname;
-  const html = await dumpDom(pinned(url, address), opts, resolver(address));
+  const html = await dumpDom(
+    url.href,
+    opts,
+    resolver(url.hostname, typeof checked === "string" ? checked : undefined),
+  );
   const failed = loadError(html);
   if (failed) throw new FetchError(`Couldn't load it: ${failed}.`, 502);
   return { html };
 }
 
-/** The URL at the address that was checked, with its name kept for the Host header and the certificate. */
-export function pinned(url: URL, address: string): string {
-  const at = new URL(url.href);
-  at.hostname = isIP(address) === 6 ? `[${address}]` : address;
-  return at.href;
-}
-
-/** Chromium's resolver for one page: the address checked, and nothing else. */
-const resolver = (address: string) =>
-  `MAP * ~NOTFOUND, EXCLUDE ${isIP(address) === 6 ? `[${address}]` : address}`;
+/**
+ * Chromium's resolver for one page: its name goes to the address checked, and nothing else resolves.
+ * The URL keeps the name, which the certificate and the Host header are for.
+ */
+const resolver = (host: string, address?: string) => {
+  const literal = (a: string) => (isIP(a) === 6 && !a.startsWith("[") ? `[${a}]` : a);
+  return address && !isIP(host.replace(/^\[|\]$/g, ""))
+    ? `MAP ${host} ${literal(address)}, MAP * ~NOTFOUND`
+    : `MAP * ~NOTFOUND, EXCLUDE ${literal(address ?? host)}`;
+};
 
 /** Renders a page of its own whose script writes its text: whether Chromium starts and runs scripts. */
 export async function selfTest(opts: RenderOptions = {}): Promise<{ ok: true }> {
