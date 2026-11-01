@@ -10,16 +10,16 @@ const data = Buffer.alloc(bytes, 0x9a).toString("base64");
 const frame = `{"id":7,"result":{"data":${JSON.stringify(data)}}}`;
 console.log(`${frame.length} bytes an answer, ${bytes} of them the screenshot`);
 
-const { spare } = await import("../src/browser");
-const opening = frame.indexOf('"result":') + '"result":'.length;
+const { shotData } = await import("../src/browser");
+if (shotData(frame)?.length !== data.length) throw new Error("the picture wasn't read");
 
 console.log(report("JSON.parse whole frame (before)", await time(() => JSON.parse(frame), 200)));
 console.log(
   report(
-    "reading the id and the result",
+    "reading the id and the picture",
     await time(() => {
       /^\{"id":(\d+),/.exec(frame);
-      spare(frame, opening);
+      shotData(frame);
     }, 200),
   ),
 );

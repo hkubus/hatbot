@@ -151,37 +151,21 @@ export class Connection {
   }
 
   /**
-   * A frame's answers and events. One of megabytes (a screenshot: Chromium sends a result in one frame
-   * whatever its size) is first read for what it is, as text: Hatbot's own large commands are the browser
-   * toolset's, whose answers are never worth parsing, and the only browser-wide message long is a tab's
-   * state changing, which is a few more. What's left is the answer to a command waiting here, and pays for
-   * the id and the result, not the megabytes around them.
+   * A frame's answers and events. A screenshot's answer (megabytes in one frame) is read for its id and
+   * its picture, not parsed: the picture is base64, which has no quotes or escapes to decode.
    */
   private receive(raw: string) {
-    if (raw.length < LARGE) return this.dispatch(raw);
-    const method = /"method":"([a-z]+\.[A-Za-z]+)"/.exec(raw);
-    if (method && !method[1]?.startsWith("Target.") && !method[1]?.startsWith("Browser."))
-      return this.dispatch(raw);
-    const p = this.waitingFor(raw);
-    const opening = raw.indexOf('"result":');
-    if (!p || opening < 0 || !this.droppable(p.method)) return this.dispatch(raw);
+    const p = raw.length < LARGE ? undefined : this.waitingFor(raw);
+    const data = p?.method === "Page.captureScreenshot" ? shotData(raw) : undefined;
+    if (!p || data === undefined) return this.dispatch(raw);
     this.pending.delete(p.id);
     clearTimeout(p.timer);
-    const value = spare(raw, opening + '"result":'.length);
-    if (value) p.resolve(value as Json);
-    else this.dispatch(raw);
+    p.resolve({ data });
   }
 
   private waitingFor(raw: string) {
     const id = /^\{"id":(\d+),/.exec(raw);
     return id ? this.pending.get(Number(id[1])) : undefined;
-  }
-
-  /** Whether nothing but its result is read of the answer: everything but the browser toolset's. */
-  private droppable(method: string) {
-    return (
-      method !== "Runtime.evaluate" && !method.startsWith("Page.") && !method.startsWith("DOM.")
-    );
   }
 
   private dispatch(raw: string) {
@@ -215,20 +199,13 @@ const KEPT_DOWNLOADS = 20;
 /** A frame past this is read for what it is before it's parsed. */
 const LARGE = 64 * 1024;
 
-/**
- * The answer in a `{value:"…"}` result at `start`, or undefined when it isn't one: the string decoded as
- * what it holds, from the frame between the quotes, not as the whole of it. Only for strings: a page's
- * answer of half a megabyte is most of what a screenshot's answer costs to read, and with its neighbors
- * it's as quick to read as the screenshot itself.
- */
-export function spare(raw: string, start: number): unknown {
-  if (!raw.startsWith('{"value":"', start)) return undefined;
-  const close = raw.lastIndexOf('"');
-  try {
-    return JSON.parse(raw.slice(start + 9, close + 1)) as string;
-  } catch {
-    return undefined;
-  }
+/** A screenshot's picture, from its answer's frame; undefined when the frame isn't just that. */
+export function shotData(raw: string): string | undefined {
+  const key = '"result":{"data":"';
+  const start = raw.indexOf(key);
+  if (start < 0) return undefined;
+  const end = raw.indexOf('"', start + key.length);
+  return end > 0 && raw[end + 1] === "}" ? raw.slice(start + key.length, end) : undefined;
 }
 
 // Keys: DOM key names, codes and Windows virtual key codes, as Chromium's input pipeline expects them, by
@@ -448,9 +425,11 @@ export class Browser {
     this.targets.clear();
     this.sessions.clear();
     this.worlds.clear();
-    this.forget(null);
     const { targetInfos } = await this.cdp.send<{ targetInfos: TargetInfo[] }>("Target.getTargets");
     for (const t of targetInfos) this.targets.set(t.targetId, t);
+    // A tab still open keeps its name and its refs over a dropped connection; the rest are gone.
+    for (const id of [...this.tabIds.keys(), ...this.nextRef.keys(), ...this.pointers.keys()])
+      if (!this.targets.has(id)) this.forget(id);
     await this.cdp.send("Target.setDiscoverTargets", { discover: true });
     await this.cdp
       .send(
@@ -468,7 +447,6 @@ export class Browser {
       case "closed":
         this.sessions.clear();
         this.worlds.clear();
-        this.forget(null);
         this.touches++;
         return;
       case "Target.targetCreated":
@@ -1310,11 +1288,11 @@ export class Browser {
     for (const t of this.pages()) {
       if (t.targetId === keep) continue;
       await this.cdp.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {});
+      this.forget(t.targetId);
       closed++;
     }
     if (keep) await this.cdp.send("Target.activateTarget", { targetId: keep }).catch(() => {});
     this.active = keep ?? null;
-    this.forget(null);
     this.changes = [];
     this.reported = new Set(this.pages().map((t) => t.targetId));
     return { closed };

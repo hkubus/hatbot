@@ -1,11 +1,13 @@
 import { afterAll, expect, test } from "bun:test";
-import { Browser, spare } from "../src/browser";
+import type { ServerWebSocket } from "bun";
+import { Browser, shotData } from "../src/browser";
 import { spawn } from "../src/x11";
 
 // A stand-in for Chromium: it answers from a script of what each command does, and can say when the
 // browser connection is finished with.
 type Answer = { result?: unknown; delayMs?: number; event?: Record<string, unknown> };
 let script: (method: string, params: Record<string, unknown>) => Answer = () => ({});
+let socket: ServerWebSocket<unknown> | undefined;
 const cdp = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
@@ -18,6 +20,9 @@ const cdp = Bun.serve({
     return new Response("not found", { status: 404 });
   },
   websocket: {
+    open(ws) {
+      socket = ws;
+    },
     message(ws, raw) {
       const { id, method, params } = JSON.parse(String(raw)) as {
         id: number;
@@ -95,7 +100,16 @@ test("a screenshot's answer is taken from the frame, not parsed with it", async 
             ? { result: { result: { value: "visible" } } }
             : {};
   const b = browser();
-  const r = (await b.call("screenshot", {})) as { data: string };
+  const parse = JSON.parse;
+  let parsedLarge = 0;
+  JSON.parse = (text: string, ...rest) => {
+    if (text.length > 64 * 1024) parsedLarge++;
+    return parse(text, ...rest);
+  };
+  const r = (await b.call("screenshot", {}).finally(() => {
+    JSON.parse = parse;
+  })) as { data: string };
+  expect(parsedLarge).toBe(0);
   // Its PNG is over 64 KB, so the frame is read before it's parsed; the WebP is what comes back.
   expect(png.length).toBeGreaterThan(64 * 1024);
   expect(r).toMatchObject({ kind: "image", mediaType: "image/webp" });
@@ -132,12 +146,30 @@ test("a page's answer of half a megabyte comes back whole", async () => {
   script = () => ({});
 });
 
-test("an answer is read from the frame as the text it stands for", () => {
-  const at = '{"id":1,"result":'.length;
-  const frame = (value: string) => JSON.stringify({ id: 1, result: { value } });
-  for (const value of ["abc", "a}b", 'say "hi"', "one\ntwo", "Kraków \u2600", "😀"])
-    expect(spare(frame(value), at)).toBe(value);
-  expect(spare(frame("x".repeat(200 * 1024)), at)).toHaveLength(200 * 1024);
-  // Not an answer of that shape: the frame is read whole instead.
-  expect(spare('{"id":1,"result":{"a":1}}', at)).toBeUndefined();
+test("a screenshot's picture is read from its frame only when the frame is just that", () => {
+  expect(shotData('{"id":1,"result":{"data":"iVBORw0KGgo="},"sessionId":"s"}')).toBe(
+    "iVBORw0KGgo=",
+  );
+  expect(shotData('{"id":1,"result":{"data":"iVBO","extra":1}}')).toBeUndefined();
+  expect(shotData('{"id":1,"error":{"message":"No target"}}')).toBeUndefined();
+});
+
+test("a tab keeps its name over a dropped connection", async () => {
+  script = (method) =>
+    method === "Target.getTargets"
+      ? TABS
+      : method === "Target.attachToTarget"
+        ? { result: { sessionId: "s-A" } }
+        : {};
+  const b = browser();
+  const tabs = async () => ((await b.call("list_tabs", {})) as { tabs: { tab_id: string }[] }).tabs;
+  const before = await tabs();
+  const first = socket;
+  first?.close();
+  // The first call after may still go out on the closing socket, and fail with it.
+  let after = await tabs().catch(() => null);
+  while (!after) after = await tabs().catch(() => null);
+  expect(socket).not.toBe(first);
+  expect(after).toEqual(before);
+  script = () => ({});
 });

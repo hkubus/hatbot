@@ -1,17 +1,6 @@
 // What the benchmarks share: a loop that drives one code path N times and reports time a call and heap.
 export type Timing = { n: number; ms: number; perMs: number; heapMb: number; peakMb: number };
 
-/** A tiny JSON body of the size a CDP answer to a page toolset call is: an element list and its URLs. */
-export const payload = (count: number) =>
-  JSON.stringify({
-    lines: Array.from({ length: count }, (_, i) => {
-      const line = `- link "Listing ${i}" [ref_${i}] href="https://example.com/offer/${i}?ref=page"`;
-      return line;
-    }),
-    next: count,
-    truncated: false,
-  });
-
 /**
  * Runs `fn` n times, timed; `heapMb` is the growth in Bun's heap, and `peakMb` the most above it that
  * one call added, worked out before a collection (one also drops what a call frees).
