@@ -56,7 +56,6 @@ import {
   Stop,
   steerNote,
   thinkingFor,
-  withChanges,
 } from "./loop";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
 import type { Tasks } from "./service";
@@ -490,8 +489,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const forSchedule = (verdict: Extract<Verdict, { action: "ask" }>) =>
     task.scheduleId !== null && verdict.kind === "access" && !verdict.careful;
 
-  /** What its writes changed outside Hatbot, for its summary. */
-  const changed: string[] = [];
   const pluginCall = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
@@ -594,7 +591,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
     const r = await runPluginTool(t, call.input, cc);
     if (t.access === "write") blocks.ran();
-    if (t.access === "write" && !core && !r.isError) changed.push(what);
     if (r.untrusted) taint(what);
     if (t.name === "send_file" && !r.isError)
       tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });
@@ -959,7 +955,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // A runner's task that stops short may keep what it had, unless you stopped it.
     if (state?.unfinished && ended.status !== "done" && !signal.aborted)
       ended.summary = await state.unfinished(ended.summary);
-    tasks.finish(id, ended.status, withChanges(ended.summary, changed), ended.notify);
+    tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
     requests.release();
     if (slot) tasks.pool.release();

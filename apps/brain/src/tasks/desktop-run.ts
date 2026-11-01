@@ -58,7 +58,6 @@ import {
   steerNote,
   textOf,
   thinkingFor,
-  withChanges,
 } from "./loop";
 import {
   checkFor,
@@ -426,8 +425,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let seq = 0;
   let lastUrl: string | null = null;
   let armed: Armed | null = null;
-  /** The approved or reviewed steps that ran, for its summary. */
-  const changed: string[] = [];
   /** What an approval asked next is for. */
   let lastHeld: { hold: Hold; page: string | null; what: string } | null = null;
   /** A negotiation's task may send one approved message, or only read. */
@@ -818,8 +815,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     let offering: "open" | "offer" | null = null;
     /** A message to a person, which waits for the owner to stop it first. */
     let toSend: string | null = null;
-    /** What this step changes, as it was approved or reviewed. */
-    let changes: string | null = null;
     let publishing = false;
     if (check) {
       const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
@@ -892,11 +887,11 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         // The send itself, or a click into a text box: neither needs confirm_intent.
         if (g.action !== "usual") hold = null;
         sending = g.action === "send";
-        if (sending) toSend = changes = `Send "${clip(collapse(gate.text ?? ""), 300)}"`;
+        if (sending) toSend = `Send "${clip(collapse(gate.text ?? ""), 300)}"`;
         if (g.action === "open_offer") offering = "open";
         if (g.action === "offer") {
           offering = "offer";
-          toSend = changes = `Offer ${gate.offer} through the site's offer button`;
+          toSend = `Offer ${gate.offer} through the site's offer button`;
         }
       }
       if (listing) {
@@ -906,7 +901,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (l.action === "publish") {
           hold = null;
           publishing = true;
-          changes = `Publish the listing "${listing.title}"`;
         }
       }
       // One asked before trying is spent on the first held step, covered or not.
@@ -914,7 +908,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const was = armed;
       const uncovered = hold && was ? notCovered(was, hold, here) : null;
       if (hold && was && (!uncovered || !was.hold)) armed = null;
-      if (hold && was && !uncovered) changes = was.summary;
       if (hold && was && !uncovered && was.kind === "send" && !was.byOwner) toSend = was.summary;
       if (hold && (!was || uncovered)) {
         const what = `${call.name} ${heldWhat(hold)}`;
@@ -966,7 +959,6 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         ),
       );
     }
-    if (changes && !r.is_error) changed.push(changes);
     if (publishing && listing) {
       // Once: whether it went or not, nothing more is published from this task.
       listing.published = true;
@@ -1759,7 +1751,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
   } catch (err) {
     const ended = endOf(err, id, signal);
-    tasks.finish(id, ended.status, withChanges(ended.summary, changed), ended.notify);
+    tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
     requests.release();
     release();

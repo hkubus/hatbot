@@ -478,7 +478,6 @@ test("each line break in typed text is checked on its own: one send the review a
     true,
   );
   expect(t.approvals.list(false)).toEqual([]);
-  expect(t.tasks.get(task.id)?.summary).toEndWith("Changed outside Hatbot:\n- Send Ann a hello");
 });
 
 test("with a wait set, a message the review lets through waits for you to stop it, and stopped, it doesn't go", async () => {
