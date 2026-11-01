@@ -19,6 +19,8 @@ final class Session {
   /// The signed-in app state; nil shows the sign-in screen.
   private(set) var store: AppStore?
   var server: String
+  /// The web app's guided setup isn't finished: the app waits for it.
+  private(set) var setupPending = false
 
   @ObservationIgnored private let vault: TokenVault
   @ObservationIgnored private let defaults: UserDefaults
@@ -66,6 +68,13 @@ final class Session {
     // What another brain, or another you, showed before isn't yours to see.
     cache?.clear()
     store = AppStore(api: makeAPI(url, token: token), cache: cache)
+    await checkSetup()
+  }
+
+  func checkSetup() async {
+    guard let api = store?.api, let me: Me = try? await api.get("/auth/me") else { return }
+    guard store?.api.token == api.token else { return }
+    setupPending = me.onboarded == false
   }
 
   func signOut() async {
@@ -78,6 +87,7 @@ final class Session {
   private func forget() {
     store?.close()
     store = nil
+    setupPending = false
     vault.clear()
     cache?.clear()
     // Files opened from the chat, and what URLSession kept of attachments and screenshots.

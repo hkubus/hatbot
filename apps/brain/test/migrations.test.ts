@@ -90,3 +90,15 @@ test("an upgrade keeps you in control of the desktop, now the Desktop plugin's",
     { key: "desktop:control", value: "owner" },
   ]);
 });
+
+test("a brain already in use counts as set up, so the guided setup doesn't open; a new one doesn't", () => {
+  const used = at(19);
+  used.exec("INSERT INTO owner (id, password_hash, totp_secret) VALUES (1, 'h', 's')");
+  migrate(used);
+  expect(used.query("SELECT value FROM settings WHERE key = 'onboarding'").get()).toEqual({
+    value: '{"finished":true}',
+  });
+  const fresh = at(19);
+  migrate(fresh);
+  expect(fresh.query("SELECT value FROM settings WHERE key = 'onboarding'").get()).toBeNull();
+});

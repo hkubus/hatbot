@@ -65,6 +65,11 @@ export const Settings = z.object({
   }),
   /** The local hour of the to-do list's morning reminder. */
   todoHour: z.number().int().min(0).max(23),
+  /** An IANA name; "" for the machine's. */
+  timezone: z
+    .string()
+    .max(64)
+    .refine((tz) => !tz || knownTimezone(tz), "That isn't a timezone, such as Europe/Warsaw."),
 });
 export type Settings = z.infer<typeof Settings>;
 /** Limits and approval kinds may change one at a time; `tools` is replaced whole. */
@@ -121,7 +126,26 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryTidy: false,
   weeklyReport: { enabled: true, weekday: 1, hour: 9 },
   todoHour: 9,
+  timezone: "",
 };
+
+function knownTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const MACHINE_TZ = process.env.TZ;
+
+/** Dates, schedules and the local hours above all follow the process's TZ, which Bun reads anew. */
+export function applyTimezone(tz: string) {
+  if (tz) process.env.TZ = tz;
+  else if (MACHINE_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = MACHINE_TZ;
+}
 
 export const getSetting = (db: Db, key: string): string | null =>
   db.query<{ value: string }, [string]>("SELECT value FROM settings WHERE key = ?").get(key)

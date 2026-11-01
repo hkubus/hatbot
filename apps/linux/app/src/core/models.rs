@@ -22,6 +22,8 @@ pub struct Me {
     pub authenticated: bool,
     #[serde(default)]
     pub local: bool,
+    /// The guided setup is finished. Absent from a brain without one, or when signed out.
+    pub onboarded: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

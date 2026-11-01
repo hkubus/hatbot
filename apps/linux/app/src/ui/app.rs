@@ -87,6 +87,9 @@ pub enum Message {
     Retry,
     DownCheck(u64),
     SetPaused(bool),
+    /// Whether the web app's guided setup is finished; until it is, the app waits.
+    Onboarded(bool),
+    OpenSetup,
     /// The theme: "system", "light" or "dark".
     Appearance(String),
     SignOut,
@@ -144,6 +147,8 @@ pub struct Session {
     /// Bumped to drop the stream and connect again at once.
     pub generation: u64,
     pub unreachable: bool,
+    /// The web app's guided setup isn't finished yet.
+    pub setup_pending: bool,
     down: u64,
     awaiting_snapshot: bool,
     pub plugins: Option<Vec<PluginName>>,
@@ -167,6 +172,7 @@ impl Session {
             route: Route::Chat,
             generation: 0,
             unreachable: false,
+            setup_pending: false,
             down: 0,
             awaiting_snapshot: false,
             plugins: None,
@@ -376,7 +382,7 @@ impl App {
         self.sync_tray();
         let start = self.start.take();
         let s = self.session().unwrap();
-        let mut t = vec![load_chats(s), load_plugins(s), load_settings(s), chat::reload(s)];
+        let mut t = vec![check_setup(s), load_chats(s), load_plugins(s), load_settings(s), chat::reload(s)];
         t.extend(start.iter().flat_map(|p| pages::link(p)).flatten().map(Task::done));
         Task::batch(t)
     }
@@ -464,6 +470,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::Focused(on) => {
             let open = app.window.is_some();
             match app.session_mut() {
+                // Back from the web app, perhaps with the setup finished.
+                Some(s) if on && s.setup_pending => check_setup(s),
                 Some(s) => {
                     s.chat.visible = on && open;
                     chat::shown(s)
@@ -508,18 +516,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             focus
         }
         Message::Welcome(welcome::Msg::Done(Ok((server, token)))) => {
-            let key = match &app.phase {
-                Phase::Welcome(w) => w.key.trim().to_string(),
-                _ => String::new(),
-            };
             app.config.local = true;
-            let t = app.signed_in(server, token);
-            let Some(s) = app.session().filter(|_| !key.is_empty()) else { return t };
-            let save = s.fire(move |api| async move {
-                let values = serde_json::json!({ "values": { "ANTHROPIC_API_KEY": key } });
-                api.put::<serde_json::Value, _>("/plugins/anthropic/secrets", &values).await.map(|_| ())
-            });
-            Task::batch([t, save])
+            Task::batch([app.signed_in(server, token), Task::done(Message::OpenSetup)])
         }
         Message::Welcome(m) => match &mut app.phase {
             Phase::Welcome(w) => welcome::update(w, m),
@@ -583,6 +581,23 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::Onboarded(done) => {
+            if let Some(s) = app.session_mut() {
+                s.setup_pending = !done;
+            }
+            Task::none()
+        }
+        Message::OpenSetup => match app.session() {
+            Some(s) if s.local => s.call(
+                |api| async move { api.post::<LocalLink, _>("/auth/link", &serde_json::json!({})).await },
+                |r| match r {
+                    Ok(l) => Message::Link(l.url),
+                    Err(e) => failed(e),
+                },
+            ),
+            Some(s) => Task::done(Message::Link(s.api.server.clone())),
+            None => Task::none(),
+        },
         Message::Link(url) => {
             open_link(&url);
             Task::none()
@@ -856,6 +871,13 @@ pub fn load_settings(s: &Session) -> Task<Message> {
     s.call(
         |api| async move { api.get::<AppSettings>("/settings").await },
         |r| r.map(|l| Message::Loaded(Loaded::Settings(l))).unwrap_or(Message::Nothing),
+    )
+}
+
+fn check_setup(s: &Session) -> Task<Message> {
+    s.call(
+        |api| async move { api.get::<Me>("/auth/me").await },
+        |r| r.map(|me| Message::Onboarded(me.onboarded != Some(false))).unwrap_or(Message::Nothing),
     )
 }
 

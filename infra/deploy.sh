@@ -5,8 +5,8 @@
 #   ./deploy.sh ~/hatbot           deploy HEAD of a git checkout on this machine
 #   ./deploy.sh 124:/root/hatbot   Proxmox: deploy HEAD of a git checkout inside another container
 #   ./deploy.sh hatbot.tar         deploy an archive made with `git archive HEAD`
-# The first run asks for the public URL, your reverse proxy's IP, the Anthropic API key, your ntfy server
-# and the git repository the Update button in Settings pulls from.
+# The first run asks for the public URL, your reverse proxy's IP and the git repository the Update button
+# in Settings pulls from. The model provider's key and ntfy are set in the web app's guided setup.
 
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -69,85 +69,6 @@ else
 HATBOT_PUBLIC_URL=${url:-$def_url}
 HATBOT_TRUSTED_PROXIES=${proxies:-$def_proxies}
 EOF
-fi
-
-if guest_exec "$BRAIN" grep -qs '^ANTHROPIC_API_KEY=.' /etc/hatbot/secrets.env; then
-  ok "the Anthropic API key is set"
-else
-  key=''
-  read -r -s -p "   Anthropic API key (empty to skip; chat replies fail without it): " key || true
-  echo
-  if [[ -n $key ]]; then
-    # The key goes to curl on stdin so it never shows up in the process list.
-    if printf 'x-api-key: %s\n' "$key" | curl -fsS -m 15 -o /dev/null -H @- \
-      -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/models; then
-      ok "the key works"
-    else
-      warn "the key was refused or the API is unreachable from the host; saving it anyway"
-    fi
-    {
-      guest_exec "$BRAIN" sh -c 'grep -v "^ANTHROPIC_API_KEY=" /etc/hatbot/secrets.env 2>/dev/null || true'
-      printf 'ANTHROPIC_API_KEY=%s\n' "$key"
-    } | push_secret "$BRAIN" /etc/hatbot/secrets.env
-    unset key
-  else
-    warn "no API key; run deploy.sh again to add it"
-  fi
-fi
-
-# Earlier versions of brain-provision.sh ran an ntfy server on the brain; that config doesn't count.
-if [[ -z ${NTFY_URL:-} ]] && guest_exec "$BRAIN" sh -c \
-  'grep -qs "^NTFY_URL=" /etc/hatbot/ntfy.env && ! grep -qs "^NTFY_URL=http://127.0.0.1:8081" /etc/hatbot/ntfy.env'; then
-  ok "keeping /etc/hatbot/ntfy.env (set NTFY_URL to change it)"
-  if guest_exec "$BRAIN" grep -qsxE 'NTFY_TOPIC=(hatbot)?' /etc/hatbot/ntfy.env; then
-    warn "the ntfy topic is the old shared default; run deploy.sh with NTFY_URL set to pick a random one"
-  fi
-else
-  ntfy_url='' topic='' token=''
-  read -r -p "   URL of your ntfy server (empty to skip) [${NTFY_URL:-}]: " ntfy_url || true
-  ntfy_url=${ntfy_url:-${NTFY_URL:-}}
-  ntfy_url=${ntfy_url%/}
-  if [[ -n $ntfy_url ]]; then
-    # Whoever reads the topic sees every notification and can press its Approve buttons, so the
-    # suggestion is one nobody can guess.
-    def_topic=hatbot-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')
-    read -r -p "   ntfy topic [$def_topic]: " topic || true
-    until [[ ${topic:-$def_topic} =~ ^[-_A-Za-z0-9]{1,64}$ ]]; do
-      read -r -p "   only letters, digits, - and _ [$def_topic]: " topic || true
-    done
-    topic=${topic:-$def_topic}
-    if ((${#topic} < 20)); then
-      warn "a short topic can be guessed; on a server that lets anyone read, anyone could approve for you"
-    fi
-    read -r -s -p "   ntfy access token of a user that may publish to it (recommended): " token || true
-    echo
-    # Checked from the brain, which is what has to reach it. The token goes over stdin.
-    if [[ -n $token ]]; then
-      if printf 'Authorization: Bearer %s\n' "$token" |
-        guest_exec "$BRAIN" curl -fsS -m 10 -o /dev/null -H @- "$ntfy_url/v1/account"; then
-        ok "the brain reaches $ntfy_url and the token works"
-      else
-        warn "the brain can't reach $ntfy_url or the token was refused; saving it anyway"
-      fi
-    elif guest_exec "$BRAIN" curl -fsS -m 10 -o /dev/null "$ntfy_url/v1/health"; then
-      ok "the brain reaches $ntfy_url"
-    else
-      warn "the brain can't reach $ntfy_url; saving it anyway"
-    fi
-    [[ -n $token ]] || warn "no token: the server must let anyone publish to the topic, so a notification that looks like Hatbot's may not be"
-    # A server that lets anyone read the topic shows them every notification, Approve buttons included.
-    if guest_exec "$BRAIN" curl -fsS -m 10 -o /dev/null "$ntfy_url/$topic/json?poll=1&since=$(date +%s)" 2>/dev/null; then
-      warn "$ntfy_url lets anyone read the topic; allow only your ntfy user to read it (ntfy's access control)"
-    fi
-    push_secret "$BRAIN" /etc/hatbot/ntfy.env <<EOF
-NTFY_URL=$ntfy_url
-NTFY_TOPIC=$topic
-NTFY_TOKEN=$token
-EOF
-    unset token
-  else
-    warn "no ntfy; run deploy.sh again to add it (needed from M2 on, for approvals)"
-  fi
 fi
 
 # The Update button in Settings: hatbot-update on the brain fetches from here (as root; the brain

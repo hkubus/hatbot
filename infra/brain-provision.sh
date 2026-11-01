@@ -38,35 +38,6 @@ install -d -o root -g hatbot -m 750 /etc/hatbot
 [[ -e /etc/hatbot/mcp.env ]] || install -o root -g hatbot -m 640 /dev/null /etc/hatbot/mcp.env
 find /etc/hatbot -maxdepth 1 -name '*.env' -exec chown root:hatbot {} + -exec chmod 640 {} +
 
-say "Memory repo (/var/lib/hatbot/memory, never pushed anywhere)"
-mem=/var/lib/hatbot/memory
-as_hatbot() { runuser -u hatbot -- "$@"; }
-if [[ ! -d $mem/.git ]]; then
-  as_hatbot git -C "$mem" init -q -b main
-  as_hatbot git -C "$mem" config user.name Hatbot
-  as_hatbot git -C "$mem" config user.email hatbot@local
-  as_hatbot mkdir -p "$mem/projects" "$mem/skills" "$mem/journal"
-  as_hatbot touch "$mem/projects/.gitkeep" "$mem/skills/.gitkeep" "$mem/journal/.gitkeep"
-  as_hatbot tee "$mem/INDEX.md" >/dev/null <<'EOF'
-# Memory index
-
-Always in context. One line per file or folder: what it holds. Keep it current.
-
-- about-you.md: facts about you
-- preferences.md: how you like things done
-- homelab.md: hosts, services, what healthy looks like, runbooks
-- projects/: one file per project
-- skills/: reusable procedures
-- journal/: notable events, one file per month
-EOF
-  for f in about-you preferences homelab; do
-    title=$(sed 's/-/ /; s/^./\U&/' <<<"$f")
-    printf '# %s\n' "$title" | as_hatbot tee "$mem/$f.md" >/dev/null
-  done
-  as_hatbot git -C "$mem" add -A
-  as_hatbot git -C "$mem" commit -q -m "Start memory"
-fi
-as_hatbot git -C "$mem" log --oneline -1
 
 say "SSH key for managing hosts (M4)"
 if [[ ! -f /var/lib/hatbot/.ssh/id_ed25519 ]]; then

@@ -138,6 +138,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
     clearDrafts();
     onSignOut();
   };
+  const setUpAgain = () =>
+    api("/onboarding/again", { body: {} }).then(
+      () => navigate("/welcome"),
+      (err) => toast(errorText(err), "error"),
+    );
 
   if (!settings) return <PageLoad wide error={load.error} retry={load.retry} />;
 
@@ -277,6 +282,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
           />
           <LinkRow to="/settings/account" label="Password and authenticator" />
           <LinkRow to="/settings/devices" label="Devices and tokens" />
+          <Row label="Guided setup">
+            <button type="button" className="btn sm" onClick={setUpAgain}>
+              Run setup again
+            </button>
+          </Row>
           <Row label="Sign out">
             <button type="button" className="btn sm" onClick={signOut}>
               Sign out

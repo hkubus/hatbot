@@ -13,14 +13,14 @@ export const anthropicPlugin = definePlugin({
   env: [{ name: "ANTHROPIC_API_KEY", secret: true, hint: "sk-ant-…" }],
   config: z.object({}),
   defaultOn: true,
-  start: ({ env }) => {
+  start: ({ env, fetch }) => {
     const key = env.ANTHROPIC_API_KEY;
     if (!key) return needsSetup("Add your Anthropic API key below.");
     return ready([], {
       models: new AnthropicModelClient(key),
       test: async () => {
         try {
-          await checkKey(key);
+          await checkKey(key, fetch);
         } catch (err) {
           throw new PluginError(
             `The key doesn't work: ${err instanceof Error ? err.message : err}`,

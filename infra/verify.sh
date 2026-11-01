@@ -349,7 +349,7 @@ if on_brain grep -qs '^NTFY_URL=http' /etc/hatbot/ntfy.env; then
   expect "the brain reaches your ntfy server" on_brain sh -c \
     '. /etc/hatbot/ntfy.env && curl -fsS -m 5 -o /dev/null "$NTFY_URL/v1/health"'
 else
-  printf '   %sskip%s  ntfy (not configured yet; deploy.sh asks for it)\n' "$yel" "$rst"
+  printf '   %sskip%s  ntfy (not in ntfy.env; the guided setup keeps it in the brain)\n' "$yel" "$rst"
 fi
 expect "the memory repo exists" on_brain test -d /var/lib/hatbot/memory/.git
 

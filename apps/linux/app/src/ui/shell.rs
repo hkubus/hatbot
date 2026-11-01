@@ -8,7 +8,7 @@ use super::app::{App, Message, Route, Session};
 use super::button::{self, button};
 use super::icons::{self, Icon};
 use super::theme::{self, FS_LG, FS_MD, FS_SM, FS_XL, ICON, NAV_ICON, SP, SP_LG, SP_MD, SP_XS};
-use super::widgets::{btn_sm, count, fill, icon_btn, icon_btn_sized, icon_btn_styled};
+use super::widgets::{btn, btn_sm, count, fill, icon_btn, icon_btn_sized, icon_btn_styled};
 use super::{chat, focus, pages};
 use crate::core::models::{Conversation, ConversationKind};
 
@@ -91,6 +91,9 @@ fn nav(app: &App) -> Nav {
 }
 
 pub fn view<'a>(app: &'a App, s: &'a Session) -> Element<'a, Message> {
+    if s.setup_pending {
+        return setup_pending();
+    }
     let nav = nav(app);
     // In a column of their own, so a banner coming or going doesn't move the page and reset its focus and scrolling.
     let banners = column![]
@@ -480,5 +483,17 @@ fn tab(name: &str, active: bool, to: Route) -> Element<'_, Message> {
         .padding([0.0, SP_LG])
         .style(theme::plain_square)
         .on_press(Message::Go(to))
+        .into()
+}
+
+fn setup_pending<'a>() -> Element<'a, Message> {
+    let card = column![
+        text("Finish setting up Hatbot in the web app").size(theme::FS_2XL),
+        row![Space::new().width(Length::Fill), btn("Open the web app", theme::primary, Some(Message::OpenSetup))],
+    ]
+    .spacing(theme::SP_LG);
+    container(container(card).padding(theme::SP_XL + 8.0).width(464).style(theme::card))
+        .center(Length::Fill)
+        .style(theme::page)
         .into()
 }

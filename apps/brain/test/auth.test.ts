@@ -461,6 +461,7 @@ describe("a brain on the owner's computer", () => {
       setupDone: false,
       authenticated: true,
       local: true,
+      onboarded: false,
     });
 
     const link = async () =>

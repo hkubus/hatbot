@@ -8,6 +8,7 @@ import WidgetKit
 struct HatbotApp: App {
   @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var session: Session
+  @Environment(\.scenePhase) private var phase
 
   init() {
     let vault = KeychainVault()
@@ -19,7 +20,9 @@ struct HatbotApp: App {
   var body: some Scene {
     WindowGroup {
       Group {
-        if let store = session.store {
+        if session.store != nil && session.setupPending {
+          ContentUnavailableView("Finish setting up Hatbot in the web app", systemImage: "safari")
+        } else if let store = session.store {
           MainView().environment(store)
         } else {
           LoginView()
@@ -28,6 +31,10 @@ struct HatbotApp: App {
       .environment(session)
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
       .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
+      // Back from the web app, perhaps with the setup finished.
+      .onChange(of: phase, initial: true) { _, phase in
+        if phase == .active { Task { await session.checkSetup() } }
+      }
       .onChange(of: session.store == nil) { _, out in
         // The widget reads the brain as you, or says to sign in.
         WidgetCenter.shared.reloadAllTimelines()

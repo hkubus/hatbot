@@ -4800,3 +4800,111 @@ a.thread-card.attn:hover {
     border-left: 0;
   }
 }
+
+/* The guided setup: its topics beside the interview. */
+.setup {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  background: var(--bg);
+}
+.setup-topics {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-lg);
+  padding: var(--sp-2xl) var(--sp-lg);
+  background: var(--chrome);
+}
+.setup-topics h2 {
+  margin: 0 var(--sp-sm);
+  font-size: 22px;
+  font-weight: 400;
+}
+.setup-topics ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--sp-2xs);
+}
+.setup-topics li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp);
+  min-height: var(--h-lg);
+  padding: 0 var(--sp-sm);
+}
+.setup-topics li:not(.todo) .name {
+  color: var(--muted);
+}
+.setup-topics .state {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2xs);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.setup-topics .state svg.i {
+  color: var(--success);
+}
+.setup-actions {
+  margin-top: auto;
+  display: grid;
+  gap: var(--sp-sm);
+}
+.setup-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.setup-chat .chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+.setup-change {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.setup-change svg.i {
+  flex: none;
+  color: var(--success);
+}
+.setup-form {
+  max-width: 480px;
+}
+.setup-form p {
+  margin: 0;
+}
+.setup-buttons {
+  display: flex;
+  gap: var(--sp-sm);
+}
+.setup-summary ul {
+  margin: 0;
+  padding-left: var(--sp-lg);
+  display: grid;
+  gap: var(--sp-2xs);
+  text-align: left;
+}
+@media (max-width: 720px) {
+  .setup {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .setup-topics {
+    padding: var(--sp-lg);
+  }
+  .setup-topics ol {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .setup-actions {
+    display: flex;
+  }
+}

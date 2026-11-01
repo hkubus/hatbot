@@ -5,7 +5,7 @@ use iced::{Alignment, Element, Length, Task, Theme};
 use super::app::Message;
 use super::icons;
 use super::theme::{self, FS_2XL, FS_LG, SP, SP_LG, SP_XL};
-use super::widgets::{btn, error, field, input};
+use super::widgets::{btn, error};
 use crate::core::local;
 
 #[derive(Debug, Clone)]
@@ -13,7 +13,6 @@ pub enum Msg {
     Here,
     Server,
     Back,
-    Key(String),
     Start,
     Step(String),
     Done(Result<(String, String), String>),
@@ -21,20 +20,17 @@ pub enum Msg {
 
 pub enum Stage {
     Choose,
-    Key,
     Working(String),
     Failed(String),
 }
 
 pub struct Welcome {
     pub stage: Stage,
-    /// The Anthropic API key, saved once the brain is up.
-    pub key: String,
 }
 
 impl Welcome {
     pub fn new() -> Self {
-        Welcome { stage: Stage::Choose, key: String::new() }
+        Welcome { stage: Stage::Choose }
     }
 }
 
@@ -58,13 +54,8 @@ fn set_up() -> impl futures::Stream<Item = Message> {
 /// What the app does itself: choosing a server, and what's done, go to `app::update`.
 pub fn update(w: &mut Welcome, m: Msg) -> Task<Message> {
     match m {
-        Msg::Here => {
-            w.stage = Stage::Key;
-            return iced::widget::operation::focus("welcome-key");
-        }
         Msg::Back => w.stage = Stage::Choose,
-        Msg::Key(k) => w.key = k,
-        Msg::Start => {
+        Msg::Here | Msg::Start => {
             w.stage = Stage::Working("Getting ready".into());
             return Task::run(set_up(), |m| m);
         }
@@ -91,22 +82,14 @@ pub fn view(w: &Welcome) -> Element<'_, Msg> {
         Stage::Choose => column![
             title("Welcome to Hatbot"),
             text("Hatbot can run on this computer, or you can connect to one on a server.").size(FS_LG),
+            text("Running it here downloads Hatbot and starts it whenever you log in. That takes a few minutes the first time.")
+                .size(FS_LG),
             row![
                 Space::new().width(Length::Fill),
                 btn("Connect to a server", theme::outlined, Some(Msg::Server)),
                 btn("Run it here", theme::primary, Some(Msg::Here))
             ]
             .spacing(SP),
-        ],
-        Stage::Key => column![
-            title("Run Hatbot here"),
-            text("It downloads Hatbot and starts it whenever you log in. That takes a few minutes the first time.")
-                .size(FS_LG),
-            field(
-                "Anthropic API key",
-                input("sk-ant-…", &w.key, Msg::Key).id("welcome-key").secure(true).on_submit(Msg::Start)
-            ),
-            buttons(Some(Msg::Back), "Set up", Some(Msg::Start)),
         ],
         Stage::Working(step) => column![title("Setting up Hatbot"), text(format!("{step}…")).size(FS_LG)],
         Stage::Failed(e) => column![

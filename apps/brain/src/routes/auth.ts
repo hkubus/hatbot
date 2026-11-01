@@ -68,13 +68,15 @@ function attempt(c: Context<AppEnv>): { ok(): void; failed(): void } | null {
 }
 
 export const authRoutes = new Hono<AppEnv>()
-  .get("/auth/me", (c) =>
-    c.json<Me>({
+  .get("/auth/me", (c) => {
+    const authenticated = principalOf(c) !== null;
+    return c.json<Me>({
       setupDone: c.var.auth.isSetUp(),
-      authenticated: principalOf(c) !== null,
+      authenticated,
       ...(c.var.config.local ? { local: true } : {}),
-    }),
-  )
+      ...(authenticated ? { onboarded: c.var.onboarding.finished() } : {}),
+    });
+  })
 
   // A local brain: the Linux app opens the web app signed in, and can set a password up from there.
   .post("/auth/link", requireAuth, (c) => {

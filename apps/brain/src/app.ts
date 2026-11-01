@@ -16,6 +16,7 @@ import { checkRoutes } from "./routes/checks";
 import { desktopRoutes } from "./routes/desktop";
 import { memoryRoutes } from "./routes/memory";
 import { negotiationRoutes } from "./routes/negotiations";
+import { onboardingRoutes } from "./routes/onboarding";
 import { pluginRoutes } from "./routes/plugins";
 import { proposalRoutes } from "./routes/proposals";
 import { questionRoutes } from "./routes/questions";
@@ -71,6 +72,7 @@ export function createApp(deps: Deps) {
   app.route("/", searchRoutes);
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
+  app.route("/", onboardingRoutes);
   for (const { id, routes, publicRoutes, sockets } of deps.plugins.routed()) {
     for (const path of publicRoutes) app.all(path, toPlugin(id));
     for (const path of sockets) app.get(path, socketAuth, toPlugin(id));
