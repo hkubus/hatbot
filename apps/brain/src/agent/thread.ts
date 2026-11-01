@@ -212,10 +212,8 @@ type Effort = NonNullable<Anthropic.Beta.BetaOutputConfig["effort"]>;
 type EffortMark = { effort: Effort };
 /** Stored among a bot's turns: a note from the app, sent as a system message, not as the owner. */
 type NoteMark = { note: string };
-/** Stored among a bot's turns: where the last request's answer started (see leaveStart). */
+/** Left among a bot's turns by an earlier version: not a turn. */
 type BreakpointMark = { breakpoint: true };
-/** A turn a request starts at: its index, and the block there a cache breakpoint goes on. */
-type OpenStart = { at: number; block: number };
 type Handoff = { messageId: number; task: Task; episodes: number[] };
 export type Said = { id: number; text: string; status: "done" | "error"; stopped?: boolean };
 
@@ -281,11 +279,6 @@ export class Thread {
    * wait for still holds back a change the next one makes.
    */
   private screeners = new Map<number, Screener>();
-  /**
-   * Where each episode's next request can start, as the prefix it was recorded under and how many
-   * turns the episode had then: written once, with the results the breakpoint follows.
-   */
-  private cacheStarts = new Map<number, string>();
   private clock: () => number;
 
   constructor(
@@ -1014,63 +1007,13 @@ export class Thread {
     episodeId: number,
     botId: string,
     role: "user" | "assistant",
-    content:
-      | BlockParam[]
-      | Anthropic.Beta.BetaContentBlock[]
-      | NoteMark
-      | EffortMark
-      | BreakpointMark,
-  ): number {
-    return Number(
-      this.d.db
-        .query(
-          "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-        )
-        .run(episodeId, botId, role, JSON.stringify(content), this.now()).lastInsertRowid,
-    );
-  }
-
-  /**
-   * Leaves a breakpoint on the turn before this one, where this request's answer starts: the request
-   * after it reads that far and writes only what came since. Null when that turn has no block to put
-   * one on.
-   */
-  private leaveStart(episodeId: number, botId: string, prefix: string): OpenStart | null {
-    const [last, before] = this.lastTurns(episodeId, botId);
-    const block = blockAt(last?.content)?.block ?? null;
-    if (block === null || !before) return null;
-    const marked = this.appendTurn(episodeId, botId, "user", { breakpoint: true });
-    if (marked > 0) this.cacheStarts.set(episodeId, `${prefix}@${marked}/${last?.id}`);
-    return { at: sentTurns(before.content) + 1, block };
-  }
-
-  /**
-   * The turn a request with this prefix starts at, from one already left; see leaveStart. Only the
-   * mark itself may have come after it: the answer would change what the cache entry holds.
-   */
-  private openedCache(episodeId: number, botId: string, prefix: string, turns: number) {
-    const stored = this.cacheStarts.get(episodeId);
-    const cut = stored === undefined ? -1 : stored.indexOf("@");
-    if (cut < 0 || stored?.slice(0, cut) !== prefix) return null;
-    const [marked, turn] = (stored as string)
-      .slice(cut + 1)
-      .split("/")
-      .map(Number);
-    const [last, before] = this.lastTurns(episodeId, botId);
-    if (!before || last?.id !== marked || before.id !== turn) return null;
-    if (turns !== sentTurns(before.content) + 2) return null;
-    // The turn's place among these: one more with its results, which the mark follows.
-    const block = blockAt(before.content)?.block ?? null;
-    return block === null ? null : { at: turns - 2, block };
-  }
-
-  /** An episode's last turn and the one before it. */
-  private lastTurns(episodeId: number, botId: string) {
-    return this.d.db
-      .query<{ id: number; content: string }, [number, string]>(
-        "SELECT id, content FROM episode_turns WHERE episode_id = ? AND bot_id = ? ORDER BY id DESC LIMIT 2",
+    content: BlockParam[] | Anthropic.Beta.BetaContentBlock[] | NoteMark | EffortMark,
+  ) {
+    this.d.db
+      .query(
+        "INSERT INTO episode_turns (episode_id, bot_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
       )
-      .all(episodeId, botId);
+      .run(episodeId, botId, role, JSON.stringify(content), this.now());
   }
 
   private appendNote(episodeId: number, botId: string, note: string) {
@@ -1085,7 +1028,7 @@ export class Thread {
     episodeId: number,
     botId: string,
     files?: Map<number, BlockParam[]>,
-  ): Promise<{ turns: Turn[]; effort: Effort | null; count: number }> {
+  ): Promise<{ turns: Turn[]; effort: Effort | null }> {
     let effort: Effort | null = null;
     const found = this.d.db
       .query<{ role: "user" | "assistant"; content: string }, [number, string]>(
@@ -1108,7 +1051,6 @@ export class Thread {
     return {
       turns: this.d.attachments ? await this.d.attachments.expand(all, files) : all,
       effort,
-      count: found.length,
     };
   }
 
@@ -2276,15 +2218,7 @@ export class Thread {
           return finish("error", "_Stopped: this reply hit its step or time limit._");
         }
 
-        const { turns: messages, effort, count } = await this.loadTurns(episode.id, bot.id, files);
-        // A request after tool results starts where their turn put a breakpoint, so it writes only
-        // what came since; otherwise the top-level breakpoint follows the conversation.
-        const opening = this.openedCache(
-          episode.id,
-          bot.id,
-          prefixOf(chatModel, system, tools),
-          count,
-        );
+        const { turns: messages, effort } = await this.loadTurns(episode.id, bot.id, files);
         // What it may cost at most, held against the limits until it's recorded.
         const prefix = prefixOf(chatModel, system, tools);
         const cached = this.cached(episode.id, bot.id, prefix).tokens;
@@ -2328,9 +2262,7 @@ export class Thread {
           },
           output_config: { effort: effort ?? chatEffort },
           ...(container ? { container } : {}),
-          messages: opening
-            ? turnsBreakpoint(messages, opening.at, opening.block)
-            : markPrevious(messages),
+          messages: markPrevious(messages),
         };
         // No keep-warm while it runs: its entry's five minutes start when it ends.
         this.sentAt.set(bot.id, { episodeId: episode.id, at: Number.POSITIVE_INFINITY });
@@ -2529,14 +2461,7 @@ export class Thread {
           );
           return toolResult(call.id, r.content, r.isError, r.image);
         });
-        // The prefix under which the answer is recorded, for the next request to read and for its
-        // cost to be held at, and where it starts: with the results about to follow the owner's turn.
-        const start = prefixOf(chatModel, system, tools);
-        this.d.db.transaction(() => {
-          this.appendTurn(episode.id, bot.id, "user", results);
-          this.cacheStarts.delete(episode.id);
-          this.leaveStart(episode.id, bot.id, start);
-        })();
+        this.appendTurn(episode.id, bot.id, "user", results);
       }
     } catch (err) {
       if (abort.signal.reason === STOPPED)
@@ -2626,24 +2551,6 @@ export function turnsBreakpoint(turns: Turn[], at: number, i: number): Turn[] {
   const out = [...turns];
   out[at] = { ...turn, content };
   return out;
-}
-
-/** Where a stored turn sits among the turns as sent: the marks left before it aren't turns. */
-function sentTurns(stored: string): number {
-  return (stored.match(/\{"breakpoint":true\}/g) ?? []).length;
-}
-
-/** Where a stored turn's answer started: its last block that takes a breakpoint. */
-function blockAt(stored: string | undefined): OpenStart | null {
-  let content: unknown;
-  try {
-    content = JSON.parse(stored ?? "null");
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(content)) return null;
-  const i = (content as BlockParam[]).findLastIndex((b) => CACHEABLE.includes(b.type));
-  return i < 0 ? null : { at: 0, block: i };
 }
 
 const toolResult = (
