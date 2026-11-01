@@ -199,6 +199,7 @@ export const proxmoxPlugin = definePlugin({
                 action: z.enum(["start", "reboot", "shutdown", "stop"]),
               }),
               describe: ({ vmid, action }) => `${ACTION[action]} ${named(vmid)}`,
+              target: ({ vmid }) => String(vmid),
               policy: ({ vmid, action }) => {
                 if (refused(vmid))
                   return block(
@@ -253,6 +254,9 @@ export const proxmoxPlugin = definePlugin({
           description: z.string().max(200).optional(),
         }),
         describe: ({ vmid, name }) => `Snapshot ${named(vmid)} as ${name}`,
+        target: ({ vmid }) => String(vmid),
+        // A snapshot is kept until someone deletes it, and Proxmox's storage fills up with them.
+        policy: () => ask("A snapshot stays until someone deletes it, and it fills the storage."),
         run: async ({ vmid, name, description }, { signal }) => {
           const r = await find(vmid);
           const upid = (await pve.post(`${path(r)}/snapshot`, {

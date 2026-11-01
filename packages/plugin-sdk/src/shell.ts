@@ -24,7 +24,12 @@ const RULES: Rule[] = [
     why: "deletes files recursively",
     kind: "delete",
   },
-  { re: /\brm\s+(-\S*\s+)*\S*(\/\*|\s\/\s*$|\s~\/?\s*$)/, why: "deletes files", kind: "delete" },
+  // rm -f *, which deletes the folder it's run in.
+  {
+    re: /\brm\s+(-\S*\s+)*\S*(\/\*|\s\/\s*$|\s~\/?\s*$|\*\s*(;|&&|\||&|$))/,
+    why: "deletes files",
+    kind: "delete",
+  },
   {
     re: /\b(shred|wipefs|mkfs(\.\w+)?|mkswap|fdisk|sfdisk|parted|sgdisk|blkdiscard)\b/,
     why: "erases or repartitions a disk",
@@ -104,8 +109,9 @@ const RULES: Rule[] = [
     re: /\b(iptables|ip6tables)(-legacy|-nft)?\b[^|;&\n]*\s(-[AIDRPFX]\b|--(append|insert|delete|replace|policy|flush|delete-chain)\b)|\b(iptables|ip6tables)(-legacy|-nft)?-restore\b|\bnft\b[^|;&\n]*\s(add|insert|delete|flush|replace|destroy|-f)\b|\bufw\s+(--?\S+\s+)*(allow|deny|reject|limit|delete|insert|prepend|disable|enable|reset|default|route|reload)\b/,
     why: "changes the firewall",
   },
+  // Options can come before the object (ip -4 addr flush), and ip takes abbreviations (ip a flush).
   {
-    re: /\bip\s+(link\s+set\s+\S+\s+down|addr\s+(del|flush)|route\s+(del|flush))\b|\b(ifdown|nmcli\s+\S+\s+(down|delete))\b/,
+    re: /\bip\s+(-\S+\s+)*(l|link)\s+set\b[^|;&\n]*\sdown\b|\bip\s+(-\S+\s+)*(a|addr|address|r|ro|route|n|neigh)\s+([^\s|;&]+\s+)*?(del|delete|flush)\b|\b(ifdown|nmcli\s+\S+\s+(down|delete))\b/,
     why: "takes the network down",
   },
   { re: /\bcrontab\s+(-\S*\s+)*-r\b/, why: "deletes a crontab", kind: "delete" },
@@ -115,14 +121,47 @@ const RULES: Rule[] = [
     why: "rewrites or discards git history",
     kind: "delete",
   },
+  // | /bin/sh, | busybox sh, | env sh.
   {
-    re: /\b(curl|wget)\b[^|;&]*\|\s*(sudo\s+)?(ba|z|da)?sh\b/,
-    why: "runs a script straight from the internet",
+    re: /\|\s*((sudo|env|busybox|nice|nohup|exec|command|timeout\s+\S+)\s+(-\S+\s+)*)*(\S*\/)?((ba|z|da|k|a)?sh|python[\d.]*|perl|ruby|node)\b/,
+    why: "runs what it reads as a script",
+  },
+  // bash -c "$(echo … | base64 -d)", eval "$(…)".
+  {
+    re: /\b((ba|z|da|k|a)?sh\s+(-\S+\s+)*-\S*c\s+["']?|eval\s+["']?)(\$\(|`)/,
+    why: "runs a script it builds as it goes",
   },
   // bash <(curl …), sh -c "$(curl …)", source <(wget …)
   {
     re: /[<$]\(\s*(sudo\s+)?(curl|wget)\b/,
     why: "runs a script straight from the internet",
+  },
+  // find . -exec sh -c '…', find . -exec busybox rm {} +, xargs busybox rm.
+  {
+    re: /\bfind\b[^|;&\n]*\s-exec(dir)?\s+(sudo\s+)?\S*(sh|bash|zsh|dash|python[\d.]*|perl|ruby|node)\b/,
+    why: "runs a shell on what it finds",
+  },
+  {
+    re: /\bfind\b[^|;&\n]*\s-exec(dir)?\s+((sudo|busybox|nice|env|nohup|ionice|timeout)\s+)*(\S*\/)?(rm|shred|unlink|rmdir)\b/,
+    why: "deletes the files it finds",
+    kind: "delete",
+  },
+  {
+    re: /\bxargs\b[^|;&\n]*\b((sudo|busybox|nice|env|nohup|ionice|timeout)\s+)*(\S*\/)?(rm|shred|unlink|rmdir)\b/,
+    why: "deletes files",
+    kind: "delete",
+  },
+  // install -m 4755 bash /tmp/x, --mode=u+s: setuid or setgid, or a program put on root's PATH.
+  {
+    re: /\binstall\b[^|;&\n]*\s(-m\s*|--mode[=\s]\s*)(0?[2-7][0-7]{3}\b|\S*s)|\binstall\b[^|;&\n]*\s\S*\/usr\/local\/(s?bin)\//,
+    why: "installs a program that runs with privileges of its own",
+    kind: "other",
+  },
+  // Writes to a system file, which changes what the machine does: printed out, tee'd, edited in place
+  // with sed or perl, or any of those from inside a system folder (cd /etc && echo x > hosts).
+  {
+    re: />>?\s*(?!\/dev\/)\/(etc|boot|usr|lib|lib64|sbin|bin|opt|var\/spool\/cron)\/|\btee\b[^|;&\n]*\s(-a\s+)?\/(etc|boot|usr|lib|sbin|bin|var\/spool\/cron)\/|\b(sed|perl)\b[^|;&\n]*\s(-[^-\s]*i\S*|--in-place\S*)\s[^|;&\n]*\/(etc|boot|usr|lib|sbin|bin|var\/spool\/cron)\/|\bcd\s+["']?\/(etc|boot|usr|lib|lib64|sbin|bin|opt|var\/spool\/cron)\b[^\n]*(>>?\s*[^\s&/]|\btee\s+(-a\s+)?[^\s/-]|\b(sed|perl)\b[^|;&\n]*\s(-[^-\s]*i|--in-place))/,
+    why: "changes a system file",
   },
   {
     re: /\bkill(all)?\s+(-9\s+|-KILL\s+)?(-1|1)\b|\bpkill\s+(-9\s+)?(systemd|sshd|init)\b/,
@@ -207,6 +246,8 @@ const READERS: Record<string, string[] | null> = {
   journalctl: null,
   dmesg: null,
   date: null,
+  df: null,
+  ip: ["a", "addr", "address", "r", "ro", "route", "l", "link", "n", "neigh"],
   pct: ["list", "status", "config", "listsnapshot", "df", "pending"],
   qm: ["list", "status", "config", "listsnapshot", "pending"],
   pvesh: ["get", "ls"],
@@ -276,24 +317,20 @@ export function inContainer(command: string): boolean {
  */
 const STATUS: Record<string, string[] | null> = {
   uptime: null,
-  df: null,
   free: null,
   nproc: null,
-  // hostname -F and date -f read a file, and print what they can't parse.
+  // hostname -F reads a file and prints what it can't parse.
   hostname: [""],
   uname: null,
   whoami: null,
   id: null,
-  lsblk: null,
-  echo: null,
-  true: null,
   sleep: null,
-  ip: ["a", "addr", "address", "r", "ro", "route", "l", "link", "n", "neigh"],
-  systemctl: ["", "is-active", "is-enabled", "is-failed", "is-system-running", "list-units"],
-  pct: ["list", "status"],
+  echo: null,
+  // Routes, not interfaces: an address's label, a link's alias and a FUSE mount's name (df) are
+  // anyone's, as are the descriptions list-units and --failed print beside a unit.
+  ip: ["r", "ro", "route"],
+  systemctl: ["is-active", "is-enabled", "is-failed", "is-system-running"],
   qm: ["list", "status"],
-  docker: ["ps"],
-  zpool: ["list", "status"],
   zfs: ["list"],
 };
 /**
@@ -302,8 +339,20 @@ const STATUS: Record<string, string[] | null> = {
  * (systemctl -p is-active status nginx) or read elsewhere (ip -b FILE, docker -H HOST).
  */
 const FLAGS: Record<string, string[]> = {
-  ip: ["-br", "-brief", "-4", "-6", "-s", "-stats", "-d", "-details", "-o", "-oneline", "-c"],
+  ip: ["-c"],
   systemctl: ["--no-pager", "--plain", "--no-legend", "--all", "-a", "--failed", "-q", "--full"],
+};
+/**
+ * What a status command must say, since what it prints without the flag includes a name someone else
+ * picks: a unit, a container, a guest, an interface, a pool, a device or a label.
+ */
+const SAYS: Record<string, RegExp> = {
+  // -c only colours it.
+  ip: /^-c$/,
+  // A failed unit's name is a unit file's: without --no-legend one named as the legend reads as it.
+  systemctl: /^--no-legend$|^-q$/,
+  // Deeper than a data set's own: then their names, which anyone who makes one chooses, don't show.
+  zfs: /^-[^-]*d|^--depth/,
 };
 /** Filters a status command may pipe into, and how many operands each may have (grep's pattern). */
 const FILTERS: Record<string, number> = { head: 0, tail: 0, wc: 0, sort: 0, uniq: 0, grep: 1 };
@@ -319,29 +368,38 @@ export function statusOnly(command: string, { writes = true } = {}): boolean {
   if (!writes && parsed.files.some((f) => f !== "/dev/null")) return false;
   return parsed.lines.every((p) =>
     p.every((words, i) => {
-      const w = plain(words);
+      const w = i === 0 ? sans(words) : plain(words);
+      // An empty word (-x ''): its option takes a value that says nothing.
+      if (i === 0 && w.some((a) => !a)) return false;
       // df --files0-from=F, wc --files0-from=F: names read from a file come back in errors.
-      if (w.some((a) => a.startsWith("-") && /file|from/i.test(a))) return false;
+      if (w.some((a) => a.startsWith("-") && /^(--files|--status|--block|--force|--get)/.test(a)))
+        return false;
       if (!writes && changes(w)) return false;
-      return (i === 0 ? isStatus : isFilter)(w);
+      return (i === 0 ? says : isFilter)(w);
     }),
   );
 }
 
-/** A status command or filter that writes all the same: sort -o FILE, ip addr add. */
-function changes(words: string[]): boolean {
-  const [prog = "", ...args] = words;
-  const name = prog.split("/").pop();
-  // -o in any cluster (-uo F), --output, and --compress-program, which runs a program.
-  if (name === "sort") return args.some((a) => /^-[^-]*o|^--(o|co)/.test(a));
-  if (name !== "ip") return false;
-  // After the object (addr, route…): nothing, or a word that only shows. ip takes abbreviations
-  // (ip link s is set), so only whole words.
-  const verb = args[args.findIndex((a) => !a.startsWith("-")) + 1];
-  return verb !== undefined && !["show", "list", "ls", "lst"].includes(verb);
+/** A command's words without leading locale settings or sudo, whose own options say nothing. */
+function sans(words: string[]): string[] {
+  let w = words;
+  while (w[0] && /^(LANG|LANGUAGE|TZ|LC_[A-Z]+)=/.test(w[0])) w = w.slice(1);
+  if (w[0] === "sudo") {
+    const rest = w.slice(1);
+    return rest.slice(sudoOptions(rest));
+  }
+  return w;
 }
 
-function isStatus(words: string[]): boolean {
+/** How many words sudo's options take, and with them their values. */
+function sudoOptions(words: string[]): number {
+  let at = 0;
+  while ((words[at] ?? "").startsWith("-")) at += VALUE_OPTS.includes(words[at] ?? "") ? 2 : 1;
+  return at;
+}
+
+/** A status command that says only what it may, by name rather than by what it prints. */
+function says(words: string[]): boolean {
   const [prog = "", ...args] = words;
   const name = prog.split("/").pop() ?? "";
   const subs = STATUS[name];
@@ -350,7 +408,28 @@ function isStatus(words: string[]): boolean {
   const at = args.findIndex((a) => !a.startsWith("-"));
   const before = at < 0 ? args : args.slice(0, at);
   if (!before.every((a) => FLAGS[name]?.includes(a))) return false;
-  return subs.includes(at < 0 ? "" : (args[at] ?? ""));
+  if (!subs.includes(at < 0 ? "" : (args[at] ?? ""))) return false;
+  const mustSays = SAYS[name];
+  return mustSays === undefined || args.some((a) => mustSays.test(a));
+}
+
+/** A status command or filter that writes all the same: sort -o FILE, ip addr flush. */
+function changes(words: string[]): boolean {
+  const [prog = "", ...args] = words;
+  const name = prog.split("/").pop();
+  // -o in any cluster (-uo F), --output, and --compress-program, which runs a program.
+  if (name === "sort") return args.some((a) => /^-[^-]*o|^--(o|co)/.test(a));
+  if (name !== "ip") return false;
+  // After the object (addr, route…) and its flags (-4, dev eth0): nothing, or a word that only shows.
+  // ip takes abbreviations (ip link s is set), so only whole words.
+  const at = args.findIndex((a) => !a.startsWith("-"));
+  if (at < 0) return false;
+  // Options between the object and its verb come with a value of their own (dev eth0).
+  for (const arg of args.slice(at + 1)) {
+    if (arg.startsWith("-")) continue;
+    return !["show", "list", "ls", "lst"].includes(arg);
+  }
+  return false;
 }
 
 function isFilter(words: string[]): boolean {
@@ -378,13 +457,32 @@ function isFilter(words: string[]): boolean {
  */
 function plain(words: string[]): string[] {
   let w = words;
-  while (w[0] && /^(LANG|LANGUAGE|TZ|LC_[A-Z]+)=/.test(w[0])) w = w.slice(1);
-  if (w[0] === "sudo") {
+  const locale: string[] = [];
+  while (w[0] !== undefined && /^(LANG|LANGUAGE|TZ|LC_[A-Z]+)=/.test(w[0])) {
+    locale.push(w[0]);
     w = w.slice(1);
-    while (w[0]?.startsWith("-")) w = w.slice(w[0] === "-u" || w[0] === "-g" ? 2 : 1);
   }
-  return w;
+  // sudo's own options, which say nothing, come after the command, where they read as its words.
+  if (w[0] === "sudo") {
+    const opts: string[] = [];
+    let rest = w.slice(1);
+    while (rest.length && (rest[0] ?? "").startsWith("-")) {
+      opts.push(rest[0] as string);
+      rest = rest.slice(VALUE_OPTS.includes(rest[0] as string) ? 2 : 1);
+    }
+    w = [...rest, ...opts];
+  }
+  // df -h -x tmpfs: an option and its value are one word, so it isn't the subcommand.
+  const out: string[] = locale;
+  for (const word of w) {
+    const [flag, value] = word.split(" ");
+    if (flag?.startsWith("-") && value !== undefined) out.push(flag, value);
+    else out.push(word);
+  }
+  return out;
 }
+
+const VALUE_OPTS = ["-u", "-U", "-g", "-p", "-C", "-D", "-R", "-T"];
 
 /**
  * A shell line's plain commands as words, grouped into pipelines; null when it does more than run
