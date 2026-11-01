@@ -103,7 +103,8 @@ write_file() {
     sed 's/^/       | /'
     return
   fi
-  tmp=$(mktemp)
+  # 0600 from the start: a firewall or a unit can carry a secret.
+  tmp=$(umask 077 && mktemp)
   cat >"$tmp"
   if [[ -f $path ]] && cmp -s "$tmp" "$path"; then
     rm -f "$tmp"

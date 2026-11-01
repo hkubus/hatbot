@@ -99,17 +99,21 @@ guest_push() {
 # push_secret GUEST PATH, content on stdin. Written mode 600; the secret never lands on this machine's
 # disk outside a mktemp file.
 push_secret() {
-  local id=$1 path=$2 tmp
+  local id=$1 path=$2
   if ((${DRY_RUN:-0})); then
     cat >/dev/null
     printf '   %s+ write secret %s in %s (mode 600)%s\n' "$dim" "$path" "$(guest_label "$id")" "$rst"
     return
   fi
-  tmp=$(mktemp)
-  cat >"$tmp"
-  guest_exec "$id" install -d -m 750 "$(dirname "$path")"
-  guest_push "$id" "$tmp" "$path" 600
-  rm -f "$tmp"
+  # 0600 from the start, and removed however this ends. Its own subshell: an EXIT trap set from inside
+  # $(…) runs when that ends, and one set here would replace the caller's.
+  (
+    tmp=$(umask 077 && mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    cat >"$tmp"
+    guest_exec "$id" install -d -m 750 "$(dirname "$path")"
+    guest_push "$id" "$tmp" "$path" 600
+  )
   ok "wrote $path in $(guest_label "$id")"
 }
 

@@ -176,6 +176,16 @@ if [[ -n $DESKTOP ]]; then
     on_desktop sh -c 'pid=$(systemctl show -P MainPID "$1") && [ "$pid" -gt 0 ] &&
       [ "$(readlink "/proc/$pid/ns/ipc")" != "$(readlink /proc/1/ns/ipc)" ]' sh "$1"
   }
+  # desktop-agent (desk) relays to the socket; any other user, as a stranger's process would be, can't.
+  socket_only_desk() {
+    if ! on_desktop runuser -u desk -- test -r "$2" 2>/dev/null; then
+      result FAIL "only desktop-agent's user reaches $1 socket" "desk can't read it"
+    elif on_desktop runuser -u nobody -- test -r "$2" 2>/dev/null; then
+      result FAIL "only desktop-agent's user reaches $1 socket" "nobody can read it"
+    else
+      result OK "only desktop-agent's user reaches $1 socket"
+    fi
+  }
   if on_desktop test -S /run/hatbot-shell/shell.sock; then
     for probe in "Chromium's DevTools (127.0.0.1:9222)|exec 3<>/dev/tcp/127.0.0.1/9222" \
       "desktop-agent ($DESKTOP_IP:7070)|exec 3<>/dev/tcp/$DESKTOP_IP/7070" \
@@ -190,9 +200,13 @@ if [[ -n $DESKTOP ]]; then
         result OK "the desktop shell can't reach ${probe%%|*}"
       fi
     done
-    # shellcheck disable=SC2016 # expands inside the desktop
-    expect "only desktop-agent's user reaches the shell's socket" \
-      on_desktop sh -c '[ "$(stat -c "%a %G" /run/hatbot-shell)" = "750 desk" ]'
+    perm=$(on_desktop stat -c '%a %G' /run/hatbot-shell 2>/dev/null || true)
+    if [[ $perm == "750 desk" ]]; then
+      result OK "only desktop-agent's user reaches the shell's socket"
+    else
+      result FAIL "only desktop-agent's user reaches the shell's socket" "${perm:-no reply}"
+    fi
+    socket_only_desk "the shell's" /run/hatbot-shell/shell.sock
     expect "the desktop shell can't attach desk's shared memory (the screen grabs)" own_ipc hatbot-desktop-shell
   else
     printf '   %sskip%s  desktop shell (not running; deploy.sh installs it)\n' "$yel" "$rst"
@@ -208,9 +222,7 @@ if [[ -n $DESKTOP ]]; then
     fi
     renders() { on_desktop curl -sS -m 30 -X POST --unix-socket /run/hatbot-render/render.sock http://render/check </dev/null | grep -q '"ok":true'; }
     expect "the renderer runs a page's scripts" renders
-    # shellcheck disable=SC2016 # expands inside the desktop
-    expect "only desktop-agent's user reaches the renderer's socket" \
-      on_desktop sh -c '[ "$(stat -c "%a %G" /run/hatbot-render)" = "750 desk" ]'
+    socket_only_desk "the renderer's" /run/hatbot-render/render.sock
     expect "the renderer can't attach desk's shared memory (the screen grabs)" own_ipc hatbot-render
   else
     printf '   %sskip%s  renderer (not running; deploy.sh installs it)\n' "$yel" "$rst"
