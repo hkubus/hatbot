@@ -1102,7 +1102,13 @@ export const migrations: string[] = [
   `INSERT OR IGNORE INTO settings (key, value)
    SELECT 'onboarding', '{"finished":true}'
    WHERE EXISTS (SELECT 1 FROM owner) OR EXISTS (SELECT 1 FROM messages);`,
-  // 72: what a chat request left in the cache, under which system prompt and tools, and when it
+  // 72: Haggler's instructions, where they're still as made: it writes as the buyer, not as if selling.
+  `
+  UPDATE bots SET instructions = replace(instructions,
+    'as a polite private buyer: in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits.',
+    'as a polite private buyer asking them to sell ("sprzeda pan za 140 zł?", not "weźmie pan dysk za 140 zł?", which is what a seller asks): in the seller''s language (Polish on OLX and Allegro Lokalnie), with amounts in digits. Use pan or pani only when the seller''s gender is plain, never both.');
+  `,
+  // 73: what a chat request left in the cache, under which system prompt and tools, and when it
   // ended: its entry's five minutes start then, not at the first token, and only a request with the
   // same prompt and tools reads it.
   `

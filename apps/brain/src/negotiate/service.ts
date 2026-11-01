@@ -1400,7 +1400,7 @@ function openingGoal(n: Negotiation, note: string | null): string {
     `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
     "",
     `1. negotiate_get ${n.id} for the listing, the mandate and anything said so far.`,
-    "2. Write a brief opening message as your instructions say, in the listing's language, offering exactly the mandate's opening price.",
+    "2. Write a brief opening message as your instructions say, in the listing's language, as the buyer asking the seller to sell, offering exactly the mandate's opening price.",
     "3. Send it once with negotiate_send: the price in offer, and what it claims about our side in stated.",
     "4. Finish with what you sent, or why nothing went.",
     ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),
