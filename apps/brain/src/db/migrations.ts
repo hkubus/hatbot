@@ -1102,4 +1102,11 @@ export const migrations: string[] = [
   `INSERT OR IGNORE INTO settings (key, value)
    SELECT 'onboarding', '{"finished":true}'
    WHERE EXISTS (SELECT 1 FROM owner) OR EXISTS (SELECT 1 FROM messages);`,
+  // 72: what a chat request left in the cache, under which system prompt and tools, and when it
+  // ended: its entry's five minutes start then, not at the first token, and only a request with the
+  // same prompt and tools reads it.
+  `
+  ALTER TABLE spend_ledger ADD COLUMN ended_at TEXT;
+  ALTER TABLE spend_ledger ADD COLUMN prefix TEXT;
+  `,
 ];

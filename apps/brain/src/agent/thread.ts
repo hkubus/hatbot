@@ -251,10 +251,13 @@ export class Thread {
   private live = new Map<number, string>();
   /** And what it has thought and done so far. */
   private liveProgress = new Map<number, string>();
-  /** When each bot's last chat request or keep-warm was sent, and in which episode: its cache entry's five minutes run from then. */
+  /** When each bot's last request ended, which its cache entry's five minutes run from; Infinity while it runs. */
   private sentAt = new Map<string, { episodeId: number; at: number }>();
   /** Each bot's last chat request, sent again to keep it cached for half an hour after it. */
-  private warm = new Map<string, { episodeId: number; params: CreateParams; at: number }>();
+  private warm = new Map<
+    string,
+    { episodeId: number; params: CreateParams; prefix: string; at: number }
+  >();
   private clock: () => number;
   private kindOf?: { kind: string; parentId: number | null };
 
@@ -1073,22 +1076,25 @@ export class Thread {
   }
 
   /**
-   * Prompt tokens the bot's last request left in the cache, while its five minutes last, which a
-   * keep-warm starts again. The ledger has when a request ended, so after a restart it's taken to
-   * have run as long as a turn may.
+   * Prompt tokens the bot's last request left in the cache while its five minutes last, if it was
+   * sent with this system prompt and tools: a request with others reads none of them. The ledger
+   * has when a request ended, which is when its entry's five minutes start.
    */
-  private cachedTokens(episodeId: number, botId: string): number {
+  private cachedTokens(episodeId: number, botId: string, prefix: string): number {
     const last = this.d.db
-      .query<{ tokens: number; created_at: string }, [number, string]>(
-        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens, created_at
+      .query<
+        { tokens: number; left: number; prefix: string | null; ended_at: string | null },
+        [number, string]
+      >(
+        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens,
+           cache_read_tokens + cache_write_5m_tokens AS left, prefix, ended_at
          FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
       )
       .get(episodeId, botId);
-    if (!last) return 0;
-    const ended = Date.parse(last.created_at);
-    const sent = this.sentAt.get(botId);
-    const at = sent && sent.episodeId === episodeId ? sent.at : ended - MAX_TURN_MS;
-    return this.clock() - at < CACHE_MS ? last.tokens : 0;
+    const at = last?.ended_at ? Date.parse(last.ended_at) : 0;
+    if (!last || !at || this.clock() - at >= CACHE_MS || last.prefix !== prefix || !last.left)
+      return 0;
+    return last.tokens;
   }
 
   private promptTokens(episodeId: number): number {
@@ -1152,7 +1158,7 @@ export class Thread {
         this.warm.delete(botId);
         continue;
       }
-      const cached = this.cachedTokens(w.episodeId, botId);
+      const cached = this.cachedTokens(w.episodeId, botId, w.prefix);
       this.sentAt.set(botId, { episodeId: w.episodeId, at: now });
       try {
         const release = spend.hold(
@@ -1160,6 +1166,11 @@ export class Thread {
         );
         try {
           const res = await model.create({ ...w.params, max_tokens: 0 });
+          // The entry the ping kept lasts from now, if it's the last request's.
+          db.query(
+            `UPDATE spend_ledger SET ended_at = ? WHERE prefix = ? AND id = (SELECT id FROM spend_ledger
+               WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1)`,
+          ).run(new Date(this.clock()).toISOString(), w.prefix, w.episodeId, botId);
           spend.recordResponse({
             model: w.params.model,
             purpose: "keep-warm",
@@ -2070,13 +2081,14 @@ export class Thread {
       };
     };
 
-    const bill = (model: string, purpose: string, usage: Anthropic.Beta.BetaUsage) => {
+    const bill = (model: string, purpose: string, usage: Anthropic.Beta.BetaUsage, at?: string) => {
       used.costUsd += spend.recordResponse({
         model,
         purpose,
         usage,
         episodeId: episode.id,
         botId: bot.id,
+        ...(at === undefined ? {} : { endedAt: this.clock(), prefix: at }),
       });
       used.tokens += tokenCount(tokensOf(usage));
       events.emit({ type: "message.usage", id: out.id, ...used });
@@ -2174,7 +2186,7 @@ export class Thread {
 
         const { turns: messages, effort } = await this.loadTurns(episode.id, bot.id, files);
         // What it may cost at most, held against the limits until it's recorded.
-        const cached = this.cachedTokens(episode.id, bot.id);
+        const cached = this.cachedTokens(episode.id, bot.id, prefix);
         let held: () => void;
         try {
           held = hold(
@@ -2217,9 +2229,9 @@ export class Thread {
           ...(container ? { container } : {}),
           messages: markPrevious(messages),
         };
-        const sentAt = this.clock();
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: sentAt });
-        this.warm.set(bot.id, { episodeId: episode.id, params, at: sentAt });
+        // No keep-warm while it runs: its entry's five minutes start when it ends.
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: Number.POSITIVE_INFINITY });
+        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: this.clock() });
         const res = await model.stream(params, {
           onText: say,
           onThinking: shown,
@@ -2236,6 +2248,7 @@ export class Thread {
           signal: abort.signal,
         });
         held();
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
         container = containerOf(res, container);
@@ -2248,7 +2261,7 @@ export class Thread {
         const content = afterFallback(res.content);
         // The turn first: what the API has answered is kept, whatever recording its cost does.
         this.appendTurn(episode.id, bot.id, "assistant", content);
-        bill(chatModel, "thread", res.usage);
+        bill(chatModel, "thread", res.usage, prefix);
         // The last request's entry was there to read, but most of it was written again.
         const read = res.usage.cache_read_input_tokens ?? 0;
         if (cached > 4000 && read < cached / 2)

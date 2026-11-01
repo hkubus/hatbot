@@ -5,7 +5,7 @@ import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thre
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, testApp, toolNames } from "./helpers";
+import { bot, lastUserText, signIn, testApp, toolNames, waitFor } from "./helpers";
 
 test("a message gets a streamed reply, stored, and /thread/ask answers with one", async () => {
   const t = await testApp(
@@ -194,11 +194,17 @@ test("a new conversation starts when the prompt or tools change, the model switc
 });
 
 test("a chat is kept cached for half an hour after its last request, while that costs less than an hour's cache", async () => {
+  const slow = Promise.withResolvers<void>();
   const model = new FakeModel(
     [
       { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
-      // Haiku: 200 tokens written for five minutes rather than an hour save what two reads cost.
-      { content: [text("Hi again.")], usage: { cache_creation_input_tokens: 200 } },
+      // Haiku: 200 tokens written for five minutes rather than an hour save what two reads cost. A
+      // read doesn't take away from that.
+      {
+        content: [text("Hi again.")],
+        usage: { cache_creation_input_tokens: 200, cache_read_input_tokens: 5000 },
+        wait: slow.promise,
+      },
     ],
     ["<recap>Said hi.</recap>\n<summary>2026-10-09: said hi.</summary>"],
   );
@@ -221,7 +227,17 @@ test("a chat is kept cached for half an hour after its last request, while that 
   await minutes(40);
   expect(pings()).toHaveLength(9);
 
-  await t.thread.post("hello again").done;
+  // A reply that takes four minutes isn't pinged while it runs; three minutes after it ends, it is.
+  const again = t.thread.post("hello again");
+  await waitFor(() => model.requests.length === 2);
+  await minutes(4);
+  expect(pings()).toHaveLength(9);
+  slow.resolve();
+  await again.done;
+  await minutes(2);
+  expect(pings()).toHaveLength(9);
+  await minutes(1);
+  expect(pings()).toHaveLength(10);
   await minutes(30);
   expect(pings()).toHaveLength(11);
   const spend = t.db
