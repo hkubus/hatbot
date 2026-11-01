@@ -143,7 +143,9 @@ const RecordConversation = z.object({
   messages: z
     .array(
       z.object({
-        from: z.enum(["seller", "us"]),
+        from: z
+          .enum(["seller", "us", "site"])
+          .describe("site: the marketplace's own notes, not typed by either of you"),
         text: z.string().max(4000),
       }),
     )
@@ -227,7 +229,7 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "record_conversation",
     description:
-      "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
+      "Record the conversation with the seller as it is on screen now: every message, oldest first, who wrote it (the seller, or us: this account) and its text, copied exactly. The site's own notes are from site, not the seller: Vinted shows one at the start of every conversation, whether or not the seller wrote, and sites add safety tips and the item's card. An offer made with the site's offer button, or its answer, is whoever made or answered it. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
     schema: RecordConversation,
   },
   // Only in a listing's desktop tasks.

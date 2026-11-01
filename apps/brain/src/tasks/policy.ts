@@ -62,7 +62,12 @@ const BUYING = words(BUY);
 
 /** Nouns that fold into a verb: "Odpowiedź" (an answer) reads as "Odpowiedz" (reply) without its accent. */
 const NOUNS = /(?<![\p{L}\p{N}])odpowiedź(?![\p{L}\p{N}])/giu;
-const read = (label: string) => fold(label.normalize("NFC").replace(NOUNS, " "));
+/** OLX's messages are split into the tabs "Kupuję" and "Sprzedaję", with a count of unread ones. */
+const TAB = /^kupuje(?: \(?\d+\)?)?$/;
+const read = (label: string) => {
+  const l = fold(label.normalize("NFC").replace(NOUNS, " "));
+  return TAB.test(l) ? "" : l;
+};
 
 export const buyingLabel = (label: string) => BUYING.test(read(label));
 

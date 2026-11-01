@@ -252,6 +252,9 @@ export function gateCheck(
         action: "hold",
         why: "Hatbot can't see the text box this would send from, so it can't check the message. Type it into the conversation's own message box, or open the conversation again.",
       };
+    // With every box empty, a Send button has nothing to send: on OLX's listing page "Wyślij
+    // wiadomość" only opens the message box.
+    if (held && "label" in held && sendLabel(held.label)) return { action: "pass" };
     return { action: "usual" };
   }
   if (gate.mode === "read" || !text)

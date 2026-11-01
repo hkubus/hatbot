@@ -971,6 +971,29 @@ test("a seller's reply that came meanwhile stops the send", async () => {
   ]);
 });
 
+test("the site's own note at the start of a conversation isn't the seller's, so the send goes", async () => {
+  const note = {
+    from: "site",
+    text: "Pamiętaj: płać tylko przez Vinted, by mieć Ochronę Kupujących.",
+  };
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [note] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [toolUse("record_conversation", { messages: [note, { from: "us", text: TEXT }] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  await sendOffer(t, n);
+  await t.tasks.idle();
+  expect(clicks(t)).toBe(1);
+  expect(t.negotiations.messages(n.id).map((m) => [m.direction, m.status])).toEqual([
+    ["out", "sent"],
+  ]);
+});
+
 test("a seller's message that looks like a scam holds the negotiation until you decide, but not over its mandate", async () => {
   const t = await testApp();
   messageBox(t, CHAT_URL);

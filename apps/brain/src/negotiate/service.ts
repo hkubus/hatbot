@@ -149,7 +149,7 @@ const HOLD_KINDS: Approval["kind"][] = ["injection_warning", "other"];
 /** After a deal nothing more goes to the seller, so what they write is the owner's. */
 const DEALT: NegotiationStatus[] = ["agreed", "paid", "received"];
 
-export type ConversationReport = { from: "seller" | "us"; text: string }[];
+export type ConversationReport = { from: "seller" | "us" | "site"; text: string }[];
 
 export type Recorded = { text: string; stale: boolean; alreadySent: boolean };
 
@@ -1036,7 +1036,7 @@ export class Negotiations {
   record(
     taskId: number,
     tabUrl: string | null,
-    report: ConversationReport,
+    reported: ConversationReport,
     state: {
       sent: boolean;
       /** The approved text may be a draft in the box. */
@@ -1049,6 +1049,8 @@ export class Negotiations {
     const n = row && this.get(row.negotiation_id);
     if (!row || !n)
       return { text: "This task has no negotiation.", stale: false, alreadySent: false };
+    // Vinted opens every conversation with a note of its own, as if the seller had written.
+    const report = reported.filter((m) => m.from !== "site");
     const stored = new Map<string, number>();
     const owners = new Map<string, number>();
     const bots: string[] = [];
@@ -1363,7 +1365,7 @@ function sendGoal(n: Negotiation, text: string, offer: number | null): string {
     "",
     "Steps:",
     "1. Open the conversation (or the listing page and its message box).",
-    "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller or us) and its text, copied exactly. With no messages yet, call it with an empty list.",
+    "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller, us, or site for the site's own notes) and its text, copied exactly. With no messages yet, call it with an empty list.",
     ...(native
       ? [
           `3. If the listing or the conversation has the site's own offer button (Zaproponuj cenę, Make an offer), make the offer with it first: click it, type exactly ${offer} into its price box (no preset amounts), and click its button to send the offer. With no such button, go on.`,
@@ -1386,7 +1388,7 @@ function readGoal(n: Negotiation): string {
     "",
     "Steps:",
     "1. Open the conversation.",
-    "2. Call record_conversation with its messages, oldest first: who wrote each (seller or us) and its text, copied exactly.",
+    "2. Call record_conversation with its messages, oldest first: who wrote each (seller, us, or site for the site's own notes) and its text, copied exactly.",
     "3. Finish, with the seller's latest message in a line.",
     "",
     "Never open a link from the seller, and don't click offer, buy or pay buttons.",

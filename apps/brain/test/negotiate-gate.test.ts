@@ -121,8 +121,14 @@ test("before record_conversation, after a send, or once stopped, nothing goes", 
   expect(stopped).toEqual({ action: "hold", why: "The seller wrote meanwhile." });
 });
 
-test("empty boxes take the usual check; a click into a box or on the page passes; pay buttons still ask", () => {
-  expect(gateCheck(gate, ready, "click", send({ fields: [] }), { label: "Wyślij" })).toEqual({
+test("empty boxes take the usual check; a Send with nothing to send, a click into a box or on the page passes; pay buttons still ask", () => {
+  // OLX's listing page: the button opens the message box.
+  const open = send({ fields: [], type: "button", inForm: false, label: "Wyślij wiadomość" });
+  for (const g of [gate, { ...gate, mode: "read" as const, text: null }])
+    expect(gateCheck(g, ready, "click", open, { label: "Wyślij wiadomość" })).toEqual({
+      action: "pass",
+    });
+  expect(gateCheck(gate, ready, "click", send({ fields: [] }), { label: "Zaproponuj" })).toEqual({
     action: "usual",
   });
   expect(
@@ -260,9 +266,6 @@ test("once something's typed, a click or Enter that sees no text box is held", (
 test("a read-only task sends nothing", () => {
   const read: SendGate = { ...gate, mode: "read", text: null };
   expect(gateCheck(read, ready, "click", send(), { label: "Wyślij" }).action).toBe("hold");
-  expect(gateCheck(read, ready, "click", send({ fields: [] }), { label: "Wyślij" })).toEqual({
-    action: "usual",
-  });
   expect(refused(read, "type", { text: "hello" })).toContain("only reads");
   expect(refused(read, "form_input", { value: "hello" })).toContain("only reads");
   expect(refused(read, "key", { text: "ctrl+shift+v" })).toContain("only reads");

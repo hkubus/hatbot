@@ -18,6 +18,7 @@ test("buy, pay, order, offer, send and delete labels are held; everyday ones, lo
   const held = [
     "Kup teraz",
     "Zamawiam i płacę",
+    "Tak, kupuję",
     "Zaproponuj cenę",
     "Wyślij wiadomość",
     "Usuń ogłoszenie",
@@ -49,6 +50,8 @@ test("buy, pay, order, offer, send and delete labels are held; everyday ones, lo
     "Dalej",
     // Tabs, headings and an address that read like buying, and a cookie banner's choices.
     "Kupujący",
+    "Kupuję",
+    "KUPUJĘ (2)",
     "Zakupione",
     "Wystawione",
     "Odpowiedź",
