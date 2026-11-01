@@ -25,6 +25,8 @@ struct Me: Decodable, Sendable {
   let setupDone: Bool
   let authenticated: Bool
   let local: Bool?
+  /// The guided setup is finished. Nil from a brain without one.
+  let onboarded: Bool?
 }
 
 struct LoginResponse: Decodable, Sendable {

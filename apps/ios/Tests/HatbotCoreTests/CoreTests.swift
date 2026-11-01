@@ -712,6 +712,19 @@ final class SignOutAndCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
+  func testTheAppWaitsUntilTheGuidedSetupIsFinished() async throws {
+    SlowBrain.reset(["/auth/me": #"{"setupDone":true,"authenticated":true,"onboarded":false}"#])
+    let session = try await MainActor.run { try Session.saved(vault: MemoryVault("t")) }
+    await session.checkSetup()
+    var waiting = await MainActor.run { session.setupPending }
+    XCTAssertTrue(waiting)
+    // A brain from before the guided setup leaves it out.
+    SlowBrain.reset(["/auth/me": #"{"setupDone":true,"authenticated":true}"#])
+    await session.checkSetup()
+    waiting = await MainActor.run { session.setupPending }
+    XCTAssertFalse(waiting)
+  }
+
   func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
     SlowBrain.reset([
       "/auth/me": #"{"setupDone":true,"authenticated":false}"#,
