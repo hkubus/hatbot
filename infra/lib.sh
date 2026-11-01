@@ -87,29 +87,24 @@ guest_push() {
   guest_exec "$1" sh -c 'umask 077 && cat >"$1.new" && chmod "$2" "$1.new" && mv -f "$1.new" "$1"' sh "$3" "$4" <"$2"
 }
 
-# A temp file only your user can read; one push_secret leaves behind goes at the script's exit.
-mktemp_secret() {
-  local f
-  f=$(umask 077 && mktemp)
-  trap 'rm -f "$f"' EXIT
-  printf '%s\n' "$f"
-}
-
 # push_secret GUEST PATH, content on stdin. Written mode 600; the secret never lands on this machine's
 # disk outside a mktemp file.
 push_secret() {
-  local id=$1 path=$2 tmp
+  local id=$1 path=$2
   if ((${DRY_RUN:-0})); then
     cat >/dev/null
     printf '   %s+ write secret %s in %s (mode 600)%s\n' "$dim" "$path" "$(guest_label "$id")" "$rst"
     return
   fi
-  # 0600 from the start, and removed even if this stops partway: a crash must not leave it readable.
-  tmp=$(mktemp_secret)
-  cat >"$tmp"
-  guest_exec "$id" install -d -m 750 "$(dirname "$path")"
-  guest_push "$id" "$tmp" "$path" 600
-  rm -f "$tmp"
+  # 0600 from the start, and removed however this ends. Its own subshell: an EXIT trap set from inside
+  # $(…) runs when that ends, and one set here would replace the caller's.
+  (
+    tmp=$(umask 077 && mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    cat >"$tmp"
+    guest_exec "$id" install -d -m 750 "$(dirname "$path")"
+    guest_push "$id" "$tmp" "$path" 600
+  )
   ok "wrote $path in $(guest_label "$id")"
 }
 
