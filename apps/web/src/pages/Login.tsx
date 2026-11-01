@@ -114,7 +114,8 @@ export function AddToAuthenticator({ uri, secret }: { uri: string; secret: strin
   );
 }
 
-export function Setup({ onDone }: { onDone: () => void }) {
+/** `local`: a password for a brain on this computer, to reach it from other devices. */
+export function Setup({ onDone, local }: { onDone: () => void; local?: boolean }) {
   const [code, setCode] = useState("");
   const [secret, setSecret] = useState<SetupStartResponse | null>(null);
   const [qr, setQr] = useState("");
@@ -130,6 +131,17 @@ export function Setup({ onDone }: { onDone: () => void }) {
       QRCode.toString(secret.uri, { type: "svg", margin: 0 }).then(setQr),
     );
   }, [secret]);
+
+  // The app on this computer may read the setup code, so there's none to type.
+  useEffect(() => {
+    if (!local) return;
+    api<{ code: string }>("/auth/setup/code")
+      .then(async ({ code }) => {
+        setCode(code);
+        setSecret(await api<SetupStartResponse>("/auth/setup/start", { body: { code } }));
+      })
+      .catch((err) => setError(errorText(err)));
+  }, [local]);
 
   const start = async (e: FormEvent) => {
     e.preventDefault();
@@ -166,7 +178,9 @@ export function Setup({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="login">
-      {!secret ? (
+      {!secret && local ? (
+        <div className="login-card">{error && <div className="form-error">{error}</div>}</div>
+      ) : !secret ? (
         <form className="login-card" onSubmit={start}>
           <div className="brand-mark">
             <Icon name="hat" />
@@ -190,7 +204,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
         </form>
       ) : (
         <form className="login-card" onSubmit={finish}>
-          <h2>Set up Hatbot</h2>
+          <h2>{local ? "Set a password" : "Set up Hatbot"}</h2>
           <div className="muted hint">
             Scan this with your authenticator app, or add it on this device.
           </div>

@@ -47,7 +47,9 @@ export const CreateToken = z.object({ name: z.string().min(1).max(100) });
 export type ApiToken = { id: number; name: string; createdAt: string; lastUsedAt: string | null };
 export type CreateTokenResponse = ApiToken & { token: string };
 
-export type Me = { setupDone: boolean; authenticated: boolean };
+/** `local`: the brain runs on the owner's computer, set up by the Linux app. */
+export type Me = { setupDone: boolean; authenticated: boolean; local?: boolean };
+export type LocalLink = { url: string };
 
 export const ConfirmOwner = z.object({
   password: z.string().min(1).max(1024),

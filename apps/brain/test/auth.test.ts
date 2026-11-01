@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { Session, SignedOutOthers } from "@hatbot/shared";
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { LocalLink, Session, SignedOutOthers } from "@hatbot/shared";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { resetLogin } from "../src/reset-login";
 import { ORIGIN, setUpOwner, signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -439,5 +441,70 @@ describe("your account", () => {
     expect((await end()).status).toBe(200);
     expect(await works({ cookie: againCookie })).toBe(false);
     expect((await end()).status).toBe(404);
+  });
+});
+
+describe("a brain on the owner's computer", () => {
+  const linkPath = (url: string) => url.slice(`${ORIGIN}/api/v1`.length);
+
+  test("the app's token is in a file only the owner reads, and opens the web app signed in once", async () => {
+    const t = await testApp();
+    t.config.local = true;
+    const file = join(t.config.dataDir, "app-token");
+    t.auth.localToken(file);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const token = readFileSync(file, "utf8").trim();
+    t.auth.localToken(file);
+    expect(readFileSync(file, "utf8").trim()).toBe(token);
+    const bearer = { authorization: `Bearer ${token}` };
+    expect(await (await t.call("GET", "/auth/me", undefined, bearer)).json()).toEqual({
+      setupDone: false,
+      authenticated: true,
+      local: true,
+    });
+
+    const link = async () =>
+      linkPath(((await (await t.call("POST", "/auth/link", {}, bearer)).json()) as LocalLink).url);
+    const path = await link();
+    const opened = await t.call("GET", path);
+    expect(opened.status).toBe(302);
+    expect(opened.headers.get("location")).toBe("/");
+    const cookie = cookieOf(opened, "hatbot_session") ?? "";
+    expect((await t.call("GET", "/tokens", undefined, { cookie })).status).toBe(200);
+    expect((await t.call("GET", path)).status).toBe(403);
+    // Only the app makes links, not a browser it signed in.
+    expect((await t.call("POST", "/auth/link", {}, { cookie })).status).toBe(403);
+
+    const late = await link();
+    t.advance(61_000);
+    expect((await t.call("GET", late)).status).toBe(403);
+
+    // A token revoked in Settings is replaced when the brain starts again.
+    t.auth.deleteToken(t.auth.listTokens()[0]?.id ?? 0);
+    t.auth.localToken(file);
+    expect(readFileSync(file, "utf8").trim()).not.toBe(token);
+  });
+
+  test("gives the app its setup code until a password is set", async () => {
+    const t = await testApp();
+    t.config.local = true;
+    const bearer = { authorization: `Bearer ${t.auth.createToken("This computer").token}` };
+    const code = () => t.call("GET", "/auth/setup/code", undefined, bearer);
+    expect(await (await code()).json()).toEqual({ code: t.auth.setupCode });
+    await setUpOwner(t);
+    expect((await code()).status).toBe(403);
+  });
+
+  test("a brain on a server makes no links and keeps its setup code to its log", async () => {
+    const t = await testApp();
+    const bearer = { authorization: `Bearer ${t.auth.createToken("cli").token}` };
+    expect((await t.call("POST", "/auth/link", {}, bearer)).status).toBe(403);
+    expect((await t.call("GET", "/auth/setup/code", undefined, bearer)).status).toBe(403);
+    t.config.local = true;
+    const path = linkPath(
+      ((await (await t.call("POST", "/auth/link", {}, bearer)).json()) as LocalLink).url,
+    );
+    t.config.local = false;
+    expect((await t.call("GET", path)).status).toBe(403);
   });
 });

@@ -18,6 +18,8 @@ export type Config = {
   updateRequest: string;
   /** Which commit this copy of the brain is, written by brain-deploy.sh. */
   releaseFile: string;
+  /** Run by the Linux app on the owner's own computer: its token is in a file, no password needed. */
+  local: boolean;
 };
 
 export const urlHost = (host: string) => (host.includes(":") ? `[${host}]` : host);
@@ -66,5 +68,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     updateDir: env.HATBOT_UPDATE_DIR ?? "/var/lib/hatbot-update",
     updateRequest: env.HATBOT_UPDATE_REQUEST ?? join(dataDir, "update-request"),
     releaseFile: env.HATBOT_RELEASE_FILE ?? join(import.meta.dir, "../../../release.json"),
+    local: env.HATBOT_LOCAL === "1",
   };
 }

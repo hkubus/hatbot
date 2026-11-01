@@ -6,15 +6,22 @@ import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Secrets } from "./secrets";
 import { createServices } from "./services";
+import { getSetting, setSetting } from "./settings";
 import { webHandler } from "./web";
 
 const config = loadConfig();
 const secrets = new Secrets(join(config.dataDir, "secrets.json"));
 const ntfy = new NtfyNotifier(secrets.ntfy());
 secrets.onChange(() => ntfy.configure(secrets.ntfy()));
+const db = openDb(config.dbPath);
+// On the owner's own computer there's no desktop or boxes guest to connect to.
+if (config.local)
+  for (const id of ["desktop", "boxes"])
+    if (getSetting(db, `plugin:${id}`) === null)
+      setSetting(db, `plugin:${id}`, JSON.stringify({ enabled: false }));
 const brain = await createServices({
   config,
-  db: openDb(config.dbPath),
+  db,
   notifications: ntfy,
   ntfy,
   plugins: PLUGINS,
@@ -31,6 +38,7 @@ const brain = await createServices({
 });
 const { app, auth, approvals, chats, negotiations, plugins, tasks } = brain;
 const { proposals, storage, ping } = brain;
+if (config.local) auth.localToken(join(config.dataDir, "app-token"));
 await brain.skills.refresh();
 // In the background: an MCP server that is slow to answer mustn't hold up the health check.
 const pluginsStarted = plugins
@@ -91,6 +99,6 @@ const server = Bun.serve({
   websocket: { ...websocket, perMessageDeflate: { compress: "32KB", decompress: true } },
 });
 console.log(`hatbot brain listening on http://${urlHost(config.host)}:${server.port}`);
-if (!auth.isSetUp()) {
+if (!auth.isSetUp() && !config.local) {
   console.log(`First run: open ${config.publicUrl}/setup and enter setup code ${auth.setupCode}`);
 }

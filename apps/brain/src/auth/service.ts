@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import type { ApiToken, Session } from "@hatbot/shared";
 import type { Db } from "../db";
 import { sameText, secretKey } from "./keys";
@@ -13,6 +14,7 @@ export type Principal = { kind: "session"; id: number } | { kind: "token"; id: n
 
 const keyOf = (p: Principal) => `${p.kind} ${p.id}`;
 const TOTP_CHANGE_MS = 10 * 60_000;
+const LINK_MS = 60_000;
 
 type OwnerRow = { password_hash: string; totp_secret: string; totp_last_step: number };
 
@@ -31,6 +33,7 @@ export class AuthService {
   untrustedProxy: { ip: string; at: number } | null = null;
   private sockets = new Map<string, Set<() => void>>();
   private totpChange: { secret: string; for: string; until: number; tries: number } | null = null;
+  private links = new Map<string, number>();
 
   constructor(
     private db: Db,
@@ -126,6 +129,31 @@ export class AuthService {
       .run(change.secret, step);
     this.totpChange = null;
     return true;
+  }
+
+  /** The Linux app's token on a local brain, in a file only the owner's user can read. */
+  localToken(file: string) {
+    try {
+      if (this.resolveToken(readFileSync(file, "utf8").trim())) return;
+    } catch {}
+    const { token } = this.createToken("This computer");
+    writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    chmodSync(file, 0o600);
+  }
+
+  /** A one-time sign-in for the web app, which the Linux app opens on a local brain. */
+  newLink(): string {
+    const now = this.clock();
+    for (const [code, until] of this.links) if (until <= now) this.links.delete(code);
+    const code = randomBytes(24).toString("base64url");
+    this.links.set(code, now + LINK_MS);
+    return code;
+  }
+
+  useLink(code: string): boolean {
+    const until = this.links.get(code);
+    this.links.delete(code);
+    return until !== undefined && until > this.clock();
   }
 
   listSessions(current?: Principal): Session[] {

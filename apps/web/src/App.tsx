@@ -179,7 +179,20 @@ export function App() {
       </div>
     );
   if (!me) return null;
-  if (!me.setupDone) return <Setup onDone={refresh} />;
+  if (me.local && !me.setupDone) {
+    if (!me.authenticated)
+      return <div className="unreachable">Open Hatbot from the app on this computer.</div>;
+    if (location.pathname === "/setup")
+      return (
+        <Setup
+          local
+          onDone={() => {
+            navigate("/", true);
+            refresh();
+          }}
+        />
+      );
+  } else if (!me.setupDone) return <Setup onDone={refresh} />;
   if (!me.authenticated) return <Login onDone={refresh} />;
   return <Shell onSignOut={refresh} />;
 }

@@ -24,6 +24,7 @@ extension KeyedDecodingContainer {
 struct Me: Decodable, Sendable {
   let setupDone: Bool
   let authenticated: Bool
+  let local: Bool?
 }
 
 struct LoginResponse: Decodable, Sendable {

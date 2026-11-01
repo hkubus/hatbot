@@ -5,6 +5,7 @@ import {
   ConfirmOwner,
   CreateToken,
   FinishTotpChange,
+  type LocalLink,
   Login,
   type Me,
   SetupFinish,
@@ -68,7 +69,30 @@ function attempt(c: Context<AppEnv>): { ok(): void; failed(): void } | null {
 
 export const authRoutes = new Hono<AppEnv>()
   .get("/auth/me", (c) =>
-    c.json<Me>({ setupDone: c.var.auth.isSetUp(), authenticated: principalOf(c) !== null }),
+    c.json<Me>({
+      setupDone: c.var.auth.isSetUp(),
+      authenticated: principalOf(c) !== null,
+      ...(c.var.config.local ? { local: true } : {}),
+    }),
+  )
+
+  // A local brain: the Linux app opens the web app signed in, and can set a password up from there.
+  .post("/auth/link", requireAuth, (c) => {
+    if (!c.var.config.local || c.var.principal.kind !== "token")
+      return c.json({ error: "Only the app on this computer can do that." }, 403);
+    const url = `${c.var.config.publicUrl}${API_PREFIX}/auth/link/${c.var.auth.newLink()}`;
+    return c.json<LocalLink>({ url });
+  })
+  .get("/auth/link/:code", (c) => {
+    if (!c.var.config.local || !c.var.auth.useLink(c.req.param("code")))
+      return c.text("That link has expired. Open Hatbot from the app again.", 403);
+    setSessionCookie(c, c.var.auth.createSession(c.req.header("user-agent") ?? null));
+    return c.redirect(c.req.query("to") === "setup" ? "/setup" : "/");
+  })
+  .get("/auth/setup/code", requireAuth, (c) =>
+    c.var.config.local && !c.var.auth.isSetUp()
+      ? c.json({ code: c.var.auth.setupCode })
+      : c.json({ error: "Hatbot already has a password." }, 403),
   )
 
   // First run: the setup code from the log unlocks a TOTP secret, then password + first code finish it.
