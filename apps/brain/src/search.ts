@@ -1,5 +1,5 @@
 import { MATCH_END, MATCH_START, type MessageHit, type SearchResults } from "@hatbot/shared";
-import { listedQuery } from "./agent/chats";
+import { LISTED_CHAT } from "./agent/chats";
 import type { Db } from "./db";
 import type { MemoryStore } from "./memory/store";
 import type { Tasks } from "./tasks/service";
@@ -69,8 +69,8 @@ function hitMessages(db: Db, fts: string): MessageHit[] {
     db.query(
       `INSERT INTO temp.search_found (id) SELECT f.rowid FROM messages_fts f
        JOIN messages m ON m.id = f.rowid
-       JOIN conversations c ON c.id = m.conversation_id AND c.deleted_at IS NULL
-       WHERE messages_fts MATCH ? AND ${listedQuery("m.conversation_id")}
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE messages_fts MATCH ? AND ${LISTED_CHAT}
        ORDER BY f.rowid DESC LIMIT ?`,
     ).run(fts, LIMIT);
     return db

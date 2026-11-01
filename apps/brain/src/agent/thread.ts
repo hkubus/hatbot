@@ -2197,7 +2197,8 @@ export class Thread {
     let container: string | undefined;
     // Incognito can't change anything, so there's nothing to screen for.
     const screener = incognito ? null : this.screenerFor(episode.id);
-    const screen = (source: string, text: Readable) => screener?.add(source, text);
+    const screen = (source: string, text: Readable, opts?: { after?: boolean }) =>
+      screener?.add(source, text, opts);
     /** A change waits for what the reply read so far to be screened, then for you. */
     const checked = async <T>(run: () => Promise<T>): Promise<T> => {
       await screener?.settled();
@@ -2414,9 +2415,9 @@ export class Thread {
               messageId: out.id,
               episodeId: episode.id,
               tainted: () => this.trust(episode.id).tainted,
-              taint: (by: string, text?: string) => {
+              taint: (by: string, text?: string, opts?: { after?: boolean }) => {
                 this.taint(episode.id, by);
-                if (text !== undefined) screen(by, text);
+                if (text !== undefined) screen(by, text, opts);
               },
               suspected: async () => {
                 await screener?.settled();
