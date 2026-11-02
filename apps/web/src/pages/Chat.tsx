@@ -44,6 +44,7 @@ import {
   botName,
   chatName,
   chatPath,
+  continueReply,
   currentChat,
   deleteEpisode,
   ensureBox,
@@ -102,20 +103,29 @@ export function dayLabel(iso: string, now: Date): string {
   return label;
 }
 
+/** /stop leaves it saying where it stopped; only a reply that got somewhere can go on. */
+const stoppedPartway = (m: ThreadMessage) =>
+  m.text.trimEnd().endsWith("_Stopped._") && m.text.trim() !== "_Stopped._";
+
 function Meta({
   m,
   copy,
   open,
   retry,
+  goOn,
 }: {
   m: ThreadMessage;
   copy?: string;
   open?: { to: string; label: string };
   retry?: () => Promise<unknown>;
+  /** The reply was stopped partway, and can carry on from there. */
+  goOn?: () => Promise<unknown>;
 }) {
   const [copied, doCopy] = useCopy();
   const [retrying, setRetrying] = useState(false);
   const [retryFailed, setRetryFailed] = useState(false);
+  const [goingOn, setGoingOn] = useState(false);
+  const [goOnFailed, setGoOnFailed] = useState(false);
   return (
     <div className="meta">
       <span className="time">{time(m.createdAt)}</span>
@@ -151,6 +161,27 @@ function Meta({
             }}
           >
             <Icon name="retry" />
+          </button>
+        )}
+        {goOn && (
+          <button
+            type="button"
+            className="msg-act"
+            title={goOnFailed ? "Couldn't carry on" : "Continue"}
+            disabled={goingOn}
+            onClick={() => {
+              setGoingOn(true);
+              setGoOnFailed(false);
+              goOn().then(
+                () => setGoingOn(false),
+                () => {
+                  setGoingOn(false);
+                  setGoOnFailed(true);
+                },
+              );
+            }}
+          >
+            <Icon name="play" />
           </button>
         )}
         {open && (
@@ -330,11 +361,13 @@ function ReplyMessage({
   progress,
   retryable,
   answerable,
+  goOn,
 }: {
   m: ThreadMessage;
   progress?: string;
   retryable: boolean;
   answerable: boolean;
+  goOn: boolean;
 }) {
   const task = useStore((s) => (m.taskId ? s.tasks[m.taskId] : undefined));
   const used = useStore((s) => s.usage[m.id]);
@@ -391,6 +424,7 @@ function ReplyMessage({
                   (m.taskId ? { to: `/tasks/${m.taskId}`, label: "Open task" } : undefined))
           }
           retry={retryable && m.status === "error" ? () => retryReply(m) : undefined}
+          goOn={goOn ? () => continueReply(m) : undefined}
         />
       )}
     </>
@@ -613,6 +647,7 @@ type RowProps = {
   unread: boolean;
   retryable: boolean;
   answerable: boolean;
+  goOn: boolean;
 };
 
 const Row = memo(function Row({
@@ -646,12 +681,15 @@ export const Message = memo(function Message({
   unread,
   retryable = false,
   answerable = false,
+  goOn = false,
 }: {
   m: ThreadMessage;
   progress?: string;
   animate: boolean;
   retryable?: boolean;
   answerable?: boolean;
+  /** It was stopped partway, and goes on from there. */
+  goOn?: boolean;
   unread: boolean;
 }) {
   // Touch screens have no hover: a tap shows the message's actions.
@@ -682,7 +720,13 @@ export const Message = memo(function Message({
     inner = <HandoffMessage m={m} />;
   } else {
     inner = (
-      <ReplyMessage m={m} progress={progress} retryable={retryable} answerable={answerable} />
+      <ReplyMessage
+        m={m}
+        progress={progress}
+        retryable={retryable}
+        answerable={answerable}
+        goOn={goOn}
+      />
     );
   }
 
@@ -981,6 +1025,7 @@ export function Chat({ id }: { id: number }) {
     (m) => m.role === "assistant" && m.kind !== "command" && m.kind !== "box",
   );
   const retryableId = lastReply?.status === "error" ? lastReply.id : 0;
+  const goOnId = lastReply && stoppedPartway(lastReply) ? lastReply.id : 0;
   // A question's choices stay tappable until anything comes after it.
   const answerableId = messages.at(-1)?.choices?.length ? (messages.at(-1)?.id ?? 0) : 0;
   // A screen reader hears each new reply once it's finished, not every streamed word.
@@ -1010,9 +1055,10 @@ export function Chat({ id }: { id: number }) {
         unread: unread.includes(m.id),
         retryable: m.id === retryableId,
         answerable: m.id === answerableId,
+        goOn: m.id === goOnId,
       };
     });
-  }, [messages, today, members, bots, progress, unread, retryableId, answerableId]);
+  }, [messages, today, members, bots, progress, unread, retryableId, answerableId, goOnId]);
   const rowOf = useMemo(() => new Map(rows.map((r, i) => [r.m, i])), [rows]);
   // The day last shown, over the rows on screen: a closed fold's rows don't move it on.
   let shownDay = "";

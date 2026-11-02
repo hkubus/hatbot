@@ -5,7 +5,7 @@ import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thre
 import { EventBus } from "../src/events";
 import { runTool } from "../src/tools";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, testApp, toolNames } from "./helpers";
+import { bot, lastUserText, signIn, testApp, toolNames, waitFor } from "./helpers";
 
 test("a message gets a streamed reply, stored, and /thread/ask answers with one", async () => {
   const t = await testApp(
@@ -711,6 +711,67 @@ test("/stop stops a reply while it's written or waiting for the summary, and aft
   });
   // Lines like these are yours already: never unread.
   expect(t.thread.unread()).not.toContain(t.thread.list().at(-1)?.id as number);
+});
+
+/** The last user turn's text blocks, which is where a note to the model goes. */
+const lastText = (req: { messages: { role: string; content: unknown }[] } | undefined) =>
+  (req?.messages.at(-1)?.content as { type: string; text: string }[] | undefined)
+    ?.filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+
+test("/continue goes on from where a stopped reply got to, and says why when it can't", async () => {
+  const model = new FakeModel([{ content: [text("It's a widget")] }, { content: [text("two")] }]);
+  const t = await testApp(model);
+  const note = () => t.thread.list().at(-1)?.text;
+
+  // Nothing stopped yet: there's nothing to go on with.
+  await t.thread.post("/continue").done;
+  expect(note()).toBe("Nothing to go on with.");
+
+  // A reply, then a stop that caught it mid-way: the reply keeps where it got to and says so.
+  await t.thread.post("What is it?").done;
+  t.db
+    .query("UPDATE messages SET text = ? WHERE role = 'assistant' AND kind = 'text'")
+    .run("It's a widget\n\n---\n\n_Stopped._");
+
+  // It goes on in the same reply, from what it wrote, with the word to go on after it.
+  await t.thread.post("/continue").done;
+  expect(model.requests).toHaveLength(2);
+  const turns = model.requests[1]?.messages as { role: string; content: unknown }[];
+  expect(turns.at(-2)).toMatchObject({
+    role: "assistant",
+    content: [{ type: "text", text: expect.stringContaining("It's a widget") }],
+  });
+  expect(lastText(model.requests[1])).toContain("carry on from where you stopped");
+  const replies = t.thread.list().filter((m) => m.role === "assistant" && m.kind === "text");
+  expect(replies).toHaveLength(1);
+  expect(replies[0]).toMatchObject({ text: "two", status: "done" });
+
+  // A complete reply isn't carried on, and neither is a failed one, which has Try Again.
+  await t.thread.post("/continue").done;
+  expect(note()).toBe("The last reply was complete, or said nothing before it stopped.");
+  t.settings.update({ limits: { taskUsd: 1, dailyUsd: 0.000001 } });
+  await t.thread.post("too costly").done;
+  await t.thread.post("/continue").done;
+  expect(note()).toBe("That reply failed, so it starts again: press Try Again on it.");
+});
+
+test("/continue while a reply is still being written says to stop it first", async () => {
+  const model = new HangingModel([{ content: [text("one")] }]);
+  const t = await testApp(model);
+  const writing = t.thread.post("first");
+  await model.started.promise;
+  const res = await t.call("POST", "/thread/messages", { text: "/continue" }, signIn(t));
+  expect(res.status).toBe(202);
+  // Over the API, each call its own thread: the reply being written is known from the database.
+  const told = await waitFor(() =>
+    t.thread.list().find((m) => m.kind === "command" && m.role === "assistant" && m.text),
+  );
+  expect(told.text).toBe("The reply is still being written. Stop it, then /continue.");
+  await t.thread.post("/stop").done;
+  await writing.done;
+  expect(model.requests).toHaveLength(1);
 });
 
 test("tool calls a stop cut off get a result, so the next message still goes through", async () => {

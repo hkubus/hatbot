@@ -128,6 +128,8 @@ const MAX_CHAT_COMMANDS = 2;
 /** Why a reply was cut off: /stop, rather than Pause all. */
 const STOPPED = "stopped";
 const DELETED = "deleted";
+/** The line a stopped reply ends with: what it wrote, then this. */
+const STOP_LINE = "_Stopped._";
 export const MESSAGE_COLUMNS =
   "id, role, conversation_id AS conversationId, bot_id AS botId, kind, text, status, created_at AS createdAt, task_id AS taskId, schedule_id AS scheduleId, negotiation_id AS negotiationId, box_id AS boxId, episode_id AS episodeId, edited_at AS editedAt, seen_at AS seenAt, incognito, sources, choices, link_conversation_id AS linkConversation, link_message_id AS linkMessage";
 export type MessageRow = Omit<ThreadMessage, "incognito" | "sources" | "choices" | "link"> & {
@@ -450,6 +452,9 @@ export class Thread {
       this.stop(command.arg, message);
       return { message, done: Promise.resolve() };
     }
+    // Answered without waiting behind the reply it asks about, which may not end until it's stopped.
+    if (command?.name === "continue" && this.current)
+      return { message, done: this.command(command, message, this.bot()) };
     const group = this.group() !== null;
     const first = group ? this.responders(text) : [this.bot()];
     const done = this.enqueue(async () => {
@@ -819,6 +824,8 @@ export class Thread {
     const incognito = !!message.incognito;
     // A new incognito conversation: the one before it is gone, /new included.
     if (incognito && c.name === "new") return this.deleteIncognito();
+    // Answered before it could wait to open a conversation, for the reply it asks about.
+    const midReply = !!this.current;
     const episode = await this.episodeFor(
       this.prefixFor(bot, incognito),
       c.name === "new",
@@ -826,6 +833,33 @@ export class Thread {
     );
     if (!this.file(message, episode.id)) return;
     const note = (text: string) => this.commandNote(text, episode.id, incognito);
+    // Filed with no conversation: the one being written mustn't be touched.
+    if (c.name === "continue" && midReply)
+      return void this.add({
+        kind: "command",
+        text: "The reply is still being written. Stop it, then /continue.",
+        seen: true,
+      });
+    if (c.name === "continue") {
+      const last = this.list(message.id, 50)
+        .filter((m) => m.kind === "text" && m.role === "assistant" && m.episodeId === episode.id)
+        .at(-1);
+      const again = last && this.continuable(last.id);
+      if (!again)
+        return void note(
+          !last
+            ? "Nothing to go on with."
+            : last.status === "error"
+              ? "That reply failed, so it starts again: press Try Again on it."
+              : "The last reply was complete, or said nothing before it stopped.",
+        );
+      return void (await this.reply(
+        null,
+        this.d.bots.get(again.botId ?? HATBOT_ID) ?? bot,
+        null,
+        again,
+      ));
+    }
     if (incognito)
       return void note(`/${c.name} doesn't work in incognito; it would outlast the conversation.`);
     if (c.name === "task") {
@@ -1730,13 +1764,29 @@ export class Thread {
    * and its episode is the one still going, so its turns are where the next request picks up.
    */
   private retryable(messageId: number): ThreadMessage | null {
+    const row = this.settled(messageId);
+    return row?.status === "error" ? row : null;
+  }
+
+  /**
+   * A reply /stop cut off, or one a restart did, that can go on: the same, once it has said
+   * something to go on from.
+   */
+  private continuable(messageId: number): ThreadMessage | null {
+    const row = this.settled(messageId, true);
+    if (row?.status !== "done" || !row.text.trimEnd().endsWith(STOP_LINE)) return null;
+    return row.text.trim() === STOP_LINE ? null : row;
+  }
+
+  /** `anyLater`: a text said after it doesn't stop it, so the /continue asking doesn't count. */
+  private settled(messageId: number, anyLater = false): ThreadMessage | null {
     const { db } = this.d;
     const row = db
       .query<MessageRow, [number, number]>(
         `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE id = ? AND conversation_id = ?`,
       )
       .get(messageId, this.conversationId);
-    if (row?.role !== "assistant" || row.kind !== "text" || row.status !== "error") return null;
+    if (row?.role !== "assistant" || row.kind !== "text") return null;
     if (row.episodeId === null || !this.d.bots.active(row.botId ?? HATBOT_ID)) return null;
     const later = db
       .query<unknown, [number, number, number]>(
@@ -1745,7 +1795,7 @@ export class Thread {
       )
       .get(this.conversationId, row.incognito, messageId);
     const episode = this.latest(!!row.incognito);
-    if (later || episode?.id !== row.episodeId || episode.summarized) return null;
+    if ((later && !anyLater) || episode?.id !== row.episodeId || episode.summarized) return null;
     return messageOf(row);
   }
 
@@ -1844,11 +1894,22 @@ export class Thread {
     if (again) {
       // The turns it had are there to run again; after a reply the model ended, it needs a word.
       const { turns } = await this.loadTurns(episode.id, bot.id, new Map());
-      if (turns.at(-1)?.role === "assistant")
+      const carryingOn = again.text.trimEnd().endsWith(STOP_LINE);
+      // Carrying on, its own cut-off text was never a turn of its, so it goes in as where it got to.
+      if (carryingOn) {
+        const got = again.text.trimEnd().slice(0, -STOP_LINE.length).trimEnd();
+        if (got)
+          this.appendTurn(episode.id, bot.id, "assistant", [
+            { type: "text", text: `${got}\n\n_Stopped: this much was written._` },
+          ]);
+      }
+      if (carryingOn || turns.at(-1)?.role === "assistant")
         this.appendTurn(episode.id, bot.id, "user", [
           {
             type: "text",
-            text: "(No message from the owner: they asked you to try that reply again.)",
+            text: carryingOn
+              ? "(No message from the owner: they asked you to carry on from where you stopped.)"
+              : "(No message from the owner: they asked you to try that reply again.)",
           },
         ]);
     } else {
