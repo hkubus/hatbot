@@ -1,7 +1,7 @@
 // Negotiation: the appraisal against a stand-in Scout, the tools in the chat, and the
 // exact-text send gate against a stand-in desktop.
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpPlugin } from "@hatbot/plugin-mcp";
@@ -11,7 +11,7 @@ import type { AgentElement } from "@hatbot/shared/desktop";
 import { askedIfBot } from "../src/negotiate/bot-question";
 import { mandateSummary, NOTE_PROMPT } from "../src/negotiate/mandate";
 import { scamSignals } from "../src/negotiate/scam";
-import { replyPause, SAY_HUMAN } from "../src/negotiate/service";
+import { FOLLOW_UP_MS, replyPause, SAY_HUMAN } from "../src/negotiate/service";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
 import { computer, FakeModel, text, toolUse } from "./fake-model";
@@ -47,7 +47,11 @@ const noted = (m: Partial<Record<string, unknown>>) =>
   });
 
 /** The MCP plugin with the stand-in Scout, its read tools set to Chat. */
-async function withScout(t: TestApp, modes: Record<string, string> = {}) {
+async function withScout(
+  t: TestApp,
+  modes: Record<string, string> = {},
+  env: Record<string, string> = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "hatbot-scout-"));
   tempDirs.push(dir);
   const log = join(dir, "calls.jsonl");
@@ -56,7 +60,7 @@ async function withScout(t: TestApp, modes: Record<string, string> = {}) {
     transport: "stdio",
     command: process.execPath,
     args: [join(import.meta.dir, "fixtures/scout-server.ts")],
-    env: { SCOUT_LOG: log },
+    env: { SCOUT_LOG: log, ...env },
     tools: {
       scout_listing_detail: "chat",
       scout_watch_analytics: "chat",
@@ -1042,7 +1046,10 @@ test("a seller's message that looks like a scam holds the negotiation until you 
   await runPluginTool(close, lost, call());
   expect(t.negotiations.get(n.id)?.status).toBe("open");
 
+  // Letting it carry on wakes the bot to answer.
+  t.taskModel.script.push(later);
   t.approvals.decide(hold.id, "approve", "web");
+  await t.tasks.idle();
   expect(verdictFor(send, input, call(), true).action).toBe("allow");
   // Another one, denied: the negotiation ends.
   await read("Albo napisz na Telegram, tam szybciej.");
@@ -1093,7 +1100,10 @@ test("a seller who doesn't move in three rounds holds the negotiation; only roun
   const lost = close.schema.parse({ negotiation: n.id, outcome: "lost" });
   expect(verdictFor(close, lost, call(), true).action).not.toBe("block");
 
+  // Letting it carry on wakes the bot to answer.
+  t.taskModel.script.push(later);
   t.approvals.decide(hold.id, "approve", "web");
+  await t.tasks.idle();
   expect(t.negotiations.held(t.negotiations.get(n.id) as Negotiation)).toBeNull();
   // The seller moves, then holds at the new price: three rounds at it from then on hold it again.
   await round(1200, "Dobra, 1450 zł.");
@@ -1127,7 +1137,10 @@ test("a seller asking whether it's a bot holds the negotiation for you to answer
   // Asked again meanwhile, it's the same question.
   await readSeller(t, n, "Halo, jesteś AI?");
   expect(pending()).toEqual([hold]);
+  // Letting it carry on wakes the bot to answer.
+  t.taskModel.script.push(later);
   t.approvals.decide(hold.id, "approve", "web");
+  await t.tasks.idle();
   expect(verdictFor(send, input, call(), true).action).toBe("allow");
 
   await readSeller(t, n, "To bot?");
@@ -1143,7 +1156,10 @@ test("Say I'm human lets the bot tell the seller it's a person, and asking again
   await readSeller(t, n, "Czy rozmawiam z botem?");
   const hold = await waitFor(() => t.approvals.list(true)[0]);
   expect(hold.answers).toEqual([SAY_HUMAN]);
+  // Letting it carry on wakes the bot to answer.
+  t.taskModel.script.push(later);
   t.approvals.decide(hold.id, "approve", "web", SAY_HUMAN);
+  await t.tasks.idle();
   const got = await runPluginTool(
     named(negotiateTools(t), "negotiate_get"),
     { negotiation: n.id },
@@ -1325,4 +1341,198 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Wyślę po przedpłacie.",
   ])
     expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
+});
+
+/** Our message to the seller, as gone. */
+function sent(t: TestApp, n: Negotiation, text = TEXT, offer = 1060) {
+  const id = t.negotiations.claimSend(n, { text, offer, agree: false, stated: null });
+  t.db.query("UPDATE negotiation_messages SET status = 'sent' WHERE id = ?").run(id);
+}
+
+const answerTasks = (t: TestApp) =>
+  t.tasks.list().filter((x) => /^(Answer|Nudge|Give up on) the seller/.test(x.title));
+
+test("a seller's reply in Scout's inbox gets an answer, with nobody in the chat", async () => {
+  const seller = "Za 1060 nie, mogę zejść do 1350 zł.";
+  const reply = "Mogę dać 1150 zł, pasuje?";
+  const work = new FakeModel([
+    // The task the reply wakes.
+    { content: [toolUse("negotiate_get", { negotiation: 1 })] },
+    { content: [toolUse("negotiate_send", { negotiation: 1, text: reply, offer: 1150 })] },
+    // Its desktop task, which finds the seller's message recorded already.
+    {
+      content: [
+        toolUse("record_conversation", {
+          messages: [
+            { from: "us", text: TEXT },
+            { from: "seller", text: seller },
+          ],
+        }),
+      ],
+    },
+    { content: [computer("type", { text: reply })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "Offered 1150 zł.", notify: false }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const dir = mkdtempSync(join(tmpdir(), "hatbot-inbox-"));
+  tempDirs.push(dir);
+  const file = join(dir, "inbox.json");
+  const { calls } = await withScout(
+    t,
+    { scout_inbox: "chat", scout_conversation: "chat" },
+    { SCOUT_INBOX: file },
+  );
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  sent(t, n);
+  const conversation = (messages: unknown[]) =>
+    writeFileSync(
+      file,
+      JSON.stringify({
+        conversations: [
+          { id: "OLX:7", listingKey: "OLX:2002", role: "buy", updatedAt: "2026-10-09T11:00:00Z" },
+          {
+            id: "OLX:555",
+            listingKey: "OLX:1001",
+            role: "buy",
+            updatedAt: `2026-10-09T12:0${messages.length}:00Z`,
+          },
+        ],
+        messages: { "OLX:555": messages },
+      }),
+    );
+  conversation([{ id: "a", direction: "out", type: "text", text: TEXT }]);
+  await t.sellerInbox.tick();
+  expect(answerTasks(t)).toEqual([]);
+
+  conversation([
+    { id: "a", direction: "out", type: "text", text: TEXT },
+    { id: "b", direction: "in", type: "text", text: seller },
+  ]);
+  await t.sellerInbox.tick();
+  await waitFor(() => t.negotiations.messages(n.id).length === 3);
+  await t.tasks.idle();
+
+  expect(t.negotiations.messages(n.id).map((m) => [m.direction, m.text, m.status])).toEqual([
+    ["out", TEXT, "sent"],
+    ["in", seller, "received"],
+    ["out", reply, "sent"],
+  ]);
+  expect(answerTasks(t)).toMatchObject([{ status: "done", conversationId: n.conversationId }]);
+  expect(t.approvals.list(false)).toEqual([]);
+  // Unchanged, the conversation isn't read again, and nothing wakes the bot twice.
+  await t.sellerInbox.tick();
+  t.negotiations.due();
+  expect(calls().filter((c) => c === "scout_conversation")).toHaveLength(2);
+  expect(answerTasks(t)).toHaveLength(1);
+  await t.plugins.stopAll();
+});
+
+test("Scout's inbox and the desktop record a message once, and the owner's words and the seller's answer to an offer are told apart", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  sent(t, n);
+  await readSeller(t, n, "Cena 1500 zł, jak w ogłoszeniu.");
+  // Read on the desktop by whoever asked: no task is woken for it.
+  t.negotiations.due();
+  expect(answerTasks(t)).toEqual([]);
+  const inbox = [
+    { id: "a", direction: "out" as const, type: "text", text: TEXT, offer: null },
+    { id: "d", direction: "out" as const, type: "text", text: "Odbiorę w Krakowie.", offer: null },
+    // Our offer through the site's button, which the seller took after.
+    {
+      id: "b",
+      direction: "out" as const,
+      type: "offer",
+      text: "",
+      offer: { amount: 1060, status: "accepted" },
+    },
+    {
+      id: "c",
+      direction: "in" as const,
+      type: "text",
+      text: "Cena 1500 zł, jak w ogłoszeniu.",
+      offer: null,
+    },
+  ];
+  t.taskModel.script.push(later);
+  expect(t.negotiations.recordInbox(n.id, inbox)).toBe(1);
+  expect(t.negotiations.recordInbox(n.id, inbox)).toBe(0);
+  expect(t.negotiations.messages(n.id).map((m) => [m.direction, m.text])).toEqual([
+    ["out", TEXT],
+    ["in", "Cena 1500 zł, jak w ogłoszeniu."],
+    ["owner", "Odbiorę w Krakowie."],
+    ["in", "(The seller accepted your offer of 1060 zł through the site.)"],
+  ]);
+  await t.tasks.idle();
+  expect(answerTasks(t)).toHaveLength(1);
+});
+
+test("a scam in Scout's inbox holds the negotiation without waking the bot, and letting it carry on wakes it", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  sent(t, n);
+  const scam = "Wyślę przez OLX, ale najpierw podaj kod BLIK.";
+  t.negotiations.recordInbox(n.id, [
+    { id: "s", direction: "in", type: "text", text: scam, offer: null },
+  ]);
+  t.negotiations.due();
+  expect(answerTasks(t)).toEqual([]);
+  const hold = await waitFor(() => t.approvals.list(true)[0]);
+  t.taskModel.script.push(later);
+  t.approvals.decide(hold.id, "approve", "web");
+  await waitFor(() => answerTasks(t).length === 1);
+  expect(answerTasks(t)[0]?.title).toStartWith("Answer the seller");
+  await t.tasks.idle();
+});
+
+test("a seller who leaves our message for a day is nudged once, then given up on", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  messageBox(t);
+  const n = openNegotiation(t);
+  await sendOffer(t, n);
+  await t.tasks.idle();
+  const at = Date.parse(t.negotiations.get(n.id)?.nextFollowUpAt ?? "");
+  expect(at).toBe(Date.parse("2026-10-09T12:00:00Z") + FOLLOW_UP_MS);
+
+  t.advance(FOLLOW_UP_MS - 60_000);
+  t.negotiations.due();
+  expect(answerTasks(t)).toEqual([]);
+  t.advance(60_000);
+  work.script.push(later);
+  t.negotiations.due();
+  await t.tasks.idle();
+  expect(answerTasks(t).map((x) => x.title)).toEqual([`Nudge the seller: ${n.title}`]);
+
+  // The nudge went unanswered too.
+  sent(t, n, "Czy karta jest jeszcze dostępna? Mogę dać 1060 zł.");
+  t.negotiations.update(n.id, { next_follow_up_at: t.negotiations.now() });
+  work.script.push(later);
+  t.negotiations.due();
+  await t.tasks.idle();
+  expect(answerTasks(t)[0]?.title).toBe(`Give up on the seller: ${n.title}`);
+
+  // A seller who answered isn't nudged.
+  work.script.push(later);
+  t.negotiations.recordInbox(n.id, [
+    { id: "r", direction: "in", type: "text", text: "Tak, jest.", offer: null },
+  ]);
+  await t.tasks.idle();
+  const before = answerTasks(t).length;
+  t.negotiations.update(n.id, { next_follow_up_at: t.negotiations.now() });
+  t.negotiations.due();
+  expect(answerTasks(t)).toHaveLength(before);
 });

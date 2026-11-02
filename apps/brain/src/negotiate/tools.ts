@@ -327,7 +327,7 @@ export function negotiateTools(
     tool({
       name: "negotiate_check",
       description:
-        "Read the negotiation's conversation now, in a desktop task that sends nothing, and record what the seller wrote. Then negotiate_get shows it. It still reads after a deal (agreed, paid or received), when what the seller writes goes to the owner, who answers it.",
+        "Read the negotiation's conversation now, in a desktop task that sends nothing, and record what the seller wrote. Then negotiate_get shows it. Where Scout reads the inbox, sellers' replies are read every 10 minutes on their own and start a task that answers them, so don't check just to wait for one. It still reads after a deal (agreed, paid or received), when what the seller writes goes to the owner, who answers it.",
       schema: z.object({ negotiation: Id }),
       access: "write",
       untrusted: true,

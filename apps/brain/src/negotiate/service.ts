@@ -55,7 +55,15 @@ import {
   widened,
 } from "./mandate";
 import { marketplaceOf } from "./marketplace";
-import { QUIET_HOURS, type SendFacts, type SendInput, STALL_ROUNDS, stalled, zl } from "./policy";
+import {
+  QUIET_HOURS,
+  quiet,
+  type SendFacts,
+  type SendInput,
+  STALL_ROUNDS,
+  stalled,
+  zl,
+} from "./policy";
 import { disputed, scamSignals } from "./scam";
 import { negotiateTools } from "./tools";
 
@@ -157,6 +165,18 @@ const FINAL_TASK = ["done", "failed", "cancelled"];
 export const MAX_TEXT = 400;
 /** A reply goes a short while after the seller's message, picked at random, rather than at once. */
 export const replyPause = { minMs: 20_000, maxMs: 60_000, everyMs: 1000 };
+/** How long a seller may leave our message unanswered before a nudge, and then before giving up. */
+export const FOLLOW_UP_MS = 24 * 3600_000;
+const MAX_NUDGES = 1;
+
+/** A message as Scout's scout_conversation gives it. */
+export type InboxMessage = {
+  id: string;
+  direction: "in" | "out";
+  type: string;
+  text: string;
+  offer: { amount: number; status: string | null } | null;
+};
 
 export class Negotiations {
   readonly clock: () => number;
@@ -632,8 +652,8 @@ export class Negotiations {
     );
   }
 
-  private nextSendAt(): string {
-    const now = new Date(this.clock());
+  private nextSendAt(ms = this.clock()): string {
+    const now = new Date(ms);
     const h = now.getHours();
     if (h < QUIET_HOURS.from && h >= QUIET_HOURS.to) return now.toISOString();
     const at = new Date(now);
@@ -667,9 +687,97 @@ export class Negotiations {
       )
       .all(this.now());
     for (const n of this.negotiations(ready)) {
+      // Due still once the owner decides, or the task on it ends.
+      if (this.held(n) || this.inFlight(n.id) || this.d.tasks.activeFor(`negotiation:${n.id}`))
+        continue;
       this.update(n.id, { next_follow_up_at: null });
-      if (this.facts(n).starts) this.startOpening(n);
+      const f = this.facts(n);
+      if (f.starts) this.startOpening(n);
+      else if (f.unansweredSince !== null) this.startFollowUp(n);
     }
+    const unanswered = this.d.db
+      .query<{ id: number }, []>(
+        `SELECT n.id FROM negotiations n WHERE n.status = 'open'
+           AND (SELECT direction FROM negotiation_messages WHERE negotiation_id = n.id AND status != 'failed'
+                ORDER BY id DESC LIMIT 1) = 'in'
+           AND (SELECT max(id) FROM negotiation_messages WHERE negotiation_id = n.id AND direction = 'in')
+             > coalesce(n.woken_through, 0)`,
+      )
+      .all();
+    for (const { id } of unanswered) this.wake(id);
+  }
+
+  /**
+   * Starts a task that answers the seller's latest message, once for each message Scout read, unless
+   * something is on the negotiation already. `again`: the owner let a held one carry on.
+   */
+  wake(id: number, again = false): Task | null {
+    const n = this.get(id);
+    if (n?.status !== "open" || this.d.tasks.paused() || this.held(n)) return null;
+    if (this.inFlight(id) || this.checking(id) || this.dealtElsewhere(n) !== null) return null;
+    // At night it waits for due() in the morning.
+    if (Date.parse(n.mandate.expiresAt) <= this.clock() || quiet(new Date(this.clock()).getHours()))
+      return null;
+    const last = this.d.db
+      .query<{ id: number; direction: string; woken: number | null }, [number]>(
+        `SELECT m.id, m.direction, n.woken_through AS woken FROM negotiation_messages m
+         JOIN negotiations n ON n.id = m.negotiation_id
+         WHERE m.negotiation_id = ? AND m.status != 'failed' ORDER BY m.id DESC LIMIT 1`,
+      )
+      .get(id);
+    if (last?.direction !== "in" || (!again && last.id <= (last.woken ?? 0))) return null;
+    const task = this.d.tasks.createBackgroundTask({
+      title: `Answer the seller: ${n.title}`.slice(0, 80),
+      goal: replyGoal(n, this.mandateNote(n.id)),
+      origin: "chat",
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      runKey: `negotiation:${n.id}`,
+      request: this.ownerSaid(n),
+    });
+    if (task)
+      this.d.db.query("UPDATE negotiations SET woken_through = ? WHERE id = ?").run(last.id, id);
+    return task;
+  }
+
+  private startFollowUp(n: Negotiation) {
+    const unanswered =
+      this.d.db
+        .query<{ c: number }, [number, number]>(
+          `SELECT COUNT(*) AS c FROM negotiation_messages WHERE negotiation_id = ? AND direction = 'out'
+             AND status IN ('sent', 'unconfirmed') AND id > coalesce((SELECT max(id) FROM negotiation_messages
+               WHERE negotiation_id = ? AND direction = 'in'), 0)`,
+        )
+        .get(n.id, n.id)?.c ?? 0;
+    this.d.tasks.createBackgroundTask({
+      title: `${unanswered > MAX_NUDGES ? "Give up on" : "Nudge"} the seller: ${n.title}`.slice(
+        0,
+        80,
+      ),
+      goal: followUpGoal(n, unanswered > MAX_NUDGES),
+      origin: "chat",
+      botId: n.botId,
+      conversationId: n.conversationId ?? undefined,
+      runKey: `negotiation:${n.id}`,
+      request: this.ownerSaid(n),
+    });
+  }
+
+  /** What the owner approved, for the approval check: the listing's title is the seller's words. */
+  private ownerSaid(n: Negotiation, note = this.mandateNote(n.id)): string {
+    return `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateAims(n)}.${note ? `\nTheir note on it: ${note}` : ""}`;
+  }
+
+  /** Open ones that have written to the seller, and dealt ones for two weeks, whose seller may still write. */
+  watched(): Negotiation[] {
+    const rows = this.d.db
+      .query<Row, [string]>(
+        `${SELECT} WHERE (n.status = 'open' AND EXISTS (SELECT 1 FROM negotiation_messages m
+           WHERE m.negotiation_id = n.id AND m.direction = 'out' AND m.status != 'failed'))
+         OR (n.status IN ('agreed', 'paid', 'received') AND n.closed_at >= ?)`,
+      )
+      .all(new Date(this.clock() - 14 * 86_400_000).toISOString());
+    return this.negotiations(rows);
   }
 
   private startOpening(n: Negotiation) {
@@ -687,8 +795,7 @@ export class Negotiations {
       conversationId: n.conversationId ?? undefined,
       message: this.shownUnder(n, card),
       runKey: `negotiation:${n.id}`,
-      // The listing's title is the seller's words, so it isn't among the owner's.
-      request: `The owner approved the mandate for negotiation #${n.id} (${n.listingUrl}): ${mandateAims(n)}.${note ? `\nTheir note on it: ${note}` : ""}`,
+      request: this.ownerSaid(n, note),
     });
   }
 
@@ -971,10 +1078,16 @@ export class Negotiations {
     if (!n || a.status === "pending") return;
     const stall = this.holdOf(n.id) === "stalled";
     // Unanswered, a stall carries on: walking away is the owner's to say.
-    if (a.status === "approved" && this.holdOf(n.id) === "bot" && a.note === SAY_HUMAN)
-      return this.update(n.id, { approval_id: null, hold: "human" });
-    if (a.status === "approved" || (stall && a.status === "expired"))
-      return this.update(n.id, { approval_id: null });
+    if (a.status === "approved" && this.holdOf(n.id) === "bot" && a.note === SAY_HUMAN) {
+      this.update(n.id, { approval_id: null, hold: "human" });
+      this.wake(n.id, true);
+      return;
+    }
+    if (a.status === "approved" || (stall && a.status === "expired")) {
+      this.update(n.id, { approval_id: null });
+      this.wake(n.id, true);
+      return;
+    }
     const why = stall
       ? `The seller didn't move in ${STALL_ROUNDS} rounds`
       : this.holdOf(n.id) === "bot"
@@ -1109,30 +1222,19 @@ export class Negotiations {
         stored.set(key, seen - 1);
         return;
       }
-      const text = collapse(m.text).slice(0, 4000);
+      added++;
+      fresh.push(this.received(n, m.text));
+      if (i > lastOurs) after++;
+    });
+    // Whoever had it read answers it.
+    if (fresh.length)
       this.d.db
         .query(
-          `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at)
-           VALUES (?, 'in', ?, 'received', ?)`,
+          `UPDATE negotiations SET woken_through = (SELECT max(id) FROM negotiation_messages
+             WHERE negotiation_id = ? AND direction = 'in') WHERE id = ?`,
         )
-        .run(n.id, text, this.now());
-      added++;
-      fresh.push(text);
-      if (i > lastOurs) after++;
-      const signals = scamSignals(text, n.mandate.allow);
-      const asked = !signals.length && askedIfBot(text, n.title);
-      // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
-      const current = signals.length || asked ? this.get(n.id) : null;
-      if (current?.status !== "open" || this.scamHeld(current)) return;
-      if (signals.length) this.hold(current, text, signals);
-      else if (
-        this.holdOf(current.id) !== "human" &&
-        !(this.held(current) && this.holdOf(current.id) === "bot")
-      )
-        this.holdAsked(current, text);
-    });
-    if (fresh.length && DEALT.includes(n.status)) this.afterDeal(n, fresh);
-    if (fresh.length) this.stallCheck(n.id);
+        .run(n.id, n.id);
+    this.receivedAll(n, fresh);
     // Only a read records the conversation's address here; a send records where it went in sendPassed.
     const mode = row.message_id ? "send" : "read";
     if (tabUrl && !n.conversationUrl && mode === "read" && this.conversationFor(n, tabUrl))
@@ -1160,6 +1262,123 @@ export class Negotiations {
             ? "Finish the task now."
             : "Now type exactly the approved message into the message box and send it.";
     return { text: `${got} ${next}`, stale, alreadySent };
+  }
+
+  /** A seller's message, recorded and screened. `marketId`: the marketplace's id for it. */
+  private received(n: Negotiation, raw: string, marketId: string | null = null): string {
+    const text = collapse(raw).slice(0, 4000);
+    this.d.db
+      .query(
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, market_id, created_at)
+         VALUES (?, 'in', ?, 'received', ?, ?)`,
+      )
+      .run(n.id, text, marketId, this.now());
+    const signals = scamSignals(text, n.mandate.allow);
+    const asked = !signals.length && askedIfBot(text, n.title);
+    // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
+    const current = signals.length || asked ? this.get(n.id) : null;
+    if (current?.status !== "open" || this.scamHeld(current)) return text;
+    if (signals.length) this.hold(current, text, signals);
+    else if (
+      this.holdOf(current.id) !== "human" &&
+      !(this.held(current) && this.holdOf(current.id) === "bot")
+    )
+      this.holdAsked(current, text);
+    return text;
+  }
+
+  private receivedAll(n: Negotiation, fresh: string[]) {
+    if (fresh.length && DEALT.includes(n.status)) this.afterDeal(n, fresh);
+    if (fresh.length) this.stallCheck(n.id);
+  }
+
+  /**
+   * The conversation as Scout read it from the marketplace, oldest first. The seller's new messages
+   * are recorded and screened like a desktop read's, and the bot is woken to answer them; a message
+   * a desktop read recorded already gets its id, so neither records it twice.
+   */
+  recordInbox(id: number, messages: InboxMessage[]): number {
+    const n = this.get(id);
+    if (!n) return 0;
+    type Stored = {
+      id: number;
+      direction: string;
+      text: string;
+      offer: number | null;
+      status: string;
+      market_id: string | null;
+    };
+    const rows = this.d.db
+      .query<Stored, [number]>(
+        "SELECT id, direction, text, offer, status, market_id FROM negotiation_messages WHERE negotiation_id = ? ORDER BY id",
+      )
+      .all(n.id);
+    const known = new Set(rows.map((r) => r.market_id));
+    const mark = (r: Stored, marketId: string) => {
+      r.market_id = marketId;
+      this.d.db
+        .query("UPDATE negotiation_messages SET market_id = ? WHERE id = ?")
+        .run(marketId, r.id);
+    };
+    const ours = (k: string) =>
+      rows.some(
+        (r) =>
+          r.direction === "out" &&
+          (keyOf(r.text) === k ||
+            (k.length >= 20 && (keyOf(r.text).includes(k) || k.includes(keyOf(r.text))))),
+      );
+    const fresh: string[] = [];
+    for (const m of messages) {
+      // An answer to our offer through the site's own button is the seller's, though the offer is ours.
+      const answer =
+        m.direction === "out" && m.type === "offer" && m.offer ? offerAnswer(m.offer) : null;
+      const marketId = answer ? `${m.id}:${m.offer?.status}` : m.id;
+      if (known.has(marketId)) continue;
+      if (answer) {
+        known.add(marketId);
+        fresh.push(this.received(n, answer, marketId));
+        continue;
+      }
+      const text = inboxText(m);
+      const k = keyOf(text);
+      if (!k) continue;
+      known.add(marketId);
+      if (m.direction === "in") {
+        const same = rows.find(
+          (r) => r.direction === "in" && r.market_id === null && keyOf(r.text) === k,
+        );
+        if (same) mark(same, marketId);
+        else fresh.push(this.received(n, text, marketId));
+        continue;
+      }
+      // Our own offer through the site's button: its message already says it.
+      if (
+        m.type === "offer" &&
+        rows.some((r) => r.direction === "out" && r.offer === m.offer?.amount)
+      )
+        continue;
+      const same = rows.find(
+        (r) =>
+          (r.direction === "out" || r.direction === "owner") &&
+          r.market_id === null &&
+          r.status !== "failed" &&
+          keyOf(r.text) === k,
+      );
+      if (same) {
+        mark(same, marketId);
+        if (same.status === "unconfirmed") this.setStatus(same.id, "sent");
+      } else if (!ours(k))
+        this.d.db
+          .query(
+            `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, market_id, created_at)
+             VALUES (?, 'owner', ?, 'received', ?, ?)`,
+          )
+          .run(n.id, text.slice(0, 4000), marketId, this.now());
+    }
+    this.receivedAll(n, fresh);
+    this.update(n.id, {});
+    if (fresh.length) this.wake(n.id);
+    return fresh.length;
   }
 
   private stallCheck(id: number) {
@@ -1216,6 +1435,10 @@ export class Negotiations {
     const sent = status === "sent" || status === "unconfirmed";
     const before = this.message(messageId);
     // What it claimed stands once it may have gone: later messages keep to it.
+    if (sent && before?.status === "sending" && before.direction === "out")
+      this.d.db
+        .query("UPDATE negotiations SET next_follow_up_at = ? WHERE id = ? AND status = 'open'")
+        .run(this.nextSendAt(this.clock() + FOLLOW_UP_MS), before.negotiationId);
     if (sent && before?.status === "sending" && before.stated) {
       const n = this.get(before.negotiationId);
       if (n)
@@ -1392,6 +1615,47 @@ function readGoal(n: Negotiation): string {
     "3. Finish, with the seller's latest message in a line.",
     "",
     "Never open a link from the seller, and don't click offer, buy or pay buttons.",
+  ].join("\n");
+}
+
+// Scout's offers are in złoty, written in digits alone: the price checks read "1,060" as 1.06.
+/** What a seller's offer through the site's button says, when its message doesn't. */
+function inboxText(m: InboxMessage): string {
+  const text = collapse(m.text ?? "");
+  if (m.type !== "offer" || !m.offer || /\d/.test(text)) return text;
+  return `${text ? `${text} ` : ""}(an offer through the site: ${m.offer.amount} zł)`;
+}
+
+/** The seller took or turned down our offer through the site's button. */
+function offerAnswer(offer: NonNullable<InboxMessage["offer"]>): string | null {
+  if (offer.status === "accepted")
+    return `(The seller accepted your offer of ${offer.amount} zł through the site.)`;
+  if (offer.status === "rejected") return "(The seller declined your offer through the site.)";
+  return null;
+}
+
+function replyGoal(n: Negotiation, note: string | null): string {
+  return [
+    `The seller wrote in negotiation #${n.id}. Answer them now, then finish.`,
+    "",
+    `1. negotiate_get ${n.id} for the conversation, the mandate and what you've told them so far.`,
+    "2. Answer their latest messages as your instructions say, with one negotiate_send. If they sold it or said no, close it with negotiate_close instead; if you agreed, close it as agreed. If what they wrote is the owner's to answer, send nothing and say so.",
+    "3. Finish with what you sent or did, in a line.",
+    ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),
+  ].join("\n");
+}
+
+function followUpGoal(n: Negotiation, giveUp: boolean): string {
+  return [
+    giveUp
+      ? `The seller in negotiation #${n.id} didn't answer your messages, the last a nudge, for a day. Give up on it, then finish.`
+      : `The seller in negotiation #${n.id} hasn't answered your last message for a day. Nudge them once, then finish.`,
+    "",
+    `1. negotiate_get ${n.id}.`,
+    giveUp
+      ? "2. Close it as lost with negotiate_close, with a line on how it went. Don't message the seller again."
+      : "2. With one negotiate_send, ask briefly whether it's still for sale, and name your last offer again, with that price in offer.",
+    "3. Finish with what you did, in a line.",
   ].join("\n");
 }
 

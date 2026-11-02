@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { websocket } from "hono/bun";
 import { loadConfig, urlHost } from "./config";
 import { openDb } from "./db";
+import { INBOX_EVERY_MS } from "./negotiate/inbox";
 import { NtfyNotifier } from "./notify";
 import { PLUGINS } from "./plugins";
 import { Secrets } from "./secrets";
@@ -75,6 +76,7 @@ void Promise.race([pluginsStarted, Bun.sleep(30_000)]).then(() => {
   plugins.startTimers();
   safely("listings", () => brain.listings.tick());
   setInterval(() => safely("listings", () => brain.listings.tick()), 5 * 60_000);
+  setInterval(() => safely("seller inbox", () => brain.sellerInbox.tick()), INBOX_EVERY_MS);
   setInterval(() => {
     safely("ping", () => ping.tick());
     safely("proposals", () => proposals.tick());

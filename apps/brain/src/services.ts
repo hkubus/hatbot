@@ -41,6 +41,7 @@ import { Proposals } from "./memory/proposals";
 import { Skills, skillPath } from "./memory/skills";
 import { MemoryConflict, MemoryStore } from "./memory/store";
 import { modelName } from "./models-known";
+import { SellerInbox } from "./negotiate/inbox";
 import { Logins } from "./negotiate/logins";
 import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier } from "./notify";
@@ -284,6 +285,7 @@ export async function createServices(o: Outside) {
   const proposals = new Proposals({ ...core, tasks });
   const negotiations = new Negotiations({ ...core, tasks });
   tasks.negotiations = negotiations;
+  const sellerInbox = new SellerInbox({ ...core, tasks, negotiations });
   const listings = new Listings({ ...core, tasks });
   tasks.listings = listings;
   tasks.logins = new Logins({ ...core });
@@ -349,6 +351,7 @@ export async function createServices(o: Outside) {
     todoReminders,
     proposals,
     negotiations,
+    sellerInbox,
     listings,
     listingPhotos: new ListingPhotos(o.fetch),
     updates,

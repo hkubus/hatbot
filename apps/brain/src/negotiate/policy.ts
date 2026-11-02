@@ -87,7 +87,7 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
 }
 
 const pad = (h: number) => String(h).padStart(2, "0");
-const quiet = (hour: number) => hour >= QUIET_HOURS.from || hour < QUIET_HOURS.to;
+export const quiet = (hour: number) => hour >= QUIET_HOURS.from || hour < QUIET_HOURS.to;
 const marketplaceOf = (n: Negotiation) => n.listingKey.split(":")[0] ?? "the marketplace";
 const quoted = (xs: string[]) => xs.map((x) => `"${x.slice(0, 40)}"`).join(", ");
 
