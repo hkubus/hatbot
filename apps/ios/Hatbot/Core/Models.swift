@@ -107,6 +107,12 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   /// What came of a command you ran, shown as a quiet line; one that started a task shows like a reply.
   var isNote: Bool { role == .assistant && kind == .command && taskId == nil }
 
+  /// /stop leaves it saying where it stopped; only a reply that got somewhere can go on from there.
+  var stoppedPartway: Bool {
+    let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return said.hasSuffix("_Stopped._") && said != "_Stopped._"
+  }
+
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
     case incognito, conversationId, botId, sources, choices, boxId, negotiationId, link, progress

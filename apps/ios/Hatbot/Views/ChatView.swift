@@ -957,6 +957,9 @@ private struct MessageRow: View, Equatable {
           }
         }
       }
+      if m.role == .assistant, m.stoppedPartway {
+        Button("Continue", systemImage: "arrow.right") { goOn() }
+      }
     }
   }
 
@@ -974,6 +977,16 @@ private struct MessageRow: View, Equatable {
         try await store.retry(m.id)
       } catch let e as APIError where e.status == 409 {
         store.toast = "Only the latest reply can be tried again."
+      } catch {
+        store.toast = message(for: error)
+      }
+    }
+  }
+
+  private func goOn() {
+    Task {
+      do {
+        try await store.send("/continue")
       } catch {
         store.toast = message(for: error)
       }

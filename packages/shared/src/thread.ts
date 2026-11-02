@@ -42,6 +42,7 @@ export function threadGroups(
 export const CHAT_COMMANDS = [
   { name: "new", args: "", description: "Start a new conversation" },
   { name: "stop", args: "[task number]", description: "Stop the reply, or a task" },
+  { name: "continue", args: "", description: "Go on with the last reply, where it stopped" },
   { name: "task", args: "<what to do>", description: "Run it as a background task" },
   { name: "remember", args: "<fact>", description: "Save it to memory as written" },
   { name: "todo", args: "[item]", description: "Add it to the to-do list, or show the list" },

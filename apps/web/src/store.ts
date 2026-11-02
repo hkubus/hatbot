@@ -305,6 +305,11 @@ export async function retryReply(m: ThreadMessage) {
   await api(`/conversations/${m.conversationId}/messages/${m.id}/retry`, { body: {} });
 }
 
+/** A reply stopped partway goes on from where it stopped; it's rewritten in place, as a retry is. */
+export async function continueReply(m: ThreadMessage) {
+  await api(`/conversations/${m.conversationId}/messages`, { body: { text: "/continue" } });
+}
+
 /** message.deleted takes it off the screen. */
 export async function deleteEpisode(id: number, conversationId = state.conversationId) {
   await api(`/conversations/${conversationId}/episodes/${id}`, { method: "DELETE" });
