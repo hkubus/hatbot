@@ -823,6 +823,8 @@ export type AppSettings = {
   weeklyReport: WeeklyReportSettings;
   /** The local hour the to-do list's morning reminder goes out. */
   todoHour: number;
+  /** Selling a flip, the least Haggler takes: Scout's break-even plus this many percent. */
+  saleMarginPct: number;
   /** An IANA name, such as Europe/Warsaw; "" for the machine's. */
   timezone: string;
 };

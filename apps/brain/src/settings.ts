@@ -65,6 +65,7 @@ export const Settings = z.object({
   }),
   /** The local hour of the to-do list's morning reminder. */
   todoHour: z.number().int().min(0).max(23),
+  saleMarginPct: z.number().int().min(0).max(200),
   /** An IANA name; "" for the machine's. */
   timezone: z
     .string()
@@ -126,6 +127,7 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryTidy: false,
   weeklyReport: { enabled: true, weekday: 1, hour: 9 },
   todoHour: 9,
+  saleMarginPct: 10,
   timezone: "",
 };
 

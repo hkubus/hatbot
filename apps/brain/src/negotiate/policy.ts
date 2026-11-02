@@ -48,7 +48,7 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
     return block(`A message in negotiation #${n.id} is being sent already. Wait for it.`);
   if (f.dealtElsewhere !== null)
     return block(
-      `You agreed with another seller for this, in negotiation #${f.dealtElsewhere}, so nothing more goes to this one. If that deal falls through, close it as lost first.`,
+      `You agreed with another ${n.role === "sell" ? "buyer" : "seller"} for this, in negotiation #${f.dealtElsewhere}, so nothing more goes to this one. If that deal falls through, close it as lost first.`,
     );
   if (n.conversationUrl && !sameHost(n.conversationUrl, n.listingUrl))
     return block("The recorded conversation isn't on the listing's site, so nothing goes there.");
@@ -60,7 +60,7 @@ export function sendPolicy(n: Negotiation, input: SendInput, f: SendFacts): Verd
     );
   if (quiet(f.hour))
     return block(
-      `Nothing goes to sellers between ${pad(QUIET_HOURS.from)}:00 and ${pad(QUIET_HOURS.to)}:00. Send it after ${pad(QUIET_HOURS.to)}:00.`,
+      `Nothing goes to ${n.role === "sell" ? "buyers" : "sellers"} between ${pad(QUIET_HOURS.from)}:00 and ${pad(QUIET_HOURS.to)}:00. Send it after ${pad(QUIET_HOURS.to)}:00.`,
     );
   if (f.starts && f.startedToday >= NEW_PER_DAY)
     return block(

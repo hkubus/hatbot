@@ -1124,4 +1124,11 @@ export const migrations: string[] = [
   UPDATE negotiations SET woken_through = (SELECT max(id) FROM negotiation_messages m
     WHERE m.negotiation_id = negotiations.id AND m.direction = 'in');
   `,
+  // 75: selling (N5): the listing Hatbot posted that a buyer wrote about, and the brain's own "it's
+  // sold" to the other buyers, which goes after their negotiation ends.
+  `
+  ALTER TABLE negotiations ADD COLUMN flip_listing_id INTEGER REFERENCES flip_listings(id);
+  CREATE INDEX negotiations_flip_listing ON negotiations (flip_listing_id);
+  ALTER TABLE negotiation_messages ADD COLUMN notice INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

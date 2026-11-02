@@ -1,6 +1,6 @@
 // A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: the tools Scout has
 // today; with `full`, also the price reference and comparables it doesn't have yet; with `flips`,
-// the flips to list, kept in that JSON file, which the tests change; and with `sessions`, the
+// the flips to list and the flip ledger, kept in that JSON file, which the tests change; and with `sessions`, the
 // marketplace logins shared with Hatbot, kept the same way; and with `inbox`, the marketplace inboxes,
 // `{conversations, messages: {[conversationId]: [...]}}`, kept the same way. Calls are appended to
 // `log`, one JSON line each.
@@ -242,6 +242,51 @@ export function scoutServer(o: ScoutOptions): McpServer {
           mime: "image/jpeg",
           base64: Buffer.from([0xff, 0xd8, id, 0xd9]).toString("base64"),
         });
+      },
+    );
+    server.registerTool(
+      "scout_flips",
+      {
+        description: "The owner's flip ledger",
+        inputSchema: { status: z.string().optional(), limit: z.number().optional() },
+        annotations: { readOnlyHint: true },
+      },
+      async (input) => {
+        log("scout_flips", input);
+        const open = flips().filter((f) => !f.soldOn);
+        return json({
+          open: {
+            count: open.length,
+            items: open.map((f) => ({
+              id: f.id,
+              title: f.title,
+              askingPrices: f.askingPrices ?? {},
+              breakEven: f.breakEven ?? {},
+            })),
+          },
+        });
+      },
+    );
+    server.registerTool(
+      "scout_flip_update",
+      {
+        description: "Change a flip; record a sale with soldOn, saleChannel and salePrice",
+        inputSchema: {
+          id: z.number(),
+          soldOn: z.string().optional(),
+          saleChannel: z.string().optional(),
+          salePrice: z.number().optional(),
+        },
+        annotations: { readOnlyHint: false },
+      },
+      async (input) => {
+        log("scout_flip_update", input);
+        const all = flips();
+        const f = all.find((x) => x.id === input.id);
+        if (!f) return notFound;
+        Object.assign(f, input);
+        writeFileSync(flipsFile, JSON.stringify(all));
+        return json({ flip: f });
       },
     );
     server.registerTool(

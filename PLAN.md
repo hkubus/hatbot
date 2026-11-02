@@ -60,10 +60,12 @@ Built 2026-10-31, not tried live: the opening offer is 90% of the asking price (
 
 Built 2026-11-02, not tried live: N3, waking (`negotiate/inbox.ts`). Every 10 minutes, while a negotiation has written to a seller (or for two weeks after a deal), the brain reads `scout_inbox` without the model, and `scout_conversation` for each of its conversations that changed. A seller's new message is recorded and screened like a desktop read's, and starts a short task that answers it; at night it waits for 08:00. A read on the desktop is answered by whoever asked for it. Our message unanswered for a day starts a task that nudges the seller once, and the next day gives up. Letting a held negotiation carry on wakes the bot too. Scout's answers to our offers through the site's button (accepted, declined) count as the seller's. Not checked: how Scout's message ids and texts line up with what the desktop reads on a real conversation.
 
+Built 2026-11-02, not tried live: N5, selling (`negotiate/selling.ts`). Where a listing Hatbot posted is up, the inbox read also looks at conversations where we're the seller. One about our listing (by the id in its address, else by its exact title) opens a negotiation of its own at once, since marking the flip ready was the go-ahead: asking at the posted price, with a floor of Scout's break-even plus the margin in Settings (10% by default, never above the asking price), and a task answers the buyer from the listing as posted. A price under the floor asks. Every buyer of one flip shares a want, so the first agreement ends the others: they're sent a fixed "it's sold" through the send gate, Scout records the sale (`scout_flip_update`, which needs Allow), and the chat says where to take it off. Not checked: whether OLX's and Vinted's ids in Scout match the listing addresses, and the sellers' side of the offer buttons. Buyers aren't nudged, and a closed one who writes again is left alone.
+
 ### 3.1 Milestones
 - **N1, finish**: once Haggler has its own marketplace account, show it one negotiation per site (teach-by-showing) for its playbook skill. Done when one OLX negotiation runs end to end.
 - **N3, live**: done when a seller's reply gets an answer within 15 minutes, with nobody in the chat, on a real account.
-- **N5, selling**: answering buyers on your listings. The floor comes from Scout's flips: the buy price, fees and a margin.
+- **N5, live**: done when a buyer on a real listing gets an answer and a sale is recorded in Scout.
 - **N6, listing** (planned 2026-10-22): you mark a flip "Ready to list" in Scout, and Haggler posts it on the marketplaces you picked without asking again. See 3.3.
 - **Maybe later**: `scout_send_message`, if sending from the desktop turns out too slow.
 

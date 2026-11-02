@@ -845,6 +845,7 @@ const LABELS: Record<string, string> = {
   "weeklyReport.weekday": "Weekly report's day",
   "weeklyReport.hour": "Weekly report's hour",
   todoHour: "To-do reminder's hour",
+  saleMarginPct: "Least margin when selling (%)",
 };
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
