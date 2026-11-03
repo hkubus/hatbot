@@ -15,7 +15,7 @@ import { prTitle, shortSha, stamp } from "../format";
 import { LoadError, PageLoad, useLoad } from "../load";
 import { chatModelOptions, modelNameIn, modelOptions, useModels } from "../models";
 import { navigate } from "../router";
-import { parseLimit, parseName, SavedRow } from "../saved-row";
+import { parseLimit, parseName, parsePercent, SavedRow } from "../saved-row";
 import { pluginOn, setPaused, useStore } from "../store";
 import { Switch } from "../switch";
 import { setTheme, useTheme } from "../theme";
@@ -98,6 +98,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const paused = useStore((s) => s.paused);
   const boxes = useStore((s) => pluginOn(s.plugins, "boxes"));
   const desktop = useStore((s) => pluginOn(s.plugins, "desktop"));
+  const scout = useStore((s) => pluginOn(s.plugins, "scout") || pluginOn(s.plugins, "mcp"));
   // Saved elsewhere (the app, another tab): shown here too.
   const settingsVersion = useStore((s) => s.settingsVersion);
   const {
@@ -237,6 +238,18 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
         </Group>
 
         <RoutinesGroup settings={settings} update={update} />
+
+        {scout && (
+          <Group title="Selling">
+            <SavedRow
+              label="Least margin over Scout's break-even (%)"
+              saved={settings.saleMarginPct}
+              parse={parsePercent}
+              save={(saleMarginPct) => put({ saleMarginPct })}
+              input={{ type: "number", inputMode: "numeric", min: "0", max: "200", step: "1" }}
+            />
+          </Group>
+        )}
 
         <div id="spending">
           <Group title="Spending">

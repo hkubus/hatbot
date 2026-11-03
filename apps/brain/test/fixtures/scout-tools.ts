@@ -1,13 +1,20 @@
 // A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: the tools Scout has
 // today; with `full`, also the price reference and comparables it doesn't have yet; with `flips`,
-// the flips to list, kept in that JSON file, which the tests change; and with `sessions`, the
-// marketplace logins shared with Hatbot, kept the same way. Calls are appended to `log`, one
-// JSON line each.
+// the flips to list and the flip ledger, kept in that JSON file, which the tests change; and with `sessions`, the
+// marketplace logins shared with Hatbot, kept the same way; and with `inbox`, the marketplace inboxes,
+// `{conversations, messages: {[conversationId]: [...]}}`, kept the same way. Calls are appended to
+// `log`, one JSON line each.
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-export type ScoutOptions = { log?: string; full?: boolean; flips?: string; sessions?: string };
+export type ScoutOptions = {
+  log?: string;
+  full?: boolean;
+  flips?: string;
+  sessions?: string;
+  inbox?: string;
+};
 
 export function scoutServer(o: ScoutOptions): McpServer {
   const log = (tool: string, input: unknown) => {
@@ -238,6 +245,51 @@ export function scoutServer(o: ScoutOptions): McpServer {
       },
     );
     server.registerTool(
+      "scout_flips",
+      {
+        description: "The owner's flip ledger",
+        inputSchema: { status: z.string().optional(), limit: z.number().optional() },
+        annotations: { readOnlyHint: true },
+      },
+      async (input) => {
+        log("scout_flips", input);
+        const open = flips().filter((f) => !f.soldOn);
+        return json({
+          open: {
+            count: open.length,
+            items: open.map((f) => ({
+              id: f.id,
+              title: f.title,
+              askingPrices: f.askingPrices ?? {},
+              breakEven: f.breakEven ?? {},
+            })),
+          },
+        });
+      },
+    );
+    server.registerTool(
+      "scout_flip_update",
+      {
+        description: "Change a flip; record a sale with soldOn, saleChannel and salePrice",
+        inputSchema: {
+          id: z.number(),
+          soldOn: z.string().optional(),
+          saleChannel: z.string().optional(),
+          salePrice: z.number().optional(),
+        },
+        annotations: { readOnlyHint: false },
+      },
+      async (input) => {
+        log("scout_flip_update", input);
+        const all = flips();
+        const f = all.find((x) => x.id === input.id);
+        if (!f) return notFound;
+        Object.assign(f, input);
+        writeFileSync(flipsFile, JSON.stringify(all));
+        return json({ flip: f });
+      },
+    );
+    server.registerTool(
       "scout_flip_listed",
       {
         description: "Record where a flip went up on one marketplace, or why it didn't",
@@ -290,6 +342,41 @@ export function scoutServer(o: ScoutOptions): McpServer {
         const s = shared().find((x) => x.marketplace === marketplace);
         if (!s) return { isError: true, content: [{ type: "text" as const, text: "Not shared." }] };
         return json(s);
+      },
+    );
+  }
+  const inboxFile = o.inbox;
+  if (inboxFile) {
+    type Inbox = {
+      conversations: { id: string }[];
+      messages: Record<string, unknown[]>;
+    };
+    const inbox = (): Inbox => JSON.parse(readFileSync(inboxFile, "utf8"));
+    server.registerTool(
+      "scout_inbox",
+      {
+        description: "Your marketplace inbox",
+        inputSchema: { marketplace: z.string() },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ marketplace }) => {
+        log("scout_inbox", { marketplace });
+        const conversations = inbox().conversations.filter((c) =>
+          c.id.startsWith(`${marketplace}:`),
+        );
+        return json({ marketplace, conversations });
+      },
+    );
+    server.registerTool(
+      "scout_conversation",
+      {
+        description: "One conversation's messages",
+        inputSchema: { id: z.string() },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ id }) => {
+        log("scout_conversation", { id });
+        return json({ id, messages: inbox().messages[id] ?? [] });
       },
     );
   }

@@ -1115,4 +1115,20 @@ export const migrations: string[] = [
   ALTER TABLE spend_ledger ADD COLUMN ended_at TEXT;
   ALTER TABLE spend_ledger ADD COLUMN prefix TEXT;
   `,
+  // 74: Scout reads the sellers' replies (N3): the conversation it found and how it looked last, and
+  // the seller's latest message a task was started to answer. Those read so far had their answer.
+  `
+  ALTER TABLE negotiations ADD COLUMN inbox_conversation TEXT;
+  ALTER TABLE negotiations ADD COLUMN inbox_seen TEXT;
+  ALTER TABLE negotiations ADD COLUMN woken_through INTEGER;
+  UPDATE negotiations SET woken_through = (SELECT max(id) FROM negotiation_messages m
+    WHERE m.negotiation_id = negotiations.id AND m.direction = 'in');
+  `,
+  // 75: selling (N5): the listing Hatbot posted that a buyer wrote about, and the brain's own "it's
+  // sold" to the other buyers, which goes after their negotiation ends.
+  `
+  ALTER TABLE negotiations ADD COLUMN flip_listing_id INTEGER REFERENCES flip_listings(id);
+  CREATE INDEX negotiations_flip_listing ON negotiations (flip_listing_id);
+  ALTER TABLE negotiation_messages ADD COLUMN notice INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

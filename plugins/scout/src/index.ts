@@ -176,6 +176,19 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
     schema: z.object({ marketplace: Marketplace }),
     brainOnly: true,
   },
+  // Sellers' replies: the brain reads them itself (negotiate/inbox.ts).
+  {
+    name: "scout_inbox",
+    description: "The newest conversations in a marketplace inbox.",
+    schema: z.object({ marketplace: Marketplace }),
+    brainOnly: true,
+  },
+  {
+    name: "scout_conversation",
+    description: "One conversation's messages.",
+    schema: z.object({ id: z.string().min(3).max(120) }),
+    brainOnly: true,
+  },
 ];
 
 const Query = z

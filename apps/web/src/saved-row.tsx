@@ -16,6 +16,13 @@ export function parseLimit(text: string, reserve = false): Parsed<number> {
   return { value: n };
 }
 
+export function parsePercent(text: string): Parsed<number> {
+  const n = Number(text.trim().replace(/\s*%$/, ""));
+  if (!text.trim() || !Number.isInteger(n) || n < 0 || n > 200)
+    return { error: "Give a whole percent, from 0 to 200." };
+  return { value: n };
+}
+
 export const parseName = (text: string): Parsed<string> =>
   text.trim() ? { value: text.trim() } : { error: "Your name can't be empty." };
 
