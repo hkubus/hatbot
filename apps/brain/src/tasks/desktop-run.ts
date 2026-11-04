@@ -876,7 +876,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           // when no label does (an icon-only Send is also a button with no label).
           const box =
             e?.editable && e.fields && typing.trim() ? { ...e, fields: [...e.fields, typing] } : e;
-          const send = marketplaceSend(kind, box, lastUrl);
+          // A listing's own form messages no one, and the listing gate checks what goes in it.
+          const ownForm = listing && uploadPage(e?.url ?? lastUrl)?.channel === listing.channel;
+          const send = ownForm ? null : marketplaceSend(kind, box, lastUrl);
           return send ? { label: send } : h;
         }),
       );

@@ -93,8 +93,16 @@ export function listingCheck(
   if (!el?.url || uploadPage(el.url)?.channel !== g.channel) return { action: "usual" };
   // A click or a space in a text box types.
   if (kind === "click" && el.editable) return { action: "usual" };
-  const label = kind === "click" ? el.label : held && "label" in held ? held.label : "";
-  if (!publishLabel(label)) return { action: "usual" };
+  // Enter in a box submits its form or presses the button after it, which the ordinary check may not hold.
+  const labels =
+    kind === "click" || !el.editable
+      ? [el.label]
+      : [
+          held && "label" in held ? held.label : "",
+          ...(el.inForm && el.submitLabel ? [el.submitLabel] : []),
+          ...(el.buttonsAfter ?? []),
+        ];
+  if (!labels.some(publishLabel)) return { action: "usual" };
   // A promotion or payment step in a frame, or a checkout, asks as it always does.
   if (held && ("checkout" in held || "frame" in held)) return { action: "usual" };
   if (g.published)

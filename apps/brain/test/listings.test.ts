@@ -295,6 +295,61 @@ test("a listing task types only the approved text, puts photos only on the add-l
   await t.plugins.stopAll();
 });
 
+test("on its add-listing page, a listing task's Enter in a filled box goes on without asking, and one that publishes goes through the listing's check", async () => {
+  const work = new FakeModel([
+    { content: [browser("navigate", { url: OLX_ADD })] },
+    { content: [browser("form_input", { target: { type: "ref", ref: "ref_1" }, value: TITLE })] },
+    { content: [browser("key", { text: "Return" })] },
+    // On the last step, without the description.
+    { content: [browser("key", { text: "Return" })] },
+    {
+      content: [
+        browser("form_input", { target: { type: "ref", ref: "ref_2" }, value: DESCRIPTION }),
+      ],
+    },
+    { content: [browser("form_input", { target: { type: "ref", ref: "ref_3" }, value: 1199 })] },
+    { content: [browser("key", { text: "Return" })] },
+    { content: [toolUse("record_listing", { url: OLX_URL })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Listed." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const scout = await withScout(t, [flip({ channels: { OLX: "ready" } })]);
+  addPage(t, { "olx.pl": OLX_URL });
+  const boxes = new Map<string, string>();
+  let submit = "Dalej";
+  Object.defineProperty(t.agent, "element", {
+    get: (): AgentElement => ({
+      tag: "input",
+      role: null,
+      type: "text",
+      label: "Tytuł",
+      inForm: true,
+      submitLabel: submit,
+      url: t.agent.page.url ?? "",
+      editable: true,
+      fields: [...boxes.values()],
+    }),
+    configurable: true,
+  });
+  t.agent.afterAction = (name, input) => {
+    if (name === "form_input")
+      boxes.set(String((input.target as { ref: string }).ref), String(input.value));
+    if (name === "key" && submit === "Dalej") submit = "Dodaj ogłoszenie";
+    else if (name === "key") t.agent.page = { url: OLX_URL, title: TITLE, text: "" };
+  };
+  await t.listings.tick();
+  await waitFor(() => scout.calls("scout_flip_listed").length === 1);
+  await t.tasks.idle();
+
+  expect(JSON.stringify(work.requests[4]?.messages.at(-1))).toContain("approved description");
+  expect(t.agent.browserCalls.filter((c) => c.name === "key")).toHaveLength(2);
+  expect(t.approvals.list(false)).toEqual([]);
+  expect(scout.calls("scout_flip_listed")).toEqual([
+    { flipId: 7, channel: "OLX", status: "listed", url: OLX_URL },
+  ]);
+  await t.plugins.stopAll();
+});
+
 test("a listing task that published but recorded no address tells Scout it may have gone up", async () => {
   const work = new FakeModel([
     { content: [browser("navigate", { url: OLX_ADD })] },

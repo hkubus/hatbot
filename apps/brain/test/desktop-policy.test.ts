@@ -248,6 +248,12 @@ test("a checkout page, a payment host or the held step raises the kind, whatever
   );
   expect(approvalKind("other", blank, listing, { frame: "" })).toBe("purchase");
   expect(approvalKind("send", { summary: "Zamów i zapłać" }, at(null))).toBe("purchase");
+  // The reason says why, and what a step isn't.
+  const step = {
+    summary: "Click Dalej",
+    reason: "A draft step, not publishing, payment or deletion.",
+  };
+  expect(approvalKind("other", step, listing)).toBe("other");
   // A shop's footer lists BLIK on every page; only a BLIK code field makes it a payment.
   const footer = at("https://shop.example/kontakt", "Płatności: BLIK, Visa, Mastercard");
   expect(approvalKind("send", { summary: "Send the reply to Anna" }, footer)).toBe("send");

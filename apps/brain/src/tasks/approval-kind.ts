@@ -25,7 +25,7 @@ export function buysOrPays(hold: Hold): boolean {
 
 export function approvalKind(
   kind: ApprovalKind,
-  step: { summary: string; reason?: string; control?: string },
+  step: { summary: string; control?: string },
   page: { url: string | null; text: string | null },
   held: Hold | null = null,
 ): ApprovalKind {
@@ -36,7 +36,8 @@ export function approvalKind(
   if (held && "checkout" in held && paymentHost(held.checkout)) return "payment";
   if (
     kind === "purchase" ||
-    buyingLabel(`${step.summary} ${step.reason ?? ""} ${step.control ?? ""}`) ||
+    // Not the reason: there the model says what a step isn't ("not publishing, payment or deletion").
+    buyingLabel(`${step.summary} ${step.control ?? ""}`) ||
     checkoutHost(page.url ?? undefined) ||
     (held && buysOrPays(held))
   )
