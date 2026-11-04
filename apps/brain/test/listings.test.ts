@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpPlugin } from "@hatbot/plugin-mcp";
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { type ListingGate, listingCheck, listingRefused } from "../src/listings/gate";
 import { browser, FakeModel, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 
@@ -295,10 +296,66 @@ test("a listing task types only the approved text, puts photos only on the add-l
   await t.plugins.stopAll();
 });
 
-test("on its add-listing page, a listing task's Enter in a filled box goes on without asking, and one that publishes goes through the listing's check", async () => {
+const gateFor = (over: Partial<ListingGate> = {}): ListingGate => ({
+  channel: "OLX",
+  host: "olx.pl",
+  addUrl: OLX_ADD,
+  title: TITLE,
+  description: DESCRIPTION,
+  price: 1199,
+  choices: [],
+  photos: 2,
+  stage: "",
+  published: false,
+  ...over,
+});
+const formButton = (label: string, over: Partial<AgentElement> = {}): AgentElement => ({
+  tag: "button",
+  role: null,
+  type: "submit",
+  label,
+  inForm: true,
+  url: OLX_ADD,
+  editable: false,
+  fields: [TITLE],
+  ...over,
+});
+
+test("on its add-listing page, a listing task fills in the form without asking, but for what may cost money", () => {
+  const g = gateFor();
+  const fill = { action: "fill" } as const;
+  const usual = { action: "usual" } as const;
+  expect(listingCheck(g, "click", formButton("Dalej"), { label: "Dalej" })).toEqual(fill);
+  expect(listingCheck(g, "click", formButton(""), { unlabelled: "button" })).toEqual(fill);
+  const promote = formButton("Wyróżnij ogłoszenie");
+  expect(listingCheck(g, "click", promote, { label: promote.label })).toEqual(usual);
+  expect(listingCheck(g, "click", formButton("Dalej"), { frame: "" })).toEqual(usual);
+  expect(listingCheck(g, "click", formButton("Dalej"), { unseen: true })).toEqual(usual);
+  const elsewhere = formButton("Dalej", { url: OLX_URL });
+  expect(listingCheck(g, "click", elsewhere, { label: "Dalej" })).toEqual(usual);
+  // A drag reorders photos; a right click opens a menu.
+  expect(listingRefused(g, "left_click_drag", {})).toBeNull();
+  expect(listingRefused(g, "right_click", {})).toContain("left_click");
+});
+
+test("a description longer than what desktop-agent sends of a box still publishes", () => {
+  const long = Array.from({ length: 900 }, (_, i) => `Zdanie ${i}.`).join(" ");
+  const shown = long.slice(0, 4000);
+  const publish = formButton("Dodaj ogłoszenie", { fields: [TITLE, shown, "1199"] });
+  expect(listingCheck(gateFor({ description: long }), "click", publish, null)).toEqual({
+    action: "publish",
+  });
+  const cut = formButton("Dodaj ogłoszenie", { fields: [TITLE, shown.slice(0, 3000), "1199"] });
+  expect(listingCheck(gateFor({ description: long }), "click", cut, null)).toMatchObject({
+    action: "hold",
+  });
+});
+
+test("on its add-listing page, a listing task's Dalej and Enter in a filled box go on without asking, and an Enter that publishes goes through the listing's check", async () => {
   const work = new FakeModel([
     { content: [browser("navigate", { url: OLX_ADD })] },
     { content: [browser("form_input", { target: { type: "ref", ref: "ref_1" }, value: TITLE })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_8" } })] },
     { content: [browser("key", { text: "Return" })] },
     // On the last step, without the description.
     { content: [browser("key", { text: "Return" })] },
@@ -317,23 +374,29 @@ test("on its add-listing page, a listing task's Enter in a filled box goes on wi
   addPage(t, { "olx.pl": OLX_URL });
   const boxes = new Map<string, string>();
   let submit = "Dalej";
+  let clicked = false;
+  const box = (): AgentElement => ({
+    tag: "input",
+    role: null,
+    type: "text",
+    label: "Tytuł",
+    inForm: true,
+    submitLabel: submit,
+    url: t.agent.page.url ?? "",
+    editable: true,
+    fields: [...boxes.values()],
+  });
   Object.defineProperty(t.agent, "element", {
-    get: (): AgentElement => ({
-      tag: "input",
-      role: null,
-      type: "text",
-      label: "Tytuł",
-      inForm: true,
-      submitLabel: submit,
-      url: t.agent.page.url ?? "",
-      editable: true,
-      fields: [...boxes.values()],
-    }),
+    get: (): AgentElement =>
+      clicked
+        ? box()
+        : { ...box(), tag: "button", type: "submit", label: "Dalej", editable: false },
     configurable: true,
   });
   t.agent.afterAction = (name, input) => {
     if (name === "form_input")
       boxes.set(String((input.target as { ref: string }).ref), String(input.value));
+    if (name === "left_click") clicked = true;
     if (name === "key" && submit === "Dalej") submit = "Dodaj ogłoszenie";
     else if (name === "key") t.agent.page = { url: OLX_URL, title: TITLE, text: "" };
   };
@@ -341,7 +404,8 @@ test("on its add-listing page, a listing task's Enter in a filled box goes on wi
   await waitFor(() => scout.calls("scout_flip_listed").length === 1);
   await t.tasks.idle();
 
-  expect(JSON.stringify(work.requests[4]?.messages.at(-1))).toContain("approved description");
+  expect(JSON.stringify(work.requests[5]?.messages.at(-1))).toContain("approved description");
+  expect(t.agent.browserCalls.filter((c) => c.name === "left_click")).toHaveLength(1);
   expect(t.agent.browserCalls.filter((c) => c.name === "key")).toHaveLength(2);
   expect(t.approvals.list(false)).toEqual([]);
   expect(scout.calls("scout_flip_listed")).toEqual([

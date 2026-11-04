@@ -1,9 +1,10 @@
 // In a listing's desktop task, Publish goes through without asking, once, on that marketplace's
-// add-listing page, while the form holds exactly the approved title, description and price.
+// add-listing page, while the form holds exactly the approved title, description and price. The rest
+// of that form goes through too, but for anything that may cost money.
 import { type AgentElement, uploadPage } from "@hatbot/shared/desktop";
 import { combosIn, readCombo } from "@hatbot/shared/keys";
 import { exact, toAddress, typesText, UNSEEN_MOUSE } from "../negotiate/gate";
-import { fold, type Hold, hostOf, onHost } from "../tasks/policy";
+import { buyingLabel, fold, type Hold, hostOf, onHost } from "../tasks/policy";
 
 export type ListingGate = {
   channel: string;
@@ -23,6 +24,7 @@ export type ListingGate = {
 
 export type ListingCheck =
   | { action: "publish" }
+  | { action: "fill" }
   | { action: "usual" }
   | { action: "hold"; why: string };
 
@@ -33,6 +35,17 @@ const CONTACT = /https?:|www\.|\.(?:pl|com|eu|cz|net)\b|@|\d[\d\s().-]{6,}\d/i;
 const PUBLISH =
   /^(?:dodaj|opublikuj|wystaw|publish|post|list|przeslij|upload)(?: (?:ogloszenie|przedmiot|oferte|teraz|za darmo|it|item|listing))*$/;
 export const publishLabel = (label: string) => PUBLISH.test(fold(label));
+
+/** Paid extras offered while listing: promotions, bumps and packages. */
+const PAID =
+  /(?<![\p{L}\p{N}])(?:podbij|wyroznij|wyroznien|promuj|promow|promot|pakiet|bump|boost)/u;
+
+function mayCost(held: Hold | null, labels: string[]): boolean {
+  if (held && !("label" in held) && !("unlabelled" in held)) return true;
+  return [...labels, held && "label" in held ? held.label : ""].some(
+    (l) => buyingLabel(l) || PAID.test(fold(l)),
+  );
+}
 
 export function samePrice(field: string, price: number): boolean {
   const n = field
@@ -55,7 +68,9 @@ export function listingRefused(
   name: string,
   input: Record<string, unknown>,
 ): string | null {
-  if (UNSEEN_MOUSE.has(name)) return `${name} isn't available in a listing task; use left_click.`;
+  // A drag reorders photos; both its ends are checked like clicks.
+  if (UNSEEN_MOUSE.has(name) && name !== "left_click_drag")
+    return `${name} isn't available in a listing task; use left_click.`;
   const value = name === "form_input" ? input.value : input.text;
   // form_input also takes a number, which could be a phone number.
   const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
@@ -102,7 +117,9 @@ export function listingCheck(
           ...(el.inForm && el.submitLabel ? [el.submitLabel] : []),
           ...(el.buttonsAfter ?? []),
         ];
-  if (!labels.some(publishLabel)) return { action: "usual" };
+  // A checkout, a frame (perhaps a payment widget), or something Hatbot couldn't see asks as usual.
+  if (!labels.some(publishLabel))
+    return mayCost(held, labels) ? { action: "usual" } : { action: "fill" };
   // A promotion or payment step in a frame, or a checkout, asks as it always does.
   if (held && ("checkout" in held || "frame" in held)) return { action: "usual" };
   if (g.published)
@@ -116,9 +133,11 @@ export function listingCheck(
       why: "The desktop is out of date and can't show what's in the form, so nothing is published. The owner needs to update desktop-agent.",
     };
   const fields = el.fields.map(exact);
+  // desktop-agent sends a box's first 4000 characters.
+  const description = [exact(g.description), exact(exact(g.description).slice(0, 4000))];
   const missing = [
     ...(fields.includes(exact(g.title)) ? [] : ["title"]),
-    ...(fields.includes(exact(g.description)) ? [] : ["description"]),
+    ...(fields.some((f) => description.includes(f)) ? [] : ["description"]),
     ...(fields.some((f) => samePrice(f, g.price)) ? [] : ["price"]),
   ];
   if (missing.length)
