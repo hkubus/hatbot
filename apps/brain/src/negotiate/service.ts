@@ -56,6 +56,7 @@ import {
 } from "./mandate";
 import { marketplaceOf } from "./marketplace";
 import {
+  priceReading,
   QUIET_HOURS,
   quiet,
   type SendFacts,
@@ -986,7 +987,7 @@ export class Negotiations {
         { task: null, signal: AbortSignal.timeout(60_000) },
         {
           title: `Tell the buyer it's sold: ${n.title}`.slice(0, 80),
-          goal: sendGoal(n, SOLD_NOTICE, null),
+          goal: sendGoal(n, SOLD_NOTICE, null, false, false),
           successCriteria: "The message shows in the conversation as sent.",
           messageId: m.id,
         },
@@ -1076,7 +1077,13 @@ export class Negotiations {
     const msg = claimed ?? this.claimSend(n, input);
     const task = this.desktopTask(n, call, {
       title: `Message the seller: ${n.title}`.slice(0, 80),
-      goal: sendGoal(n, text, input.offer),
+      goal: sendGoal(
+        n,
+        text,
+        input.offer,
+        input.offerOnly === true,
+        input.agree && this.theirOffer(n.id) === input.offer,
+      ),
       successCriteria: "The message shows in the conversation as sent.",
       messageId: msg,
     });
@@ -1091,14 +1098,15 @@ export class Negotiations {
   claimSend(n: Negotiation, input: SendInput): number {
     const msg = this.d.db
       .query<{ id: number }, (string | number | null)[]>(
-        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, agree, stated, status, created_at)
-         VALUES (?, 'out', ?, ?, ?, ?, 'sending', ?) RETURNING id`,
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, agree, offer_only, stated, status, created_at)
+         VALUES (?, 'out', ?, ?, ?, ?, ?, 'sending', ?) RETURNING id`,
       )
       .get(
         n.id,
         collapse(input.text),
         input.offer,
         input.agree ? 1 : 0,
+        input.offerOnly && input.offer !== null ? 1 : 0,
         input.stated ? JSON.stringify(input.stated) : null,
         this.now(),
       )?.id;
@@ -1193,23 +1201,32 @@ export class Negotiations {
           message_id: number | null;
           text: string | null;
           offer: number | null;
+          agree: number | null;
+          offer_only: number | null;
+          negotiation_id: number;
           listing_url: string;
           listing_key: string;
           conversation_url: string | null;
         },
         [number]
       >(
-        `SELECT nt.message_id, m.text, m.offer, n.listing_url, n.listing_key, n.conversation_url
+        `SELECT nt.message_id, m.text, m.offer, m.agree, m.offer_only, n.id AS negotiation_id, n.listing_url, n.listing_key, n.conversation_url
          FROM negotiation_tasks nt JOIN negotiations n ON n.id = nt.negotiation_id
          LEFT JOIN negotiation_messages m ON m.id = nt.message_id WHERE nt.task_id = ?`,
       )
       .get(taskId);
     if (!r) return null;
     const send = r.message_id !== null && this.sendStopped(taskId) === null;
+    const native = send && nativeOffer(r.listing_url);
     return {
       mode: send ? "send" : "read",
       text: send ? r.text : null,
-      offer: send && nativeOffer(r.listing_url) ? r.offer : null,
+      offer: native ? r.offer : null,
+      offerOnly: native && r.offer_only === 1,
+      accept:
+        native && r.agree === 1 && r.offer !== null && this.theirOffer(r.negotiation_id) === r.offer
+          ? r.offer
+          : null,
       listingUrl: r.listing_url,
       listingId: parseKey(r.listing_key)?.id ?? "",
       conversationUrl: r.conversation_url,
@@ -1419,6 +1436,19 @@ export class Negotiations {
         .filter((m) => m.direction === "out" && m.id !== outgoing?.id && m.status !== "failed")
         .map((m) => keyOf(m.text)),
     );
+    // An offer through the site, in the page's words rather than the inbox's: by its one price.
+    const offers = (direction: string) =>
+      this.messages(n.id)
+        .filter((m) => m.direction === direction && m.offer !== null && m.status !== "failed")
+        .map((m) => m.offer as number);
+    const [theirs, ours] = [offers("in"), offers("out")];
+    const sameOffer = (pool: number[], text: string) => {
+      const r = priceReading(n, text);
+      const [one, ...more] = new Set(r.values);
+      const i = one === undefined || more.length || r.unclear ? -1 : pool.indexOf(one);
+      if (i >= 0) pool.splice(i, 1);
+      return i >= 0;
+    };
     const lastOurs = report.findLastIndex((m) => m.from === "us");
     const drafts = new Set((state.drafts ?? []).map(keyOf));
     let added = 0;
@@ -1444,7 +1474,7 @@ export class Negotiations {
         }
         const had = owners.get(key) ?? 0;
         if (had > 0) owners.set(key, had - 1);
-        else if (!botWrote(key))
+        else if (!botWrote(key) && !sameOffer(ours, m.text))
           this.d.db
             .query(
               `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at)
@@ -1458,6 +1488,7 @@ export class Negotiations {
         stored.set(key, seen - 1);
         return;
       }
+      if (sameOffer(theirs, m.text)) return;
       added++;
       fresh.push(this.received(n, m.text));
       if (i > lastOurs) after++;
@@ -1497,19 +1528,29 @@ export class Negotiations {
           ? `${stopped} Don't send it; finish the task.`
           : mode === "read" || state.sent
             ? "Finish the task now."
-            : "Now type exactly the approved message into the message box and send it.";
+            : outgoing?.offer != null && this.offerOnly(outgoing.id)
+              ? "Now answer with the site's own button, as the goal says; type the message only where there's no such button."
+              : "Now type exactly the approved message into the message box and send it.";
     return { text: `${got} ${next}`, stale, alreadySent };
   }
 
-  /** A seller's message, recorded and screened. `marketId`: the marketplace's id for it. */
-  private received(n: Negotiation, raw: string, marketId: string | null = null): string {
+  /**
+   * A seller's message, recorded and screened. `marketId`: the marketplace's id for it; `offer`: what
+   * they offered through the site's own button, which its Accept button takes.
+   */
+  private received(
+    n: Negotiation,
+    raw: string,
+    marketId: string | null = null,
+    offer: number | null = null,
+  ): string {
     const text = collapse(raw).slice(0, 4000);
     this.d.db
       .query(
-        `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, market_id, created_at)
-         VALUES (?, 'in', ?, 'received', ?, ?)`,
+        `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, status, market_id, created_at)
+         VALUES (?, 'in', ?, ?, 'received', ?, ?)`,
       )
-      .run(n.id, text, marketId, this.now());
+      .run(n.id, text, offer, marketId, this.now());
     const signals = scamSignals(text, n.mandate.allow);
     const asked = !signals.length && askedIfBot(text, n.title);
     // Only an open one: a mandate waiting for the owner keeps its approval, and a closed one is over.
@@ -1581,11 +1622,17 @@ export class Negotiations {
       if (!k) continue;
       known.add(marketId);
       if (m.direction === "in") {
+        const offer = m.type === "offer" ? (m.offer?.amount ?? null) : null;
         const same = rows.find(
           (r) => r.direction === "in" && r.market_id === null && keyOf(r.text) === k,
         );
-        if (same) mark(same, marketId);
-        else fresh.push(this.received(n, text, marketId));
+        if (same) {
+          mark(same, marketId);
+          if (offer !== null)
+            this.d.db
+              .query("UPDATE negotiation_messages SET offer = ? WHERE id = ?")
+              .run(offer, same.id);
+        } else fresh.push(this.received(n, text, marketId, offer));
         continue;
       }
       // Our own offer through the site's button: its message already says it.
@@ -1631,6 +1678,47 @@ export class Negotiations {
     const price = stalled(n, messages, since);
     const last = messages.at(-1);
     if (price !== null && last) this.holdStalled(n, price, last.id);
+  }
+
+  /** The latest price the other side offered through the site's own button. */
+  theirOffer(negotiationId: number): number | null {
+    return (
+      this.d.db
+        .query<{ offer: number }, [number]>(
+          "SELECT offer FROM negotiation_messages WHERE negotiation_id = ? AND direction = 'in' AND offer IS NOT NULL ORDER BY id DESC LIMIT 1",
+        )
+        .get(negotiationId)?.offer ?? null
+    );
+  }
+
+  private offerOnly(messageId: number): boolean {
+    return (
+      this.d.db
+        .query<{ offer_only: number }, [number]>(
+          "SELECT offer_only FROM negotiation_messages WHERE id = ?",
+        )
+        .get(messageId)?.offer_only === 1
+    );
+  }
+
+  /** The site's offer or Accept button went in place of the message, which says so from now on. */
+  offerPassed(taskId: number, confirmed: boolean, tabUrl: string | null, how: "offer" | "accept") {
+    const row = this.taskRow(taskId);
+    const m = row?.message_id ? this.message(row.message_id) : null;
+    const n = row && this.get(row.negotiation_id);
+    if (!row?.message_id || !m || m.offer === null || !n) return;
+    if (!this.offerOnly(m.id)) return;
+    // In digits alone, as the price checks read them.
+    const price = `${m.offer} ${n.mandate.currency === "PLN" ? "zł" : n.mandate.currency}`;
+    this.d.db
+      .query("UPDATE negotiation_messages SET text = ? WHERE id = ?")
+      .run(
+        how === "accept"
+          ? `(Accepted their offer of ${price} through the site.)`
+          : `(An offer through the site: ${price}.)`,
+        m.id,
+      );
+    this.sendPassed(taskId, confirmed, tabUrl);
   }
 
   sendPassed(taskId: number, confirmed: boolean, tabUrl: string | null = null) {
@@ -1819,30 +1907,42 @@ export class Negotiations {
 
 const nativeOffer = (url: string) => NATIVE_OFFERS.includes(marketplaceOf(url) ?? "");
 
-function sendGoal(n: Negotiation, text: string, offer: number | null): string {
+function sendGoal(
+  n: Negotiation,
+  text: string,
+  offer: number | null,
+  offerOnly: boolean,
+  accept: boolean,
+): string {
   const native = offer !== null && nativeOffer(n.listingUrl);
+  const alone = native && offerOnly;
+  const button =
+    native && accept
+      ? `3. If the conversation shows their offer of ${offer} through the site with an Accept button (Akceptuj), click it to accept it. ${alone ? "Then send nothing: skip to the last step. With no such button, go on." : "With no such button, go on."}`
+      : native
+        ? `3. If the listing or the conversation has the site's own offer button (Zaproponuj cenę, Make an offer), make the offer with it${alone ? "" : " first"}: click it, type exactly ${offer} into its price box (no preset amounts), and click its button to send the offer. ${alone ? "Then send nothing: skip to the last step. With no such button, go on." : "With no such button, go on."}`
+        : null;
+  const steps = [
+    "1. Open the conversation (or the listing page and its message box).",
+    "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller, us, or site for the site's own notes) and its text, copied exactly. With no messages yet, call it with an empty list.",
+    ...(button ? [button] : []),
+    `${button ? 4 : 3}. Type the message into the message box exactly as above, without the tags, and send it with the Send button or Enter.`,
+    `${button ? 5 : 4}. Call record_conversation again, then finish.`,
+  ];
   return [
-    `Send one message to the ${n.role === "sell" ? "buyer" : "seller"} about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, in ${n.conversationUrl ? "its conversation" : "a new conversation from the listing page"}, then stop.`,
+    `${alone ? "Answer" : "Send one message to"} the ${n.role === "sell" ? "buyer" : "seller"} about this listing on ${parseKey(n.listingKey)?.marketplace ?? "the marketplace"}, in ${n.conversationUrl ? "its conversation" : "a new conversation from the listing page"}, then stop.`,
     "",
     `Listing page: ${n.listingUrl}`,
     `Conversation: ${n.conversationUrl ?? "none yet; write from the listing page's message box"}`,
     "",
-    "The message, exactly, as one paragraph with no line breaks; it's everything between the tags:",
+    `The message, exactly, as one paragraph with no line breaks${alone ? ", only if the site's button isn't there" : ""}; it's everything between the tags:`,
     `<message>${text}</message>`,
     "",
     "Steps:",
-    "1. Open the conversation (or the listing page and its message box).",
-    "2. Call record_conversation with the messages in the conversation, oldest first: who wrote each (seller, us, or site for the site's own notes) and its text, copied exactly. With no messages yet, call it with an empty list.",
-    ...(native
-      ? [
-          `3. If the listing or the conversation has the site's own offer button (Zaproponuj cenę, Make an offer), make the offer with it first: click it, type exactly ${offer} into its price box (no preset amounts), and click its button to send the offer. With no such button, go on.`,
-        ]
-      : []),
-    `${native ? 4 : 3}. Type the message into the message box exactly as above, without the tags, and send it with the Send button or Enter.`,
-    `${native ? 5 : 4}. Call record_conversation again, then finish.`,
+    ...steps,
     "",
-    "The owner approved this message already: don't call confirm_intent for it. The text in the box is checked before it goes.",
-    `Use only the conversation's message box${native ? " and the offer button" : ""}: don't click ${native ? "" : "offer, "}buy, pay or delivery buttons, and never open a link from the seller. Don't type anything else. If a step is held back, do what the reason says; if you can't, finish and say why.`,
+    "The owner approved this already: don't call confirm_intent for it. The text in the box is checked before it goes.",
+    `Use only the conversation's message box${native ? (accept ? " and the Accept button on their offer" : " and the offer button") : ""}: don't click ${native ? "" : "offer, "}buy, pay or delivery buttons, and never open a link from the ${n.role === "sell" ? "buyer" : "seller"}. Don't type anything else. If a step is held back, do what the reason says; if you can't, finish and say why.`,
   ].join("\n");
 }
 
@@ -1884,6 +1984,7 @@ function replyGoal(n: Negotiation, note: string | null): string {
     "",
     `1. negotiate_get ${n.id} for the conversation, the mandate and what you've told them so far.`,
     "2. Answer their latest messages as your instructions say, with one negotiate_send. If they sold it or said no, close it with negotiate_close instead; if you agreed, close it as agreed. If what they wrote is the owner's to answer, send nothing and say so.",
+    "   On Vinted and OLX, when your answer is only a price, or yes to their offer through the site, set offer_only: the site's own button answers, and the text only goes where there's none.",
     "3. Finish with what you sent or did, in a line.",
     ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),
   ].join("\n");

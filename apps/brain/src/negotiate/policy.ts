@@ -9,6 +9,8 @@ export type SendInput = {
   text: string;
   offer: number | null;
   agree: boolean;
+  /** On Vinted and OLX, the site's offer or Accept button goes in place of the message. */
+  offerOnly?: boolean;
   stated: Stated | null;
 };
 
@@ -385,7 +387,7 @@ function theirPrice(n: Negotiation, seller: SendFacts["seller"]): number | null 
   return n.asking;
 }
 
-function priceReading(n: Negotiation, raw: string) {
+export function priceReading(n: Negotiation, raw: string) {
   const r = read(raw, n.title, n.asking);
   const t = combine(r);
   const text = plain(raw);

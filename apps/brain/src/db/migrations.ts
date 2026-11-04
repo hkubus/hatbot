@@ -1131,4 +1131,9 @@ export const migrations: string[] = [
   CREATE INDEX negotiations_flip_listing ON negotiations (flip_listing_id);
   ALTER TABLE negotiation_messages ADD COLUMN notice INTEGER NOT NULL DEFAULT 0;
   `,
+  // 76: a price that goes through the site's own offer or Accept button alone, its message only where
+  // there's no button.
+  `
+  ALTER TABLE negotiation_messages ADD COLUMN offer_only INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

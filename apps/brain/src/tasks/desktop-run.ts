@@ -814,7 +814,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
     let inspectAgain: (() => Promise<Inspected>) | null = null;
     let sending = false;
-    let offering: "open" | "offer" | null = null;
+    let offering: "open" | "offer" | "accept" | null = null;
     /** A message to a person, which waits for the owner to stop it first. */
     let toSend: string | null = null;
     let publishing = false;
@@ -896,6 +896,10 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         if (g.action === "offer") {
           offering = "offer";
           toSend = `Offer ${gate.offer} through the site's offer button`;
+        }
+        if (g.action === "accept") {
+          offering = "accept";
+          toSend = `Accept the offer of ${gate.accept} through the site's Accept button`;
         }
       }
       if (listing) {
@@ -986,17 +990,44 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       };
     }
     if (offering === "open" && gate) gateState.offering = true;
+    if (offering === "accept" && gate) {
+      // Once: there's no box to show whether it went, so it counts as gone.
+      gateState.accepted = true;
+      tasks.negotiations?.offerPassed(id, true, lastUrl, "accept");
+      tasks.addStep(id, {
+        kind: "note",
+        name: "Accepted the offer",
+        detail: String(gate.accept),
+        url: lastUrl,
+      });
+      const note = gate.offerOnly
+        ? "The offer is accepted: no message goes. Call record_conversation, then finish."
+        : "The offer is accepted. Now send the approved message in the conversation's message box, as the goal says.";
+      const content = r.content ?? [];
+      r = {
+        ...r,
+        content:
+          typeof content === "string"
+            ? `${content}\n\n${note}`
+            : [...content, { type: "text", text: note }],
+      };
+    }
     if (offering === "offer" && gate && inspectAgain) {
       // Once, whether it went or not.
       gateState.offered = true;
       const amount = gate.offer;
-      const { went } = await sentFrom(
+      const { went, url } = await sentFrom(
         inspectAgain,
         (fields) => !fields.some((f) => boxPrice(f) === amount),
       );
-      const note = went
-        ? "The offer went. Now send the approved message in the conversation's message box, as the goal says."
-        : "The offer button was clicked, but the price is still in its box, so it may not have gone. Don't offer again: close the offer form and send the approved message.";
+      if (gate.offerOnly) tasks.negotiations?.offerPassed(id, went, url ?? lastUrl, "offer");
+      const note = gate.offerOnly
+        ? went
+          ? "The offer went: no message goes with it. Call record_conversation, then finish."
+          : "The offer button was clicked, but the price is still in its box, so it may not have gone. Don't try again: call record_conversation, then finish."
+        : went
+          ? "The offer went. Now send the approved message in the conversation's message box, as the goal says."
+          : "The offer button was clicked, but the price is still in its box, so it may not have gone. Don't offer again: close the offer form and send the approved message.";
       tasks.addStep(id, {
         kind: "note",
         name: went ? "Made the approved offer" : "Not sure the offer went",

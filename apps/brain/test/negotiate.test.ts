@@ -897,6 +897,110 @@ test("an offer goes through the site's offer button at exactly the approved pric
   expect(t.negotiations.messages(n.id)[0]).toMatchObject({ status: "sent", text: TEXT });
 });
 
+/** A listing's offer button at x 100 that opens a form with a price box, and the message box. */
+function offerPage(t: TestApp, accept = false) {
+  messageBox(t);
+  const state = { form: false, price: [] as string[], chat: [] as string[], accepted: false };
+  const el = (x?: number): AgentElement => ({
+    tag: x === undefined ? (state.form ? "input" : "textarea") : "button",
+    role: null,
+    type: x === undefined ? null : "submit",
+    label:
+      x === 100 ? (accept ? "Akceptuj" : state.form ? "Zaproponuj" : "Zaproponuj cenę") : "Wyślij",
+    inForm: true,
+    url: t.agent.page.url ?? LISTING_URL,
+    editable: x === undefined,
+    fields: state.form ? state.price : state.chat,
+  });
+  t.agent.inspect = async (x?: number) => el(x);
+  t.agent.afterAction = (name, input) => {
+    const box = state.form ? state.price : state.chat;
+    if (name === "type") box.splice(0, box.length, `${box[0] ?? ""}${String(input.text)}`);
+    if (name !== "left_click") return;
+    const x = (input.coordinate as number[])[0];
+    if (x === 100 && accept) state.accepted = true;
+    else if (x === 100 && !state.form) state.form = true;
+    else if (x === 100) [state.form, state.price] = [false, []];
+    else state.chat = [];
+  };
+  return state;
+}
+
+const noteNames = (t: TestApp) =>
+  t.tasks
+    .steps(t.tasks.list()[0]?.id ?? 0)
+    .filter((s) => s.kind === "note" && s.name !== "Held back")
+    .map((s) => s.name);
+
+test("with offer_only, the offer goes through the site's offer button alone, and the message isn't sent", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("type", { text: "1060" })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  offerPage(t);
+  const n = openNegotiation(t);
+  const input = { text: TEXT, offer: 1060, agree: false, offerOnly: true, stated: null };
+  await t.negotiations.send(n, input, call());
+  await t.tasks.idle();
+
+  expect(t.agent.actions.map((a) => (a.name === "type" ? a.input.text : a.name))).toEqual([
+    "left_click",
+    "1060",
+    "left_click",
+    TEXT,
+  ]);
+  expect(noteNames(t)).toEqual(["Made the approved offer"]);
+  expect(t.negotiations.messages(n.id)[0]).toMatchObject({
+    status: "sent",
+    text: "(An offer through the site: 1060 zł.)",
+  });
+});
+
+test("agreeing to their offer through the site, with offer_only, takes it with the site's Accept button alone", async () => {
+  // The page shows the offer in its own words, which is the same offer, not a new message.
+  const card = { from: "seller", text: "Proponowana cena: 1200 zł" };
+  const work = new FakeModel([
+    { content: [toolUse("record_conversation", { messages: [card] })] },
+    { content: [computer("left_click", { coordinate: [100, 200] })] },
+    { content: [computer("type", { text: "Biorę za 1200 zł." })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const page = offerPage(t, true);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  // Their offer through the site, as the inbox read it.
+  t.db
+    .query(
+      `INSERT INTO negotiation_messages (negotiation_id, direction, text, offer, status, market_id, created_at)
+       VALUES (?, 'in', '(an offer through the site: 1200 zł)', 1200, 'received', 'o1', '2026-10-09T11:00:00Z')`,
+    )
+    .run(n.id);
+  const input = {
+    text: "Biorę za 1200 zł.",
+    offer: 1200,
+    agree: true,
+    offerOnly: true,
+    stated: null,
+  };
+  await t.negotiations.send(n, input, call());
+  await t.tasks.idle();
+
+  expect(page.accepted).toBe(true);
+  expect(clicks(t)).toBe(1);
+  expect(noteNames(t)).toEqual(["Accepted the offer"]);
+  expect(t.negotiations.messages(n.id).at(-1)).toMatchObject({
+    status: "sent",
+    text: "(Accepted their offer of 1200 zł through the site.)",
+  });
+});
+
 test("a conversation opened from the listing page is the negotiation's, and one opened by address isn't", async () => {
   const steps = [
     { content: [computer("left_click", { coordinate: [300, 500] })] },

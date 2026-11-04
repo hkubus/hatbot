@@ -1,5 +1,6 @@
 // In a negotiation's desktop task, a click or Enter goes through as the send only while the text boxes
-// hold exactly the approved message and the tab is that negotiation's conversation.
+// hold exactly the approved message and the tab is that negotiation's conversation. Where the site's
+// own offer or Accept button says it all, that goes instead, and the message only without one.
 import { escapeRe, pathOf } from "@hatbot/plugin-sdk";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { type Combo, combosIn, readCombo } from "@hatbot/shared/keys";
@@ -19,6 +20,10 @@ export type SendGate = {
   text: string | null;
   /** The price the site's own offer button may send before the message: Vinted's and OLX's. */
   offer: number | null;
+  /** The offer, or the Accept, goes alone: the message is for a site or page without the button. */
+  offerOnly?: boolean;
+  /** The other side's offer through the site, at this price, which the site's Accept button takes. */
+  accept?: number | null;
   listingUrl: string;
   listingId: string;
   conversationUrl: string | null;
@@ -31,6 +36,7 @@ export type GateState = {
   /** The site's offer form was opened, so an offer button with no price box is now its submit. */
   offering?: boolean;
   offered?: boolean;
+  accepted?: boolean;
   stopped?: string | null;
   /** From here a send needs a text box Hatbot can see. */
   typed?: boolean;
@@ -39,6 +45,7 @@ export type GateState = {
 export type GateCheck =
   | { action: "send" }
   | { action: "offer" }
+  | { action: "accept" }
   /** The click opens the site's offer form. */
   | { action: "open_offer" }
   | { action: "pass" }
@@ -118,13 +125,23 @@ export const NATIVE_OFFERS = ["olx.pl", "vinted.pl"];
 // Not "ofert" alone: "Moje oferty" is a tab.
 const OFFER =
   /(?<![\p{L}\p{N}])(?:zaproponuj|(?:wyslij|zloz|przeslij) (?:propozycj|ofert)|(?:make|send|submit) (?:an |a )?offer|offer$)/u;
-// Accepting the seller's offer, or buying at it, isn't ours to press.
+// Accepting an offer, or buying at it, isn't making one.
 const NOT_OUR_OFFER =
   /(?<![\p{L}\p{N}])(?:kup|zakup|zaplac|oplac|zamow|pay|buy|purchase|checkout|order|accept|akceptuj|zaakceptuj|przyjmij|przyjmuj|odrzuc|decline|reject|anuluj|cancel|wycofaj|withdraw)/u;
 
 export const offerLabel = (label: string) => {
   const l = fold(collapse(label));
   return OFFER.test(l) && !NOT_OUR_OFFER.test(l);
+};
+
+const ACCEPT =
+  /^(?:accept|accept offer|accept (?:the )?(?:offer|price)|akceptuj|zaakceptuj|akceptuje|przyjmij|przyjmuje|zgadzam sie)(?: (?:oferte|propozycje|cene|offer))?(?: \d[\d ]*(?:[.,]\d{1,2})? ?(?:zl|pln)?)?$/;
+// Accepting a price, not buying or paying at it, which asks as it always does.
+const MONEY = /(?<![\p{L}\p{N}])(?:kup|zakup|zaplac|oplac|zamow|pay|buy|purchase|checkout|order)/u;
+
+export const acceptLabel = (label: string) => {
+  const l = fold(collapse(label));
+  return ACCEPT.test(l) && !MONEY.test(l);
 };
 
 const PRICE_BOX =
@@ -223,8 +240,36 @@ export function gateCheck(
   const { offer } = gate;
   if (
     gate.mode === "send" &&
+    gate.accept != null &&
+    !state.accepted &&
+    !state.offered &&
+    !state.sent &&
+    kind === "click" &&
+    acceptLabel(label) &&
+    !(held && ("checkout" in held || "frame" in held)) &&
+    el.tag !== "iframe" &&
+    el.tag !== "frame"
+  ) {
+    if (state.stopped) return { action: "hold", why: state.stopped };
+    if (!el.url || !onConversation(el.url, gate))
+      return {
+        action: "hold",
+        why: `This tab (${el.url || "unknown"}) isn't the negotiation's conversation. Accept the offer in ${gate.conversationUrl ?? gate.listingUrl}.`,
+      };
+    if (!state.recorded)
+      return {
+        action: "hold",
+        why: "Call record_conversation first, with the messages in the conversation, so a reply that came meanwhile isn't missed.",
+      };
+    if (amountsInLabel(label).some((a) => a !== gate.accept))
+      return { action: "hold", why: `This button accepts another price than ${gate.accept}.` };
+    return { action: "accept" };
+  }
+  if (
+    gate.mode === "send" &&
     offer !== null &&
     !state.offered &&
+    !state.accepted &&
     !state.sent &&
     offerLabel(label) &&
     !(held && ("checkout" in held || "frame" in held)) &&
@@ -263,10 +308,13 @@ export function gateCheck(
       why: "A text box here holds text, and this task only reads the conversation: it sends nothing. Don't click or submit anything with text in a box.",
     };
   if (state.stopped) return { action: "hold", why: state.stopped };
-  if (state.sent)
+  if (state.sent || (gate.offerOnly && (state.offered || state.accepted)))
     return {
       action: "hold",
-      why: "The message has been sent once already in this task; nothing more goes. Finish the task.",
+      why:
+        state.sent || !gate.offerOnly
+          ? "The message has been sent once already in this task; nothing more goes. Finish the task."
+          : "The site's own button said it: no message goes with it. Call record_conversation, then finish.",
     };
   if (fields.length !== 1 || fields[0] !== text) {
     const other = fields.find((f) => f !== text) ?? "";

@@ -84,6 +84,25 @@ test("without an approved offer, or on buttons that accept or buy, the offer pat
   expect(check({ ...offering, mode: "read", text: null }, "Zaproponuj cenę", [])).toBe("usual");
 });
 
+test("the site's Accept takes their offer at the agreed price, once; after it, or an offer alone, no message goes", () => {
+  const accepting = { ...gate, offer: 1100, accept: 1100, offerOnly: true };
+  const click = (label: string, state: GateState = ready, fields: string[] = []) =>
+    gateCheck(accepting, state, "click", send({ label, fields }), { label }).action;
+  expect(click("Akceptuj ofertę")).toBe("accept");
+  expect(click("Accept")).toBe("accept");
+  expect(click("Akceptuj 1200 zł")).toBe("hold");
+  expect(click("Akceptuj", { ...ready, recorded: false })).toBe("hold");
+  expect(click("Kup za 1100 zł")).toBe("usual");
+  expect(click("Akceptuj ofertę", { ...ready, accepted: true })).toBe("usual");
+  // What the site's button said, the message doesn't say again; without offer_only, it goes too.
+  expect(click("Wyślij", { ...ready, accepted: true }, [TEXT])).toBe("hold");
+  expect(click("Wyślij", { ...ready, offered: true }, [TEXT])).toBe("hold");
+  const both = { ...accepting, offerOnly: false };
+  expect(
+    gateCheck(both, { ...ready, accepted: true }, "click", send(), { label: "Wyślij" }).action,
+  ).toBe("send");
+});
+
 test("other text, more text, or the wrong place is held", () => {
   const held = (el: AgentElement) => gateCheck(gate, ready, "click", el, null).action;
   expect(held(send({ fields: ["Kupię za 2000 zł"] }))).toBe("hold");
