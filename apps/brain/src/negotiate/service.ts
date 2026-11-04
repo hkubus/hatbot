@@ -169,7 +169,12 @@ const HOLD_KINDS: Approval["kind"][] = ["injection_warning", "other"];
 /** After a deal nothing more goes to the seller, so what they write is the owner's. */
 const DEALT: NegotiationStatus[] = ["agreed", "paid", "received"];
 
-export type ConversationReport = { from: "seller" | "buyer" | "us" | "site"; text: string }[];
+/** `offer`: a card for an offer made with the site's offer button, at that price. */
+export type ConversationReport = {
+  from: "seller" | "buyer" | "us" | "site";
+  text: string;
+  offer?: number;
+}[];
 
 export type Recorded = { text: string; stale: boolean; alreadySent: boolean };
 
@@ -1436,16 +1441,18 @@ export class Negotiations {
         .filter((m) => m.direction === "out" && m.id !== outgoing?.id && m.status !== "failed")
         .map((m) => keyOf(m.text)),
     );
-    // An offer through the site, in the page's words rather than the inbox's: by its one price.
+    // An offer through the site, in the page's words rather than the inbox's: by its price, which
+    // the card gives, or failing that its text's one price.
     const offers = (direction: string) =>
       this.messages(n.id)
         .filter((m) => m.direction === direction && m.offer !== null && m.status !== "failed")
         .map((m) => m.offer as number);
     const [theirs, ours] = [offers("in"), offers("out")];
-    const sameOffer = (pool: number[], text: string) => {
-      const r = priceReading(n, text);
+    const sameOffer = (pool: number[], m: ConversationReport[number]) => {
+      const r = priceReading(n, m.text);
       const [one, ...more] = new Set(r.values);
-      const i = one === undefined || more.length || r.unclear ? -1 : pool.indexOf(one);
+      const price = m.offer ?? (more.length || r.unclear ? undefined : one);
+      const i = price === undefined ? -1 : pool.findIndex((x) => Math.abs(x - price) < 0.005);
       if (i >= 0) pool.splice(i, 1);
       return i >= 0;
     };
@@ -1474,7 +1481,7 @@ export class Negotiations {
         }
         const had = owners.get(key) ?? 0;
         if (had > 0) owners.set(key, had - 1);
-        else if (!botWrote(key) && !sameOffer(ours, m.text))
+        else if (!botWrote(key) && !sameOffer(ours, m))
           this.d.db
             .query(
               `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at)
@@ -1488,9 +1495,9 @@ export class Negotiations {
         stored.set(key, seen - 1);
         return;
       }
-      if (sameOffer(theirs, m.text)) return;
+      if (sameOffer(theirs, m)) return;
       added++;
-      fresh.push(this.received(n, m.text));
+      fresh.push(this.received(n, m.text, null, m.offer ?? null));
       if (i > lastOurs) after++;
     });
     // Whoever had it read answers it.
@@ -1624,7 +1631,10 @@ export class Negotiations {
       if (m.direction === "in") {
         const offer = m.type === "offer" ? (m.offer?.amount ?? null) : null;
         const same = rows.find(
-          (r) => r.direction === "in" && r.market_id === null && keyOf(r.text) === k,
+          (r) =>
+            r.direction === "in" &&
+            r.market_id === null &&
+            (keyOf(r.text) === k || (offer !== null && r.offer === offer)),
         );
         if (same) {
           mark(same, marketId);

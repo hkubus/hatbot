@@ -1457,6 +1457,50 @@ function sent(t: TestApp, n: Negotiation, text = TEXT, offer = 1060) {
 const answerTasks = (t: TestApp) =>
   t.tasks.list().filter((x) => /^(Answer|Nudge|Give up on) the seller/.test(x.title));
 
+test("an offer through the site, read on the page in its own words, is the inbox's offer and not a new message, read after read", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  sent(t, n);
+  t.taskModel.script.push(later);
+  const offer = { amount: 1200, status: null };
+  t.negotiations.recordInbox(n.id, [{ id: "o", direction: "in", type: "offer", text: "", offer }]);
+  await t.tasks.idle();
+  const read = async (card: { text: string; offer: number }) => {
+    t.taskModel.script.push(
+      { content: [toolUse("record_conversation", { messages: [{ from: "seller", ...card }] })] },
+      finish(),
+    );
+    await t.negotiations.check(t.negotiations.get(n.id) as Negotiation, call());
+    await t.tasks.idle();
+  };
+  const card = { text: "Oferta 1260,11 zł z Ochroną Kupujących", offer: 1200 };
+  await read(card);
+  await read(card);
+  const theirs = () => t.negotiations.messages(n.id).filter((m) => m.direction === "in");
+  expect(theirs().map((m) => m.offer)).toEqual([1200]);
+  // A new price is a new offer, and the one the site's Accept would take.
+  await read({ text: "Oferta 1312,61 zł z Ochroną Kupujących", offer: 1250 });
+  expect(theirs().map((m) => m.offer)).toEqual([1200, 1250]);
+  expect(t.negotiations.theirOffer(n.id)).toBe(1250);
+});
+
+test("the marketplace's own safety notes aren't a scam, though the read puts them in the other side's mouth; a note that goes on to ask is", () => {
+  for (const text of [
+    "Zapłać bezpiecznie przez Vinted. Nie przelewaj pieniędzy poza Vinted.",
+    "Vinted nigdy nie poprosi o dane karty ani kod BLIK.",
+    "Pamiętaj: nie płać poza OLX.",
+  ])
+    expect([text, scamSignals(text, [])]).toEqual([text, []]);
+  for (const text of [
+    "Nie płać przez Vinted, wyślę numer do BLIK.",
+    "Nie przelewaj poza Vinted. Ale mi przelej zaliczkę.",
+    "Vinted nigdy nie poprosi o BLIK, ale ja proszę o BLIK.",
+    "Nie płać poza OLX: https://olx-pay.example/1",
+  ])
+    expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
+});
+
 test("a seller's reply in Scout's inbox gets an answer, with nobody in the chat", async () => {
   const seller = "Za 1060 nie, mogę zejść do 1350 zł.";
   const reply = "Mogę dać 1150 zł, pasuje?";

@@ -320,11 +320,33 @@ function ownSite(link: string): boolean {
   }
 }
 
+// The marketplace's own safety notes, which a read of the page may put in the other side's mouth:
+// "Nie przelewaj pieniędzy poza Vinted", "Vinted nigdy nie poprosi o kod BLIK".
+const MARKETS = "vinted|olx|allegro(?: lokalnie)?";
+const WARNING = new RegExp(
+  `^(?:(?:pamietaj|uwaga)\\W* )?(?:(?:nigdy )?nie \\p{L}+.* poza (?:${MARKETS}|platform\\p{L}*|serwis\\p{L}*)|(?:${MARKETS}) nigdy nie (?:poprosi|prosi|wysle|wysyla))(?![\\p{L}\\p{N}])`,
+  "u",
+);
+// "…, ale proszę o BLIK" is no warning.
+const CONTRAST = /(?<![\p{L}\p{N}])(?:ale|lecz|tylko|jednak|natomiast|but)(?![\p{L}\p{N}])/u;
+// Not the fold above, which reads "vinted" as "vlnted".
+const plainFold = (s: string) =>
+  s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/ł/g, "l");
+const unwarned = (text: string) =>
+  text
+    .split(/(?<=[.!?\n])\s*/)
+    .filter((sentence) => {
+      const f = plainFold(sentence).trim();
+      return !WARNING.test(f) || CONTRAST.test(f);
+    })
+    .join(" ");
+
 export function scamSignals(text: string, allow: MandateContact[]): string[] {
   const out: string[] = [];
-  const off = OFF_PLATFORM.exec(text)?.[0] ?? disguised(text);
+  const words = unwarned(text);
+  const off = OFF_PLATFORM.exec(words)?.[0] ?? disguised(words);
   if (off) out.push(`payment or talk off the platform (“${off}”)`);
-  if (said(DEPOSIT_RE, text)) out.push("a request for a deposit");
+  if (said(DEPOSIT_RE, words)) out.push("a request for a deposit");
   const account = [...plain(text).matchAll(ACCOUNT)].map((m) => m[0]).find(ibanChecks);
   if (account) out.push(`a bank account number (“${account}”)`);
   const link = linksIn(text).find((l) => !ownSite(l));
