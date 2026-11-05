@@ -124,10 +124,13 @@ enum Markdown {
       if let fence = fenceMarker(trimmed) {
         flush()
         let language = String(trimmed.dropFirst(fence.count)).trimmingCharacters(in: .whitespaces)
+        // Under a list item, its code is indented as far as the fence.
+        let indent = line.prefix { $0 == " " }.count
         var code: [String] = []
         i += 1
-        while i < lines.count, !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(fence) {
-          code.append(lines[i])
+        while i < lines.count, !closes(fence, lines[i].trimmingCharacters(in: .whitespaces)) {
+          let spaces = min(indent, lines[i].prefix { $0 == " " }.count)
+          code.append(String(lines[i].dropFirst(spaces)))
           i += 1
         }
         let closed = i < lines.count
@@ -182,11 +185,12 @@ enum Markdown {
         flush()
         var items: [MDBlock.Item] = []
         while i < lines.count {
+          let t = lines[i].trimmingCharacters(in: .whitespaces)
           if let item = listItem(lines[i]) {
             items.append(item)
-          } else if !lines[i].trimmingCharacters(in: .whitespaces).isEmpty, lines[i].hasPrefix("  "), !items.isEmpty {
-            // A wrapped line continues the item above.
-            items[items.count - 1].text += "\n" + lines[i].trimmingCharacters(in: .whitespaces)
+          } else if !t.isEmpty, lines[i].hasPrefix("  "), !items.isEmpty, fenceMarker(t) == nil {
+            // A wrapped line continues the item above; code under it is a block of its own.
+            items[items.count - 1].text += "\n" + t
           } else {
             break
           }
@@ -216,10 +220,17 @@ enum Markdown {
     return (blocks, settled)
   }
 
+  /// The opening run of three or more backticks or tildes, all of it.
   private static func fenceMarker(_ t: String) -> String? {
-    if t.hasPrefix("```") { return "```" }
-    if t.hasPrefix("~~~") { return "~~~" }
-    return nil
+    guard let c = t.first, c == "`" || c == "~" else { return nil }
+    let run = t.prefix { $0 == c }
+    return run.count >= 3 ? String(run) : nil
+  }
+
+  /// Closed by the same character, at least as many, and nothing after, as on the web.
+  private static func closes(_ fence: String, _ t: String) -> Bool {
+    guard let run = fenceMarker(t), run.first == fence.first, run.count >= fence.count else { return false }
+    return t.dropFirst(run.count).trimmingCharacters(in: .whitespaces).isEmpty
   }
 
   private static func heading(_ t: String) -> (Int, String)? {

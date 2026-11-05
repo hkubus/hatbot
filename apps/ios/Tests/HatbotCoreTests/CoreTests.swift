@@ -412,6 +412,23 @@ final class ChatTests: XCTestCase {
       ])
   }
 
+  /// Steps with code under each, as replies write them: the code is a block of its own, with a blank line
+  /// in it too. A longer fence holds a shorter one, as on the web.
+  func testCodeUnderAListItemAndLongerFences() {
+    let steps = "1. Install:\n   ```bash\n   npm install\n\n   npm test\n   ```\n2. Run it.\n\nDone."
+    XCTAssertEqual(
+      Markdown.parse(steps),
+      [
+        .list([.init(depth: 0, marker: "1.", text: "Install:")]),
+        .code(language: "bash", code: "npm install\n\nnpm test"),
+        .list([.init(depth: 0, marker: "2.", text: "Run it.")]),
+        .paragraph("Done."),
+      ])
+    XCTAssertEqual(
+      Markdown.parse("````md\n```js\nx\n```\n````\nAfter"),
+      [.code(language: "md", code: "```js\nx\n```"), .paragraph("After")])
+  }
+
   /// A chart is drawn once its block is whole and lines up; until then a placeholder, and if it
   /// doesn't, the code.
   func testChartBlocks() {
