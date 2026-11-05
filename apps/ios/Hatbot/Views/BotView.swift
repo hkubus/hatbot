@@ -201,14 +201,17 @@ struct BotView: View {
     }
     .task(id: id) {
       if let stored {
-        form = Form(stored)
-        if stored.brief != true {
-          base = stored
-        } else if let id {
-          await attempt($error) {
-            let whole = try await store.loadBot(id)
-            form.instructions = whole.instructions
-            base = whole
+        // Back from its notes, what you were changing stays.
+        if base?.id != stored.id || base.map(Form.init) == form {
+          form = Form(stored)
+          if stored.brief != true {
+            base = stored
+          } else if let id {
+            await attempt($error) {
+              let whole = try await store.loadBot(id)
+              form.instructions = whole.instructions
+              base = whole
+            }
           }
         }
       } else {

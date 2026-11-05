@@ -422,7 +422,8 @@ struct HeartbeatView: View {
         async let s = store.loadSettings()
         async let i = store.loadHeartbeat()
         let (all, last) = try await (s, i)
-        settings = all.heartbeat
+        // Back from its task, what you were writing stays; changes elsewhere come as settings.updated.
+        if settings == nil { settings = all.heartbeat }
         info = last
         if store.botIds.isEmpty { await store.loadBots() }
       }

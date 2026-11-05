@@ -232,8 +232,10 @@ struct ScheduleDetailView: View {
         return
       }
       await attempt($error, missing: $missing) {
+        // Back from a page it links to, what you were changing stays.
+        let shown = stored.map(Form.init)
         try await store.loadSchedule(id)
-        if let s = store.schedules[id] { form = Form(s) }
+        if let s = store.schedules[id], form == nil || form == shown { form = Form(s) }
       }
     }
   }
@@ -363,7 +365,10 @@ struct TriggerDetailView: View {
     .task(id: id) {
       await attempt($error, missing: $missing) {
         try await store.loadTrigger(id)
-        if let t = store.triggers[id] {
+        // Back from a page it links to, what you were changing stays.
+        let shown = store.triggers[id]
+        let edited = loaded && (name != shown?.name || prompt != shown?.prompt)
+        if let t = store.triggers[id], !edited {
           name = t.name
           prompt = t.prompt
         }
