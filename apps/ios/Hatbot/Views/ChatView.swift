@@ -424,8 +424,11 @@ private struct Composer: View {
   private var canSend: Bool {
     let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     let hasFiles = files.contains { $0.attachment != nil }
-    return (hasText || hasFiles) && !sending && !uploading
+    // A file that didn't go up holds the message until it's taken off: it would go without it.
+    return (hasText || hasFiles) && !sending && !uploading && failed.isEmpty
   }
+
+  private var failed: [ComposerFile] { files.filter { $0.error != nil } }
 
   private func attach(_ data: Data, name: String, mediaType: String) {
     let f = ComposerFile(name: name)
@@ -440,7 +443,6 @@ private struct Composer: View {
       drafts.update(key, id) { $0.attachment = a }
     } catch {
       drafts.update(key, id) { $0.error = message(for: error) }
-      self.error = message(for: error)
     }
   }
 
@@ -469,6 +471,13 @@ private struct Composer: View {
       }
       if !files.isEmpty {
         ComposerFiles(files: files) { id in files.removeAll { $0.id == id } }
+      }
+      if !failed.isEmpty {
+        Text(
+          failed.map { "\($0.name): \($0.error ?? "")" }.joined(separator: " ")
+            + (failed.count > 1 ? " Take them off to send." : " Take it off to send.")
+        )
+        .font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
       }
       if !mentionable.isEmpty {
         mentionList
@@ -544,11 +553,15 @@ private struct Composer: View {
       guard case let .success(urls) = result else { return }
       Task {
         for url in urls.prefix(10) {
-          guard let f = await Task.detached(operation: { PickedFile.file(url) }).value else {
-            error = "Couldn't read \(url.lastPathComponent)."
-            continue
+          do {
+            // Not read at all when it's over the brain's limit: held whole, a big one could close the app.
+            let f = try await Task.detached { try PickedFile.file(url, limit: API.maxUpload) }.value
+            attach(f.data, name: f.name, mediaType: f.mediaType)
+          } catch let e as CocoaError where e.code == .fileReadTooLarge {
+            files.append(ComposerFile(name: url.lastPathComponent, error: "Over 25 MB."))
+          } catch {
+            self.error = "Couldn't read \(url.lastPathComponent)."
           }
-          attach(f.data, name: f.name, mediaType: f.mediaType)
         }
       }
     }
@@ -618,6 +631,7 @@ private struct Composer: View {
   }
 
   private func send(_ command: String? = nil) {
+    let key = key
     let typed = command ?? draft
     let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
     let attached = command == nil ? files : []
@@ -640,8 +654,13 @@ private struct Composer: View {
       do {
         try await store.send(text, attachmentIds: ids)
       } catch {
-        if draft.isEmpty { draft = typed }
-        if files.isEmpty && !attached.isEmpty { files = attached }
+        // Back in the chat it was written in, even if you've gone to another meanwhile.
+        if key == self.key {
+          if draft.isEmpty { draft = typed }
+        } else if drafts.texts[key, default: ""].isEmpty {
+          drafts.texts[key] = typed
+        }
+        if drafts.files[key, default: []].isEmpty && !attached.isEmpty { drafts.files[key] = attached }
         self.error = message(for: error)
       }
       sending = false

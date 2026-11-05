@@ -53,10 +53,15 @@ enum PickedFile {
     return out as Data
   }
 
-  static func file(_ url: URL) -> (data: Data, name: String, mediaType: String)? {
+  /// One over `limit` bytes isn't read: that throws CocoaError.fileReadTooLarge.
+  static func file(_ url: URL, limit: Int) throws -> (data: Data, name: String, mediaType: String) {
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-    guard let data = try? Data(contentsOf: url) else { return nil }
+    if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > limit {
+      throw CocoaError(.fileReadTooLarge)
+    }
+    let data = try Data(contentsOf: url)
+    guard data.count <= limit else { throw CocoaError(.fileReadTooLarge) }
     return (data, url.lastPathComponent, mediaType(url))
   }
 
