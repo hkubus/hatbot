@@ -38,10 +38,10 @@ export function routes(computers: Computers) {
   };
   return (
     pluginRoutes()
-      // The Linux app's agent: only an app's device token, never a browser's session.
+      // The desktop app's agent: only an app's device token, never a browser's session.
       .get("/computer/connect", async (c, next) => {
         if (c.env.principal?.kind !== "token")
-          return c.json({ error: "Connect with the Linux app's device token." }, 403);
+          return c.json({ error: "Connect with the desktop app's device token." }, 403);
         await next();
       })
       .get(
@@ -65,7 +65,7 @@ export function routes(computers: Computers) {
               if (m.t !== "hello" || typeof m.machineId !== "string" || !m.machineId)
                 return ws.close(4400, "Say hello first");
               if (m.protocol !== COMPUTER_PROTOCOL)
-                return ws.close(4426, "Update the Linux app, or Hatbot");
+                return ws.close(4426, "Update Hatbot's desktop app, or Hatbot");
               link = computers.connect(
                 m,
                 c.env.principal?.id ?? 0,

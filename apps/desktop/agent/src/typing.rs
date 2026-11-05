@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use evdev::KeyCode;
+use crate::keycode::KeyCode;
 
 /// One key press that types a character: the key, and the levels it needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,7 @@ impl KeyTable {
     }
 
     /// Reads an xkb keymap, as the compositor gives it.
+    #[cfg(target_os = "linux")]
     pub fn from_keymap(text: &str) -> Option<Self> {
         use xkbcommon::xkb;
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -57,6 +58,7 @@ impl KeyTable {
     }
 
     /// The system's default keymap, from XKB_DEFAULT_LAYOUT and friends, when the compositor gave none.
+    #[cfg(target_os = "linux")]
     pub fn default_keymap() -> Option<Self> {
         use xkbcommon::xkb;
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -64,6 +66,7 @@ impl KeyTable {
         Some(Self::from_xkb(&keymap))
     }
 
+    #[cfg(target_os = "linux")]
     fn from_xkb(keymap: &xkbcommon::xkb::Keymap) -> Self {
         use xkbcommon::xkb;
         let shift = 1u32 << keymap.mod_get_index(xkb::MOD_NAME_SHIFT);
@@ -94,20 +97,25 @@ impl KeyTable {
                     };
                     let stroke =
                         Stroke { code: KeyCode::new(evdev as u16), shift: mask & shift != 0, altgr: mask & altgr != 0 };
-                    // Prefer the main keyboard's keys and the fewest modifiers over the keypad's.
-                    table
-                        .entry(c)
-                        .and_modify(|s: &mut Stroke| {
-                            if rank(stroke) < rank(*s) {
-                                *s = stroke;
-                            }
-                        })
-                        .or_insert(stroke);
+                    add(table, c, stroke);
                 }
             }
         }
         Self { layouts, current: 0 }
     }
+}
+
+/// Adds a key for a character, preferring the main keyboard's keys and the fewest modifiers over
+/// the keypad's.
+pub(crate) fn add(table: &mut HashMap<char, Stroke>, c: char, stroke: Stroke) {
+    table
+        .entry(c)
+        .and_modify(|s| {
+            if rank(stroke) < rank(*s) {
+                *s = stroke;
+            }
+        })
+        .or_insert(stroke);
 }
 
 fn rank(s: Stroke) -> (bool, u8, u16) {
@@ -184,6 +192,7 @@ pub(crate) mod tests {
         assert_eq!(t.shortcut('c'), Some(Stroke::plain(KeyCode::KEY_C)));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn reads_a_real_keymap() {
         let Some(t) = KeyTable::default_keymap() else { return };

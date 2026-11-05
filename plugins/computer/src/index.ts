@@ -1,4 +1,4 @@
-// Your own Linux computers, through Hatbot's Linux app: its agent dials in, and desktop tasks use their
+// Your own computers, Linux or Windows, through Hatbot's desktop app: its agent dials in, and desktop tasks use their
 // screens, as you, alongside the desktop. Only the computer turns its use on.
 
 import { definePlugin, type EventsHost, ready } from "@hatbot/plugin-sdk";
@@ -28,7 +28,7 @@ export const computerPlugin = definePlugin({
   id: "computer",
   name: "Your computers",
   description:
-    "Hatbot uses your own Linux computers through Hatbot's Linux app: their screens for desktop tasks, and their files and commands as you. Each computer turns this on itself.",
+    "Hatbot uses your own computers, Linux or Windows, through Hatbot's desktop app: their screens for desktop tasks, and their files and commands as you. Each computer turns this on itself.",
   config: z.object({}),
   defaultOn: true,
   allBots: true,

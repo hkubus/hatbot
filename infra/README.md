@@ -153,7 +153,7 @@ Env files in `/etc/hatbot/` on the brain still work, for ones written before or 
 | Scout | Scout's address on the plugin's page (one the brain and your browser both reach), then **Connect**: Scout asks you to let Hatbot in, and you're back, connected. Haggler gets it. Disconnect in Scout's settings, under Connected apps. Needs a Scout that can connect apps |
 | MCP | servers and the secrets they use are added on the plugin's page; a server's headers or environment use a secret as `${NAME}`. Names set in `/etc/hatbot/mcp.env` work too. A "Command" server runs inside the brain as the `hatbot` user, which can read the brain's other secrets, so only run servers you trust there; prefer HTTP servers running elsewhere |
 
-## The Linux app
+## The desktop app
 
 On Arch, add Hatbot's package repository once, and pacman updates the app with everything else:
 
@@ -173,11 +173,19 @@ The GitHub mirror builds it from `apps/desktop/packaging/PKGBUILD` on every push
 
 Without a server, the app's first start offers **Run it here**. It downloads Bun (checked against the checksum the app ships with) and the brain at the app's own commit, from the GitHub mirror or, failing that, Forgejo, then builds it under `~/.local/share/hatbot` and runs it as the systemd user service `hatbot-brain`, which starts when you log in. It needs `git`, `tar` and a systemd user session. Its settings are in `~/.config/hatbot/brain.env`, and its data, with the token the app signs in with (`app-token`), is in `~/.local/share/hatbot/data`. Then it opens the web app's guided setup, which asks for the model provider's key; the app waits until the setup is finished.
 
-- There's no password: the brain listens only on 127.0.0.1, and Settings → Hatbot on this computer → Web app opens the web app signed in. The Desktop and Boxes plugins start off, since there's no guest for them.
+- There's no password: the brain listens only on 127.0.0.1, and the app opens the web app signed in. The Desktop and Boxes plugins start off, since there's no guest for them.
 - **Reach it from other devices** first has you set a password and an authenticator in the web app, then listens on the network over plain http, so keep it to a network you trust.
 - When the app is updated, its next start brings the brain to the same commit. The database is copied first, and if the new version doesn't start in 90 seconds, the old one and the copy go back; that version isn't tried again.
 - A build of the app at a commit that isn't pushed can't fetch its brain; `HATBOT_SOURCE=http://…` makes it fetch `<commit>.tar.gz` from somewhere else.
 - Logs: `journalctl --user -u hatbot-brain`.
+
+### On Windows
+
+The GitHub mirror's CI builds an installer (the `hatbot-windows` artifact of the `desktop-windows` job). It installs for you alone, without an administrator, and the app starts in the tray when you sign in to Windows. Windows 10 1803 or later.
+
+- **Run it here** works as on Linux, under `%LOCALAPPDATA%\Hatbot`, with its settings in `%APPDATA%\Hatbot\brain.env`. There's no systemd: `hatbot.exe --brain`, started at sign-in, runs the brain and starts it again when it fails, and Quit in the tray leaves it running. It needs Git for Windows; `tar` comes with Windows. Logs: `%LOCALAPPDATA%\Hatbot\brain.log`.
+- **Let Hatbot use this computer** reads the screen with GDI, types and clicks with SendInput, and reads controls through UI Automation. Commands run in PowerShell, never as an administrator. Windows won't take Hatbot's input into an administrator's window, and a window its app keeps out of screen captures (a password manager's, say) is treated as private.
+- Untried on a real Windows: everything. CI builds it, runs its tests and lints it; the code is otherwise only compiled from Linux (`cargo clippy --target x86_64-pc-windows-gnu`).
 
 ## When the brain itself is down
 

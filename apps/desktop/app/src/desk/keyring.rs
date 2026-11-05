@@ -58,7 +58,7 @@ mod imp {
     }
 
     pub async fn save(server: &str, token: &str) -> Result<(), String> {
-        let mut name: Vec<u16> = target(server).as_wide().iter().copied().chain([0]).collect();
+        let mut name: Vec<u16> = target(server).iter().copied().chain([0]).collect();
         let mut blob = token.as_bytes().to_vec();
         let cred = CREDENTIALW {
             Type: CRED_TYPE_GENERIC,

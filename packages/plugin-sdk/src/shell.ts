@@ -172,6 +172,73 @@ const RULES: Rule[] = [
   { re: /\bmv\s+[^|;&]*\s(\/dev\/null|\/)\s*$/, why: "moves files away for good", kind: "delete" },
 ];
 
+/** PowerShell's and cmd's own ways, on a Windows computer; its aliases (rm -r, del) are caught too. */
+const WINDOWS_RULES: Rule[] = [
+  {
+    re: /\b(remove-item|ri|rm|rmdir|rd|del|erase)\b[^|;&\n]*\s(-r(ecurse)?\b|\/s\b)/i,
+    why: "deletes files recursively",
+    kind: "delete",
+  },
+  {
+    re: /\b(remove-item|ri|rm|del|erase)\b[^|;&\n]*\*/i,
+    why: "deletes files",
+    kind: "delete",
+  },
+  {
+    re: /\b(format-volume|clear-disk|initialize-disk|remove-partition|diskpart|cipher\s+\/w)\b|\bformat(\.com)?\s+[a-z]:/i,
+    why: "erases or repartitions a disk",
+    kind: "delete",
+  },
+  {
+    re: /\b(vssadmin|wbadmin)\b[^|;&\n]*\sdelete\b|\bremove-computerrestorepoint\b/i,
+    why: "deletes backups",
+    kind: "delete",
+  },
+  {
+    re: /\breg(\.exe)?\s+delete\b|\bremove-item(property)?\b[^|;&\n]*\bhk(lm|cu|ey_\w+):?\\/i,
+    why: "deletes from the registry",
+    kind: "delete",
+  },
+  {
+    re: /\b(stop-computer|restart-computer|bcdedit)\b|\bshutdown(\.exe)?\s+(\/|-)[srpf]/i,
+    why: "shuts down or restarts the computer",
+  },
+  {
+    re: /\b(stop-service|suspend-service)\b|\bset-service\b[^|;&\n]*-startuptype\s+disabled|\bsc(\.exe)?\s+(stop|delete|config)\b|\bnet\s+stop\b/i,
+    why: "stops or disables a service",
+  },
+  { re: /\b(stop-process|taskkill|spps)\b/i, why: "kills processes" },
+  {
+    re: /\b(new-localuser|set-localuser|remove-localuser|add-localgroupmember|remove-localgroupmember)\b|\bnet\s+(user|localgroup)\b[^|;&\n]*\s(\/add|\/delete|\S+\s+\S+)|\.ssh[\\/]/i,
+    why: "changes accounts, passwords or keys",
+    kind: "account_security",
+  },
+  {
+    re: /\b(set-mppreference|add-mppreference|set-executionpolicy|disable-bitlocker|manage-bde)\b/i,
+    why: "changes the computer's security settings",
+    kind: "account_security",
+  },
+  {
+    re: /\b(new-netfirewallrule|set-netfirewallrule|remove-netfirewallrule|set-netfirewallprofile|disable-netfirewallrule)\b|\bnetsh\s+(advfirewall|firewall)\b/i,
+    why: "changes the firewall",
+  },
+  {
+    re: /\b(iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring|curl|wget)\b[^\n]*\|\s*(iex|invoke-expression)\b|\b(iex|invoke-expression)\b[^\n]*\b(iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring)\b/i,
+    why: "runs a script straight from the internet",
+  },
+  {
+    re: /\b(powershell|pwsh)(\.exe)?\b[^\n]*\s-(e|en|enc|encodedcommand)\b|\bfrombase64string\b[^\n]*\b(iex|invoke-expression)\b|\b(iex|invoke-expression)\b[^\n]*\bfrombase64string\b/i,
+    why: "runs a script it hides or builds as it goes",
+  },
+];
+
+/** On a Windows computer: PowerShell's and cmd's rules, then those that hold anywhere (git, docker). */
+export function destructiveOnWindows(command: string): { why: string; kind: ApprovalKind } | null {
+  for (const r of WINDOWS_RULES)
+    if (r.re.test(command)) return { why: r.why, kind: r.kind ?? "other" };
+  return destructive(command);
+}
+
 export function commandCount(command: string): number {
   if (
     /\b(for|while|until)\b[\s\S]*\bdo\b|\b(xargs|parallel)\b|\bfind\b[^|;&]*\s-exec/.test(command)

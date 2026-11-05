@@ -12,7 +12,7 @@ mod wayland_tests;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use evdev::KeyCode;
+use crate::keycode::KeyCode;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, SessionEvent, Window};

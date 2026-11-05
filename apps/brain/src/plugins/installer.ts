@@ -249,7 +249,8 @@ export class Installer {
       const at = join(scope, name);
       rmSync(at, { recursive: true, force: true });
       mkdirSync(dirname(at), { recursive: true });
-      symlinkSync(target, at, "dir");
+      // A junction needs no administrator on Windows.
+      symlinkSync(target, at, process.platform === "win32" ? "junction" : "dir");
     }
   }
 

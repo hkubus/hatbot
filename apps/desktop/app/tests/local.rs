@@ -28,8 +28,9 @@ fn other_devices_reach_it_only_while_switched_on() {
 
 #[test]
 fn bun_is_the_build_this_processor_runs() {
-    assert_eq!(bun_build("x86_64", true).map(|b| b.0), Some("bun-linux-x64"));
-    assert_eq!(bun_build("x86_64", false).map(|b| b.0), Some("bun-linux-x64-baseline"));
-    assert_eq!(bun_build("aarch64", false).map(|b| b.0), Some("bun-linux-aarch64"));
-    assert_eq!(bun_build("riscv64", false), None);
+    assert_eq!(bun_build("linux", "x86_64", true).map(|b| b.0), Some("bun-linux-x64"));
+    assert_eq!(bun_build("linux", "x86_64", false).map(|b| b.0), Some("bun-linux-x64-baseline"));
+    assert_eq!(bun_build("linux", "aarch64", false).map(|b| b.0), Some("bun-linux-aarch64"));
+    assert_eq!(bun_build("windows", "x86_64", false).map(|b| b.0), Some("bun-windows-x64-baseline"));
+    assert_eq!(bun_build("linux", "riscv64", false), None);
 }

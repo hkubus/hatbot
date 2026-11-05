@@ -1,4 +1,4 @@
-// The Linux app's agent, over a real WebSocket to the brain.
+// The desktop app's agent, over a real WebSocket to the brain.
 import {
   COMPUTER_PROTOCOL,
   type ComputerHello,

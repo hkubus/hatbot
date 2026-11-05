@@ -10,13 +10,19 @@ use base64::engine::general_purpose::STANDARD;
 pub const MAX_FILE_BYTES: u64 = 25 * 1024 * 1024;
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| "/".into())
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| "/".into())
 }
 
 /// "~/x" and "x" are the owner's home's.
 pub fn expand(path: &str, home: &Path) -> PathBuf {
+    #[cfg(windows)]
+    let path = &path.replace('/', "\\");
     match path.strip_prefix("~") {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => home.join(rest.trim_start_matches('/')),
+        Some(rest) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
+            home.join(rest.trim_start_matches(['/', '\\']))
+        }
         _ if Path::new(path).is_absolute() => PathBuf::from(path),
         _ => home.join(path),
     }
@@ -24,7 +30,7 @@ pub fn expand(path: &str, home: &Path) -> PathBuf {
 
 /// A file name that stays in its folder.
 fn safe_name(name: &str) -> Result<String, String> {
-    let base = name.rsplit('/').next().unwrap_or("").trim();
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("").trim();
     if base.is_empty() || base == "." || base == ".." || base.contains('\0') {
         return Err("That file name can't be used.".into());
     }
@@ -56,7 +62,7 @@ pub async fn put_in(home: &Path, name: &str, data: &str, path: Option<&str>) -> 
     let name = safe_name(name)?;
     let target = match path {
         None => {
-            let dir = home.join("Downloads/Hatbot");
+            let dir = home.join("Downloads").join("Hatbot");
             tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("Can't make {}: {e}.", dir.display()))?;
             free(&dir, &name)
         }
@@ -103,10 +109,12 @@ mod tests {
         let data = STANDARD.encode(b"hi");
         let a = put_in(&home, "../../a.txt", &data, None).await.unwrap();
         let b = put_in(&home, "a.txt", &data, None).await.unwrap();
-        assert_eq!(a, home.join("Downloads/Hatbot/a.txt").display().to_string());
-        assert_eq!(b, home.join("Downloads/Hatbot/a (1).txt").display().to_string());
+        let downloads = home.join("Downloads").join("Hatbot");
+        assert_eq!(a, downloads.join("a.txt").display().to_string());
+        assert_eq!(b, downloads.join("a (1).txt").display().to_string());
+        assert!(put_in(&home, "..\\x.txt", &data, None).await.unwrap().ends_with("x.txt"));
         let c = put_in(&home, "a.txt", &data, Some("~/docs/b.txt")).await.unwrap();
-        assert_eq!(c, home.join("docs/b.txt").display().to_string());
+        assert_eq!(c, home.join("docs").join("b.txt").display().to_string());
         assert!(put_in(&home, "..", &data, None).await.is_err());
         let _ = std::fs::remove_dir_all(home);
     }

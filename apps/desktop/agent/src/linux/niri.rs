@@ -123,6 +123,7 @@ fn place(w: NiriWindow, workspaces: &[Workspace], output: &str) -> Window {
         focused: w.is_focused,
         pid: w.pid,
         rect,
+        excluded: false,
     }
 }
 

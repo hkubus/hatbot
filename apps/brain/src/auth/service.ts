@@ -131,7 +131,7 @@ export class AuthService {
     return true;
   }
 
-  /** The Linux app's token on a local brain, in a file only the owner's user can read. */
+  /** The desktop app's token on a local brain, in a file only the owner's user can read. */
   localToken(file: string) {
     try {
       if (this.resolveToken(readFileSync(file, "utf8").trim())) return;
@@ -141,7 +141,7 @@ export class AuthService {
     chmodSync(file, 0o600);
   }
 
-  /** A one-time sign-in for the web app, which the Linux app opens on a local brain. */
+  /** A one-time sign-in for the web app, which the desktop app opens on a local brain. */
   newLink(): string {
     const now = this.clock();
     for (const [code, until] of this.links) if (until <= now) this.links.delete(code);

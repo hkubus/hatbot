@@ -1,7 +1,7 @@
-// The protocol between the brain and the Linux app's agent on the owner's own computer. Types only:
+// The protocol between the brain and the desktop app's agent on the owner's own computer. Types only:
 // the agent is Rust and mirrors them by hand.
 //
-// The agent dials out: a WebSocket to /api/v1/computer/connect, with the Linux app's device token as
+// The agent dials out: a WebSocket to /api/v1/computer/connect, with the desktop app's device token as
 // `Authorization: Bearer …`. Text frames are JSON ComputerMessage; binary frames are live JPEG frames.
 // The brain asks, the agent answers with the same id. Only the agent turns use of the computer on.
 
@@ -24,11 +24,11 @@ export type ComputerHello = {
   /** Its host name, as the owner sees it until they rename it. */
   name: string;
   version: string;
-  /** "niri", "sway", "hyprland" or another wlroots compositor's name. */
+  /** "niri", "sway", "hyprland" or another wlroots compositor's name; "windows" on Windows, whose commands run in PowerShell. */
   compositor: string;
   /** "Let Hatbot use this computer", switched only at the computer. Off: the brain may not ask anything but status. */
   enabled: boolean;
-  /** What this copy can do: "screen", "input", "windows", "atspi", "files", "shell", "live". */
+  /** What this copy can do: "screen", "input", "windows", "atspi" or "uia", "files", "shell", "live". */
   features: string[];
 };
 
@@ -52,7 +52,7 @@ export type ComputerStatus = {
   locked: boolean;
   /** The owner used the mouse or keyboard in the last few seconds. */
   ownerActive: boolean;
-  /** Use paused from the Linux app's tray, the web or iOS. */
+  /** Use paused from the desktop app's tray, the web or iOS. */
   paused: boolean;
   screen: ComputerScreen | null;
 };

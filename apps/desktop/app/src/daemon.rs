@@ -436,6 +436,9 @@ impl Daemon {
         }
         if self.config.local && !fresh {
             async_runtime::spawn(async {
+                if let Err(e) = local::ensure_running().await {
+                    notices::tell(&e);
+                }
                 match local::update().await {
                     Ok(true) => notices::tell("Hatbot on this computer is updated."),
                     Ok(false) => {}

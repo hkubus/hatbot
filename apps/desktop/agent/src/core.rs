@@ -3,9 +3,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::keycode::KeyCode;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use evdev::KeyCode;
 use image::RgbImage;
 use image::imageops::FilterType;
 use serde_json::{Map, Value};
@@ -189,7 +189,7 @@ impl Core {
         if !s.enabled {
             return Err(Refusal::new(
                 ErrorCode::Disabled,
-                "Hatbot isn't allowed to use this computer. The owner can switch it on in the Linux app.",
+                "Hatbot isn't allowed to use this computer. The owner can switch it on in Hatbot's desktop app.",
             ));
         }
         if s.paused {
@@ -402,7 +402,14 @@ impl Core {
                 let mut under = windows.iter().filter(|w| w.rect.is_some_and(|r| r.contains(lx, ly)));
                 let hit = under.clone().find(|w| w.focused).or_else(|| under.next());
                 match hit.and_then(|w| Some((w, w.pid?, w.rect?))) {
-                    Some((w, pid, r)) => InspectAt::Point { pid, title: w.title.clone(), x: lx - r.x, y: ly - r.y },
+                    Some((w, pid, r)) => InspectAt::Point {
+                        pid,
+                        title: w.title.clone(),
+                        x: lx - r.x,
+                        y: ly - r.y,
+                        output: out.clone(),
+                        on_output: (lx, ly),
+                    },
                     None => return Ok(ComputerResult::Inspect { element: None }),
                 }
             }
@@ -809,8 +816,11 @@ fn screen(o: &Output) -> ComputerScreen {
     ComputerScreen { output: o.name.clone(), width: o.width, height: o.height, scale: o.scale }
 }
 
-/// Whether a window on the screen is blacked out in the frame.
+/// Whether a window on the screen is kept out of the frame or blacked out in it.
 fn hidden(frame: &Frame, out: &Output, w: &Window) -> bool {
+    if w.excluded {
+        return true;
+    }
     let Some(r) = w.rect else { return false };
     let fx = frame.width as f64 / out.width.max(1) as f64;
     let fy = frame.height as f64 / out.height.max(1) as f64;
@@ -997,6 +1007,7 @@ mod tests {
             focused: true,
             pid: Some(1),
             rect: Some(rect),
+            excluded: false,
         }]);
         {
             let mut f = fake.frame.lock().unwrap();
@@ -1014,7 +1025,10 @@ mod tests {
         assert_eq!(windows[0].hidden, Some(true));
         // Shown again, it's typed into.
         fake.frame.lock().unwrap().rgb.fill(200);
-        assert_eq!(code(&core, typed).await, None);
+        assert_eq!(code(&core, typed.clone()).await, None);
+        // Kept out of captures altogether, it never shows black, and still isn't typed into.
+        fake.windows.lock().unwrap().as_mut().unwrap()[0].excluded = true;
+        assert_eq!(code(&core, typed).await, Some(ErrorCode::Hidden));
     }
 
     #[tokio::test(start_paused = true)]

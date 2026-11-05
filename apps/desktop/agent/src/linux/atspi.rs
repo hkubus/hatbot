@@ -100,7 +100,7 @@ impl Atspi {
 
     async fn find(&self, at: InspectAt) -> zbus::Result<Option<AgentElement>> {
         let el = match at {
-            InspectAt::Point { pid, title, x, y } => {
+            InspectAt::Point { pid, title, x, y, .. } => {
                 let apps = self.apps(Some(pid)).await?;
                 let Some(frame) = self.frame(&apps, Some(&title)).await? else { return Ok(None) };
                 let mut cur = frame;

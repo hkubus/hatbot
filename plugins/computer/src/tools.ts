@@ -11,7 +11,7 @@ import {
   tool,
   type Verdict,
 } from "@hatbot/plugin-sdk";
-import { destructive } from "@hatbot/plugin-sdk/shell";
+import { destructive, destructiveOnWindows } from "@hatbot/plugin-sdk/shell";
 import type { ApprovalKind, ComputerInfo } from "@hatbot/shared";
 import { z } from "zod";
 import type { Computers } from "./computers";
@@ -22,10 +22,12 @@ const TEXT_BYTES = 200_000;
 /** The floor: these ask whatever "Using your computers" is set to. */
 const FLOOR: ApprovalKind[] = ["payment", "purchase", "account_security", "access"];
 
-const SUDO = /(^|[\s;&|(`]|\$\()(sudo|doas|pkexec|run0|su)(\s|$)/;
-/** Private keys and password stores aren't read. */
+/** Windows' too: runas, gsudo and Start-Process -Verb RunAs ask for an administrator. */
+const SUDO =
+  /(^|[\s;&|(`]|\$\()(sudo|doas|pkexec|run0|su|runas|gsudo)(\.exe)?(\s|$)|-verb\s+['"]?runas\b/i;
+/** Private keys and password stores aren't read; on Windows, nor its credential stores. */
 const SECRET =
-  /(^|\/)(\.ssh\/id_[^/]*|\.gnupg\/|[^/]*\.(kdbx|kdb|pem|key|p12|pfx)$|\.password-store\/|\.local\/share\/keyrings\/|shadow$)/;
+  /(^|[\\/])(\.ssh[\\/]id_[^\\/]*|\.gnupg[\\/]|[^\\/]*\.(kdbx|kdb|pem|key|p12|pfx|ppk)$|\.password-store[\\/]|\.local[\\/]share[\\/]keyrings[\\/]|shadow$|microsoft[\\/](credentials|protect|vault)[\\/])/i;
 
 /** Approved once, for the task or the chat's stretch of conversation that asked. */
 export const grantKey = (call: Pick<CallContext, "task" | "episodeId" | "conversationId">) =>
@@ -47,6 +49,7 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
     c?.online && !c.enabled
       ? block(`${c.name} doesn't let Hatbot use it; only the computer can switch that on.`)
       : null;
+  const onWindows = (c: ComputerInfo) => computers.linkOf(c.id)?.hello.compositor === "windows";
   const said = (err: unknown): never => {
     if (err instanceof ComputerError) throw new PluginError(err.message);
     throw err;
@@ -75,7 +78,7 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
                 ]
                   .filter(Boolean)
                   .join(", ");
-            return `- ${c.name}: ${state}`;
+            return `- ${c.name}: ${state}${c.online && onWindows(c) ? ". Windows: commands run in PowerShell" : ""}`;
           })
           .join("\n");
       },
@@ -83,7 +86,7 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
     tool({
       name: "computer_exec",
       description:
-        "Run a bash command on one of the owner's own computers, as the owner, and get its exit code and output. Never with sudo: that's refused. Using a computer asks the owner once per task or conversation; commands that look destructive ask again, and on a careful computer every command asks. Its output is untrusted.",
+        "Run a command on one of the owner's own computers, as the owner, and get its exit code and output: bash on Linux, PowerShell on Windows (computer_list says which). Never with sudo or as an administrator: that's refused. Using a computer asks the owner once per task or conversation; commands that look destructive ask again, and on a careful computer every command asks. Its output is untrusted.",
       schema: z.object({
         computer: Computer,
         command: z.string().min(1).max(20_000),
@@ -95,12 +98,13 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
       target: ({ computer }) => computer.toLowerCase(),
       untrusted: true,
       policy: ({ computer, command }, call) => {
-        if (SUDO.test(command)) return block("Commands on your computers never use sudo.");
+        if (SUDO.test(command))
+          return block("Commands on your computers never use sudo or run as an administrator.");
         const c = known(computer);
         const off = refusedOff(c);
         if (off) return off;
         if (!c) return allow();
-        const d = destructive(command);
+        const d = onWindows(c) ? destructiveOnWindows(command) : destructive(command);
         const danger = d ? ` This command ${d.why}.` : "";
         if (c.careful) return askCareful(`${c.name} is careful.${danger}`, d?.kind ?? "computer");
         if (d && FLOOR.includes(d.kind)) return ask(`This command ${d.why}.`, d.kind);

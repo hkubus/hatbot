@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { StreamParams } from "@hatbot/plugin-sdk";
-import { CLICK_CHECK_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
+import { CLICK_CHECK_PROMPT, COMPUTER_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeComputer, withComputer } from "./fake-computer";
 import { computer, FakeModel, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
@@ -22,7 +22,7 @@ const finish = (summary = "Done.") => ({
 });
 
 const onComputer = (p: Omit<StreamParams, "stream">) =>
-  JSON.stringify(p.system).includes("their own Linux computer");
+  JSON.stringify(p.system).includes(JSON.stringify(COMPUTER_PROMPT.slice(0, 80)).slice(1, -1));
 
 const startOn = (t: TestApp, screen: string | null, goal = "Tidy the downloads") =>
   t.tasks.createDesktopTask({ title: goal, goal, successCriteria: "", origin: "chat", screen });

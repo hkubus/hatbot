@@ -4,7 +4,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use evdev::KeyCode;
+use crate::keycode::KeyCode;
 use tokio::sync::oneshot;
 
 use crate::protocol::AgentElement;
@@ -70,6 +70,8 @@ pub struct Window {
     pub focused: bool,
     pub pid: Option<i32>,
     pub rect: Option<Rect>,
+    /// Its app keeps it out of screen captures (Windows' display affinity): it never shows in a frame.
+    pub excluded: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -101,11 +103,11 @@ impl Clip {
     }
 }
 
-/// Where to look with AT-SPI: a point in a window (window-relative logical pixels), or the
-/// keyboard focus.
+/// Where to look: a point in a window (window-relative logical pixels, for AT-SPI, and on its monitor,
+/// for UI Automation), or the keyboard focus.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InspectAt {
-    Point { pid: i32, title: String, x: f64, y: f64 },
+    Point { pid: i32, title: String, x: f64, y: f64, output: Output, on_output: (f64, f64) },
     Focus { pid: Option<i32> },
 }
 

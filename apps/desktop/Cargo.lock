@@ -1804,6 +1804,8 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+ "windows",
+ "windows-registry",
  "xkbcommon",
  "zbus",
 ]

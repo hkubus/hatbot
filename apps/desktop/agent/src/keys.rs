@@ -2,7 +2,7 @@
 //! reads them, to evdev key codes. Only names on its lists are pressed, so the brain's checks see
 //! every key that goes out.
 
-use evdev::KeyCode;
+use crate::keycode::KeyCode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modifier {

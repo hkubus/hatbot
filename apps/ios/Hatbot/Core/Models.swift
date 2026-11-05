@@ -376,7 +376,7 @@ struct DesktopState: Codable, Equatable, Sendable {
   var botId: String?
 }
 
-/// One of your own computers, through the Linux app (ComputerInfo in packages/shared).
+/// One of your own computers, through the desktop app (ComputerInfo in packages/shared).
 struct ComputerInfo: Codable, Identifiable, Equatable, Sendable {
   let id: String
   var name: String

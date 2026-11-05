@@ -11,10 +11,14 @@ mod window;
 use tauri::RunEvent;
 
 /// `hatbot` opens the window, in the running copy if there is one; `hatbot --daemon` runs windowless
-/// at login; `hatbot --open tasks` or a `hatbot://` link opens it on a page.
+/// at login; `hatbot --open tasks` or a `hatbot://` link opens it on a page. On Windows,
+/// `hatbot --brain` runs Hatbot on this computer, in place of a systemd service.
 pub fn run() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--brain") {
+        return core::local::supervise();
+    }
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let open_window = !args.iter().any(|a| a == "--daemon");
     let page = daemon::page_of(&args);
     // The window's Wayland app id, which launchers match to ovh.gaycats.Hatbot.desktop.

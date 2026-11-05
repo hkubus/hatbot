@@ -49,7 +49,7 @@ export type ApiToken = { id: number; name: string; createdAt: string; lastUsedAt
 export type CreateTokenResponse = ApiToken & { token: string };
 
 /**
- * `local`: the brain runs on the owner's computer, set up by the Linux app. `onboarded`: the guided
+ * `local`: the brain runs on the owner's computer, set up by the desktop app. `onboarded`: the guided
  * setup is finished; only when signed in.
  */
 export type Me = {

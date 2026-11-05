@@ -1,4 +1,4 @@
-//! Lets Hatbot use the owner's Linux computer. The Linux app starts an [`Agent`], which dials out to the
+//! Lets Hatbot use the owner's computer, on Linux or Windows. The app starts an [`Agent`], which dials out to the
 //! brain and does what it asks on the screen, within what the owner allows: the switch, a pause, and
 //! never while they're at the keyboard or the session is locked.
 
@@ -12,12 +12,16 @@ mod e2e;
 mod fake;
 mod files;
 mod human;
+mod keycode;
 mod keys;
+#[cfg(target_os = "linux")]
 mod linux;
 pub mod protocol;
 mod scale;
 mod shell;
 mod typing;
+#[cfg(windows)]
+mod windows;
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -34,7 +38,7 @@ use crate::protocol::{ComputerStatus, Hello, PROTOCOL};
 pub struct AgentConfig {
     /// The brain's address, "https://hatbot.example".
     pub brain_url: String,
-    /// The Linux app's device token.
+    /// The app's device token.
     pub device_token: String,
     /// "Let Hatbot use this computer", as the owner last left it.
     pub enabled: bool,
@@ -60,7 +64,11 @@ impl Agent {
         let rt = runtime();
         let (computer, events) = {
             let _rt = rt.enter();
-            linux::LinuxComputer::start()
+            #[cfg(target_os = "linux")]
+            let started = linux::LinuxComputer::start();
+            #[cfg(windows)]
+            let started = windows::WindowsComputer::start();
+            started
         };
         Self::run(rt, config, Arc::new(computer), events)
     }
@@ -173,17 +181,24 @@ impl Drop for AgentHandle {
     }
 }
 
-/// Stable per machine, without giving out /etc/machine-id itself.
+/// Stable per machine, without giving out the system's own id.
 fn machine_id() -> String {
-    let raw = std::fs::read_to_string("/etc/machine-id").unwrap_or_else(|_| host_name());
+    #[cfg(target_os = "linux")]
+    let raw = std::fs::read_to_string("/etc/machine-id").ok();
+    #[cfg(windows)]
+    let raw = windows_registry::LOCAL_MACHINE
+        .open(r"SOFTWARE\Microsoft\Cryptography")
+        .and_then(|k| k.get_string("MachineGuid"))
+        .ok();
+    let raw = raw.unwrap_or_else(host_name);
     let digest = Sha256::digest(format!("hatbot:{}", raw.trim()));
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
 }
 
 fn host_name() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|h| h.trim().to_owned())
-        .ok()
-        .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "Linux computer".into())
+    #[cfg(target_os = "linux")]
+    let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
+    #[cfg(windows)]
+    let name = std::env::var("COMPUTERNAME").ok();
+    name.map(|h| h.trim().to_owned()).filter(|h| !h.is_empty()).unwrap_or_else(|| "Computer".into())
 }

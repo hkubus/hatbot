@@ -83,7 +83,7 @@ export function ComputerSettings({ action, running }: PluginSettingsProps) {
       <Panel title="Computers" className="form">
         {computers?.length === 0 && (
           <span className="label">
-            None yet. Install Hatbot's Linux app on a computer, sign in, and switch on "Let Hatbot
+            None yet. Install Hatbot's desktop app on a computer, sign in, and switch on "Let Hatbot
             use this computer" there.
           </span>
         )}

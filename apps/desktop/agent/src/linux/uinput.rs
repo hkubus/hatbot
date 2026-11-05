@@ -3,16 +3,18 @@
 //! packaging/ (`KERNEL=="uinput", TAG+="uaccess"`).
 
 use evdev::uinput::VirtualDevice;
-use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
+use evdev::{AttributeSet, EventType, InputEvent};
+
+use crate::keycode::KeyCode;
 
 pub struct Keyboard(VirtualDevice);
 
 impl Keyboard {
     pub fn open() -> Result<Self, String> {
-        let mut keys = AttributeSet::<KeyCode>::new();
+        let mut keys = AttributeSet::<evdev::KeyCode>::new();
         // Every keyboard key; buttons from 0x100 on belong to pointers.
         for code in 1..0x100 {
-            keys.insert(KeyCode::new(code));
+            keys.insert(evdev::KeyCode::new(code));
         }
         let dev = VirtualDevice::builder()
             .and_then(|b| b.name("Hatbot keyboard").with_keys(&keys))

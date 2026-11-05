@@ -2,7 +2,7 @@
 
 use std::sync::Mutex;
 
-use evdev::KeyCode;
+use crate::keycode::KeyCode;
 use tokio::sync::oneshot;
 
 use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, Window};

@@ -18,7 +18,7 @@ export type Config = {
   updateRequest: string;
   /** Which commit this copy of the brain is, written by brain-deploy.sh. */
   releaseFile: string;
-  /** Run by the Linux app on the owner's own computer: its token is in a file, no password needed. */
+  /** Run by the desktop app on the owner's own computer: its token is in a file, no password needed. */
   local: boolean;
 };
 
