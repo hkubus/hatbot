@@ -456,9 +456,6 @@ final class AppStore {
         replies[id] = LiveReply(text: "")
         messages[i].text = ""
         messages[i].status = .streaming
-        // The new reply's come when it's done, and its done event leaves out those it hasn't.
-        messages[i].sources = nil
-        messages[i].choices = nil
       }
     case let .messageDelta(id, text, at):
       if let r = live(id) { r.text = Delta.added(text, to: r.text, at: at) }
@@ -467,8 +464,9 @@ final class AppStore {
       if let i = messages.firstIndex(where: { $0.id == id }) {
         messages[i].text = text
         messages[i].status = status
-        if let sources { messages[i].sources = sources }
-        if let choices { messages[i].choices = choices }
+        // All of them: a reply its task's result took the place of has none of the old one's.
+        messages[i].sources = sources
+        messages[i].choices = choices
       }
     default: break
     }

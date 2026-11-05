@@ -1735,8 +1735,12 @@ export class Thread {
     return row ? messageOf(row) : null;
   }
 
-  private rewriteMessage(m: ThreadMessage): ThreadMessage {
-    this.d.db.query("UPDATE messages SET text = '', status = 'streaming' WHERE id = ?").run(m.id);
+  private rewriteMessage({ sources: _, choices: __, ...m }: ThreadMessage): ThreadMessage {
+    this.d.db
+      .query(
+        "UPDATE messages SET text = '', status = 'streaming', sources = NULL, choices = NULL WHERE id = ?",
+      )
+      .run(m.id);
     this.d.events.emit({ type: "message.rewrite", id: m.id });
     return { ...m, text: "", status: "streaming" };
   }

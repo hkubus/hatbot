@@ -8,7 +8,16 @@ import { EventBus } from "../src/events";
 import { requestCeiling, searchesIn } from "../src/spend";
 import { Tasks } from "../src/tasks/service";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, requested, signIn, type TestApp, testApp, unmarked } from "./helpers";
+import {
+  bot,
+  lastUserText,
+  requested,
+  signIn,
+  type TestApp,
+  testApp,
+  unmarked,
+  waitFor,
+} from "./helpers";
 
 const overloaded = new Anthropic.APIError(
   undefined,
@@ -572,6 +581,45 @@ test("a task's reply that fails as it's written still says how the task went", a
   const reply = t.thread.list().find((m) => m.role === "assistant" && m.taskId);
   expect(reply?.status).toBe("error");
   expect(reply?.text).toStartWith("Example.com is up.");
+});
+
+test("a reply its task's result takes the place of, or that's written again, keeps none of the old one's sources and answers", async () => {
+  const slow = Promise.withResolvers<void>();
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title: "Look", goal: "Look at the NAS" })] },
+    { content: [text("On it.")] },
+    { content: [toolUse("run_task", { title: "Look", goal: "Look at the router" })] },
+    { content: [text("On it.")] },
+    { wait: slow.promise, content: [text("The router is fine.")] },
+  ]);
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: true })] },
+  ]);
+  const t = await testApp(chat, work);
+  const asked = (id: number) =>
+    t.db
+      .query("UPDATE messages SET sources = ?, choices = ? WHERE id = ?")
+      .run(JSON.stringify([{ url: "https://a.example", title: "A" }]), '[["Yes","No"]]', id);
+  const shown = (id: number) => t.thread.list().find((m) => m.id === id);
+
+  await t.thread.post("look at the nas").done;
+  const routine = t.thread.list().at(-1) as ThreadMessage;
+  asked(routine.id);
+  await t.tasks.idle();
+  expect(shown(routine.id)?.text).toBe("Fine.");
+  expect(shown(routine.id)).not.toContainKeys(["sources", "choices"]);
+
+  await t.thread.post("look at the router").done;
+  const told = t.thread.list().at(-1) as ThreadMessage;
+  asked(told.id);
+  await t.tasks.idle();
+  await waitFor(() => chat.requests.length === 5);
+  // While it's written, and if the bot never writes it, when its task's result takes its place.
+  expect(shown(told.id)).not.toContainKeys(["sources", "choices"]);
+  slow.resolve();
+  await t.thread.idle();
+  expect(shown(told.id)?.text).toBe("The router is fine.");
 });
 
 test("a task a deleted bot started ends with its result; the bot isn't asked again", async () => {

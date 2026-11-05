@@ -441,7 +441,8 @@ export class Chats {
         { id: number; text: string; status: "done" | "error" | "streaming" },
         [string, number]
       >(
-        `UPDATE messages SET text = ?, status = CASE WHEN ${rewrite ? 1 : 0} THEN 'streaming' ELSE status END
+        `UPDATE messages SET text = ?, sources = NULL, choices = NULL,
+         status = CASE WHEN ${rewrite ? 1 : 0} THEN 'streaming' ELSE status END
          WHERE task_id = ? AND kind IN ('text', 'command') AND status != 'streaming' RETURNING id, text, status`,
       )
       .all(rewrite ? "" : resultText(task), task.id);

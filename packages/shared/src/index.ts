@@ -496,6 +496,7 @@ export type HatbotEvent =
       id: number;
       text: string;
       status: "done" | "error";
+      /** All the reply's, absent when it has none: one written again keeps none of the old one's. */
       sources?: Source[];
       choices?: string[][];
     }

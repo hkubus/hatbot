@@ -919,7 +919,8 @@ function onMessages(list: ThreadMessage[], e: HatbotEvent, w: Where): ThreadMess
     case "message.box":
       return patch(e.id, (m) => ({ ...m, boxId: e.boxId }));
     case "message.done":
-      return patch(e.id, (m) => ({
+      // All its sources and answers: a reply its task's result took the place of has none of the old one's.
+      return patch(e.id, ({ sources: _, choices: __, ...m }) => ({
         ...m,
         text: e.text,
         status: e.status,

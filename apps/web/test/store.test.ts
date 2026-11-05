@@ -117,6 +117,22 @@ test("the stream's first open catches the thread up too, and takes what's live f
   store.disconnect();
 });
 
+test("a reply its task's result takes the place of keeps none of the old one's sources and answers", async () => {
+  const store = await freshStore("rewrite");
+  store.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  serve(() => [
+    msg(1, { choices: [["Yes", "No"]], sources: [{ url: "https://a.example", title: "A" }] }),
+  ]);
+  await store.loadThread();
+  socket.emit({ type: "message.done", id: 1, text: "Done.", status: "done" });
+  dom.flushFrames();
+  const [m] = store.getState().messages;
+  expect([m?.text, m?.choices, m?.sources]).toEqual(["Done.", undefined, undefined]);
+  store.disconnect();
+});
+
 test("Earlier messages loads once however often it's asked, and never into incognito", async () => {
   const store = await freshStore("earlier");
   const latest = Array.from({ length: 50 }, (_, i) => msg(51 + i));
