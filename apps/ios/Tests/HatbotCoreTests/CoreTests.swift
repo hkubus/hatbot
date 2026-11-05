@@ -595,6 +595,16 @@ final class FormTests: XCTestCase {
     XCTAssertNotEqual(later, ScheduleForm(once))
   }
 
+  /// What's sent is trimmed, so a prompt of blank lines isn't one.
+  func testAPromptOfBlankLinesIsntValid() {
+    var f = ScheduleForm()
+    f.name = "Morning"
+    f.prompt = "\n\n"
+    XCTAssertFalse(f.valid)
+    f.prompt = "Brief me"
+    XCTAssertTrue(f.valid)
+  }
+
   /// A picker has a row for what's set now when it isn't one of its own (set on the web, or a deleted
   /// bot), so it doesn't show a blank and saving keeps it.
   func testPickersKeepAValueSetElsewhere() {

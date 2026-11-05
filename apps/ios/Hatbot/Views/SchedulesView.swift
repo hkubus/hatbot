@@ -242,7 +242,8 @@ struct ScheduleDetailView: View {
 
   private func editor(_ form: Binding<Form>) -> some View {
     let f = form.wrappedValue
-    let changed = stored.map { Form($0) != f } ?? true
+    // A tainted one saves as it is too: saving it yourself is what clears it.
+    let changed = stored.map { $0.tainted == true || Form($0) != f } ?? true
     return SwiftUI.Form {
       if let error { Text(error).foregroundStyle(.red) }
       if let stored, stored.tainted == true {
@@ -364,10 +365,10 @@ struct TriggerDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     .task(id: id) {
       await attempt($error, missing: $missing) {
-        try await store.loadTrigger(id)
         // Back from a page it links to, what you were changing stays.
         let shown = store.triggers[id]
         let edited = loaded && (name != shown?.name || prompt != shown?.prompt)
+        try await store.loadTrigger(id)
         if let t = store.triggers[id], !edited {
           name = t.name
           prompt = t.prompt

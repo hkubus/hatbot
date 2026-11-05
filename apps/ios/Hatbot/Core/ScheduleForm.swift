@@ -38,7 +38,8 @@ struct ScheduleForm: Equatable {
   }
 
   var valid: Bool {
-    !name.trimmingCharacters(in: .whitespaces).isEmpty && !prompt.trimmingCharacters(in: .whitespaces).isEmpty
+    !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       && (!repeats || !cron.trimmingCharacters(in: .whitespaces).isEmpty)
   }
 }
