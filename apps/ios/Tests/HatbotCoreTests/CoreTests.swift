@@ -267,7 +267,7 @@ final class ChatTests: XCTestCase {
       store.apply(
         try decode(
           HatbotEvent.self,
-          #"{"type":"message.created","message":{"id":3,"role":"assistant","kind":"text","text":"On it.","status":"done","createdAt":"2026-10-11T10:00:00.000Z","taskId":7}}"#
+          #"{"type":"message.created","message":{"id":3,"role":"assistant","kind":"text","text":"On it.","status":"done","createdAt":"2026-10-11T10:00:00.000Z","taskId":7,"choices":[["Yes","No"]]}}"#
         ))
       XCTAssertEqual(store.unread, [3])
       store.apply(try decode(HatbotEvent.self, #"{"type":"message.seen","ids":[3],"seenAt":"2026-10-11T10:00:01.000Z"}"#))
@@ -277,6 +277,9 @@ final class ChatTests: XCTestCase {
       store.apply(try decode(HatbotEvent.self, #"{"type":"message.rewrite","id":3}"#))
       XCTAssertEqual(store.messages.first?.text, "")
       XCTAssertEqual(store.messages.first?.status, .streaming)
+      // The old reply's answers don't stay under the new one.
+      store.apply(.messageDone(id: 3, text: "Done.", status: .done, sources: nil, choices: nil))
+      XCTAssertNil(store.messages.first?.choices)
       XCTAssertTrue(Self.redraws({ _ = store.reply(3) }, after: { store.apply(.messageRewrite(id: 3)) }))
     }
   }

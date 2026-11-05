@@ -456,6 +456,9 @@ final class AppStore {
         replies[id] = LiveReply(text: "")
         messages[i].text = ""
         messages[i].status = .streaming
+        // The new reply's come when it's done, and its done event leaves out those it hasn't.
+        messages[i].sources = nil
+        messages[i].choices = nil
       }
     case let .messageDelta(id, text, at):
       if let r = live(id) { r.text = Delta.added(text, to: r.text, at: at) }
