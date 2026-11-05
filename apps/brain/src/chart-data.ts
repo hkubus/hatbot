@@ -1,4 +1,5 @@
 // A chart block's "data" can name an attachment, so the model doesn't type out thousands of values.
+import { head as cut } from "@hatbot/plugin-sdk";
 import {
   CHART_FILE_MAX_ROWS,
   CHART_MAX_POINTS,
@@ -59,7 +60,7 @@ function cell(s: string | undefined): number | null | undefined {
   const n = Number(t);
   return Number.isFinite(n) ? n : undefined;
 }
-const name = (s: string | undefined) => s?.trim().slice(0, 60) || undefined;
+const name = (s: string | undefined) => cut(s?.trim() ?? "", 60) || undefined;
 const isValue = (v: unknown) => v === null || (typeof v === "number" && Number.isFinite(v));
 
 function seriesFromCsv(rows: string[][]): Read {
@@ -76,7 +77,7 @@ function seriesFromCsv(rows: string[][]): Read {
       const v = cell(r[j + 1]);
       if (v === undefined)
         return {
-          problem: `row ${i + 2}, column "${head[j + 1]}": "${r[j + 1]?.slice(0, 40)}" isn't a number`,
+          problem: `row ${i + 2}, column "${head[j + 1]}": "${cut(r[j + 1] ?? "", 40)}" isn't a number`,
         };
       se.data.push(v);
     }
@@ -155,7 +156,8 @@ function scatterFromJson(o: { series?: unknown }): Read {
       kept.push(label ? { x: p.x, y: p.y, label } : { x: p.x, y: p.y });
     }
     const n = (se as { name?: unknown }).name;
-    out.push({ name: typeof n === "string" ? name(n) : undefined, points: kept });
+    // One with no points has nothing to draw, only a name in the legend.
+    if (kept.length) out.push({ name: typeof n === "string" ? name(n) : undefined, points: kept });
   }
   return { data: { series: out } };
 }
