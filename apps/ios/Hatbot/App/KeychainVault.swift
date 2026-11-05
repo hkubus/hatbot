@@ -4,13 +4,14 @@ import Foundation
 import Security
 
 struct KeychainVault: TokenVault {
+  var account = "token"
   var accessGroup: String? = AppGroup.id
 
   private var query: [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: "hatbot",
-      kSecAttrAccount as String: "token",
+      kSecAttrAccount as String: account,
     ]
   }
 

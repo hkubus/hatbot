@@ -829,6 +829,28 @@ final class SignOutAndCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
+  /// Signed out while the brain can't be reached, the token still works there: it's sent again when the app
+  /// next starts, and let go only once the brain has it, or says it's gone already.
+  func testASignOutTheBrainDidntHearIsSentAgain() async throws {
+    SlowBrain.reset(["/auth/logout": "{}"])
+    SlowBrain.statuses["/auth/logout"] = 502
+    let signedOut = MemoryVault()
+    let session = try await MainActor.run { try Session.saved(vault: MemoryVault("t"), signedOut: signedOut) }
+    await session.signOut()
+    let gone = await MainActor.run { session.store == nil }
+    XCTAssertTrue(gone)
+    XCTAssertNotNil(signedOut.load())
+
+    // Started again with the brain still down, then back.
+    let again = try await MainActor.run { try Session.saved(vault: MemoryVault(), signedOut: signedOut) }
+    await again.signOutAgain()
+    XCTAssertNotNil(signedOut.load())
+    SlowBrain.statuses = ["/auth/logout": 401]
+    await again.signOutAgain()
+    XCTAssertNil(signedOut.load())
+    XCTAssertEqual(Set(SlowBrain.tokens("/auth/logout")), ["Bearer t"])
+  }
+
   func testALoadThatEndsAfterSigningOutKeepsNothing() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -897,8 +919,11 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
   private static let lock = NSLock()
   nonisolated(unsafe) private static var paths: [String] = []
   nonisolated(unsafe) private static var bodies: [String: Data] = [:]
+  nonisolated(unsafe) private static var bearers: [String: [String]] = [:]
 
   static var requested: [String] { lock.withLock { paths } }
+  /// The tokens each request to `path` was sent with.
+  static func tokens(_ path: String) -> [String] { lock.withLock { bearers[path] ?? [] } }
   static func sent(_ path: String) -> Data? { lock.withLock { bodies[path] } }
   static func reset(_ routes: [String: String] = [:]) {
     self.routes = routes
@@ -907,6 +932,7 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
     lock.withLock {
       paths = []
       bodies = [:]
+      bearers = [:]
     }
   }
 
@@ -920,6 +946,7 @@ final class SlowBrain: URLProtocol, @unchecked Sendable {
     Self.lock.withLock {
       Self.paths.append("\(request.httpMethod ?? "GET") \(path)")
       if let sent { Self.bodies[path] = sent }
+      if let auth = request.value(forHTTPHeaderField: "Authorization") { Self.bearers[path, default: []].append(auth) }
     }
     let body = Self.routes[path]
     let status = body == nil ? 404 : Self.statuses[path] ?? 200
@@ -1388,10 +1415,12 @@ extension XCTestCase {
 
 extension Session {
   /// As the app starts with `server` saved and the token in `vault`, talking to the slow brain.
-  static func saved(_ server: String = "https://h.example", vault: TokenVault, cacheDir: URL? = nil) throws -> Session {
+  static func saved(
+    _ server: String = "https://h.example", vault: TokenVault, signedOut: TokenVault? = nil, cacheDir: URL? = nil
+  ) throws -> Session {
     let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
     defaults.set(server, forKey: serverKey)
-    return Session(vault: vault, defaults: defaults, cacheDir: cacheDir, urlSession: SlowBrain.session())
+    return Session(vault: vault, signedOut: signedOut, defaults: defaults, cacheDir: cacheDir, urlSession: SlowBrain.session())
   }
 }
 

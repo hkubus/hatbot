@@ -23,12 +23,18 @@ final class Session {
   private(set) var setupPending = false
 
   @ObservationIgnored private let vault: TokenVault
+  /// Sign-outs the brain didn't hear: their tokens still work there, so they're sent again.
+  @ObservationIgnored private let signedOut: TokenVault?
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private let cache: DiskCache?
   @ObservationIgnored private let urlSession: URLSession
 
-  init(vault: TokenVault, defaults: UserDefaults = .standard, cacheDir: URL? = nil, urlSession: URLSession = .hatbot) {
+  init(
+    vault: TokenVault, signedOut: TokenVault? = nil, defaults: UserDefaults = .standard, cacheDir: URL? = nil,
+    urlSession: URLSession = .hatbot
+  ) {
     self.vault = vault
+    self.signedOut = signedOut
     self.defaults = defaults
     self.urlSession = urlSession
     cache = cacheDir.map(DiskCache.init(dir:))
@@ -36,6 +42,7 @@ final class Session {
     if let url = API.serverURL(from: server), let token = vault.load() {
       store = AppStore(api: makeAPI(url, token: token), cache: cache)
     }
+    Task { await signOutAgain() }
   }
 
   func signIn(password: String, code: String, device: String) async throws {
@@ -68,6 +75,7 @@ final class Session {
     // What another brain, or another you, showed before isn't yours to see.
     cache?.clear()
     store = AppStore(api: makeAPI(url, token: token), cache: cache)
+    Task { await signOutAgain() }
     await checkSetup()
   }
 
@@ -80,8 +88,41 @@ final class Session {
   func signOut() async {
     guard let store else { return }
     store.disconnect()
-    try? await store.api.post("/auth/logout")
+    let heard = await Self.signOut(store.api)
+    if !heard, let token = store.api.token { unheard += [Unheard(server: store.api.server, token: token)] }
     forget()
+  }
+
+  private struct Unheard: Codable, Equatable {
+    let server: URL
+    let token: String
+  }
+
+  private var unheard: [Unheard] {
+    get { signedOut?.load().flatMap { try? JSONDecoder().decode([Unheard].self, from: Data($0.utf8)) } ?? [] }
+    set {
+      guard let data = try? JSONEncoder().encode(newValue) else { return }
+      if newValue.isEmpty { signedOut?.clear() } else { signedOut?.save(String(decoding: data, as: UTF8.self)) }
+    }
+  }
+
+  /// When the app starts and when you sign in, as the brain may be back.
+  func signOutAgain() async {
+    for u in unheard {
+      if await Self.signOut(API(server: u.server, token: u.token, session: urlSession)) { unheard.removeAll { $0 == u } }
+    }
+  }
+
+  /// Whether the brain heard: a 401 says the token was gone already.
+  private nonisolated static func signOut(_ api: API) async -> Bool {
+    do {
+      try await api.post("/auth/logout")
+      return true
+    } catch let e as APIError {
+      return e.status == 401
+    } catch {
+      return false
+    }
   }
 
   private func forget() {

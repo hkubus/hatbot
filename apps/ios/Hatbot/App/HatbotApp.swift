@@ -13,7 +13,10 @@ struct HatbotApp: App {
   init() {
     let vault = KeychainVault()
     AppGroup.migrate(vault: vault)
-    _session = State(initialValue: Session(vault: vault, defaults: AppGroup.defaults, cacheDir: AppGroup.cacheDir))
+    _session = State(
+      initialValue: Session(
+        vault: vault, signedOut: KeychainVault(account: "signed-out", accessGroup: nil), defaults: AppGroup.defaults,
+        cacheDir: AppGroup.cacheDir))
     PrivacyCover.shared.start()
   }
 
