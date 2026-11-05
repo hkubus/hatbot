@@ -399,6 +399,7 @@ private struct Composer: View {
   @Environment(AppStore.self) private var store
   @Environment(Drafts.self) private var drafts
   @Environment(\.sectionShown) private var sectionShown
+  @Environment(\.openURL) private var openURL
   @State private var draft = ""
   @State private var photos: [PhotosPickerItem] = []
   @State private var pickingPhotos = false
@@ -416,10 +417,7 @@ private struct Composer: View {
   private var uploading: Bool { files.contains { $0.attachment == nil && $0.error == nil } }
 
   /// The approval or question shown above the field.
-  private var asking: String? {
-    if let a = store.pendingApprovals.first { return "a\(a.id)" }
-    return store.pendingQuestions.first.map { "q\($0.id)" }
-  }
+  private var asking: String? { store.waitingHere.here.first?.id }
 
   private var canSend: Bool {
     let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -429,6 +427,14 @@ private struct Composer: View {
   }
 
   private var failed: [ComposerFile] { files.filter { $0.error != nil } }
+
+  /// The one chat the rest wait in, or Tasks, which lists them all.
+  private func openElsewhere(_ chat: Conversation?) {
+    guard let chat else { return openURL(AppLink.tasks.url) }
+    Task {
+      if chat.kind == .thread { await store.openThread(chat.id) } else { await store.openConversation(chat.id) }
+    }
+  }
 
   private func attach(_ data: Data, name: String, mediaType: String) {
     let f = ComposerFile(name: name)
@@ -448,18 +454,34 @@ private struct Composer: View {
 
   var body: some View {
     VStack(spacing: 6) {
-      let waiting = store.pendingApprovals.count + store.pendingQuestions.count
-      if waiting > 0 {
+      let waiting = store.waitingHere
+      if !waiting.here.isEmpty || waiting.rest > 0 {
         VStack(alignment: .leading, spacing: 10) {
-          if let a = store.pendingApprovals.first {
+          switch waiting.here.first {
+          case let .approval(a)? where a.status == .blocked:
+            BlockedBody(approval: a) { try await store.send("Run it anyway.") }.id(a.id)
+          case let .approval(a)? where a.status == .sending:
+            SendingBody(approval: a).id(a.id)
+          case let .approval(a)?:
             ApprovalBody(approval: a, compact: true).id(a.id)
-          } else if let q = store.pendingQuestions.first {
+          case let .question(q)?:
             QuestionBody(question: q).id("q\(q.id)")
+          case nil:
+            EmptyView()
           }
-          if waiting > 1 {
-            Text("\(waiting - 1) more waiting")
+          if waiting.here.count > 1 {
+            Text("\(waiting.here.count - 1) more waiting")
               .font(.footnote)
               .foregroundStyle(.secondary)
+          }
+          if waiting.rest > 0 {
+            let count = waiting.here.isEmpty ? "\(waiting.rest)" : "\(waiting.rest) more"
+            let place = waiting.elsewhere.map { store.chatName($0) } ?? "other chats"
+            Button("\(count) waiting in \(place)") {
+              openElsewhere(waiting.elsewhere)
+            }
+            .font(.footnote)
+            .buttonStyle(.borderless)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1352,6 +1374,67 @@ struct SendingBody: View {
         self.error = message(for: error)
         busy = false
       }
+    }
+  }
+}
+
+/// What the safety review stopped. It runs anyway only while its task is still going, or in a chat.
+struct BlockedBody: View {
+  let approval: Approval
+  /// In a chat: tells its bot, which hears only when you write.
+  var onRan: (@MainActor () async throws -> Void)?
+  @Environment(AppStore.self) private var store
+  @State private var busy = false
+  @State private var error: String?
+
+  var body: some View {
+    let a = approval
+    let live = a.taskId.map { store.tasks[$0]?.isActive == true } ?? true
+    VStack(alignment: .leading, spacing: 10) {
+      Text("\(Text("Blocked:").bold()) \(a.summary)").textSelection(.enabled)
+      if !a.reason.isEmpty { Text(a.reason).textSelection(.enabled) }
+      if let error {
+        Text(error).font(.footnote).foregroundStyle(.red)
+      }
+      HStack(spacing: 16) {
+        Button { act { try await store.dismissBlocked(a.id) } } label: {
+          Text("Dismiss").frame(maxWidth: .infinity)
+        }
+        .glassButton()
+        if live {
+          Button {
+            act {
+              try await store.runAnyway(a.id)
+              try await onRan?()
+            }
+          } label: {
+            Text("Run anyway").frame(maxWidth: .infinity)
+          }
+          .glassButton(prominent: true)
+          .tint(.attention)
+        }
+      }
+      .controlSize(.large)
+      if (a.scopes ?? []).contains("always") {
+        // This exact action skips the review from now on.
+        Button("Always") {
+          act {
+            try await store.runAnyway(a.id, always: true)
+            if live { try await onRan?() }
+          }
+        }
+        .font(.subheadline)
+        .buttonStyle(.borderless)
+      }
+    }
+    .disabled(busy)
+  }
+
+  private func act(_ work: @escaping @MainActor () async throws -> Void) {
+    busy = true
+    Task {
+      await attempt($error) { try await work() }
+      if error != nil { busy = false }
     }
   }
 }

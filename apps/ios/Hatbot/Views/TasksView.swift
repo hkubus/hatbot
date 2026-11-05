@@ -175,6 +175,9 @@ struct TaskDetailView: View {
       ForEach(store.sendingApprovals.filter { $0.taskId == taskId }) { a in
         Section { SendingBody(approval: a) }
       }
+      ForEach(store.blockedApprovals.filter { $0.taskId == taskId }) { a in
+        Section { BlockedBody(approval: a).padding(.vertical, 4) }
+      }
       ForEach(pending) { a in
         Section {
           VStack(alignment: .leading, spacing: 10) { ApprovalBody(approval: a, linksTask: false) }

@@ -343,6 +343,46 @@ final class ChatTests: XCTestCase {
     XCTAssertEqual(Waiting.count(approvals: approvals, questions: [try Self.question(1)], desktop: nil, computers: []), 2)
   }
 
+  /// One asked in a chat waits there, and a task's in its bot's chats but not their threads; the rest are
+  /// counted, with the one chat they wait in if there's one.
+  func testEachChatShowsWhatItsBotsAsked() throws {
+    let mine = Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0)
+    let haggler = Conversation(id: 2, kind: .direct, botIds: ["haggler"], unread: 0)
+    let thread = Conversation(id: 3, kind: .thread, botIds: ["hatbot"], unread: 0, parentId: 1)
+    let group = Conversation(id: 4, kind: .group, botIds: ["hatbot", "haggler"], unread: 0)
+    let chats = [mine, haggler, thread, group]
+    let inThread = Waiting.Item.approval(try Self.approval(1, "pending", extra: #","botId":"hatbot","conversationId":3"#))
+    let hagglers = Waiting.Item.approval(try Self.approval(2, "pending", extra: #","botId":"haggler""#))
+    let mineAsked = Waiting.Item.question(try Self.question(3))
+    let all = [inThread, hagglers, mineAsked]
+
+    var split = Waiting.split(all, in: mine, chats: chats)
+    XCTAssertEqual(split.here.map(\.id), ["q3"])
+    XCTAssertEqual(split.rest, 2)
+    XCTAssertNil(split.elsewhere)
+    split = Waiting.split(all, in: thread, chats: chats)
+    XCTAssertEqual(split.here.map(\.id), ["a1"])
+    split = Waiting.split(all, in: group, chats: chats)
+    XCTAssertEqual(split.here.map(\.id), ["a2", "q3"])
+    XCTAssertEqual(split.elsewhere, thread)
+  }
+
+  /// What the review blocked shows only in the chat it was asked in, and a task's only on the task; a
+  /// message on its way shows with the rest.
+  func testABlockedApprovalShowsOnlyInItsOwnChat() async throws {
+    let blocked = try Self.approval(1, "blocked", extra: #","botId":"hatbot","conversationId":1"#)
+    let elsewhere = try Self.approval(2, "blocked", extra: #","botId":"hatbot","conversationId":5"#)
+    let tasks = try Self.approval(3, "blocked", extra: #","botId":"hatbot","taskId":2"#)
+    let sending = try Self.approval(4, "sending", extra: #","botId":"hatbot","taskId":2"#)
+    await MainActor.run {
+      let store = Self.store()
+      store.conversations = [Conversation(id: 1, kind: .direct, botIds: ["hatbot"], unread: 0)]
+      for a in [blocked, elsewhere, tasks, sending] { store.apply(.approvalCreated(a)) }
+      XCTAssertEqual(store.waitingHere.here.map(\.id), ["a1", "a4"])
+      XCTAssertEqual(store.waitingHere.rest, 0)
+    }
+  }
+
   /// A delta says where it starts, in UTF-16 units as JavaScript counts: what's shown already isn't
   /// added again.
   func testADeltaSkipsWhatsShownByTheBrainsCount() {

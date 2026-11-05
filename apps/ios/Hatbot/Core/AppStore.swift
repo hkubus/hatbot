@@ -186,6 +186,22 @@ final class AppStore {
     approvals.values.filter { $0.status == .sending }.sorted { $0.id < $1.id }
   }
 
+  var blockedApprovals: [Approval] {
+    approvals.values.filter { $0.status == .blocked }.sorted { $0.id < $1.id }
+  }
+
+  /// What waits in the open chat, and how many wait in others: each chat's bots ask in their own.
+  var waitingHere: Waiting.Split {
+    let chat = currentChat
+    // What the review blocked shows only in its own chat; a task's shows on the task.
+    let asking = approvals.values.filter {
+      $0.status == .pending || $0.status == .sending
+        || ($0.status == .blocked && $0.taskId == nil && $0.conversationId == chat?.id)
+    }.map(Waiting.Item.approval) + pendingQuestions.map(Waiting.Item.question)
+    return Waiting.split(
+      asking.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }, in: chat, chats: conversations + threads.values)
+  }
+
   // MARK: Event stream
 
   func connect() {
@@ -1120,7 +1136,7 @@ final class AppStore {
   private func take(
     approvals pending: [Approval], questions asked: [Question]?, desktop state: DesktopState?, unread list: [Int]?
   ) {
-    for a in approvals.values where a.status == .pending || a.status == .sending {
+    for a in approvals.values where a.status == .pending || a.status == .blocked || a.status == .sending {
       requested.remove("a\(a.id)")
       if !pending.contains(where: { $0.id == a.id }) { approvals[a.id] = nil }
     }
@@ -1142,6 +1158,18 @@ final class AppStore {
     let body = Body(decision: decision, note: trimmed.isEmpty ? nil : trimmed, scope: scope)
     let a: Approval = try await api.post("/approvals/\(id)", body: body)
     approvals[a.id] = a
+  }
+
+  /// What the safety review blocked, run after all. `always`: this exact action isn't reviewed again.
+  func runAnyway(_ id: Int, always: Bool = false) async throws {
+    struct Body: Encodable { let always: Bool? }
+    let a: Approval = try await api.post("/approvals/\(id)/anyway", body: Body(always: always ? true : nil))
+    approvals[a.id] = a
+  }
+
+  func dismissBlocked(_ id: Int) async throws {
+    try await api.post("/approvals/\(id)/dismiss")
+    approvals[id]?.status = .cancelled
   }
 
   func answer(_ id: Int, _ answer: String) async throws {
