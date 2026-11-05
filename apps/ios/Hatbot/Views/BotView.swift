@@ -146,7 +146,7 @@ struct BotView: View {
             "Every plugin that's on",
             isOn: Binding(
               get: { form.plugins == nil },
-              set: { form.plugins = $0 ? nil : plugins.map(\.id) }))
+              set: { on in form.plugins = on ? nil : plugins.filter { $0.enabled != false }.map(\.id) }))
           if let on = form.plugins {
             ForEach(plugins) { p in
               // Only plugins that are on reach a bot.
