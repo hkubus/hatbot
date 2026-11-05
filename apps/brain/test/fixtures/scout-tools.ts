@@ -313,6 +313,65 @@ export function scoutServer(o: ScoutOptions): McpServer {
         return json({ ok: true });
       },
     );
+    // A sold flip's listings, recorded through scout_flip_listed, still up on other marketplaces.
+    server.registerTool(
+      "scout_flips_to_take_down",
+      {
+        description: "Sold flips still listed elsewhere",
+        inputSchema: {},
+        annotations: { readOnlyHint: true },
+      },
+      async () => {
+        log("scout_flips_to_take_down", {});
+        return json({
+          flips: flips().flatMap((f) => {
+            const delisted = (f.delisted as string[] | undefined) ?? [];
+            const up = new Map(
+              (f.listed ?? [])
+                .filter((l) => l.status === "listed" && l.url)
+                .map((l) => [String(l.channel), String(l.url)]),
+            );
+            const channels = [...up]
+              .filter(([c]) => c !== f.saleChannel && !delisted.includes(c))
+              .map(([channel, url]) => ({ channel, url }));
+            return f.soldOn && channels.length
+              ? [
+                  {
+                    id: f.id,
+                    title: f.title,
+                    soldOn: f.soldOn,
+                    saleChannel: f.saleChannel,
+                    channels,
+                  },
+                ]
+              : [];
+          }),
+        });
+      },
+    );
+    server.registerTool(
+      "scout_flip_taken_down",
+      {
+        description: "Tick a sold flip's listing on one marketplace as taken down",
+        inputSchema: { flipId: z.number(), channel: z.string() },
+        annotations: { readOnlyHint: false },
+      },
+      async (input) => {
+        log("scout_flip_taken_down", input);
+        const all = flips();
+        const f = all.find((x) => x.id === input.flipId);
+        if (!f) return notFound;
+        if (!f.soldOn)
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: `Flip ${f.id} has no sale recorded` }],
+          };
+        const delisted = (f.delisted as string[] | undefined) ?? [];
+        f.delisted = [...new Set([...delisted, input.channel])];
+        writeFileSync(flipsFile, JSON.stringify(all));
+        return json({ ok: true });
+      },
+    );
   }
   const sessionsFile = o.sessions;
   if (sessionsFile) {

@@ -32,7 +32,7 @@ import { COMPUTER_PROMPT, DESKTOP_PROMPT } from "../agent/prompt";
 import { Blocks, blockedText, levelOf, safeToRun } from "../agent/review";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
-import { listingCheck, listingRefused } from "../listings/gate";
+import { listingCheck, listingRefused, takeDownCheck, takeDownRefused } from "../listings/gate";
 import { skillPath } from "../memory/skills";
 import { modelInfo, modelName } from "../models-known";
 import {
@@ -180,6 +180,7 @@ const SetFiles = z.object({
 const RecordListing = z.object({
   url: z.string().max(2000).describe("The new listing's address, as the browser shows it"),
 });
+const RecordTakenDown = z.object({});
 const FocusWindow = z.object({ id: z.number().int().describe("The window's id, from the list") });
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed", "blocked"]),
@@ -254,6 +255,13 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "Record the new listing's address once it's published and its page shows. Then finish the task.",
     schema: RecordListing,
+  },
+  // Only in a sold flip's take-down tasks.
+  {
+    name: "record_taken_down",
+    description:
+      "Record that the listing is down: the site shows it ended, deleted or gone. Then finish the task.",
+    schema: RecordTakenDown,
   },
 ].map((t) => ({
   name: t.name,
@@ -443,6 +451,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const gateState: GateState = { recorded: false, sent: false, stopped: null };
   /** A listing's task may publish the approved listing once, without asking. */
   const listing = (guest && tasks.listings?.gateFor(id)) || null;
+  /** A sold flip's take-down task stays on that marketplace and posts nothing. */
+  const takeDown = (guest && tasks.listings?.takeDownGateFor(id)) || null;
   /** Text was typed or pasted in this task: what's in a box may be ours, not sent. */
   let typed = false;
   /** The last click was on the listing page, so a conversation it opens is this seller's. */
@@ -800,7 +810,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     }
     const no =
       (gate && refused(gate, call.name, input)) ||
-      (listing && listingRefused(listing, call.name, input));
+      (listing && listingRefused(listing, call.name, input)) ||
+      (takeDown && takeDownRefused(takeDown, call.name, input));
     if (no) return notRun(call, no);
     if (typesText(call.name, input)) typed = true;
     const check = checkFor(isBrowser ? "browser" : "computer", call.name, input);
@@ -911,6 +922,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           toSend = `Accept the offer of ${gate.accept} through the site's Accept button`;
         }
       }
+      const posts = takeDown && takeDownCheck(el, lastUrl);
+      if (posts) return notRun(call, posts);
       if (listing) {
         const l = listingCheck(listing, kind, el, hold);
         if (l.action === "hold") return notRun(call, l.why);
@@ -1247,6 +1260,19 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     return textResult(call, r.text, !r.ok);
   });
 
+  const recordTakenDown = withInput(RecordTakenDown, async (call) => {
+    if (!takeDown || !tasks.listings)
+      return textResult(call, "This task has no listing to take down.", true);
+    const r = tasks.listings.recordTakenDown(id);
+    tasks.addStep(id, {
+      kind: "action",
+      name: "record_taken_down",
+      detail: takeDown.url,
+      url: lastUrl,
+    });
+    return textResult(call, r.text, !r.ok);
+  });
+
   const confirmIntent = withInput(ConfirmIntent, async (call, input) => {
     if (gate?.mode === "read")
       return textResult(
@@ -1558,6 +1584,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     ...(listing
       ? [["set_files", setFiles] as const, ["record_listing", recordListing] as const]
       : []),
+    ...(takeDown ? [["record_taken_down", recordTakenDown] as const] : []),
   ]);
 
   // Its bot's name; the desktop model needs no role or memory.
@@ -1583,7 +1610,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
           (guest || (t.name !== "desktop_shell" && t.name !== "send_file")) &&
           (machine || (t.name !== "list_windows" && t.name !== "focus_window")) &&
           (gate || t.name !== "record_conversation") &&
-          (listing || (t.name !== "set_files" && t.name !== "record_listing")),
+          (listing || (t.name !== "set_files" && t.name !== "record_listing")) &&
+          (takeDown || t.name !== "record_taken_down"),
       ),
     ],
     thinking: thinkingFor(model),

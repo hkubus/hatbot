@@ -162,6 +162,12 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
     schema: z.object({ id: z.number().int().positive() }),
     brainOnly: true,
   },
+  {
+    name: "scout_flips_to_take_down",
+    description: "Sold flips still listed on another marketplace.",
+    schema: z.object({}),
+    brainOnly: true,
+  },
   // Marketplace logins the owner shared: the brain puts them in the bot's browser (desktop/logins.ts).
   // They sign a browser in, so the model never sees them.
   {
@@ -374,6 +380,11 @@ const FlipListed = z.object({
   error: z.string().max(2000).optional(),
 });
 
+const FlipTakenDown = z.object({
+  flipId: z.number().int().positive(),
+  channel: z.string().trim().min(1).max(80),
+});
+
 /** Emits "connected" once signed in. */
 export const scoutPlugin = definePlugin({
   id: "scout",
@@ -509,6 +520,17 @@ export const scoutPlugin = definePlugin({
         policy: (_, c) =>
           c.task ? block("Hatbot tells Scout itself once a listing's task ends.") : allow(),
         run: (input, c) => call("scout_flip_listed", input, c.signal),
+      }),
+      tool({
+        name: "scout_flip_taken_down",
+        description: "Tell Scout a sold flip's listing on one marketplace is down.",
+        access: "write",
+        brainOnly: true,
+        schema: FlipTakenDown,
+        // The brain reports it itself once the take-down task ends.
+        policy: (_, c) =>
+          c.task ? block("Hatbot tells Scout itself once a take-down task ends.") : allow(),
+        run: (input, c) => call("scout_flip_taken_down", input, c.signal),
       }),
     ];
     return ready(tools, {

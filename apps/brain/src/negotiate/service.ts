@@ -959,9 +959,13 @@ export class Negotiations {
         scout = r && !r.isError ? "Scout has the sale." : "Scout couldn't record the sale.";
       }
     }
+    // With the sale in Scout, the listings come down by themselves (listings/service.ts).
+    const takenDown =
+      scout === "Scout has the sale." && !!scoutTool(available, "scout_flips_to_take_down");
+    const others = elsewhere.join(" and ");
     this.d.chats.note(
       n.botId,
-      `**Sold** ${quotedTitle(n.title)} on ${flip.channel} for ${zl(price, n.mandate.currency)} (negotiation #${n.id}). The buyer pays on the site; send it or hand it over once they have.${elsewhere.length ? ` Take it off ${elsewhere.join(" and ")}.` : ""} ${scout}`,
+      `**Sold** ${quotedTitle(n.title)} on ${flip.channel} for ${zl(price, n.mandate.currency)} (negotiation #${n.id}). The buyer pays on the site; send it or hand it over once they have.${elsewhere.length ? (takenDown ? ` Taking it off ${others} next.` : ` Take it off ${others}.`) : ""} ${scout}`,
     );
     return scout;
   }
