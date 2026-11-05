@@ -201,6 +201,25 @@ final class SafetyTests: XCTestCase {
     }
   }
 
+  /// Siri's answer when the brain stopped waiting: a reply still being written isn't read out cut off.
+  func testSiriDoesntReadAHalfWrittenReply() throws {
+    let reply = { (id: Int, text: String, status: String) in
+      #"{"id":\#(id),"role":"assistant","kind":"text","text":"\#(text)","status":"\#(status)","createdAt":"t"}"#
+    }
+    let ask = { (replies: [String], finished: Bool) in
+      try decode(
+        AskResult.self,
+        #"{"message":\#(reply(1, "Hi", "done")),"replies":[\#(replies.joined(separator: ","))],"finished":\#(finished)}"#)
+    }
+    XCTAssertEqual(
+      try ask([reply(2, "On it.", "done"), reply(3, "The forecast for tomor", "streaming")], false).answer,
+      "On it.\n\nThe rest will be in the chat.")
+    XCTAssertEqual(
+      try ask([reply(3, "The forecast for tomor", "streaming")], false).answer,
+      "Hatbot is still on it. The answer will be in the chat.")
+    XCTAssertEqual(try ask([reply(2, "**Sunny.**", "done")], true).answer, "Sunny.")
+  }
+
   func testSharedTextGoesAsAFileNotAsYourWords() {
     let url = URL(string: "https://example.com/a")!
     let draft = ShareDraft(

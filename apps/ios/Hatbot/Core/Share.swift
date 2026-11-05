@@ -6,8 +6,12 @@ struct AskResult: Decodable, Sendable {
   var finished: Bool
 
   var answer: String {
-    let text = replies.map { Markdown.plain($0.text) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-    if !finished { return text.isEmpty ? "Hatbot is still on it. The answer will be in the chat." : text }
+    // A reply still being written comes cut off where it was: it isn't read out as if that were all.
+    let text = replies.filter { $0.status != .streaming }.map { Markdown.plain($0.text) }.filter { !$0.isEmpty }
+      .joined(separator: "\n\n")
+    if !finished {
+      return text.isEmpty ? "Hatbot is still on it. The answer will be in the chat." : text + "\n\nThe rest will be in the chat."
+    }
     return text.isEmpty ? "Hatbot didn't answer." : text
   }
 }
