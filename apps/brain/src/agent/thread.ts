@@ -562,7 +562,13 @@ export class Thread {
   private async approve(
     episodeId: number,
     bot: Bot,
-    call: { tool: string; input: unknown; what: string; target?: string | null },
+    call: {
+      tool: string;
+      input: unknown;
+      what: string;
+      target?: string | null;
+      secret?: string;
+    },
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
     progress: (line: string) => void,
@@ -626,8 +632,9 @@ export class Thread {
       call: { tool: call.tool, input: call.input, target: call.target ?? null },
       episodeId,
       scopes: [...scopes],
+      secret: call.secret,
     });
-    progress("Waiting for your approval");
+    progress(call.secret ? `Waiting for you to enter ${call.secret}` : "Waiting for your approval");
     this.waiting = approval.id;
     let outcome: Awaited<ReturnType<Approvals["wait"]>>;
     try {
@@ -693,7 +700,7 @@ export class Thread {
         };
     }
     progress(activity(t.label ?? `Using ${t.name}`, input));
-    const r = await runPluginTool(t, input, cc);
+    const r = await runPluginTool(t, input, cc, this.d.plugins.hideSecrets);
     if (r.untrusted) this.taint(episodeId, what);
     return {
       content: note ? `${r.content}\n\n${ownerNote(note)}` : r.content,
@@ -2367,6 +2374,7 @@ export class Thread {
             progress(activity(plugin?.label ?? toolLabel(call.name, plugins), call.input));
           const r = await runOffered(call.name, call.input, {
             offered: pluginTools,
+            hide: plugins.hideSecrets,
             live: (t) => this.livePlugin(bot, t, incognito),
             gated: async (t, input, signal) => {
               // The sandbox is scratch space; only commands on the homelab and accounts count.
@@ -2404,7 +2412,9 @@ export class Thread {
               answering: this.currentHandoff?.task,
               approve: ({ why, always, ...call }, signal) =>
                 checked(async () => {
-                  const verdict = { action: "ask" as const, why, tainted: true, always };
+                  const verdict: Extract<Verdict, { action: "ask" }> = call.secret
+                    ? { action: "ask", why, kind: "secret", always: true, careful: true }
+                    : { action: "ask", why, tainted: true, always };
                   const r = await this.approve(episode.id, bot, call, verdict, signal, progress);
                   if ("content" in r) return r;
                   return { content: r.note ? `\n\n${ownerNote(r.note)}` : "", isError: false };

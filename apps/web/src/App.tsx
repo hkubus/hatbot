@@ -122,6 +122,7 @@ const SUB_TITLE: Record<string, string> = {
   "/settings/add-plugin": "Add a plugin",
   "/settings/notifications": "ntfy server",
   "/settings/allowed": "Always allowed",
+  "/settings/secrets": "Secrets",
   "/settings/safety": "Approvals and guardrails",
   "/settings/account": "Password and authenticator",
   "/settings/devices": "Devices and tokens",

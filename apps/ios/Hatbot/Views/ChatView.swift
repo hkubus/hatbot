@@ -1252,6 +1252,7 @@ struct ApprovalBody: View {
   @State private var busy = false
   @State private var error: String?
   @State private var note = ""
+  @State private var secret = ""
   @State private var decided: Decision?
   @State private var trusted = false
   @State private var more = false
@@ -1265,13 +1266,23 @@ struct ApprovalBody: View {
     let folds = compact && ((!a.reason.isEmpty && !warns) || shot || a.takesNote)
     let opens = linksTask && router != nil ? a.taskId : nil
     // All of it as written, never Markdown: the summary can be a whole shell command.
-    Text("\(Text("Can I go ahead?").bold()) \(a.summary)").textSelection(.enabled)
+    if a.secret != nil {
+      Text(a.summary).bold().textSelection(.enabled)
+    } else {
+      Text("\(Text("Can I go ahead?").bold()) \(a.summary)").textSelection(.enabled)
+    }
     if !a.reason.isEmpty && (shown || warns) { Text(a.reason).textSelection(.enabled) }
     if !a.sources.isEmpty {
       Text("After reading \(a.sources.joined(separator: ", "))").font(.footnote).foregroundStyle(.secondary)
     }
     if shown, let taskId = a.taskId, let stepId = a.screenshotStepId {
       Screenshot(taskId: taskId, stepId: stepId)
+    }
+    if let name = a.secret {
+      SecureField(name, text: $secret)
+        .textContentType(.password)
+        .textFieldStyle(.roundedBorder)
+        .onSubmit { if !secret.isEmpty { decide(.approve) } }
     }
     if shown && a.takesNote {
       TextField("Tell it what to do instead, or how to go ahead", text: $note, axis: .vertical)
@@ -1293,9 +1304,12 @@ struct ApprovalBody: View {
     HStack(spacing: 16) {
       Button(role: .destructive) { decide(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
         .glassButton()
-      Button { decide(.approve) } label: { Text("Approve").frame(maxWidth: .infinity) }
-        .glassButton(prominent: true)
-        .tint(.attention)
+      Button { decide(.approve) } label: {
+        Text(a.secret != nil ? "Save" : "Approve").frame(maxWidth: .infinity)
+      }
+      .glassButton(prominent: true)
+      .tint(.attention)
+      .disabled(a.secret != nil && secret.isEmpty)
     }
     .controlSize(.large)
     .disabled(busy)
@@ -1346,7 +1360,9 @@ struct ApprovalBody: View {
     error = nil
     Task {
       do {
-        try await store.decide(approval.id, decision, note: answer ?? note, scope: scope)
+        try await store.decide(
+          approval.id, decision, note: answer ?? note, scope: scope,
+          secret: approval.secret != nil ? secret : nil)
         decided = decision
       } catch {
         self.error = message(for: error)

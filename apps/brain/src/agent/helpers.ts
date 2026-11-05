@@ -293,7 +293,7 @@ async function runHelper(c: HelperCall, part: Part, offeredTools: PluginTool[]):
         if (typeof t === "string") return error(t);
         const what = describeCall(t, call.input);
         step(c, t.name, `${part.topic}: ${what}`);
-        const r = await runPluginTool(t, call.input, cc);
+        const r = await runPluginTool(t, call.input, cc, c.tasks.d.plugins.hideSecrets);
         if (r.untrusted) untrusted.push(what);
         return {
           type: "tool_result",

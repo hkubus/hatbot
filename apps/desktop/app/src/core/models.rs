@@ -81,6 +81,7 @@ pub enum ApprovalKind {
     Mandate,
     Listing,
     Computer,
+    Secret,
     Other,
     #[default]
     #[serde(other)]

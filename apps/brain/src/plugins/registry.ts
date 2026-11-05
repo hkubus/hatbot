@@ -26,7 +26,13 @@ import {
   untrustedOf,
   type Verdict,
 } from "@hatbot/plugin-sdk";
-import type { PluginEnvInfo, PluginInfo, PluginState, SafetySettings } from "@hatbot/shared";
+import {
+  type PluginEnvInfo,
+  type PluginInfo,
+  type PluginState,
+  type SafetySettings,
+  secretsIn,
+} from "@hatbot/shared";
 import { z } from "zod";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
@@ -393,6 +399,9 @@ export class Plugins {
     return fn(args);
   }
 
+  /** Kept secrets in `text`, shown as their placeholders. */
+  readonly hideSecrets = (text: string) => this.d.secrets.hideSecrets(text);
+
   /** A stable order: it's part of the prompt cache. */
   private readyOnes(only: string[] | null, except: string[], ready = true) {
     return [...this.slots.values()]
@@ -731,11 +740,15 @@ export function saved(db: Db, id: string): { enabled?: boolean; config?: unknown
   return row === null ? {} : JSON.parse(row);
 }
 
-/** Labels untrusted output so it can't pose as instructions. Policy is the caller's job. */
+/**
+ * Labels untrusted output so it can't pose as instructions, and takes out what `hide` finds, such as
+ * kept secrets. Policy is the caller's job.
+ */
 export async function runPluginTool(
   t: PluginTool,
   input: unknown,
   call: CallContext,
+  hide: (text: string) => string = (text) => text,
 ): Promise<{
   content: string;
   isError: boolean;
@@ -754,19 +767,15 @@ export async function runPluginTool(
   let images: ToolImage[] | undefined;
   try {
     const r = await t.run(parsed.data, call);
-    out = textOf(r);
+    out = hide(textOf(r));
     if (typeof r !== "string" && r.images.length) images = r.images;
   } catch (err) {
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
     if (err instanceof PluginError) {
       const untrusted = untrustedOf(t, parsed.data);
-      return {
-        content: label(err.message, untrusted),
-        isError: true,
-        untrusted,
-        text: err.message,
-      };
+      const text = hide(err.message);
+      return { content: label(text, untrusted), isError: true, untrusted, text };
     }
     console.error(`tool ${t.name} failed`, err);
     const content = "The tool failed with an internal error.";
@@ -822,6 +831,16 @@ export function verdictFor(
   if (!parsed.success) return allow();
   const own = t.policy ? t.policy(parsed.data, call) : allow();
   if (own.action === "block") return own;
+  // What was read may be steering where they go, so only you can let them.
+  const placed = tainted ? secretsIn(JSON.stringify(parsed.data)) : [];
+  if (placed.length)
+    return {
+      action: "ask",
+      why: `This puts your secret${placed.length > 1 ? "s" : ""} ${placed.join(", ")} there, after reading untrusted content.`,
+      kind: "account_security",
+      always: true,
+      careful: true,
+    };
   const mine = safety?.tools[t.name];
   if (mine === "ask")
     return own.action === "ask"

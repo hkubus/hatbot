@@ -21,6 +21,7 @@ import { pluginRoutes } from "./routes/plugins";
 import { proposalRoutes } from "./routes/proposals";
 import { questionRoutes } from "./routes/questions";
 import { searchRoutes } from "./routes/search";
+import { secretRoutes } from "./routes/secrets";
 import { streamRoutes } from "./routes/stream";
 import { approvalRoutes, taskRoutes } from "./routes/tasks";
 import { threadRoutes } from "./routes/thread";
@@ -73,6 +74,7 @@ export function createApp(deps: Deps) {
   app.route("/", proposalRoutes);
   app.route("/", todoRoutes);
   app.route("/", onboardingRoutes);
+  app.route("/", secretRoutes);
   for (const { id, routes, publicRoutes, sockets } of deps.plugins.routed()) {
     for (const path of publicRoutes) app.all(path, toPlugin(id));
     for (const path of sockets) app.get(path, socketAuth, toPlugin(id));

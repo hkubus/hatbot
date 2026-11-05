@@ -1136,4 +1136,6 @@ export const migrations: string[] = [
   `
   ALTER TABLE negotiation_messages ADD COLUMN offer_only INTEGER NOT NULL DEFAULT 0;
   `,
+  // 77: an approval that asks you to type in a secret, by the name it's kept under; never its value.
+  `ALTER TABLE approvals ADD COLUMN secret TEXT;`,
 ];

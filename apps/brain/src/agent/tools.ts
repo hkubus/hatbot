@@ -856,6 +856,7 @@ export async function runOffered(
     call: CallContext;
     live?: (t: PluginTool) => PluginTool | string;
     gated?: (t: PluginTool, input: unknown, signal: AbortSignal) => Promise<Ran>;
+    hide?: (text: string) => string;
   },
 ): Promise<Ran> {
   const found =
@@ -871,7 +872,7 @@ export async function runOffered(
     if (!o.gated) return { content: `${tool.name} can't run here.`, isError: true };
     return o.gated(tool, input, o.call.signal);
   }
-  const r = await runPluginTool(tool, input, o.call);
+  const r = await runPluginTool(tool, input, o.call, o.hide);
   if (r.untrusted) o.call.taint?.(describeCall(tool, input));
   return r;
 }

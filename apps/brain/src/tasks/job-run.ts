@@ -15,11 +15,11 @@ export function taskApprove(tasks: Tasks, task: Task): JobRun["approve"] {
     const t = tasks.get(id);
     return t?.tainted ? t.taintedBy || "What started it" : null;
   };
-  return async ({ why, always, ...call }, sig) => {
+  return async ({ why, always, secret, ...call }, sig) => {
     const verdict = { action: "ask" as const, why, tainted: true, always };
     const by = tainted();
     const sources = by ? [by] : [];
-    const level = levelOf(d.settings.get(), verdict);
+    const level = secret ? "ask" : levelOf(d.settings.get(), verdict);
     if (level === "allow") return { content: "", isError: false };
     if (level === "review") {
       if (d.approvals.granted({ botId: task.botId, ...call, target: null, taskId: id }))
@@ -59,7 +59,14 @@ export function taskApprove(tasks: Tasks, task: Task): JobRun["approve"] {
     const answer = await askOwner(
       tasks,
       id,
-      { botId: task.botId, kind: "other", summary: call.what, reason: why, sources },
+      {
+        botId: task.botId,
+        kind: secret ? "secret" : "other",
+        summary: call.what,
+        reason: why,
+        sources,
+        secret,
+      },
       null,
       (wait) => {
         tasks.setStatus(id, "waiting_approval");
