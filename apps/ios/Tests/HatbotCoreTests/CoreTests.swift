@@ -520,6 +520,12 @@ final class ChatTests: XCTestCase {
     XCTAssertEqual(Markdown.parse("```chart\n\(bad)\n```"), [.code(language: "chart", code: bad)])
   }
 
+  /// Two series of the same name are still two: the chart tells them apart by name.
+  func testSeriesOfTheSameNameStayApart() {
+    XCTAssertEqual(
+      ChartSpec.names(["Sales", nil, "Sales", "Series 2", ""]), ["Sales", "Series 2", "Sales (2)", "Series 2 (2)", "Series 5"])
+  }
+
   /// A block can name a file for its values instead; the brain's values go into it and through the same
   /// checks. Values typed in as well make it neither.
   func testChartFromFile() throws {

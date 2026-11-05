@@ -455,10 +455,19 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   /// Series names, with "Series 2" for one Hatbot left unnamed.
   var names: [String] { Self.names(series.map(\.name)) }
 
+  /// Each told apart: Swift Charts colours and places a series by its name, so two called "Sales" were
+  /// drawn as one.
   static func names(_ given: [String?]) -> [String] {
-    given.indices.map { i in
-      let name = given[i] ?? ""
-      return name.isEmpty ? "Series \(i + 1)" : name
+    var taken = Set<String>()
+    return given.indices.map { i in
+      let name = given[i].flatMap { $0.isEmpty ? nil : $0 } ?? "Series \(i + 1)"
+      var shown = name
+      var n = 2
+      while !taken.insert(shown).inserted {
+        shown = "\(name) (\(n))"
+        n += 1
+      }
+      return shown
     }
   }
 
