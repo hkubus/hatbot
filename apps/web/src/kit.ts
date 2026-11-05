@@ -5,6 +5,7 @@ export { useAction } from "./action";
 export { errorText } from "./api";
 export { ask, askText, useLeaveGuard } from "./confirm";
 export { Copyable } from "./copy";
+export { inDesktopApp, toDesktopApp } from "./desktop";
 export { IdListSettings } from "./plugin-kit/id-list";
 export { useSignInReturn } from "./plugin-kit/sign-in";
 export { Switch } from "./switch";

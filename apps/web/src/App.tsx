@@ -1,6 +1,7 @@
 import type { Conversation, Me } from "@hatbot/shared";
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorText } from "./api";
+import { inDesktopApp, toDesktopApp } from "./desktop";
 import { BotMark, Icon, type IconName } from "./icons";
 import { Link } from "./link";
 import { LiveView } from "./live";
@@ -182,6 +183,7 @@ export function App() {
       </div>
     );
   if (!me) return null;
+  if (!me.authenticated && inDesktopApp) return <BackToApp />;
   if (me.local && !me.setupDone) {
     if (!me.authenticated)
       return <div className="unreachable">Open Hatbot from the app on this computer.</div>;
@@ -208,6 +210,12 @@ export function App() {
       />
     );
   return <Shell onSignOut={refresh} />;
+}
+
+/** The app signs the window in again from its own sign-in, or asks for it. */
+function BackToApp() {
+  useEffect(() => toDesktopApp("signed-out"), []);
+  return null;
 }
 
 function Shell({ onSignOut }: { onSignOut: () => void }) {

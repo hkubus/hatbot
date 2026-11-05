@@ -10,6 +10,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
 import { ask } from "../confirm";
+import { inDesktopApp, toDesktopApp } from "../desktop";
 import { clearDrafts } from "../drafts";
 import { prTitle, shortSha, stamp } from "../format";
 import { LoadError, PageLoad, useLoad } from "../load";
@@ -137,7 +138,8 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
   const signOut = async () => {
     await api("/auth/logout", { body: {} }).catch(() => {});
     clearDrafts();
-    onSignOut();
+    if (inDesktopApp) toDesktopApp("sign-out");
+    else onSignOut();
   };
   const setUpAgain = () =>
     api("/onboarding/again", { body: {} }).then(

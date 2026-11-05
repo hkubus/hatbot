@@ -58,7 +58,7 @@ export type Me = {
   local?: boolean;
   onboarded?: boolean;
 };
-export type LocalLink = { url: string };
+export type AppLink = { url: string };
 
 export const ConfirmOwner = z.object({
   password: z.string().min(1).max(1024),

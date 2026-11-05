@@ -1,5 +1,7 @@
 export function deviceName(ua: string | null): string {
   if (!ua) return "A browser";
+  const app = /HatbotApp\/\S+ \((\w+)\)/.exec(ua)?.[1];
+  if (app) return `Hatbot's app on ${app}`;
   const browser = /Edg(e|iOS|A)?\//.test(ua)
     ? "Edge"
     : /(Firefox|FxiOS)\//.test(ua)

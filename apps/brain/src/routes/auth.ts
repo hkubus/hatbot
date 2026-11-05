@@ -1,11 +1,11 @@
 import { idParam } from "@hatbot/plugin-sdk";
 import {
   API_PREFIX,
+  type AppLink,
   ChangePassword,
   ConfirmOwner,
   CreateToken,
   FinishTotpChange,
-  type LocalLink,
   Login,
   type Me,
   SetupFinish,
@@ -78,18 +78,20 @@ export const authRoutes = new Hono<AppEnv>()
     });
   })
 
-  // A local brain: the Linux app opens the web app signed in, and can set a password up from there.
+  // The desktop app opens the web app signed in, from its own token, at the page it names.
   .post("/auth/link", requireAuth, (c) => {
-    if (!c.var.config.local || c.var.principal.kind !== "token")
-      return c.json({ error: "Only the app on this computer can do that." }, 403);
+    if (c.var.principal.kind !== "token")
+      return c.json({ error: "Only Hatbot's apps can do that." }, 403);
     const url = `${c.var.config.publicUrl}${API_PREFIX}/auth/link/${c.var.auth.newLink()}`;
-    return c.json<LocalLink>({ url });
+    return c.json<AppLink>({ url });
   })
   .get("/auth/link/:code", (c) => {
-    if (!c.var.config.local || !c.var.auth.useLink(c.req.param("code")))
+    if (!c.var.auth.useLink(c.req.param("code")))
       return c.text("That link has expired. Open Hatbot from the app again.", 403);
     setSessionCookie(c, c.var.auth.createSession(c.req.header("user-agent") ?? null));
-    return c.redirect(c.req.query("to") === "setup" ? "/setup" : "/");
+    const to = c.req.query("to") ?? "/";
+    // A path on this site only: "//elsewhere" and "/\elsewhere" lead off it.
+    return c.redirect(/^\/(?![/\\])/.test(to) ? to : "/");
   })
   .get("/auth/setup/code", requireAuth, (c) =>
     c.var.config.local && !c.var.auth.isSetUp()

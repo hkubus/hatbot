@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { LocalLink, Session, SignedOutOthers } from "@hatbot/shared";
+import type { AppLink, Session, SignedOutOthers } from "@hatbot/shared";
 import { AuthService, FailureLimiter } from "../src/auth/service";
 import { resetLogin } from "../src/reset-login";
 import { ORIGIN, setUpOwner, signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -465,7 +465,7 @@ describe("a brain on the owner's computer", () => {
     });
 
     const link = async () =>
-      linkPath(((await (await t.call("POST", "/auth/link", {}, bearer)).json()) as LocalLink).url);
+      linkPath(((await (await t.call("POST", "/auth/link", {}, bearer)).json()) as AppLink).url);
     const path = await link();
     const opened = await t.call("GET", path);
     expect(opened.status).toBe(302);
@@ -496,16 +496,19 @@ describe("a brain on the owner's computer", () => {
     expect((await code()).status).toBe(403);
   });
 
-  test("a brain on a server makes no links and keeps its setup code to its log", async () => {
+  test("a brain on a server gives the app links too, only ever to its own pages", async () => {
     const t = await testApp();
-    const bearer = { authorization: `Bearer ${t.auth.createToken("cli").token}` };
-    expect((await t.call("POST", "/auth/link", {}, bearer)).status).toBe(403);
+    const bearer = { authorization: `Bearer ${t.auth.createToken("Laptop").token}` };
     expect((await t.call("GET", "/auth/setup/code", undefined, bearer)).status).toBe(403);
-    t.config.local = true;
-    const path = linkPath(
-      ((await (await t.call("POST", "/auth/link", {}, bearer)).json()) as LocalLink).url,
-    );
-    t.config.local = false;
-    expect((await t.call("GET", path)).status).toBe(403);
+    const open = async (to: string) => {
+      const { url } = (await (await t.call("POST", "/auth/link", {}, bearer)).json()) as AppLink;
+      const res = await t.call("GET", `${linkPath(url)}?to=${encodeURIComponent(to)}`);
+      expect(cookieOf(res, "hatbot_session")).toBeTruthy();
+      return res.headers.get("location");
+    };
+    expect(await open("/tasks/12")).toBe("/tasks/12");
+    expect(await open("//evil.example/")).toBe("/");
+    expect(await open("/\\evil.example/")).toBe("/");
+    expect(await open("https://evil.example/")).toBe("/");
   });
 });

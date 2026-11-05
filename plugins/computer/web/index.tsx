@@ -4,10 +4,12 @@ import {
   askText,
   Copyable,
   errorText,
+  inDesktopApp,
   Panel,
   type PluginSettingsProps,
   type PluginWeb,
   Switch,
+  toDesktopApp,
   useAction,
 } from "@hatbot/web/kit";
 import { useEffect, useState } from "react";
@@ -68,6 +70,16 @@ export function ComputerSettings({ action, running }: PluginSettingsProps) {
 
   return (
     <>
+      {inDesktopApp && (
+        <Panel title="This computer" className="form">
+          <div className="form-row">
+            <span className="label">Only this computer can let Hatbot use it.</span>
+            <button type="button" className="btn sm" onClick={() => toDesktopApp("computer")}>
+              Open
+            </button>
+          </div>
+        </Panel>
+      )}
       <Panel title="Computers" className="form">
         {computers?.length === 0 && (
           <span className="label">
