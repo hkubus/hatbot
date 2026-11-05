@@ -508,6 +508,8 @@ final class ChatTests: XCTestCase {
     XCTAssertEqual(l.items[0].place, "olx.pl")
     XCTAssertTrue(ChartSpec.listingPhoto(try XCTUnwrap(l.items[0].photo)))
     XCTAssertFalse(ChartSpec.listingPhoto("https://olxcdn.com.evil.example/a.jpg"))
+    XCTAssertTrue(ChartSpec.listingPhoto("https://ireland.apollo.olxcdn.com:443/v1/files/p1-PL/image"))
+    XCTAssertFalse(ChartSpec.listingPhoto("https://ireland.apollo.olxcdn.com:8443/v1/files/p1-PL/image"))
     XCTAssertNil(ChartSpec.parse(listings.replacingOccurrences(of: "%@", with: #""javascript:alert(1)""#)))
   }
 

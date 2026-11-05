@@ -242,7 +242,9 @@ struct ChartSpec: Decodable, Equatable, Sendable {
   /// Whether the brain fetches this photo for a listings block.
   static func listingPhoto(_ s: String) -> Bool {
     guard webAddress(s, https: true), let u = URLComponents(string: s), let host = u.host?.lowercased(),
-      u.port == nil, u.user == nil, u.password == nil else { return false }
+      // JavaScript's URL drops https's own port, so the brain takes :443; OLX's addresses have it.
+      u.port == nil || u.port == 443, u.user == nil, u.password == nil
+    else { return false }
     return photoHosts.contains { host == $0 || host.hasSuffix(".\($0)") }
   }
 
