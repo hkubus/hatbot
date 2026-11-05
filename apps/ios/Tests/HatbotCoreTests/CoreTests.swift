@@ -1016,7 +1016,7 @@ final class NetworkTests: XCTestCase {
   func testAReplyLoadedMidWayIsNeitherDoubledNorCut() async throws {
     let store = await MainActor.run { Self.store() }
     SlowBrain.routes["/thread/messages?limit=50"] =
-      #"[{"id":9,"role":"assistant","kind":"text","text":"Hello","status":"streaming","createdAt":"2026-10-15T08:00:00Z"}]"#
+      #"[{"id":9,"role":"assistant","kind":"text","text":"Hello","status":"streaming","createdAt":"2026-10-15T08:00:00Z","progress":"Searched the web"}]"#
     // Still on its way while the deltas come.
     SlowBrain.slower = ["/thread/messages?limit=50": 0.2]
     try await MainActor.run {
@@ -1032,6 +1032,8 @@ final class NetworkTests: XCTestCase {
     try await loaded
     await MainActor.run {
       XCTAssertEqual(store.reply(9)?.text, "Hello world")
+      // What it had done so far comes with the page.
+      XCTAssertEqual(store.reply(9)?.progress, "Searched the web")
       // One sent before the page was read that comes after it.
       store.apply(.messageDelta(id: 9, text: "world!", at: 6))
       XCTAssertEqual(store.reply(9)?.text, "Hello world!")

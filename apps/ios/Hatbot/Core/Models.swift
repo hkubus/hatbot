@@ -78,6 +78,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var boxId: Int?
   /// A hand-off's other end: on the request, the message that asked; on that message, the request.
   var link: MessageLink?
+  /// A reply being written: what it's done so far, its thinking and tools.
+  var progress: String?
 
   var isIncognito: Bool { incognito == true }
 
@@ -86,7 +88,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, sources, choices, boxId, link
+    case incognito, conversationId, botId, sources, choices, boxId, link, progress
   }
 
   init(
@@ -139,6 +141,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       choices: c.decodeIfPresent([[String]].self, forKey: .choices),
       boxId: c.decodeIfPresent(Int.self, forKey: .boxId),
       link: c.decodeIfPresent(MessageLink.self, forKey: .link))
+    progress = try c.decodeIfPresent(String.self, forKey: .progress)
   }
 }
 

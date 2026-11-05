@@ -10,6 +10,12 @@ final class LiveReply {
   var usage: ReplyUsage?
 
   init(text: String) { self.text = text }
+
+  /// One loaded mid-reply, with what it's done so far.
+  init(_ m: ThreadMessage) {
+    text = m.text
+    progress = m.progress ?? ""
+  }
 }
 
 @MainActor
@@ -395,7 +401,7 @@ final class AppStore {
   private func live(_ id: Int) -> LiveReply? {
     if let r = replies[id] { return r }
     guard let m = messages.first(where: { $0.id == id }), m.status == .streaming else { return nil }
-    let r = LiveReply(text: m.text)
+    let r = LiveReply(m)
     replies[id] = r
     return r
   }
@@ -409,7 +415,7 @@ final class AppStore {
     switch event {
     case let .messageCreated(m):
       guard m.isIncognito == incognito && (m.conversationId ?? 1) == conversationId else { return }
-      if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(text: m.text) }
+      if m.status == .streaming && replies[m.id] == nil { replies[m.id] = LiveReply(m) }
       upsert(m)
     case let .messageEdited(id, editedAt):
       change(id) { $0.editedAt = editedAt }
@@ -456,8 +462,9 @@ final class AppStore {
         replies[m.id] = nil
       } else if let r = replies[m.id] {
         r.text = m.text
+        if let progress = m.progress { r.progress = progress }
       } else {
-        replies[m.id] = LiveReply(text: m.text)
+        replies[m.id] = LiveReply(m)
       }
     }
     let shown = Set(messages.map(\.id))
