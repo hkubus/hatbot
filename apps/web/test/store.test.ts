@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Approval, Proposal, Task, ThreadMessage } from "@hatbot/shared";
 import { FakeSocket, installDom, type Request, settle } from "./dom";
-import { msg } from "./fixtures";
+import { chat, msg } from "./fixtures";
 
 const dom = installDom();
 dom.answer(() => []);
@@ -286,5 +286,38 @@ test("a thread open beside the chat takes its own messages, and the chat keeps i
     [10, "Message 10"],
     [11, "Sure."],
   ]);
+  store.disconnect();
+});
+
+test("a chat read to the bottom is seen here at once, the brain hears up to where, and its count is the brain's", async () => {
+  const store = await freshStore("seen-through");
+  store.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  serve(
+    () => [msg(1), msg(2, { seenAt: null }), msg(3, { seenAt: null })],
+    (r) =>
+      r.path === "/thread/seen"
+        ? { conversations: [{ ...chat(1, "direct", ["hatbot"]), unread: 0 }] }
+        : [],
+  );
+  await store.loadThread();
+  socket.emit({
+    type: "snapshot",
+    paused: false,
+    bots: [],
+    // More unread than were sent or loaded.
+    conversations: [{ ...chat(1, "direct", ["hatbot"]), unread: 140 }],
+    approvals: [],
+    questions: [],
+    desktop: null,
+    unread: [2, 3],
+  });
+  await settle();
+  store.markSeen([], 3);
+  expect(store.getState().unread).toEqual([]);
+  await settle();
+  expect(asked(/^\/thread\/seen/).map((r) => r.body)).toEqual([{ ids: [], through: 3 }]);
+  expect(store.getState().conversations[0]?.unread).toBe(0);
   store.disconnect();
 });

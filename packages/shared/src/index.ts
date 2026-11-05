@@ -88,7 +88,15 @@ export const PostMessage = z
   .refine((m) => m.text.length > 0 || m.attachmentIds.length > 0, {
     message: "A message needs text or a file.",
   });
-export const SeenMessages = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) });
+/** `through`: a message whose chat you've read to the bottom, so it and everything before it there is seen. */
+export const SeenMessages = z
+  .object({
+    ids: z.array(z.number().int().positive()).max(200).default([]),
+    through: z.number().int().positive().optional(),
+  })
+  .refine((s) => s.ids.length > 0 || s.through !== undefined, { message: "Say which messages." });
+/** What POST /thread/seen answers: the chats whose unread counts that changed. */
+export type Seen = { conversations: Conversation[] };
 export const PutMemoryFile = z.object({
   content: z.string().max(1_000_000),
   message: z.string().max(200).optional(),

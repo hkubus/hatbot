@@ -141,6 +141,37 @@ test("you open a thread on a bot's message: it starts with that message, and the
   expect(t.chats.get(thread.id)?.latest).toBe("B is cheaper.");
 });
 
+test("you read a chat to the bottom: it and everything before it there is seen, not its threads or what comes after", async () => {
+  const model = new FakeModel([
+    { content: [text("One.")] },
+    { content: [text("Two.")] },
+    { content: [text("In the thread.")] },
+    { content: [text("Three.")] },
+  ]);
+  const t = await testApp(model);
+  const { cookie } = signIn(t);
+  await t.thread.post("one").done;
+  await t.thread.post("two").done;
+  const two = t.thread.list().at(-1)?.id as number;
+  const opened = await t.call("POST", "/conversations/1/threads", { messageId: two }, { cookie });
+  const thread = (await opened.json()) as Conversation;
+  await t.chats.thread(thread.id)?.post("more?").done;
+  const inThread = t.chats.get(thread.id)?.unread as number;
+  expect(inThread).toBeGreaterThan(0);
+  const bottom = t.thread.list().at(-1)?.id as number;
+
+  const res = await t.call("POST", "/thread/seen", { through: bottom }, { cookie });
+  // The answer has the chat's new count, so the badge needn't wait for the list.
+  expect(((await res.json()) as { conversations: Conversation[] }).conversations).toEqual([
+    expect.objectContaining({ id: 1, unread: inThread }),
+  ]);
+  expect(t.chats.get(thread.id)?.unread).toBe(inThread);
+
+  await t.thread.post("three").done;
+  await t.call("POST", "/thread/seen", { through: bottom }, { cookie });
+  expect(t.chats.get(1)?.unread).toBe(inThread + 1);
+});
+
 test("a background task opens a thread: you're notified, and its question and result come there, not in the chat", async () => {
   const work = new FakeModel([
     {

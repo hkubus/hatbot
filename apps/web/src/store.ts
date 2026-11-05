@@ -20,6 +20,7 @@ import {
   type Proposal,
   type Question,
   type Schedule,
+  type Seen,
   type Snapshot,
   type SpendSummary,
   type Task,
@@ -459,12 +460,28 @@ const addUnread = (id: number) =>
     ? state.unread
     : [...state.unread, id].sort((a, b) => a - b);
 
-/** They stop counting as unread here and on your other devices. */
-export function markSeen(ids: number[]) {
-  const seen = ids.filter((id) => state.unread.includes(id));
-  if (!seen.length) return;
+/**
+ * They stop counting as unread here and on your other devices. `through`: you read its chat to the
+ * bottom, so it and everything before it there is seen too.
+ */
+export function markSeen(ids: number[], through?: number) {
+  const loaded = [...state.messages, ...(state.side?.messages ?? [])];
+  const chat = loaded.find((m) => m.id === through)?.conversationId;
+  const before = new Set(
+    loaded.filter((m) => m.conversationId === chat && m.id <= (through ?? 0)).map((m) => m.id),
+  );
+  const seen = state.unread.filter((id) => ids.includes(id) || before.has(id));
+  if (!seen.length && !through) return;
   set({ unread: state.unread.filter((id) => !seen.includes(id)) });
-  void api("/thread/seen", { body: { ids: seen } }).catch(() => {});
+  // The brain takes up to 200 at a time.
+  const asked = ids.filter((id) => seen.includes(id));
+  for (let i = 0; i === 0 || i < asked.length; i += 200)
+    void api<Seen>("/thread/seen", {
+      body: { ids: asked.slice(i, i + 200), ...(i === 0 && through ? { through } : {}) },
+    }).then(
+      (r) => r.conversations?.forEach(putConversation),
+      () => {},
+    );
 }
 
 export async function setPaused(paused: boolean) {

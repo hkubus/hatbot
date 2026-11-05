@@ -553,6 +553,11 @@ struct Conversation: Codable, Identifiable, Equatable, Sendable {
   var isThread: Bool { kind == .thread && parentId != nil }
 }
 
+/// What POST /thread/seen answers: the chats whose unread counts that changed.
+struct Seen: Decodable, Sendable {
+  var conversations: [Conversation]
+}
+
 /// A trigger with its secret: only right after it's made or the secret is replaced.
 struct TriggerWithSecret: Decodable, Sendable {
   let trigger: Trigger

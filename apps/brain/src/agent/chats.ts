@@ -413,16 +413,48 @@ export class Chats {
       .map((r) => r.id);
   }
 
-  markSeen(ids: number[]) {
+  /**
+   * `through`: you read its chat to the bottom, so it and everything before it there is seen, the
+   * messages never loaded too. Answers the chats whose counts changed, and the chats they're in.
+   */
+  markSeen(ids: number[], through?: number): Conversation[] {
     const seenAt = this.now();
-    const marked = this.d.db
-      .query<{ id: number }, (string | number)[]>(
-        `UPDATE messages SET seen_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})
-         AND status != 'streaming' RETURNING id`,
-      )
-      .all(seenAt, ...ids)
-      .map((r) => r.id);
-    if (marked.length) this.d.events.emit({ type: "message.seen", ids: marked, seenAt });
+    type Marked = { id: number; conversation_id: number };
+    const marked = this.d.db.transaction(() => [
+      ...(ids.length
+        ? this.d.db
+            .query<Marked, (string | number)[]>(
+              `UPDATE messages SET seen_at = ? WHERE id IN (${ids.map(() => "?").join(", ")})
+               AND ${UNREAD} RETURNING id, conversation_id`,
+            )
+            .all(seenAt, ...ids)
+        : []),
+      ...(through
+        ? this.d.db
+            .query<Marked, [string, number]>(
+              `UPDATE messages SET seen_at = ?1
+               WHERE conversation_id = (SELECT conversation_id FROM messages WHERE id = ?2) AND id <= ?2
+               AND ${UNREAD} RETURNING id, conversation_id`,
+            )
+            .all(seenAt, through)
+        : []),
+    ])();
+    if (!marked.length) return [];
+    this.d.events.emit({
+      type: "message.seen",
+      ids: marked.map((r) => r.id).sort((a, b) => a - b),
+      seenAt,
+    });
+    const chats = new Set(marked.map((r) => r.conversation_id));
+    for (const id of [...chats]) {
+      const parent = this.d.db
+        .query<{ parent_id: number | null }, [number]>(
+          "SELECT parent_id FROM conversations WHERE id = ?",
+        )
+        .get(id)?.parent_id;
+      if (parent) chats.add(parent);
+    }
+    return [...chats].flatMap((id) => this.get(id) ?? []);
   }
 
   markEdited(taskId: number) {

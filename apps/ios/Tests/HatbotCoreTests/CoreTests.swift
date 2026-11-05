@@ -996,6 +996,30 @@ final class NetworkTests: XCTestCase {
       api: API(server: URL(string: "https://h.example")!, token: "t", session: SlowBrain.session()), cache: cache)
   }
 
+  /// A chat read to the bottom is seen here at once, the brain hears up to where, and the chat's count is the
+  /// brain's answer: it had more unread than were sent or loaded.
+  func testAChatReadToTheBottomIsSeenThroughItsNewestMessage() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/thread/seen"] = #"{"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":0}]}"#
+    let snapshot = #"{"type":"snapshot","paused":false,"bots":[],"conversations":[{"id":1,"kind":"direct","botIds":["hatbot"],"unread":140}],"approvals":[],"questions":[],"unread":[]}"#
+    try await MainActor.run {
+      store.apply(try decode(HatbotEvent.self, snapshot))
+      for id in [2, 3] {
+        store.apply(
+          try decode(
+            HatbotEvent.self,
+            #"{"type":"message.created","message":{"id":\#(id),"conversationId":1,"role":"assistant","kind":"text","text":"Hi.","status":"done","createdAt":"2026-10-15T08:00:00Z"}}"#
+          ))
+      }
+      XCTAssertEqual(store.unread, [2, 3])
+      store.markSeen([], through: 3)
+      XCTAssertEqual(store.unread, [])
+    }
+    await waitUntil { store.conversations.first?.unread == 0 }
+    let sent = try JSONSerialization.jsonObject(with: SlowBrain.sent("/thread/seen") ?? Data()) as? NSDictionary
+    XCTAssertEqual(sent, ["ids": [Int](), "through": 3] as NSDictionary)
+  }
+
   /// A chat's task rows load in one request. A brain from before ids= sends its newest tasks instead:
   /// the rows it left out load one at a time.
   func testTaskRowsLoadTogether() async throws {

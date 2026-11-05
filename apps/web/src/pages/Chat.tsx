@@ -1184,26 +1184,42 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
     return () => ro.disconnect();
   }, []);
 
-  // An unread message that has been on screen for a moment, with the window in front, is seen.
+  // An unread message that has been on screen for a moment, with the window in front, is seen; so is
+  // all of the chat once its bottom has been, the messages not loaded too. One timer, so a change to
+  // the unread list doesn't start the moment again.
   useEffect(() => {
-    if (!unread.length) return;
-    const since = new Map<number, number>();
+    let since = new Map<number, number>();
+    let bottomSince = 0;
+    let sent = "";
     const timer = setInterval(() => {
       const el = scroller.current;
-      if (!el || document.visibilityState !== "visible" || !document.hasFocus())
-        return since.clear();
+      if (!el || document.visibilityState !== "visible" || !document.hasFocus()) {
+        bottomSince = 0;
+        since = new Map();
+        return;
+      }
+      const s = getState();
       const view = el.getBoundingClientRect();
       const now = Date.now();
-      for (const id of unread) {
+      const shown = new Map<number, number>();
+      for (const id of s.unread) {
         const r = el.querySelector(`[data-id="${id}"]`)?.getBoundingClientRect();
-        if (r && r.top < view.bottom && r.bottom > view.top) since.set(id, since.get(id) ?? now);
-        else since.delete(id);
+        if (r && r.top < view.bottom && r.bottom > view.top) shown.set(id, since.get(id) ?? now);
       }
+      since = shown;
       const seen = [...since].filter(([, t]) => now - t >= SEEN_AFTER_MS).map(([id]) => id);
-      if (seen.length) markSeen(seen);
+      const chat = side ? s.threads[id] : s.conversations.find((c) => c.id === id);
+      const last = listed(side).at(-1);
+      const key = `${last?.id}:${chat?.unread}`;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      if (!atBottom || !last || !chat?.unread || incognito || key === sent) bottomSince = 0;
+      else bottomSince ||= now;
+      const through = bottomSince && now - bottomSince >= SEEN_AFTER_MS ? last?.id : undefined;
+      if (through) sent = key;
+      if (seen.length || through) markSeen(seen, through);
     }, 500);
     return () => clearInterval(timer);
-  }, [unread]);
+  }, [id, side, incognito]);
 
   const lastTop = useRef(0);
   const onScroll = () => {

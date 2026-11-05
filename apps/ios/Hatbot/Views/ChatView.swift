@@ -22,6 +22,9 @@ struct ChatView: View {
   @State private var farFromBottom = false
   static let readingWidth: CGFloat = 720
   @State private var nearBottom = true
+  @Environment(\.scenePhase) private var scenePhase
+  /// The chat is kept, hidden, while another section shows: nothing in it is seen then.
+  @Environment(\.sectionShown) private var sectionShown
   /// The first message when the page before it was last asked for, so scrolling asks once a page.
   @State private var earlierBefore: Int?
 
@@ -103,6 +106,15 @@ struct ChatView: View {
       let after = i + 1 < rows.count ? rows[i + 1] : nil
       return .message(m, joined: sender(before) == key(m), tail: sender(after) != key(m))
     }
+  }
+
+  /// The newest message, while the chat's bottom is on screen and something in it is unread: reading
+  /// to there reads all of it, the messages not loaded too.
+  private var bottomRead: [Int]? {
+    guard nearBottom, scenePhase == .active, sectionShown, !store.incognito, let last = store.messages.last?.id,
+      let unread = store.currentChat?.unread, unread > 0
+    else { return nil }
+    return [last, unread]
   }
 
   private var members: [Bot]? {
@@ -200,6 +212,11 @@ struct ChatView: View {
             earlierBefore = first
             Task { try? await store.loadEarlier() }
           }
+        }
+        .task(id: bottomRead) {
+          guard let through = bottomRead?.first else { return }
+          try? await Task.sleep(for: .seconds(1.5))
+          if !Task.isCancelled { store.markSeen([], through: through) }
         }
         .simultaneousGesture(TapGesture().onEnded { writing = false })
         .overlay(alignment: .bottom) {

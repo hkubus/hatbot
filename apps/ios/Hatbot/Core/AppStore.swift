@@ -105,6 +105,7 @@ final class AppStore {
   @ObservationIgnored private var prefetching = false
   @ObservationIgnored private var prefetchAgain = false
   @ObservationIgnored private var seenQueue: [Int] = []
+  @ObservationIgnored private var seenThrough: Int?
   @ObservationIgnored private var seenFlush: Task<Void, Never>?
   @ObservationIgnored private var wantedTasks: [Int] = []
   /// Tasks shown from disk, loaded again once the stream opens.
@@ -495,12 +496,16 @@ final class AppStore {
   }
 
   /// You've seen these messages: they stop counting as unread here and on your other devices.
+  /// `through`: you read its chat to the bottom, so it and everything before it there is seen too.
   /// Rows that come into view together are told in one request.
-  func markSeen(_ ids: [Int]) {
-    let seen = ids.filter { unread.contains($0) }
-    guard !seen.isEmpty else { return }
+  func markSeen(_ ids: [Int], through: Int? = nil) {
+    let chat = through.flatMap { t in messages.first { $0.id == t }?.conversationId }
+    let before = Set(messages.filter { $0.conversationId == chat && $0.id <= (through ?? 0) }.map(\.id))
+    let seen = unread.filter { ids.contains($0) || before.contains($0) }
+    guard !seen.isEmpty || through != nil else { return }
     unread.removeAll { seen.contains($0) }
-    seenQueue += seen
+    seenQueue += seen.filter { ids.contains($0) }
+    if let through { seenThrough = max(seenThrough ?? 0, through) }
     guard seenFlush == nil else { return }
     seenFlush = Task { [weak self] in
       try? await Task.sleep(for: .milliseconds(200))
@@ -510,13 +515,20 @@ final class AppStore {
 
   private func flushSeen() async {
     let ids = seenQueue
+    let through = seenThrough
     seenQueue = []
+    seenThrough = nil
     seenFlush = nil
-    struct Body: Encodable { let ids: [Int] }
+    struct Body: Encodable {
+      let ids: [Int]
+      let through: Int?
+    }
     // The brain takes up to 200 at a time.
-    for start in stride(from: 0, to: ids.count, by: 200) {
+    for start in stride(from: 0, to: max(ids.count, 1), by: 200) {
       let chunk = Array(ids[start..<min(start + 200, ids.count)])
-      let _: Empty? = try? await api.post("/thread/seen", body: Body(ids: chunk))
+      let seen: Seen? = try? await api.post("/thread/seen", body: Body(ids: chunk, through: start == 0 ? through : nil))
+      // The new counts, so the badges needn't wait for the list.
+      for c in seen?.conversations ?? [] { put(c) }
     }
   }
 

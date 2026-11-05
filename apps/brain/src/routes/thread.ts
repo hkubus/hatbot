@@ -3,6 +3,7 @@ import {
   CreateGroup,
   PostMessage,
   ReplyInThread,
+  type Seen,
   SeenMessages,
   type ThreadMessage,
   UpdateGroup,
@@ -160,8 +161,8 @@ export const threadRoutes = new Hono<AppEnv>()
   })
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
-    c.var.chats.markSeen(c.req.valid("json").ids);
-    return c.json({ ok: true });
+    const { ids, through } = c.req.valid("json");
+    return c.json({ conversations: c.var.chats.markSeen(ids, through) } satisfies Seen);
   });
 
 // biome-ignore lint/suspicious/noExplicitAny: the handlers' contexts differ only in their validated input.
