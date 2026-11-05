@@ -45,6 +45,14 @@ enum AppLink: Equatable, Sendable {
     ["http", "https", "mailto", "hatbot"].contains(url.scheme?.lowercased() ?? "")
   }
 
+  /// What a link tapped in a reply, a source or a step opens, if anything. A notification's Approve only
+  /// opens the approval: the page a reply quotes could have written it.
+  static func tapped(_ url: URL) -> URL? {
+    guard opens(url) else { return nil }
+    if case let .approve(id) = AppLink(url: url) { return AppLink.approval(id).url }
+    return url
+  }
+
   var url: URL {
     let s =
       switch self {

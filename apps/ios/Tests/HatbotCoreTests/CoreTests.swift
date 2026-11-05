@@ -149,6 +149,15 @@ final class SafetyTests: XCTestCase {
     }
   }
 
+  /// A reply can hold a notification's Approve link; tapped there, it only opens the approval.
+  func testATappedLinkNeverApproves() {
+    let tapped = { (s: String) in AppLink.tapped(URL(string: s)!).flatMap(AppLink.init(url:)) }
+    XCTAssertEqual(tapped("hatbot://approvals/42?approve=1"), .approval(42))
+    XCTAssertEqual(tapped("HATBOT://approvals/42?approve=1"), .approval(42))
+    XCTAssertEqual(tapped("hatbot://tasks/3"), .task(3))
+    XCTAssertNil(AppLink.tapped(URL(string: "shortcuts://run-shortcut?name=Wipe")!))
+  }
+
   /// hatbot:// links open in any case, as opens() lets them through, and only what they name.
   func testReadsAppLinks() {
     let link = { (s: String) in AppLink(url: URL(string: s)!) }

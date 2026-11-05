@@ -30,7 +30,7 @@ struct HatbotApp: App {
       }
       .environment(session)
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
-      .environment(\.openURL, OpenURLAction { url in AppLink.opens(url) ? .systemAction : .discarded })
+      .environment(\.openURL, OpenURLAction { url in AppLink.tapped(url).map { .systemAction($0) } ?? .discarded })
       // Back from the web app, perhaps with the setup finished.
       .onChange(of: phase, initial: true) { _, phase in
         if phase == .active { Task { await session.checkSetup() } }
@@ -70,6 +70,8 @@ struct MainView: View {
   @State private var todoPath: [Route] = []
   @State private var boxesPath: [Route] = []
   @State private var lingering = Lingering()
+  /// A notification's Approve, waiting for you to say yes to what it is.
+  @State private var confirming: Approval?
 
   var body: some View {
     Sidebar(tab: $tab, open: $sidebar, atRoot: roots[tab, default: 0] > 0) { sections }
@@ -110,6 +112,15 @@ struct MainView: View {
       await Spotlight.index(store)
     }
     .overlay(alignment: .top) { Toast() }
+    .alert(
+      "Approve this?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+      presenting: confirming
+    ) { a in
+      Button("Approve") { approve(a) }
+      Button("Cancel", role: .cancel) {}
+    } message: { a in
+      Text(a.summary)
+    }
     .environment(drafts)
     .sensoryFeedback(.warning, trigger: store.needsYou) { old, new in new > old }
   }
@@ -168,8 +179,8 @@ struct MainView: View {
     }
   }
 
-  /// Opens the approval's task; `approving`, a notification's Approve, approves it once Face ID (or
-  /// the passcode) says it's you.
+  /// Opens the approval's task; `approving`, a notification's Approve, asks to approve it, then
+  /// approves it once Face ID (or the passcode) says it's you.
   private func openApproval(_ id: Int, approving: Bool) {
     tab = .tasks
     tasksPath = []
@@ -178,7 +189,13 @@ struct MainView: View {
       guard let a = approval else { return }
       store.apply(.approvalCreated(a))
       if let taskId = a.taskId { tasksPath = [.task(taskId)] }
-      guard approving, a.status == .pending else { return }
+      // Asked first, with what it is: any app or page can open this link, and Face ID doesn't say what it's for.
+      if approving && a.status == .pending { confirming = a }
+    }
+  }
+
+  private func approve(_ a: Approval) {
+    Task {
       let context = LAContext()
       guard (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Approve: \(a.summary)")) == true
       else { return }
