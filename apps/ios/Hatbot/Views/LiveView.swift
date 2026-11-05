@@ -12,6 +12,8 @@ final class LiveFeed {
   @ObservationIgnored private var socket: Socket?
   @ObservationIgnored private var decoding = false
   @ObservationIgnored private var next: Data?
+  /// Bumped by stop: a frame that was decoding then is the old screen's.
+  @ObservationIgnored private var generation = 0
 
   func start(_ store: AppStore, screen: String?) {
     guard socket == nil else { return }
@@ -30,6 +32,8 @@ final class LiveFeed {
     socket = nil
     conn = .connecting
     frame = nil
+    next = nil
+    generation += 1
   }
 
   func send(_ input: LiveInput) {
@@ -48,9 +52,10 @@ final class LiveFeed {
       return
     }
     decoding = true
+    let shown = generation
     Task {
       let image = await Task.detached(priority: .userInitiated) { UIImage(data: data)?.preparingForDisplay() }.value
-      if let image { frame = image }
+      if let image, shown == generation { frame = image }
       decoding = false
       if let pending = next {
         next = nil
@@ -117,7 +122,11 @@ struct LiveView: View {
     .toolbar(landscape ? .hidden : .automatic, for: .navigationBar)
     .statusBarHidden(landscape)
     .onAppear { visible = true }
-    .onDisappear { visible = false }
+    .onDisappear {
+      visible = false
+      // Taken away, a view's onChange doesn't run any more.
+      feed.stop()
+    }
     .onChange(of: streaming, initial: true) { _, on in
       if on { feed.start(store, screen: screenId) } else { feed.stop() }
     }

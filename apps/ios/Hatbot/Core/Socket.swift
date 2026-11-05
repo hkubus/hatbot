@@ -137,6 +137,8 @@ final class Socket {
       do {
         while !Task.isCancelled {
           let message = try await ws.receive()
+          // Stopped meanwhile: what was on its way is for no one, and a socket started again may be listening.
+          if Task.isCancelled { break }
           if !open {
             open = true
             retry = 0
@@ -151,8 +153,8 @@ final class Socket {
       } catch {}
       pinger.cancel()
       ws.cancel(with: .goingAway, reason: nil)
-      if open { onClose() }
       if Task.isCancelled { break }
+      if open { onClose() }
       if !open, (ws.response as? HTTPURLResponse)?.statusCode == 401 {
         loop = nil
         self.ws = nil
