@@ -41,7 +41,7 @@ Then, either way:
 
 Without any of the above: `bun install`, then `ANTHROPIC_API_KEY=… bun --cwd apps/brain dev` and `bun --cwd apps/web dev`, and open `http://localhost:5173/setup` with the setup code the brain prints. Its data goes in `data/`. Desktop tasks, watchers and notifications are off until a desktop and ntfy are set up (`DESKTOP_AGENT_URL`, `NTFY_URL`).
 
-`infra/README.md` explains each step, updates and rollbacks. `bun run licenses` lists the dependencies' licences; Hatbot takes no copyleft ones.
+`infra/README.md` explains each step, updates and rollbacks. `bun run licenses` lists the dependencies' licences; Hatbot takes no GPL or AGPL ones.
 
 ## Licence
 

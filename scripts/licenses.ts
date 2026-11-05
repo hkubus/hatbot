@@ -1,12 +1,15 @@
-// Lists every installed dependency's licence, and fails on a copyleft or unknown one, MPL included:
+// Lists every installed dependency's licence, and fails on a strong copyleft (GPL, AGPL) or unknown one:
 // the JavaScript packages, and the Linux app's crates from `cargo metadata`.
 // Run after `bun install`: `bun run licenses`.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
-/** Licences that ask nothing of Hatbot's own code. */
-const PERMISSIVE = new Set([
+/**
+ * Licences that ask nothing of Hatbot's own code. LGPL and MPL bind only the library itself, so
+ * Hatbot stays MIT; GPL and AGPL would bind whatever ships with them.
+ */
+const ALLOWED = new Set([
   "0BSD",
   "Apache-2.0",
   "BlueOak-1.0.0",
@@ -16,24 +19,24 @@ const PERMISSIVE = new Set([
   "CC-BY-4.0",
   "CC0-1.0",
   "ISC",
+  // Old SPDX names, which some packages still give.
+  "LGPL-2.0",
+  "LGPL-2.1",
+  "LGPL-3.0",
+  "LGPL-2.0-only",
+  "LGPL-2.0-or-later",
+  "LGPL-2.1-only",
+  "LGPL-2.1-or-later",
+  "LGPL-3.0-only",
+  "LGPL-3.0-or-later",
   "MIT",
   "MIT-0",
+  "MPL-2.0",
   "Python-2.0",
   "Unicode-3.0",
   "Unlicense",
   "Zlib",
 ]);
-
-/**
- * Copyleft packages allowed anyway, by name, each with why. Only build tools whose code doesn't end
- * up in anything Hatbot ships belong here.
- */
-const EXCEPTIONS: [RegExp, string][] = [
-  [
-    /^lightningcss(-.+)?$/,
-    "MPL-2.0: Vite's CSS minifier, a dependency of Vite itself. It runs when the web app is built; none of it is in the build.",
-  ],
-];
 
 type Pkg = { name: string; version: string; license: string };
 
@@ -74,15 +77,15 @@ function read(dir: string, out: Map<string, Pkg>) {
   packages(join(dir, "node_modules"), out);
 }
 
-/** An SPDX expression is fine if one of its OR choices is all permissive. */
-function permissive(expr: string): boolean {
+/** An SPDX expression is fine if one of its OR choices is all allowed. */
+function allowed(expr: string): boolean {
   // Old crates write "MIT/Apache-2.0"; LLVM's exception only takes from Apache's conditions.
   return expr
     .replace(/[()]/g, "")
     .replaceAll("/", " OR ")
     .replace(/\s+WITH\s+LLVM-exception/gi, "")
     .split(/\s+OR\s+/i)
-    .some((choice) => choice.split(/\s+AND\s+/i).every((l) => PERMISSIVE.has(l.trim())));
+    .some((choice) => choice.split(/\s+AND\s+/i).every((l) => ALLOWED.has(l.trim())));
 }
 
 const root = join(import.meta.dir, "..");
@@ -115,20 +118,16 @@ const list = [...all.values()]
   .sort((a, b) => a.name.localeCompare(b.name));
 const bad: string[] = [];
 for (const p of list) {
-  const allowed = EXCEPTIONS.find(([re]) => re.test(p.name));
-  const note = permissive(p.license)
-    ? ""
-    : allowed
-      ? `  (allowed: ${allowed[1]})`
-      : "  ← not allowed";
-  console.log(`${p.name}@${p.version}: ${p.license || "no licence given"}${note}`);
-  if (!permissive(p.license) && !allowed)
-    bad.push(`${p.name}@${p.version} (${p.license || "none"})`);
+  const ok = allowed(p.license);
+  console.log(
+    `${p.name}@${p.version}: ${p.license || "no licence given"}${ok ? "" : "  ← not allowed"}`,
+  );
+  if (!ok) bad.push(`${p.name}@${p.version} (${p.license || "none"})`);
 }
 console.log(`\n${list.length} packages.`);
 if (bad.length) {
   console.error(
-    `\nNot allowed: ${bad.join(", ")}.\nHatbot takes no copyleft dependencies. A licence missing from the list in scripts/licenses.ts needs checking before it's added there.`,
+    `\nNot allowed: ${bad.join(", ")}.\nHatbot takes no GPL or AGPL dependencies. A licence missing from the list in scripts/licenses.ts needs checking before it's added there.`,
   );
   process.exit(1);
 }
