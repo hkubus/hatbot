@@ -813,7 +813,8 @@ private struct MessageRow: View, Equatable {
     }
     if m.kind != .box, let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
-    if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list) }
+    // Another set of questions, as a rewritten reply's, starts its answers again: one each.
+    if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list).id(list) }
     if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .leading) }
   }
 
