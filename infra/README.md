@@ -167,7 +167,7 @@ sudo pacman -Syu hatbot
 systemctl --user enable --now hatbot
 ```
 
-The GitHub mirror builds it from `apps/linux/packaging/PKGBUILD` on every push to `main` that changes the app, and `publish.sh` uploads it with the `FORGEJO_PACKAGES_TOKEN` secret, a Forgejo token that can write packages. Each Monday it rebuilds, and uploads only if Arch's libraries changed under it. Elsewhere, `apps/linux/packaging/install.sh` builds it and installs it for you.
+The GitHub mirror builds it from `apps/desktop/packaging/PKGBUILD` on every push to `main` that changes the app, and `publish.sh` uploads it with the `FORGEJO_PACKAGES_TOKEN` secret, a Forgejo token that can write packages. Each Monday it rebuilds, and uploads only if Arch's libraries changed under it. Elsewhere, `apps/desktop/packaging/install.sh` builds it (with Bun, Rust, and WebKitGTK's and gtk-layer-shell's headers) and installs it for you.
 
 ### Hatbot on your computer alone
 

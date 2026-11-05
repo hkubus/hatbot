@@ -43,6 +43,21 @@
         "zod": "^4.6.5",
       },
     },
+    "apps/desktop": {
+      "name": "@hatbot/desktop",
+      "dependencies": {
+        "@hatbot/web": "workspace:*",
+        "@tauri-apps/api": "^2.10.1",
+        "react": "^19.3.0",
+        "react-dom": "^19.3.0",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "@vitejs/plugin-react": "^6.1.2",
+        "vite": "^8.3.4",
+      },
+    },
     "apps/desktop-agent": {
       "name": "@hatbot/desktop-agent",
       "dependencies": {
@@ -346,6 +361,8 @@
 
     "@hatbot/brain": ["@hatbot/brain@workspace:apps/brain"],
 
+    "@hatbot/desktop": ["@hatbot/desktop@workspace:apps/desktop"],
+
     "@hatbot/desktop-agent": ["@hatbot/desktop-agent@workspace:apps/desktop-agent"],
 
     "@hatbot/hatbox": ["@hatbot/hatbox@workspace:apps/hatbox"],
@@ -435,6 +452,8 @@
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
 
     "@stablelib/base64": ["@stablelib/base64@1.0.1", "", {}, "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ=="],
+
+    "@tauri-apps/api": ["@tauri-apps/api@2.12.4", "", {}, "sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 

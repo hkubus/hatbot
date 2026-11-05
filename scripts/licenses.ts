@@ -93,11 +93,11 @@ const all = packages(join(root, "node_modules"));
 for (const w of ["apps", "packages", "plugins"])
   for (const name of readdirSync(join(root, w))) packages(join(root, w, name, "node_modules"), all);
 
-/** Every crate the Linux app's workspace could build, for any platform. */
+/** Every crate the desktop app's workspace could build, for any platform. */
 function crates(): Pkg[] {
   const r = spawnSync(
     "cargo",
-    ["metadata", "--format-version", "1", "--locked", "--manifest-path", "apps/linux/Cargo.toml"],
+    ["metadata", "--format-version", "1", "--locked", "--manifest-path", "apps/desktop/Cargo.toml"],
     { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
   );
   if (r.status !== 0) {

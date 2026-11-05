@@ -36,16 +36,23 @@ jobs:
       # The guests' firewalls (host-setup.sh's and their own), in throwaway network namespaces.
       - run: sudo bash infra/test-firewall.sh
 
-  linux:
+  desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
-        working-directory: apps/linux
+        working-directory: apps/desktop
     steps:
       - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       # sway runs headless for the Wayland tests; grim checks their screenshots.
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libxkbcommon-dev sway grim
+      - run: >-
+          sudo apt-get update -qq && sudo apt-get install -y -qq libxkbcommon-dev libwebkit2gtk-4.1-dev
+          libgtk-3-dev libgtk-layer-shell-dev sway grim
+      # The app's own pages are built into the binary.
+      - run: bun install --frozen-lockfile && bun run build
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./kit": "./src/kit.ts"
+    "./kit": "./src/kit.ts",
+    "./styles.css": "./src/styles.css"
   },
   "scripts": {
     "dev": "vite",

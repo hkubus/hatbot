@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The app's own pages, never the brain's: they hear the app's state.",
+  "windows": ["main", "computer", "banner"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

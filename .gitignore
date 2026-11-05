@@ -13,5 +13,6 @@ target/
 
 /apps/brain/eval/results/
 
-/apps/linux/packaging/src/
-/apps/linux/packaging/pkg/
+/apps/desktop/packaging/src/
+/apps/desktop/packaging/pkg/
+/apps/desktop/app/gen/
