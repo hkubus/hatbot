@@ -41,13 +41,19 @@ struct StatusProvider: TimelineProvider {
 
   static func load() async -> StatusEntry {
     guard let api = AppGroup.api() else { return StatusEntry(signedIn: false) }
-    let spend: SpendSummary? = try? await api.get("/spend/summary")
-    let pending: [Approval]? = try? await api.get("/approvals?pending=1")
-    let desktop: DesktopState? = try? await api.get("/desktop/status")
+    async let spendLoad: SpendSummary? = try? api.get("/spend/summary")
+    async let approvalsLoad: [Approval]? = try? api.get("/approvals?pending=1")
+    async let questionsLoad: [Question]? = try? api.get("/questions")
+    async let desktopLoad: DesktopState? = try? api.get("/desktop/status")
+    async let computersLoad: [ComputerInfo]? = try? api.get("/computers")
+    let (spend, pending, questions, desktop, computers) =
+      await (spendLoad, approvalsLoad, questionsLoad, desktopLoad, computersLoad)
     return StatusEntry(
       today: spend?.todayUsd, dailyLimit: spend?.limits.dailyUsd, month: spend?.monthUsd,
       monthlyLimit: spend?.limits.monthlyUsd,
-      needsYou: pending.map { $0.count + (desktop?.request == nil ? 0 : 1) })
+      needsYou: pending.map {
+        Waiting.count(approvals: $0, questions: questions ?? [], desktop: desktop, computers: computers ?? [])
+      })
   }
 }
 

@@ -165,8 +165,7 @@ final class AppStore {
   }
 
   var needsYou: Int {
-    approvals.values.filter { $0.status == .pending }.count + pendingQuestions.count
-      + (desktop?.request == nil ? 0 : 1) + computers.filter { $0.request != nil }.count
+    Waiting.count(approvals: approvals.values, questions: questions.values, desktop: desktop, computers: computers)
   }
 
   var pendingQuestions: [Question] {

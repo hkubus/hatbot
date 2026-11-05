@@ -305,6 +305,25 @@ final class ChatTests: XCTestCase {
     }
   }
 
+  static func approval(_ id: Int, _ status: String, extra: String = "") throws -> Approval {
+    try decode(
+      Approval.self,
+      #"{"id":\#(id),"kind":"send","summary":"s","reason":"","sources":[],"status":"\#(status)","costUsd":0,"createdAt":"t","expiresAt":"t"\#(extra)}"#)
+  }
+
+  static func question(_ id: Int, extra: String = "") throws -> Question {
+    try decode(
+      Question.self,
+      #"{"id":\#(id),"botId":"hatbot","taskId":2,"question":"Which?","choices":[],"status":"pending","createdAt":"t","expiresAt":"t"\#(extra)}"#)
+  }
+
+  /// The badge and the widget count what waits on you, which the brain's pending list isn't: not what the
+  /// review blocked or a message on its way, but questions too.
+  func testOnlyWhatWaitsOnYouCounts() throws {
+    let approvals = try ["pending", "blocked", "sending", "approved"].enumerated().map { try Self.approval($0, $1) }
+    XCTAssertEqual(Waiting.count(approvals: approvals, questions: [try Self.question(1)], desktop: nil, computers: []), 2)
+  }
+
   /// A delta says where it starts, in UTF-16 units as JavaScript counts: what's shown already isn't
   /// added again.
   func testADeltaSkipsWhatsShownByTheBrainsCount() {
