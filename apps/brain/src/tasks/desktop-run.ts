@@ -47,7 +47,7 @@ import {
   typesText,
 } from "../negotiate/gate";
 import { marketplaceSend } from "../negotiate/marketplace";
-import { type Armed, approvalKind, notCovered } from "./approval-kind";
+import { type Armed, approvalKind, heldKind, notCovered } from "./approval-kind";
 import {
   addNotes,
   askOwner,
@@ -186,11 +186,13 @@ const FinishTask = z.object({
   summary: z.string().min(1).max(2000).describe("What you did and the result, for the owner"),
 });
 
+const HELD_WHY = "A desktop step that sends, submits, deletes or changes something needs approval.";
+
 const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "confirm_intent",
     description:
-      "Ask the owner to approve one consequential action before you take it: sending or posting, submitting personal details, buying, paying, booking, deleting, or changing account or security settings. Returns once they decide.",
+      "Ask the owner to approve one action before you take it: buying, ordering, paying, or changing account or security settings, or a step Hatbot held back and said to ask about. Other steps don't need it. Returns once they decide.",
     schema: ConfirmIntent,
   },
   {
@@ -929,12 +931,25 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         const what = `${call.name} ${heldWhat(hold)}`;
         const needs = `${what} needs approval`;
         if (gate) return notRun(call, needs, gateHeld(gate, check.press, hold));
-        lastHeld = { hold, page: here, what };
-        return notRun(
-          call,
-          needs,
-          `${heldBack(check.press, hold, el)}${uncovered ? ` ${uncovered}` : ""}`,
-        );
+        // Only what you'd be asked about waits for confirm_intent; the review looks at the rest here.
+        const seen = !("unseen" in hold || "outside" in hold);
+        const tab = seen ? await guest?.context(true).catch(() => null) : null;
+        const kind = heldKind(hold, { url: here, text: tab?.text ?? null });
+        const grant = { tool: "confirm_intent", input: { page: here } };
+        const review = seen
+          ? await reviewed(call.name, { ...input, page: here }, what, HELD_WHY, kind, here, grant)
+          : null;
+        if (review && !review.safe)
+          return textResult(call, blocked(review, what, kind, { ...grant, target: here }), true);
+        if (!review) {
+          lastHeld = { hold, page: here, what };
+          return notRun(
+            call,
+            needs,
+            `${heldBack(check.press, hold, el)}${uncovered ? ` ${uncovered}` : ""}`,
+          );
+        }
+        if (kind === "send") toSend = what;
       }
     }
     if (toSend !== null) {
@@ -1277,7 +1292,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     const arm = (hold: Hold | null, byOwner = false) => {
       armed = { page, kind, summary: input.summary, control: input.control, hold, byOwner };
     };
-    const why = "A desktop step that sends, submits, deletes or changes something needs approval.";
+    const why = HELD_WHY;
     // Run anyway lets the task's next step on this page go.
     const grant = { tool: "confirm_intent", input: { page } };
     const check = await reviewed(

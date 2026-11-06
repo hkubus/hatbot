@@ -71,19 +71,43 @@ const read = (label: string) => {
 
 export const buyingLabel = (label: string) => BUYING.test(read(label));
 
+const SENDING = words([
+  `(?:send|post|publish|reply)${END}`,
+  `wysl(?:ij|ac|e)${END}|wysylam${END}|odesl(?:ij|ac)${END}|odpowiedz${END}|(?:o)?publikuj`,
+  `poslat|odeslat|(?:posli|odesli)${END}|odpovedet|odpovez${END}|publikovat|zverejnit`,
+]);
+const ACCOUNT = words([
+  `password|passkey|two-factor|2fa${END}|(?:delete|close) (?:my |your |the )?account${END}`,
+  "hasl|(?:usun|zamknij) konto|dwuetapow",
+  "hesl|(?:smazat|zrusit) ucet",
+]);
+
+/** What a held label does, as far as its words say. */
+export function labelKind(label: string): "account_security" | "delete" | "send" | null {
+  const l = read(label);
+  if (ACCOUNT.test(l)) return "account_security";
+  if (SOFT.test(l)) return "delete";
+  return SENDING.test(l) ? "send" : null;
+}
+
 const SOFT = words([
-  `(?:submit|confirm|delete|remove|apply|save changes)${END}`,
-  `potwierdz|zatwierdz|usun(?:ac)?${END}|skasuj|zapisz zmiany|aplikuj`,
-  `potvrd|potvrzuji|smazat|smaz${END}|odstran(?:it)?${END}|ulozit zmeny`,
+  `(?:delete|remove)${END}`,
+  `usun(?:ac)?${END}|skasuj`,
+  `smazat|smaz${END}|odstran(?:it)?${END}`,
 ]);
 
 const NARROWING = words([
   "filt|sort|seradit|radit|wynik|vysledk|results|search|szuka|wyszuk|hleda|vyhled",
 ]);
 
-/** A cookie banner's choices ("Confirm my choices") aren't consequential. */
+/** A cookie banner's choices ("Remove all cookies") aren't consequential. */
 const CONSENT = words([
   "choices|preferences|cookie|consent|wybor|preferencj|zgod|ciasteczk|prywatnos|vyber|predvolb|souhlas",
+]);
+
+/** A frame titled like a payment widget's ("Secure payment", "Google Pay"). */
+const PAYING_FRAME = words([
+  "card|karta|karty|stripe|paypal|klarna|blik|przelewy|payu|platn|secure pay",
 ]);
 
 export const narrowingLabel = (label: string) =>
@@ -308,13 +332,6 @@ export type Hold =
   /** Enter or Space with the keyboard off the page: in the address bar, where it opens what's typed. */
   | { outside: true };
 
-const buttonLike = (el: AgentElement) =>
-  el.tag === "button" ||
-  el.role === "button" ||
-  // A div or icon the page made clickable (desktop-agent says so).
-  el.role === "clickable" ||
-  (el.tag === "input" && ["submit", "button", "image", "reset"].includes(el.type ?? ""));
-
 /** An older desktop-agent doesn't say, so it goes by the tag. */
 const editable = (el: AgentElement) =>
   el.editable ??
@@ -326,8 +343,11 @@ const nameless = (label: string) => !/[\p{L}\p{N}]/u.test(label);
 
 export function consequential(press: Press, el: AgentElement | null): Hold | null {
   if (!el || el.tag === "body") return null;
-  // Payment and chat widgets live in frames from another address.
-  if (el.tag === "iframe" || el.tag === "frame") return { frame: el.label };
+  // desktop-agent goes into most frames; one it couldn't holds only if it may be a payment widget.
+  if (el.tag === "iframe" || el.tag === "frame")
+    return checkoutHost(el.url) || buyingLabel(el.label) || PAYING_FRAME.test(read(el.label))
+      ? { frame: el.label }
+      : null;
   // In a checkout or payment frame the tab's address doesn't show it, so the hold does, whatever the
   // label: then it asks as a purchase or payment, and nothing else approved covers it.
   const framed = checkoutHost(el.frameUrl);
@@ -362,11 +382,6 @@ function clicked(el: AgentElement, search: boolean, checkout: string | null): Ho
     return { label: el.label };
   // At checkout, a button labelled "Dalej" may be the one that orders: only typing and choosing pass.
   if (checkout && !el.toggle) return { checkout };
-  if (search) return null;
-  if (el.type === "submit" && el.inForm) return { label: el.label || "Submit" };
-  // An icon with no name could be Send or Pay as easily as a menu; one that opens or closes part of the
-  // page says so (aria-expanded and the like).
-  if (buttonLike(el) && nameless(el.label) && !el.toggle) return { unlabelled: "button" };
   return null;
 }
 
