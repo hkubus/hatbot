@@ -934,6 +934,29 @@ function Fold({
   );
 }
 
+/** The composer you last typed in; the chat's own until you've used one beside it. */
+let lastComposer: HTMLTextAreaElement | null = null;
+
+type Key = Pick<
+  KeyboardEvent,
+  "key" | "ctrlKey" | "metaKey" | "altKey" | "isComposing" | "defaultPrevented" | "getModifierState"
+>;
+
+/**
+ * A character typed with nothing to type it into goes to the composer. Space, shortcuts, and keys
+ * in a field, a dialog or the live view stay where they are; AltGr's characters (ł, €) count.
+ */
+export function typesIntoComposer(
+  e: Key,
+  focused: Pick<Element, "closest"> | null,
+  dialogOpen: boolean,
+) {
+  if (e.defaultPrevented || e.isComposing || dialogOpen) return false;
+  if ((e.ctrlKey || e.metaKey || e.altKey) && !e.getModifierState("AltGraph")) return false;
+  if ([...e.key].length !== 1 || e.key === " ") return false;
+  return !focused?.closest("input, textarea, select, [contenteditable], canvas, .live-keys");
+}
+
 /**
  * Window listeners that take files dragged anywhere over the app: the browser would otherwise open a
  * file dropped outside the chat in the app's place.
@@ -1493,6 +1516,19 @@ export function Composer({
   useEffect(() => {
     if (!touchScreen()) textarea.current?.focus({ preventScroll: true });
   }, []);
+  // Focused before the key's character lands, so it lands here.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const ta = textarea.current;
+      if (!ta || (lastComposer?.isConnected ? lastComposer !== ta : side)) return;
+      if (!typesIntoComposer(e, document.activeElement, !!document.querySelector("dialog[open]")))
+        return;
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [side]);
 
   const attach = (list: FileList | File[]) => attachFiles(chat, list);
   const unattach = (key: number) => removeFile(chat, key);
@@ -1648,6 +1684,9 @@ export function Composer({
         <textarea
           ref={textarea}
           rows={1}
+          onFocus={(e) => {
+            lastComposer = e.currentTarget;
+          }}
           // The menu over it: commands after "/", a group's bots after "@". A textarea keeps its own
           // role (combobox isn't allowed on one), which takes all of these but aria-expanded.
           aria-label={`Message ${name}`}

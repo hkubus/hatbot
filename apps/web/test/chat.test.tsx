@@ -4,7 +4,9 @@ import { installDom, settle } from "./dom";
 import { msg } from "./fixtures";
 
 const dom = installDom();
-const { Chat, Composer, fileDrops, follows, sendError } = await import("../src/pages/Chat");
+const { Chat, Composer, fileDrops, follows, sendError, typesIntoComposer } = await import(
+  "../src/pages/Chat"
+);
 const store = await import("../src/store");
 const { ApiError } = await import("../src/api");
 const drafts = await import("../src/drafts");
@@ -107,6 +109,38 @@ test("files dropped anywhere in the window go into the composer, not over the ap
   fire("dragover", event(["Files"]));
   fire("dragleave", event(["Files"]));
   expect(dropping).toBe(false);
+});
+
+test("a character typed with nothing to type it into goes to the composer", () => {
+  const key = (key: string, mods: { ctrl?: boolean; alt?: boolean; altGraph?: boolean } = {}) => ({
+    key,
+    ctrlKey: !!mods.ctrl,
+    metaKey: false,
+    altKey: !!mods.alt,
+    isComposing: false,
+    defaultPrevented: false,
+    getModifierState: (m: string) => m === "AltGraph" && !!mods.altGraph,
+  });
+  const on = (selector: string | null) => ({
+    closest: (s: string) => (selector && s.split(", ").includes(selector) ? {} : null),
+  });
+  const types = (e: ReturnType<typeof key>, focused = on(null), dialog = false) =>
+    typesIntoComposer(e, focused as unknown as Element, dialog);
+
+  expect(types(key("h"), null as unknown as ReturnType<typeof on>)).toBe(true);
+  // Focus left on a button you clicked, or the page.
+  expect(types(key("H"))).toBe(true);
+  expect(types(key("ł", { ctrl: true, alt: true, altGraph: true }))).toBe(true);
+  expect(types(key("😀"))).toBe(true);
+
+  expect(types(key("h"), on("input"))).toBe(false);
+  expect(types(key("h"), on("textarea"))).toBe(false);
+  expect(types(key("h"), on(".live-keys"))).toBe(false);
+  expect(types(key("h"), on(null), true)).toBe(false);
+  expect(types(key(" "))).toBe(false);
+  expect(types(key("Enter"))).toBe(false);
+  expect(types(key("k", { ctrl: true }))).toBe(false);
+  expect(types(key("ArrowUp", { alt: true }))).toBe(false);
 });
 
 test("the thread stops following on any scroll up, and starts again only at the bottom", () => {
