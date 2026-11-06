@@ -76,21 +76,17 @@ test("buy, pay, order, offer, send and delete labels are held; everyday ones, lo
   ).toEqual({ label: tile });
 });
 
-test("an icon-only button or clickable div is held unless it toggles; a search form's submit searches unless it pays", () => {
-  expect(consequential("click", button(""))).toEqual({ unlabelled: "button" });
-  expect(consequential("click", button("", { tag: "div", role: "clickable", type: null }))).toEqual(
-    { unlabelled: "button" },
-  );
-  expect(consequential("click", button("", { toggle: true }))).toBeNull();
-  expect(consequential("click", button("", { tag: "a" }))).toBeNull();
-  expect(consequential("click", button("Apply filters"))).toBeNull();
-  expect(consequential("click", button("Apply"))).toEqual({ label: "Apply" });
+test("icon-only buttons, a form's own submit and words like Confirm or Save go; a search form's submit searches unless it pays", () => {
+  expect(consequential("click", button(""))).toBeNull();
+  expect(
+    consequential("click", button("", { tag: "div", role: "clickable", type: null })),
+  ).toBeNull();
+  for (const label of ["Apply", "Confirm", "Submit", "Zapisz zmiany", "Potwierdź", "Zatwierdź"])
+    expect([label, consequential("click", button(label))]).toEqual([label, null]);
+  expect(consequential("click", button("", { type: "submit", inForm: true }))).toBeNull();
   const searchSubmit = { type: "submit", inForm: true, search: true };
-  expect(consequential("click", button("Potwierdź", searchSubmit))).toBeNull();
+  expect(consequential("click", button("Usuń", searchSubmit))).toBeNull();
   expect(consequential("click", button("Zapłać", searchSubmit))).toEqual({ label: "Zapłać" });
-  expect(consequential("click", button("", { type: "submit", inForm: true }))).toEqual({
-    label: "Submit",
-  });
 });
 
 test("on a checkout page or in a payment frame every button asks; typing and choosing don't", () => {
@@ -108,9 +104,14 @@ test("on a checkout page or in a payment frame every button asks; typing and cho
     frameUrl: "https://js.stripe.com/v3/elements-inner",
   });
   expect(consequential("click", confirm)).toEqual({ checkout: "js.stripe.com" });
-  // A frame Hatbot couldn't enter can't be told apart from a Pay button.
-  const frame = button("Secure payment", { tag: "iframe", type: null });
-  expect(consequential("click", frame)).toEqual({ frame: "Secure payment" });
+  // A frame Hatbot couldn't enter is held when it may be a payment widget: by its title, or at checkout.
+  const frame = (label: string, url?: string) =>
+    consequential("click", button(label, { tag: "iframe", type: null, ...(url ? { url } : {}) }));
+  expect(frame("Secure payment")).toEqual({ frame: "Secure payment" });
+  expect(frame("Google Pay")).toEqual({ frame: "Google Pay" });
+  expect(frame("", checkout)).toEqual({ frame: "" });
+  expect(frame("SP Consent Message")).toBeNull();
+  expect(frame("")).toBeNull();
 
   const pages: [string, string | null][] = [
     ["https://secure.payu.com/pay/?orderId=1", "secure.payu.com"],

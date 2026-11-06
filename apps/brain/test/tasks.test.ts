@@ -444,11 +444,10 @@ test("a click in a frame Hatbot can't enter, or that it couldn't look at, is hel
   expect(t.agent.actions.map((a) => a.input)).toEqual([{ coordinate: [400, 10] }]);
 });
 
-test("each line break in typed text is checked on its own: one send the review approves sends one message", async () => {
+test("each line break in typed text is checked on its own: the review looks at each send where it is", async () => {
   const work = new FakeModel([
     { content: [computer("type", { text: "Hi Ann" })] },
     { content: [computer("key", { text: "Return" })] },
-    { content: [toolUse("confirm_intent", { kind: "send", summary: "Send Ann a hello" })] },
     { content: [computer("type", { text: "\nsecond message\nthird message\n" })] },
     finish(),
   ]);
@@ -465,18 +464,67 @@ test("each line break in typed text is checked on its own: one send the review a
     editable: true,
     buttonsAfter: ["Send"],
   };
+  const verdicts = [true, true, false];
   t.taskModel.onCreate = (p) =>
     p.system === REVIEW_PROMPT
-      ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
+      ? JSON.stringify({ safe: verdicts.shift(), why: "The owner asked to write to Ann." })
       : undefined;
   const task = startTask(t, "Write to Ann");
   await t.tasks.idle();
-  // The approved Enter, then the text after it; the next Enter waits for another approval.
-  expect(t.agent.actions.map((a) => a.input.text)).toEqual(["Hi Ann", "\n", "second message"]);
-  expect(lastText(work.requests[4])).toContain('submit with \\"Send\\"');
-  expect(t.tasks.steps(task.id).some((s) => s.name === "Not asking: Haiku 5.5 found it safe")).toBe(
-    true,
-  );
+  expect(t.agent.actions.map((a) => a.input.text)).toEqual([
+    "Hi Ann",
+    "Return",
+    "\n",
+    "second message",
+  ]);
+  expect(lastText(work.requests[3])).toContain("The text before the line break was typed.");
+  expect(lastText(work.requests[3])).toContain("Blocked by the safety review");
+  expect(
+    t.tasks.steps(task.id).filter((s) => s.name === "Not asking: Haiku 5.5 found it safe"),
+  ).toHaveLength(2);
+  expect(t.approvals.list(false).filter((a) => a.status === "pending")).toEqual([]);
+});
+
+test("a held click is reviewed where it is, without confirm_intent, unless it changes the account; a cookie banner's isn't held", async () => {
+  const click = (y: number) => computer("left_click", { coordinate: [300, y] });
+  const work = new FakeModel([
+    { content: [click(100)] },
+    { content: [click(200)] },
+    { content: [click(300)] },
+    finish(),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const url = "https://shop.example/account";
+  t.agent.page = { url, title: "Account", text: "" };
+  const labels: Record<number, string> = {
+    100: "Confirm",
+    200: "Usuń ogłoszenie",
+    300: "Delete account",
+  };
+  t.agent.inspect = async (_x?: number, y?: number) => ({
+    tag: "button",
+    role: null,
+    type: "button",
+    label: labels[y ?? 0] ?? "",
+    inForm: false,
+    url,
+    editable: false,
+    fields: [],
+  });
+  let reviews = 0;
+  t.taskModel.onCreate = (p) => {
+    if (p.system !== REVIEW_PROMPT) return undefined;
+    reviews++;
+    return JSON.stringify({ safe: true, why: "The owner asked for it." });
+  };
+  startTask(t, "Delete my old listing");
+  await t.tasks.idle();
+  expect(t.agent.actions.map((a) => a.input.coordinate)).toEqual([
+    [300, 100],
+    [300, 200],
+  ]);
+  expect(reviews).toBe(1);
+  expect(lastText(work.requests[3])).toContain("call confirm_intent first");
   expect(t.approvals.list(false)).toEqual([]);
 });
 

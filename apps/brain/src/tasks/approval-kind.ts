@@ -9,6 +9,7 @@ import {
   type Hold,
   heldWhat,
   hostOf,
+  labelKind,
   paymentHost,
   samePage,
 } from "./policy";
@@ -43,6 +44,14 @@ export function approvalKind(
   )
     return "purchase";
   return kind;
+}
+
+/** The kind of a step held without confirm_intent, for the review: by its label, then its page. */
+export function heldKind(hold: Hold, page: { url: string | null; text: string | null }) {
+  const label = "label" in hold ? hold.label : "";
+  const kind =
+    labelKind(label) ?? ("unlabelled" in hold && hold.unlabelled === "beside" ? "send" : "other");
+  return approvalKind(kind, { summary: label }, page, hold);
 }
 
 export type Armed = {

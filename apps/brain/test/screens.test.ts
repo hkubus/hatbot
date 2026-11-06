@@ -129,22 +129,35 @@ test("a computer that doesn't let tasks use it fails the task without asking; an
   expect("error" in t.tasks.screenFor("desk")).toBe(true);
 });
 
-test("on a computer, a click nothing can name is judged from a zoomed screenshot: consequential ones wait for confirm_intent", async () => {
+test("on a computer, a click nothing can name is judged from a zoomed screenshot: a buy waits for confirm_intent, the review looks at the rest", async () => {
   const click = () => computer("left_click", { coordinate: [300, 500] });
-  const work = new FakeModel([{ content: [click()] }, { content: [click()] }, finish()]);
+  const work = new FakeModel([
+    { content: [click()] },
+    { content: [click()] },
+    { content: [click()] },
+    finish(),
+  ]);
   const verdicts = [
+    '{"consequential": true, "label": "Buy now"}',
     '{"consequential": true, "label": "Delete forever"}',
     '{"consequential": false, "label": "Open"}',
   ];
-  work.onCreate = (p) => (p.system === CLICK_CHECK_PROMPT ? verdicts.shift() : undefined);
+  work.onCreate = (p) =>
+    p.system === CLICK_CHECK_PROMPT
+      ? verdicts.shift()
+      : p.system === REVIEW_PROMPT
+        ? JSON.stringify({ safe: false, why: "The owner didn't ask to delete anything." })
+        : undefined;
   const t = await testApp(new FakeModel(), work);
   const { computer: laptop } = await connected(t);
   const task = startOn(t, "m-laptop");
   t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
   await ended(t, task.id);
 
-  expect(JSON.stringify(work.requests[1]?.messages.at(-1)?.content)).toContain("Delete forever");
-  expect(laptop.requests.filter((r) => r.op === "zoom")).toHaveLength(2);
+  const said = (n: number) => JSON.stringify(work.requests[n]?.messages.at(-1)?.content);
+  expect(said(1)).toContain("call confirm_intent first");
+  expect(said(2)).toContain("Blocked by the safety review");
+  expect(laptop.requests.filter((r) => r.op === "zoom")).toHaveLength(3);
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
 });
 
@@ -171,7 +184,7 @@ test("on a computer, a click by the screen's corner is judged from a zoom inside
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
 });
 
-test("on a computer, Enter held from a screenshot goes once the review finds it safe, though the check words it differently the next time", async () => {
+test("on a computer, Enter held from a screenshot goes once approved, though the check words it differently the next time", async () => {
   const enter = () => computer("key", { text: "Return" });
   const work = new FakeModel([
     { content: [enter()] },
@@ -190,16 +203,15 @@ test("on a computer, Enter held from a screenshot goes once the review finds it 
     '{"consequential": true, "label": "Enter key with unclear focus; may send a message"}',
     '{"consequential": true, "label": "Enter in the focused chat input"}',
   ];
-  work.onCreate = (p) =>
-    p.system === CLICK_CHECK_PROMPT
-      ? verdicts.shift()
-      : p.system === REVIEW_PROMPT
-        ? JSON.stringify({ safe: true, why: "The owner asked for it." })
-        : undefined;
+  work.onCreate = (p) => (p.system === CLICK_CHECK_PROMPT ? verdicts.shift() : undefined);
   const t = await testApp(new FakeModel(), work);
+  // So the send asks you, and confirm_intent arms it.
+  t.settings.update({ reviewChanges: false });
   const { computer: laptop } = await connected(t);
   const task = startOn(t, "m-laptop", "Send Sam hi on Discord");
   t.approvals.decide((await waitFor(() => t.approvals.list(true)[0])).id, "approve", "web");
+  const send = await waitFor(() => t.approvals.list(true).find((a) => a.kind === "send"));
+  t.approvals.decide(send.id, "approve", "web");
   expect((await ended(t, task.id)).status).toBe("done");
 
   expect(laptop.requests.filter((r) => r.op === "action")).toHaveLength(1);
