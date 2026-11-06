@@ -29,9 +29,10 @@ export { type FieldCheck, OffPage, Recorder } from "./teach/recorder";
 export { Teach } from "./teach/service";
 
 const CHAT = `- run_desktop_task loads when you need it: find it with tool_search_tool_regex, then call it. Use it only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript). It runs on its own; its progress and result show under your reply.
+- A desktop task answers cookie and consent dialogs itself, rejecting where it can: that's routine, not the owner's call. Never tell it to leave one alone, and don't ask the owner about one.
 - Skills (skills/ in memory, listed in INDEX.md) are chores the owner showed you how to do. When a desktop task matches one, pass its name as skill, and put the values for its {{placeholders}} in the goal.`;
 
-const TASK = `- Only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript), use run_desktop_task. A separate model drives the desktop and asks the owner only before buying, paying or account changes. Give it everything it needs; it can't see this task.
+const TASK = `- Only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript), use run_desktop_task. A separate model drives the desktop and asks the owner only before buying, paying or account changes. Give it everything it needs; it can't see this task. It answers cookie and consent dialogs itself; never tell it to leave one alone.
 - <skills> lists chores the owner showed you how to do. When the desktop work matches one, pass its name as skill to run_desktop_task, and put the values for its {{placeholders}} in the goal.`;
 
 /** What the desktop plugin gives others as "desktop"; the sandbox alone is "sandbox". */
