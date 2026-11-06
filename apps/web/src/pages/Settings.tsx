@@ -30,6 +30,7 @@ const Account = lazy(() => import("./Account").then((m) => ({ default: m.Account
 const Checks = lazy(() => import("./Checks").then((m) => ({ default: m.Checks })));
 const Devices = lazy(() => import("./Devices").then((m) => ({ default: m.Devices })));
 const NtfyPage = lazy(() => import("./Connections").then((m) => ({ default: m.NtfyPage })));
+const SecretsPage = lazy(() => import("./Secrets").then((m) => ({ default: m.SecretsPage })));
 
 /** Old addresses, for bookmarks and links from before the regroup. */
 const MOVED: Record<string, string> = {
@@ -73,6 +74,8 @@ export function Settings({
     <NtfyPage toast={toast} />
   ) : path === "/settings/safety" ? (
     <SafetyPage toast={toast} />
+  ) : path === "/settings/secrets" ? (
+    <SecretsPage toast={toast} />
   ) : path === "/settings/allowed" ? (
     <AllowedPage />
   ) : path === "/settings/checks" ? (
@@ -281,6 +284,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
           <LinkRow to="/settings/allowed" label="Always allowed">
             {rules !== null && <span className="val">{rules || "None"}</span>}
           </LinkRow>
+          <LinkRow to="/settings/secrets" label="Secrets" />
         </Group>
 
         <Group title="Integrations">

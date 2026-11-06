@@ -7,11 +7,13 @@ import {
   askCareful,
   block,
   definePlugin,
+  keepSecretFrom,
   MAX_ATTACHMENT_BYTES,
   PluginError,
   ready,
   type Sandbox,
   SandboxError,
+  type SecretsHost,
   sizeText,
   tool,
   type Verdict,
@@ -23,7 +25,7 @@ import {
   readOnly,
   statusOnly,
 } from "@hatbot/plugin-sdk/shell";
-import { type ApprovalKind, MAX_BOX_VALUE } from "@hatbot/shared";
+import { type ApprovalKind, MAX_BOX_VALUE, SecretName } from "@hatbot/shared";
 import { z } from "zod";
 
 const OUTPUT_CHARS = 15_000;
@@ -192,8 +194,10 @@ export const sshPlugin = definePlugin({
   description: "Run commands on your hosts",
   env: [{ name: "HATBOT_BRAIN_ID", optional: true, hint: "101" }],
   uses: ["sandbox"],
+  needs: ["secrets"],
   config: Config,
-  start: ({ env, config, files, configOf, optional }) => {
+  start: ({ env, config, files, configOf, optional, service }) => {
+    const secrets = service<SecretsHost>("secrets");
     const home = env.HOME ?? homedir();
     const key = env.HATBOT_SSH_KEY ?? join(home, ".ssh/id_ed25519");
     const knownHosts = env.HATBOT_SSH_KNOWN_HOSTS ?? join(home, ".ssh/known_hosts");
@@ -616,7 +620,7 @@ export const sshPlugin = definePlugin({
       tool({
         name: "ssh_write_file",
         description:
-          "Create or replace a text file on a host with the content you give. Files outside the user's home directory and /tmp need approval (the safety review or the owner); SSH keys, and anything on a careful host, wait for the owner.",
+          "Create or replace a text file on a host with the content you give. {{secret:NAME}} in it puts in a secret the owner keeps, which you never see. Files outside the user's home directory and /tmp need approval (the safety review or the owner); SSH keys, and anything on a careful host, wait for the owner.",
         access: "write",
         schema: z.object({
           host: hostField,
@@ -628,10 +632,25 @@ export const sshPlugin = definePlugin({
         policy: ({ host, path, sudo }) => writePolicy({ host, path, sudo }),
         run: async ({ host, path, content, sudo }, { signal }) => {
           // On stdin, as copies go: in the command it would pass the system's argument limit.
-          const bytes = new TextEncoder().encode(content);
+          const bytes = new TextEncoder().encode(secrets.fill(content));
           await push({ host, path, sudo }, bytes, signal);
           return `Wrote ${path} on ${host} (${bytes.byteLength} bytes).`;
         },
+      }),
+      tool({
+        name: "ssh_keep_secret",
+        description:
+          "Keep a text file on a host, such as a token or key a command made, as one of the owner's secrets, without reading it. Then write {{secret:NAME}} where it goes, in a file on another host, say.",
+        access: "read",
+        places: ["chat", "task"],
+        incognito: false,
+        label: "Keeping a secret",
+        schema: RemoteFile(hostField).extend({
+          name: SecretName.describe("What it's kept as, like GITEA_TOKEN"),
+        }),
+        describe: ({ name, ...r }) => `Keep ${where(r)} as ${name}`,
+        run: async ({ name, ...r }, { signal }) =>
+          keepSecretFrom(secrets, name, await pull(r, signal), where(r)),
       }),
       tool({
         name: "ssh_copy_file",

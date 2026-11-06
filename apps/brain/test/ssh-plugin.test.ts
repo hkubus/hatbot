@@ -711,3 +711,21 @@ test("a shell line counts each chained part, and a loop as many", () => {
   ])
     expect(commandCount(cmd), cmd).toBe(Number.POSITIVE_INFINITY);
 });
+
+test("a host's file is kept as a secret without the model reading it, and written into another by name", async () => {
+  const t = await ssh();
+  const token = "gta_9f8e7d6c5b4a";
+  writeFileSync(join(dir, "token"), `${token}\n`);
+  const keep = t.tool("ssh_keep_secret");
+  const from = { host: "nas", path: join(dir, "token"), name: "RUNNER_TOKEN" };
+  const kept = await runPluginTool(keep, from, call, t.plugins.hideSecrets);
+  expect(kept).toMatchObject({ isError: false, untrusted: false });
+  expect(kept.content).not.toContain(token);
+  expect(t.secrets.secret("RUNNER_TOKEN")).toBe(token);
+  expect((await runPluginTool(keep, from, call)).isError).toBe(true);
+
+  const to = join(dir, "runner.env");
+  const content = "TOKEN={{secret:RUNNER_TOKEN}}\n";
+  await runPluginTool(t.tool("ssh_write_file"), { host: "nas", path: to, content }, call);
+  expect(readFileSync(to, "utf8")).toBe(`TOKEN=${token}\n`);
+});

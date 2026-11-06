@@ -774,9 +774,15 @@ export async function decideApproval(
   decision: "approve" | "deny",
   note = "",
   scope?: ApprovalScope,
+  secret?: string,
 ) {
   const a = await api<Approval>(`/approvals/${id}`, {
-    body: { decision, ...(note.trim() ? { note: note.trim() } : {}), ...(scope ? { scope } : {}) },
+    body: {
+      decision,
+      ...(note.trim() ? { note: note.trim() } : {}),
+      ...(scope ? { scope } : {}),
+      ...(secret ? { secret } : {}),
+    },
   });
   put("approvals", a.id, a);
 }

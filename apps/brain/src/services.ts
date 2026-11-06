@@ -14,16 +14,18 @@ import {
   type Hosts,
   type Notifier,
   type Plugin,
+  PluginError,
   type SchedulesService,
 } from "@hatbot/plugin-sdk";
 import { selfPlugin } from "@hatbot/plugin-self";
 import { t3Plugin } from "@hatbot/plugin-t3";
 import type { T3Code } from "@hatbot/plugin-t3/client";
-import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
+import { ACTIVE_TASK_STATUSES, SECRET_NAME } from "@hatbot/shared";
 import { Chats } from "./agent/chats";
 import { corePlugins } from "./agent/core-tools";
 import { type ModelClient, oneShot } from "./agent/model";
 import { Models } from "./agent/models";
+import { secretsPlugin } from "./agent/secret-tools";
 import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
 import { Approvals } from "./approvals";
@@ -50,7 +52,7 @@ import { DeadManPing } from "./ping";
 import { Installer } from "./plugins/installer";
 import { Plugins } from "./plugins/registry";
 import { Questions } from "./questions";
-import { Secrets } from "./secrets";
+import { fillSecrets, Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
 import { requestCeiling, Spend } from "./spend";
 import { Storage, storageLine } from "./storage";
@@ -130,6 +132,7 @@ export async function createServices(o: Outside) {
     automationPlugin,
     researchPlugin,
     boxesPlugin(o.hatbox),
+    secretsPlugin(secrets),
     ...corePlugins(() => ({
       db,
       clock,
@@ -218,6 +221,14 @@ export async function createServices(o: Outside) {
         ownerOf: (tool) => {
           const p = plugins.pluginOf(tool);
           return (p && plugins.list().find((x) => x.id === p.id)) ?? null;
+        },
+      }),
+      secrets: () => ({
+        names: () => secrets.vault().map((s) => s.name),
+        fill: (text) => fillSecrets(secrets, text),
+        keep: (name, value) => {
+          if (!SECRET_NAME.test(name)) throw new PluginError(`"${name}" can't name a secret.`);
+          secrets.setSecret(name, value, new Date(clock()).toISOString());
         },
       }),
     } satisfies { [K in keyof Hosts]: () => Hosts[K] },

@@ -164,7 +164,8 @@ export function taskLine(t: TaskCard, progress?: string): string {
 export const MANDATE_NOTE = "Change the numbers, or tell it how to go about it";
 
 /** Approvals whose answer can carry a note to the task: the task carries on afterwards. */
-export const takesNote = (a: Approval) => a.kind !== "budget" && a.kind !== "injection_warning";
+export const takesNote = (a: Approval) =>
+  a.kind !== "budget" && a.kind !== "injection_warning" && !a.secret;
 
 const RESOLVED: Record<
   Exclude<Approval["status"], "pending" | "blocked" | "sending">,
@@ -291,6 +292,7 @@ export function PendingApproval({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [secret, setSecret] = useState("");
   const [more, setMore] = useState(!compact);
   const shot =
     a.taskId && a.screenshotStepId ? (
@@ -305,7 +307,7 @@ export function PendingApproval({
     setBusy(true);
     setError("");
     try {
-      await decideApproval(a.id, decision, answer ?? note, scope);
+      await decideApproval(a.id, decision, answer ?? note, scope, a.secret ? secret : undefined);
     } catch (err) {
       setError(errorText(err));
       setBusy(false);
@@ -325,6 +327,22 @@ export function PendingApproval({
         </div>
         {more && shot}
       </div>
+      {a.secret && (
+        <input
+          className="field mono"
+          type="password"
+          aria-label={a.secret}
+          placeholder={a.secret}
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={20000}
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && secret) decide("approve");
+          }}
+        />
+      )}
       {more && takesNote(a) && (
         <textarea
           className="field approval-note"
@@ -392,11 +410,11 @@ export function PendingApproval({
         <button
           type="button"
           className="btn primary"
-          disabled={busy}
+          disabled={busy || (a.secret !== null && !secret)}
           onClick={() => decide("approve")}
         >
           <Icon name="check" />
-          Approve
+          {a.secret ? "Save" : "Approve"}
         </button>
       </div>
     </div>

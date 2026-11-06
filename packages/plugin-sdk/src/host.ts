@@ -34,6 +34,7 @@ export const HOST_SERVICES = [
   "storage",
   "skills",
   "plugins",
+  "secrets",
 ] as const satisfies readonly (keyof Hosts)[];
 
 /** The core's services, by the name a plugin `needs` them by. */
@@ -51,6 +52,7 @@ export type Hosts = {
   storage: StorageHost;
   skills: SkillsHost;
   plugins: PluginsHost;
+  secrets: SecretsHost;
 };
 
 export type NtfyAction =
@@ -243,6 +245,18 @@ export interface PluginsHost {
   readyFor(id: string, bot: Bot): boolean;
   /** The plugin a tool is from, as Settings lists it. */
   ownerOf(tool: string): PluginInfo | null;
+}
+
+/**
+ * The secrets the owner keeps in Hatbot, by name. The model writes {{secret:NAME}} where one goes and
+ * never sees its value; a tool that writes files fills them in.
+ */
+export interface SecretsHost {
+  names(): string[];
+  /** `text` with each placeholder's secret put in; one that isn't kept throws a PluginError. */
+  fill(text: string): string;
+  /** Replaces what's kept under `name`. */
+  keep(name: string, value: string): void;
 }
 
 /** A line in Check everything. */

@@ -127,10 +127,14 @@ export const approvalRoutes = new Hono<AppEnv>()
   )
   .get("/approvals/:id", (c) => found(c, c.var.approvals.get(idParam(c))))
   .post("/approvals/:id", json(DecideApproval), (c) => {
-    const { decision, note, scope } = c.req.valid("json");
+    const { decision, note, scope, secret } = c.req.valid("json");
     const asked = c.var.approvals.get(idParam(c));
     if (scope && asked && !asked.scopes.includes(scope))
       return c.json({ error: "This approval can only be given once." }, 400);
+    if (asked?.secret && asked.status === "pending" && decision === "approve") {
+      if (!secret) return c.json({ error: "Enter it first.", field: "secret" }, 400);
+      c.var.secrets.setSecret(asked.secret, secret);
+    }
     const approval = c.var.approvals.decide(idParam(c), decision, "web", note, scope);
     if (!approval) return c.json({ error: "That was already answered." }, 409);
     return c.json(approval);

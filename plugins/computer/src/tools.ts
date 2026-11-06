@@ -4,15 +4,17 @@ import {
   askCareful,
   block,
   type CallContext,
+  keepSecretFrom,
   MAX_ATTACHMENT_BYTES,
   PluginError,
   type PluginFiles,
+  type SecretsHost,
   sizeText,
   tool,
   type Verdict,
 } from "@hatbot/plugin-sdk";
 import { destructive, destructiveOnWindows } from "@hatbot/plugin-sdk/shell";
-import type { ApprovalKind, ComputerInfo } from "@hatbot/shared";
+import { type ApprovalKind, type ComputerInfo, SecretName } from "@hatbot/shared";
 import { z } from "zod";
 import type { Computers } from "./computers";
 import { ComputerError } from "./link";
@@ -35,7 +37,7 @@ export const grantKey = (call: Pick<CallContext, "task" | "episodeId" | "convers
 
 const Computer = z.string().min(1).max(60).describe("The computer, by its name");
 
-export function computerTools(computers: Computers, files?: PluginFiles) {
+export function computerTools(computers: Computers, secrets: SecretsHost, files?: PluginFiles) {
   const known = (name: string): ComputerInfo | null => computers.find(name);
   const usable = (name: string) => {
     const c = computers.named(name);
@@ -133,7 +135,7 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
     tool({
       name: "computer_put_file",
       description:
-        "Put a file on one of the owner's own computers: text you write (content) or a file from the chat (attachment). It goes in a folder of yours in their Downloads without asking; give path to put it anywhere else, which asks the owner.",
+        "Put a file on one of the owner's own computers: text you write (content) or a file from the chat (attachment). {{secret:NAME}} in content puts in a secret the owner keeps, which you never see. It goes in a folder of yours in their Downloads without asking; give path to put it anywhere else, which asks the owner.",
       schema: z
         .object({
           computer: Computer,
@@ -175,7 +177,7 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
           const b = await files?.attachments.bytes(attachment);
           if (!b) throw new PluginError(`There's no attachment #${attachment}.`);
           bytes = b;
-        } else bytes = new TextEncoder().encode(content ?? "");
+        } else bytes = new TextEncoder().encode(secrets.fill(content ?? ""));
         if (bytes.length > MAX_ATTACHMENT_BYTES)
           throw new PluginError(`That's ${sizeText(bytes.length)}; at most 25 MB goes.`);
         const r = await link
@@ -224,6 +226,29 @@ export function computerTools(computers: Computers, files?: PluginFiles) {
           throw new PluginError(`${r.name} isn't text, and files can't be sent from here.`);
         const a = await call.sendFile(r.name, bytes);
         return `${r.name} isn't text: sent it to the owner as attachment #${a.id}.`;
+      },
+    }),
+    tool({
+      name: "computer_keep_secret",
+      description:
+        "Keep a text file on one of the owner's own computers, such as a token, as one of their secrets, without reading it. Then write {{secret:NAME}} where it goes. Not private keys or password stores.",
+      schema: z.object({
+        computer: Computer,
+        path: z.string().min(1).max(1000),
+        name: SecretName.describe("What it's kept as, like GITEA_TOKEN"),
+      }),
+      access: "read",
+      places: ["chat", "task"],
+      incognito: false,
+      label: "Keeping a secret from your computer",
+      describe: ({ computer, path, name }) => `Keep ${path} on ${computer} as ${name}`,
+      run: async ({ computer, path, name }, call) => {
+        if (SECRET.test(path))
+          throw new PluginError("Hatbot doesn't read private keys or password stores.");
+        const { c, link } = usable(computer);
+        const r = await link.request({ op: "get_file", path }, 120_000, call.signal).catch(said);
+        const bytes = new Uint8Array(Buffer.from(r.data, "base64"));
+        return keepSecretFrom(secrets, name, bytes, `${path} on ${c.name}`);
       },
     }),
   ];

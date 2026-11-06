@@ -8,6 +8,7 @@ import {
   ready,
   type Sandbox,
   SandboxError,
+  type SecretsHost,
   tool,
 } from "@hatbot/plugin-sdk";
 import { z } from "zod";
@@ -18,7 +19,9 @@ export const codePlugin = definePlugin({
   description: "Run commands and scripts in the desktop's sandbox",
   config: z.object({}),
   uses: ["sandbox"],
-  start: ({ files, optional }) => {
+  needs: ["secrets"],
+  start: ({ files, optional, service }) => {
+    const secrets = service<SecretsHost>("secrets");
     const sandbox = optional<Sandbox>("sandbox");
     if (!files || !sandbox?.configured)
       return needsSetup("The desktop isn't set up yet; the sandbox runs on it.");
@@ -73,6 +76,29 @@ export const codePlugin = definePlugin({
             if (err instanceof SandboxError) throw new PluginError(err.message);
             throw err;
           }
+        },
+      }),
+      tool({
+        name: "code_write_file",
+        description:
+          "Create or replace a text file in the sandbox, relative to its home as code_run sees it. {{secret:NAME}} in content puts in a secret the owner keeps, which you never see: for a script's config or .env.",
+        access: "write",
+        label: "Writing a file in the sandbox",
+        schema: z.object({
+          path: z.string().min(1).max(500),
+          content: z.string().max(1_000_000),
+        }),
+        describe: ({ path }) => path,
+        run: async ({ path, content }, call) => {
+          const desktop = sandbox.withSignal?.(call.signal) ?? sandbox;
+          const bytes = new TextEncoder().encode(secrets.fill(content));
+          try {
+            await desktop.putFile(path, bytes);
+          } catch (err) {
+            if (err instanceof SandboxError) throw new PluginError(err.message);
+            throw err;
+          }
+          return `Wrote ${path} in the sandbox (${bytes.byteLength} bytes).`;
         },
       }),
     ];

@@ -352,9 +352,11 @@ struct Approval: Codable, Identifiable, Equatable, Sendable {
   var episodeId: Int?
   /// Ready answers: each approves it, with itself as the note.
   var answers: [String]?
+  /// The name what you type in is kept under: approving it takes the value.
+  var secret: String?
 
   /// Whether the answer can carry a note: the task carries on afterwards.
-  var takesNote: Bool { kind != "budget" && kind != "injection_warning" }
+  var takesNote: Bool { kind != "budget" && kind != "injection_warning" && secret == nil }
 }
 
 enum Decision: String, Encodable, Sendable {

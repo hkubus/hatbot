@@ -160,6 +160,32 @@ test("files: into Downloads/Hatbot freely, anywhere else asks; reading keys is r
   expect(key.isError).toBe(true);
 });
 
+test("a secret goes into a file put on the computer, and one of its files is kept as a secret unread, but not a key", async () => {
+  const t = await testApp();
+  const { computer } = await connected(t);
+  t.secrets.setSecret("API_KEY", "gta_9f8e7d6c5b4a");
+  const put = toolOf(t, "computer_put_file");
+  await runPluginTool(
+    put,
+    { computer: "laptop", name: ".env", content: "K={{secret:API_KEY}}" },
+    call,
+  );
+  const sent = computer.requests.at(-1) as { data: string };
+  expect(Buffer.from(sent.data, "base64").toString()).toBe("K=gta_9f8e7d6c5b4a");
+
+  const keep = toolOf(t, "computer_keep_secret");
+  const kept = await runPluginTool(
+    keep,
+    { computer: "laptop", path: "~/notes.txt", name: "NOTE" },
+    call,
+  );
+  expect(kept.content).not.toContain("hello");
+  expect(t.secrets.secret("NOTE")).toContain("hello");
+  const key = { computer: "laptop", path: "~/.ssh/id_ed25519", name: "KEY" };
+  expect((await runPluginTool(keep, key, call)).isError).toBe(true);
+  expect(t.secrets.secret("KEY")).toBeNull();
+});
+
 test("a task runs commands on the computer as the owner: using it is asked once, and after its output the review looks at the next", async () => {
   const exec = (command: string) => ({
     content: [toolUse("computer_exec", { computer: "laptop", command })],

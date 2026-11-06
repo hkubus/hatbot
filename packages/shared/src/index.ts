@@ -4,6 +4,7 @@ import type { Box } from "./box";
 import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
+import { SecretValue } from "./secret";
 import type { Watcher } from "./watch";
 
 export * from "./bot-id";
@@ -15,6 +16,7 @@ export * from "./onboarding";
 export * from "./plugin";
 export * from "./schedule";
 export * from "./search";
+export * from "./secret";
 export * from "./templates";
 export * from "./thread";
 export * from "./todo";
@@ -307,6 +309,8 @@ export type ApprovalKind =
   | "listing"
   /** A task using one of your own computers: asked once per task, naming it. */
   | "computer"
+  /** A secret you type in, which Hatbot keeps under a name the model knows it by. */
+  | "secret"
   | "other";
 
 /** Where one channel of a flip Scout marked ready to list is. */
@@ -383,11 +387,15 @@ export type Approval = {
   scope: ApprovalScope | null;
   /** Ready answers: each approves it, with itself as the note. */
   answers: string[];
+  /** The name what you type in is kept under: approving it takes the value. */
+  secret: string | null;
 };
 export const DecideApproval = z.object({
   decision: z.enum(["approve", "deny"]),
   note: z.string().trim().max(4000).optional(),
   scope: z.enum(["always", "schedule"]).optional(),
+  /** The value an approval with `secret` asks for. */
+  secret: SecretValue.optional(),
 });
 /** Running what the safety review blocked: once, or `always` for this exact call. */
 export const RunAnyway = z.object({ always: z.boolean().optional() });

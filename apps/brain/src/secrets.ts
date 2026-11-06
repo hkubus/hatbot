@@ -1,10 +1,18 @@
 // Kept in a file of their own, mode 600, not in the database, so the nightly snapshots and the
 // settings every client is sent don't carry them. Unset, the host's apply (/etc/hatbot).
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import type { ConnectionSource, Connections } from "@hatbot/shared";
+import { PluginError } from "@hatbot/plugin-sdk";
+import {
+  type ConnectionSource,
+  type Connections,
+  type KeptSecret,
+  secretPlaceholder,
+  secretsIn,
+} from "@hatbot/shared";
 
 export type NtfyConfig = { url: string; topic: string; token: string };
 type Values = Record<string, string>;
+const MIN_HIDDEN = 6;
 type Stored = {
   ntfy?: NtfyConfig;
   env?: Values;
@@ -12,6 +20,8 @@ type Stored = {
   named?: Record<string, Values>;
   /** A plugin's own, by plugin, then by its key. */
   kept?: Record<string, Record<string, Values>>;
+  /** The owner's own, which the model places by name. */
+  vault?: Record<string, { value: string; setAt: string }>;
 };
 
 /** Only string values, so a hand-edited file can't hand a plugin anything else. */
@@ -56,6 +66,14 @@ function read(path: string): Stored {
         // Boxes' secrets, kept before boxes were a plugin.
         ...(s.boxes && !s.kept?.boxes ? { boxes: byId(s.boxes) } : {}),
       },
+      vault: Object.fromEntries(
+        Object.entries(s.vault && typeof s.vault === "object" ? s.vault : {}).flatMap(
+          ([name, x]) =>
+            x && typeof x.value === "string"
+              ? [[name, { value: x.value, setAt: String(x.setAt ?? "") }]]
+              : [],
+        ),
+      ),
     };
   } catch (err) {
     console.error(`${path} isn't readable JSON; the host's settings apply`, err);
@@ -147,6 +165,39 @@ export class Secrets {
     });
   }
 
+  vault(): KeptSecret[] {
+    return Object.entries(this.stored.vault ?? {})
+      .map(([name, { setAt }]) => ({ name, setAt }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  secret(name: string): string | null {
+    return this.stored.vault?.[name]?.value ?? null;
+  }
+
+  /** Null forgets it. */
+  setSecret(name: string, value: string | null, setAt = new Date().toISOString()) {
+    const { [name]: _, ...vault } = this.stored.vault ?? {};
+    this.save({
+      ...this.stored,
+      vault: value === null ? vault : { ...vault, [name]: { value, setAt } },
+    });
+  }
+
+  /**
+   * `text` with every kept secret in it shown as its placeholder, longest first, so one inside
+   * another still shows. Short ones are left: they'd hide ordinary words.
+   */
+  hideSecrets(text: string): string {
+    const kept = Object.entries(this.stored.vault ?? {})
+      .filter(([, x]) => x.value.length >= MIN_HIDDEN)
+      .sort(([, a], [, b]) => b.value.length - a.value.length);
+    let out = text;
+    for (const [name, { value }] of kept)
+      if (out.includes(value)) out = out.split(value).join(secretPlaceholder(name));
+    return out;
+  }
+
   onChange(fn: () => void) {
     this.listeners.push(fn);
   }
@@ -161,6 +212,20 @@ export class Secrets {
     this.stored = next;
     for (const fn of this.listeners) fn();
   }
+}
+
+/** `text` with each {{secret:NAME}} replaced by what's kept under NAME. */
+export function fillSecrets(secrets: Secrets, text: string): string {
+  const names = secretsIn(text);
+  const missing = names.filter((n) => secrets.secret(n) === null);
+  if (missing.length)
+    throw new PluginError(
+      `No secret is kept as ${missing.join(", ")}. Ask the owner for it with secrets_ask.`,
+    );
+  return names.reduce(
+    (out, n) => out.split(secretPlaceholder(n)).join(secrets.secret(n) as string),
+    text,
+  );
 }
 
 function merge(now: Values | undefined, changes: Record<string, string | null>): Values {

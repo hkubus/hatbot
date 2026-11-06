@@ -193,7 +193,8 @@ struct MainView: View {
       store.apply(.approvalCreated(a))
       if let taskId = a.taskId { tasksPath = [.task(taskId)] }
       // Asked first, with what it is: any app or page can open this link, and Face ID doesn't say what it's for.
-      if approving && a.status == .pending { confirming = a }
+      // A secret is typed in where it shows, not approved from here.
+      if approving && a.status == .pending && a.secret == nil { confirming = a }
     }
   }
 

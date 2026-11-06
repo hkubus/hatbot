@@ -12,7 +12,7 @@ import type { FetchResult, RenderResult, ShellResult } from "@hatbot/shared/desk
 import { type Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { z } from "zod";
-import type { Hosts, PluginCheck, SearchRoutine, TaskOrigin } from "./host";
+import type { Hosts, PluginCheck, SearchRoutine, SecretsHost, TaskOrigin } from "./host";
 import type { ModelProvider } from "./models";
 import type { TaskJob, TaskRunner } from "./runner";
 
@@ -128,9 +128,19 @@ export type CallContext = {
   ownerSaid?: () => string;
   /** The hand-off the reply answers, if it answers one. */
   answering?: Task;
-  /** For an `own` tool: asks as a write's change asks, the review then you; `always`: only you. */
+  /**
+   * For an `own` tool: asks as a write's change asks, the review then you; `always`: only you.
+   * `secret`: only you, who type in a value kept under that name.
+   */
   approve?: (
-    call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
+    call: {
+      tool: string;
+      input: unknown;
+      what: string;
+      why: string;
+      always?: boolean;
+      secret?: string;
+    },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
   /** Shows a schedule made in the chat as a card in it. */
@@ -270,6 +280,29 @@ export type SchedulesService = {
   update(id: number, patch: ScheduleFields): Schedule | null;
   delete(id: number): boolean;
 };
+
+/**
+ * Keeps a file's text as the owner's secret `name`, without the newline it ends with; the model is
+ * told only that it's kept. A name that's kept already stays as it is: only the owner replaces one.
+ */
+export function keepSecretFrom(
+  secrets: SecretsHost,
+  name: string,
+  bytes: Uint8Array,
+  where: string,
+): string {
+  if (secrets.names().includes(name))
+    throw new PluginError(
+      `${name} is kept already. Pick another name, or ask the owner with secrets_ask to replace it.`,
+    );
+  if (bytes.includes(0)) throw new PluginError(`${where} isn't text.`);
+  const text = new TextDecoder().decode(bytes).replace(/\r?\n$/, "");
+  if (!text.trim()) throw new PluginError(`${where} is empty.`);
+  if (text.length > 20_000)
+    throw new PluginError(`${where} is over the 20,000 characters a secret holds.`);
+  secrets.keep(name, text);
+  return `Kept ${where} as {{secret:${name}}} without reading it. Write that where it goes; the owner sees it in Settings → Secrets.`;
+}
 
 /** The most a file handed to or from Hatbot may be. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;

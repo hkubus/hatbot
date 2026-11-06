@@ -589,7 +589,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         detail: core ? describe(t.name, call.input) : what,
         url: null,
       });
-    const r = await runPluginTool(t, call.input, cc);
+    const r = await runPluginTool(t, call.input, cc, d.plugins.hideSecrets);
     if (t.access === "write") blocks.ran();
     if (r.untrusted) taint(what);
     if (t.name === "send_file" && !r.isError)

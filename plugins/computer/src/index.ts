@@ -1,7 +1,7 @@
 // Your own computers, Linux or Windows, through Hatbot's desktop app: its agent dials in, and desktop tasks use their
 // screens, as you, alongside the desktop. Only the computer turns its use on.
 
-import { definePlugin, type EventsHost, ready } from "@hatbot/plugin-sdk";
+import { definePlugin, type EventsHost, ready, type SecretsHost } from "@hatbot/plugin-sdk";
 import { ACTIVE_TASK_STATUSES, type ComputerInfo } from "@hatbot/shared";
 import { z } from "zod";
 import { Computers } from "./computers";
@@ -32,7 +32,7 @@ export const computerPlugin = definePlugin({
   config: z.object({}),
   defaultOn: true,
   allBots: true,
-  needs: ["events"],
+  needs: ["events", "secrets"],
   provides: ["computers"],
   migrations: [
     `CREATE TABLE computer_machines (
@@ -55,7 +55,7 @@ export const computerPlugin = definePlugin({
     });
     const service: ComputersService = computers;
     const id = (args: unknown) => z.object({ id: z.string() }).parse(args).id;
-    return ready(computerTools(computers, ctx.files), {
+    return ready(computerTools(computers, ctx.service<SecretsHost>("secrets"), ctx.files), {
       services: { computers: service },
       routes: routes(computers),
       get prompt() {
