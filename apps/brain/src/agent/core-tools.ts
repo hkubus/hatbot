@@ -100,9 +100,9 @@ const META: Record<string, Meta> = {
   },
   thread_resolve: {
     plugin: "threads",
-    label: "Resolving the thread",
+    label: "Resolving a thread",
     places: CHAT,
-    when: inThread,
+    when: (o) => mainChat(o) || inThread(o),
   },
 };
 

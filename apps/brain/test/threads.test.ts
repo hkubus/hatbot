@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { type Conversation, MAX_OPEN_THREADS, type Task } from "@hatbot/shared";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { lastUserText, requested, signIn, testApp, toolNames, waitFor } from "./helpers";
+import { bot, lastUserText, requested, signIn, testApp, toolNames, waitFor } from "./helpers";
 import { ended, finish, scheduled } from "./plugin-helpers";
 
 test("a bot opens a thread from its chat, answers in it while the chat replies, resolves it, and writing opens it again", async () => {
@@ -26,7 +26,6 @@ test("a bot opens a thread from its chat, answers in it while the chat replies, 
   const { cookie } = signIn(t);
   await t.thread.post("how are the backups?").done;
   expect(toolNames(model.requests[0])).toContain("thread_open");
-  expect(toolNames(model.requests[0])).not.toContain("thread_resolve");
 
   // The thread stays out of the chat list; its card in the chat links to its first message.
   const chats = (await (
@@ -78,6 +77,23 @@ test("a bot opens a thread from its chat, answers in it while the chat replies, 
   await t.thread.post("/new").done;
   await t.thread.post("hi").done;
   expect(lastUserText(model.requests.at(-1))).toContain(`#${id} \\"Backups failing\\": resolved`);
+});
+
+test("asked in the main chat, a bot resolves one of that chat's threads, but not another chat's", async () => {
+  const model = new FakeModel([
+    { content: [toolUse("thread_resolve", { id: 4, outcome: "Not needed" })] },
+    { content: [toolUse("thread_resolve", { id: 2, outcome: "Not needed" })] },
+    { content: [text("Resolved it.")] },
+  ]);
+  const t = await testApp(model);
+  const chef = bot(t, "Chef");
+  t.chats.openThread({ botId: "hatbot", title: "Backups", message: "Retry them?" });
+  const theirs = t.chats.openThread({ botId: chef.id, title: "Dinner", message: "Pasta?" });
+  expect(theirs.conversation.id).toBe(4);
+  await t.thread.post("resolve the backups thread").done;
+  expect(lastUserText(model.requests[1])).toContain("No thread #4 in this chat.");
+  expect(t.chats.get(4)?.resolvedAt).toBeNull();
+  expect(t.chats.get(2)).toMatchObject({ outcome: "Not needed" });
 });
 
 test(`a bot can't have more than ${MAX_OPEN_THREADS} threads open`, async () => {

@@ -691,8 +691,9 @@ export const TOOLS = [
   def({
     name: "thread_resolve",
     description:
-      "Mark this thread settled, once its topic is done, with what it came to. The main chat hears the outcome. The owner can open it again by writing in it.",
+      "Mark a thread settled, with what it came to. In a thread, this one, once its topic is done. From the main chat, one of its threads by id, when the owner asks you to. The main chat hears the outcome. The owner can open it again by writing in it.",
     schema: z.object({
+      id: z.number().int().optional().describe("The thread's id; required from the main chat"),
       outcome: z
         .string()
         .trim()
@@ -700,10 +701,16 @@ export const TOOLS = [
         .max(300)
         .describe('What it came to, in a line: "Offered 350 zł; the seller agreed"'),
     }),
-    run: async ({ outcome }, { chats, conversationId }) => {
+    run: async ({ id, outcome }, { chats, conversationId }) => {
       if (!chats || conversationId === undefined) return "Threads aren't available here.";
-      const c = chats.resolveThread(conversationId, outcome);
-      return c?.resolvedAt ? "Resolved." : "This isn't an open thread.";
+      const here = chats.get(conversationId);
+      const target = here?.kind === "thread" ? (id ?? conversationId) : id;
+      if (target === undefined) return "Say which thread: its id.";
+      const mine = target === conversationId && here?.kind === "thread";
+      if (!mine && !chats.threads(conversationId).some((c) => c.id === target))
+        return `No thread #${target} in this chat.`;
+      const c = chats.resolveThread(target, outcome);
+      return c?.resolvedAt ? "Resolved." : "That thread isn't open.";
     },
   }),
   def({
