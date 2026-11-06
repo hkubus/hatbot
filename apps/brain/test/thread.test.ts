@@ -6,6 +6,7 @@ import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, testApp, toolNames, waitFor } from "./helpers";
+import { finish } from "./plugin-helpers";
 
 test("a message gets a streamed reply, stored, and /thread/ask answers with one", async () => {
   const t = await testApp(
@@ -960,6 +961,84 @@ test("deleting a conversation takes it out of the chat, search, files and the su
   await t.thread.post("still there?").done;
   expect(lastUserText(model.requests.at(-1))).not.toContain("hello");
   expect(t.thread.list().map((m) => m.text)).toEqual(["still there?", "Yes."]);
+});
+
+test("clearing a bot's chat deletes its messages, files, summary and threads, and with notes its memory folder; tasks, incognito and shared memory stay", async () => {
+  const model = new FakeModel([
+    { content: [text("Noted, 51820.")] },
+    { content: [text("Shh.")] },
+    { content: [text("Nothing yet.")] },
+  ]);
+  const t = await testApp(model, new FakeModel([finish("Soup made.")]));
+  const { cookie } = signIn(t);
+  bot(t, "Chef");
+  const chef = t.chats.direct("chef");
+  const id = chef.conversationId;
+  const a = await t.attachments.save({
+    bytes: new TextEncoder().encode("wg0.conf"),
+    name: "wg0.conf",
+    mediaType: "text/plain",
+    from: "owner",
+  });
+  await chef.post("my wireguard port is 51820", [a.id]).done;
+  await chef.post("a secret", [], true).done;
+  t.db.query("UPDATE conversations SET summary = 'They like tea.' WHERE id = ?").run(id);
+  const task = t.tasks.createBackgroundTask({ title: "Soup", goal: "Soup", origin: "schedule" });
+  await t.tasks.idle();
+  chef.add({ kind: "task", text: "Made soup.", taskId: task?.id });
+  const { conversation: side } = t.chats.openThread({
+    botId: "chef",
+    title: "Wireguard",
+    message: "Which port?",
+  });
+  const { owner } = t.settings.get();
+  await t.memory.write("bots/chef/recipes.md", "# Soup", owner, "Soup");
+  await t.memory.write("about-you.md", "# You", owner, "You");
+
+  const res = await t.call("POST", `/conversations/${id}/clear`, { notes: true }, { cookie });
+  expect(res.status).toBe(200);
+  expect(chef.list()).toEqual([]);
+  expect(chef.list(undefined, 50, true).map((m) => m.text)).toEqual(["a secret", "Shh."]);
+  expect(t.chats.get(side.id)).toBeNull();
+  expect(t.chats.threads(id)).toEqual([]);
+  expect(t.events).toContainEqual({ type: "conversation.deleted", id: side.id });
+  expect(
+    t.db.query("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'wireguard'").all(),
+  ).toEqual([]);
+  expect(t.attachments.get(a.id)).toBeNull();
+  expect(
+    t.db
+      .query("SELECT id FROM episodes WHERE conversation_id IN (?, ?) AND incognito = 0")
+      .all(id, side.id),
+  ).toEqual([]);
+  expect(t.tasks.get(task?.id as number)).not.toBeNull();
+  expect(await t.memory.exists("bots/chef/recipes.md")).toBe(false);
+  expect((await t.memory.log(1))[0]?.author).toBe(owner.name);
+  expect(await t.memory.read("about-you.md")).toBe("# You\n");
+
+  await chef.post("anything?").done;
+  expect(lastUserText(model.requests.at(-1))).not.toContain("tea");
+  expect(lastUserText(model.requests.at(-1))).not.toContain("51820");
+});
+
+test("only a bot's own chat clears with notes: not Hatbot's, whose notes are every bot's, nor a group's", async () => {
+  const t = await testApp(new FakeModel());
+  const { cookie } = signIn(t);
+  bot(t, "Chef");
+  const group = t.chats.createGroup("Kitchen", ["hatbot", "chef"]);
+  t.thread.add({ text: "Hello." });
+  const { conversation: side } = t.chats.openThread({ botId: "chef", title: "T", message: "M" });
+  const clear = (id: number, notes: boolean) =>
+    t.call("POST", `/conversations/${id}/clear`, { notes }, { cookie });
+
+  expect((await clear(1, true)).status).toBe(400);
+  expect((await clear(group.id, true)).status).toBe(400);
+  expect(t.thread.list().map((m) => m.text)).toEqual(["Hello."]);
+  expect((await clear(side.id, false)).status).toBe(404);
+  expect((await clear(99, false)).status).toBe(404);
+  expect((await clear(group.id, false)).status).toBe(200);
+  expect((await clear(1, false)).status).toBe(200);
+  expect(t.thread.list()).toEqual([]);
 });
 
 test("without a desktop, the chat isn't offered the tools that need one", async () => {

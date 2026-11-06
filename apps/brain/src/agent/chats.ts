@@ -1,3 +1,4 @@
+import { botFolder } from "@hatbot/plugin-sdk";
 import {
   type Box,
   type Conversation,
@@ -579,6 +580,49 @@ export class Chats {
     this.running.delete(id);
     this.d.db.query("UPDATE conversations SET deleted_at = ? WHERE id = ?").run(this.now(), id);
     this.d.events.emit({ type: "conversation.deleted", id });
+    return true;
+  }
+
+  /**
+   * A chat's messages, summary and threads, for good; with `notes`, its bot's own folder in memory
+   * too, first, so a failed commit deletes nothing. Tasks stay on Tasks.
+   */
+  async clear(id: number, notes = false): Promise<boolean> {
+    const chat = this.get(id);
+    if (!chat || chat.kind === "thread") return false;
+    const folder = chat.kind === "direct" ? botFolder(chat.botIds[0] ?? HATBOT_ID) : null;
+    if (notes && !folder)
+      throw new UserError(
+        chat.kind === "group"
+          ? "A group has no notes of its own."
+          : "Hatbot's notes are every bot's. Change them in Memory.",
+      );
+    const { db, memory, settings } = this.d;
+    if (notes && folder)
+      await memory.edit(
+        async () => {
+          const files = (await memory.tree()).filter((f) => f.path.startsWith(`${folder}/`));
+          return files.length ? files.map((f) => ({ path: f.path, content: null })) : null;
+        },
+        settings.get().owner,
+        `Delete ${folder}/`,
+      );
+    const threads = db
+      .query<{ id: number }, [number]>(
+        "SELECT id FROM conversations WHERE parent_id = ? AND deleted_at IS NULL",
+      )
+      .all(id);
+    for (const { id: t } of threads) {
+      await this.thread(t)?.clear();
+      this.running.delete(t);
+      db.query(
+        `UPDATE conversations SET deleted_at = ?, title = NULL, outcome = NULL, thread_key = NULL,
+         needs_you_at = NULL WHERE id = ?`,
+      ).run(this.now(), t);
+      this.d.events.emit({ type: "conversation.deleted", id: t });
+    }
+    await (this.thread(id) as Thread).clear();
+    this.changed(id);
     return true;
   }
 

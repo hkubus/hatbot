@@ -665,6 +665,8 @@ export type Conversation = {
 };
 /** You open a thread on one of a bot's messages in its chat. */
 export const ReplyInThread = z.object({ messageId: z.number().int() });
+/** Clears a chat; `notes`: its bot's own folder in memory too. */
+export const ClearChat = z.object({ notes: z.boolean().default(false) });
 
 /** Most open threads a bot may have. */
 export const MAX_OPEN_THREADS = 12;

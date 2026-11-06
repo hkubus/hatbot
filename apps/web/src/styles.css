@@ -4334,6 +4334,13 @@ dialog.ask .field {
   width: 100%;
   height: var(--h-lg);
 }
+.ask-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-md);
+  font-size: var(--fs-text);
+  cursor: pointer;
+}
 .ask-actions {
   display: flex;
   justify-content: flex-end;

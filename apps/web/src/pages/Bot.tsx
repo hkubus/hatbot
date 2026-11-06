@@ -9,14 +9,14 @@ import {
 import { useEffect, useState } from "react";
 import { useAction } from "../action";
 import { api } from "../api";
-import { ask, useLeaveGuard } from "../confirm";
+import { ask, askChecked, useLeaveGuard } from "../confirm";
 import { toggled, useStoredForm } from "../form";
 import { BotMark } from "../icons";
 import { Link } from "../link";
 import { PageLoad, useLoad } from "../load";
 import { chatModelOptions, modelNameIn, modelOptions, useModels } from "../models";
 import { navigate } from "../router";
-import { chatPath, createBot, deleteBot, loadBot, saveBot, useStore } from "../store";
+import { chatPath, clearChat, createBot, deleteBot, loadBot, saveBot, useStore } from "../store";
 import { Switch } from "../switch";
 import { BackHead, EFFORTS, SaveBar, Select } from "../ui";
 
@@ -161,10 +161,28 @@ export function BotPage({ id, toast }: { id: string; toast: (t: string) => void 
     });
   };
 
+  const clear = async () => {
+    if (!stored || !chat) return;
+    const text = `Clear your chat with ${stored.name}? Its messages and threads are deleted for good, and ${stored.name} forgets them. Tasks stay.`;
+    const answer = isHatbot
+      ? (await ask({ text, ok: "Clear" })) && { checked: false }
+      : await askChecked({ text, ok: "Clear", check: `Delete its notes in bots/${id}/ too` });
+    if (!answer) return;
+    await run(async () => {
+      await clearChat(chat.id, answer.checked);
+      toast("Cleared");
+    });
+  };
+
   return (
     <section className="view">
       <div className="page narrow">
         <BackHead to={back} label="Chat">
+          {!isNew && chat && (
+            <button type="button" className="btn sm danger-text" onClick={clear}>
+              Clear chat
+            </button>
+          )}
           {!isNew && !isHatbot && (
             <button type="button" className="btn sm danger-text" onClick={remove}>
               Delete

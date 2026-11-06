@@ -20,6 +20,7 @@ struct BotView: View {
   @State private var base: Bot?
   @State private var busy = false
   @State private var confirmDelete = false
+  @State private var confirmClear = false
   @State private var error: String?
 
   struct Form: Equatable {
@@ -61,6 +62,7 @@ struct BotView: View {
 
   private var stored: Bot? { id.flatMap { store.bots[$0] } }
   private var isHatbot: Bool { id == Bot.hatbot }
+  private var chat: Conversation? { store.conversations.first { $0.kind == .direct && $0.botIds.first == id } }
 
   var body: some View {
     let changed = id == nil || (base.map { Form($0) != form } ?? false)
@@ -163,6 +165,13 @@ struct BotView: View {
           }
         }
       }
+      if chat != nil {
+        Section {
+          Button("Clear chat", role: .destructive) { confirmClear = true }
+        } footer: {
+          Text("Its messages and threads are deleted for good, and it forgets them. Tasks stay.")
+        }
+      }
       if let id, !isHatbot {
         Section {
           NavigationLink("Its notes", value: Route.memoryFile("bots/\(id)/INDEX.md"))
@@ -195,6 +204,14 @@ struct BotView: View {
     ) { pick in
       Button(pick.key == nil ? "Clear it" : "Use the template", role: .destructive) { fill(pick.key) }
       Button("Keep mine", role: .cancel) {}
+    }
+    .confirmationDialog(
+      "Clear your chat with \(stored?.name ?? "this bot")?", isPresented: $confirmClear, titleVisibility: .visible
+    ) {
+      Button("Clear chat", role: .destructive) { clear(notes: false) }
+      if !isHatbot {
+        Button("Clear chat and its notes", role: .destructive) { clear(notes: true) }
+      }
     }
     .confirmingDelete("Delete \(stored?.name ?? "this bot")?", isPresented: $confirmDelete, error: $error) {
       if let id { try await store.deleteBot(id) }
@@ -250,6 +267,16 @@ struct BotView: View {
     return Bot.Tint.allCases.min { a, b in
       used.filter { $0 == a }.count < used.filter { $0 == b }.count
     } ?? .amber
+  }
+
+  private func clear(notes: Bool) {
+    guard let chat else { return }
+    Task {
+      await attempt($error) {
+        try await store.clearChat(chat.id, notes: notes)
+        store.toast = "Cleared"
+      }
+    }
   }
 
   private func save() async {

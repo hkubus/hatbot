@@ -958,6 +958,13 @@ final class AppStore {
   }
 
   /// Deletes a conversation from the chat for good; message.deleted takes it off the screen.
+  /// Deletes a chat's messages and threads for good; `notes`, its bot's own folder in memory too.
+  func clearChat(_ id: Int, notes: Bool) async throws {
+    struct Body: Encodable { let notes: Bool }
+    let _: Empty = try await api.post("/conversations/\(id)/clear", body: Body(notes: notes))
+    cache?.forget(id)
+  }
+
   func deleteEpisode(_ id: Int) async throws {
     let _: Empty = try await api.delete("\(chatPath)/episodes/\(id)")
   }

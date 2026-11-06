@@ -1,5 +1,6 @@
 import { BudgetError, found, idParam, MAX_ATTACHMENT_BYTES } from "@hatbot/plugin-sdk";
 import {
+  ClearChat,
   CreateGroup,
   PostMessage,
   ReplyInThread,
@@ -159,6 +160,11 @@ export const threadRoutes = new Hono<AppEnv>()
     if (thread?.kind !== "thread") return c.json({ error: "That's gone." }, 404);
     return c.json(c.var.chats.resolveThread(thread.id, null) ?? thread);
   })
+  .post("/conversations/:id/clear", json(ClearChat), async (c) =>
+    (await c.var.chats.clear(idParam(c), c.req.valid("json").notes))
+      ? c.json({ ok: true })
+      : c.json({ error: "That's gone." }, 404),
+  )
   .get("/thread/unread", (c) => c.json(c.var.chats.unread()))
   .post("/thread/seen", json(SeenMessages), (c) => {
     const { ids, through } = c.req.valid("json");

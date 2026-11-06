@@ -9,6 +9,7 @@ struct GroupView: View {
   @State private var members: [String] = []
   @State private var busy = false
   @State private var confirmDelete = false
+  @State private var confirmClear = false
   @State private var error: String?
 
   /// Most bots in a group, besides you (MAX_GROUP_BOTS in packages/shared).
@@ -40,6 +41,11 @@ struct GroupView: View {
       }
       if id != nil {
         Section {
+          Button("Clear chat", role: .destructive) { confirmClear = true }
+        } footer: {
+          Text("Its messages are deleted for good, and its bots forget them. Tasks stay.")
+        }
+        Section {
           Button("Delete group", role: .destructive) { confirmDelete = true }
         }
       }
@@ -55,6 +61,16 @@ struct GroupView: View {
       ToolbarItem(placement: .confirmationAction) {
         Button(id == nil ? "Create" : "Save") { Task { await save(trimmed) } }
           .disabled(busy || !changed || !valid)
+      }
+    }
+    .confirmationDialog("Clear \(store.chatName(stored))?", isPresented: $confirmClear, titleVisibility: .visible) {
+      Button("Clear chat", role: .destructive) {
+        Task {
+          await attempt($error) {
+            if let id { try await store.clearChat(id, notes: false) }
+            store.toast = "Cleared"
+          }
+        }
       }
     }
     .confirmingDelete(

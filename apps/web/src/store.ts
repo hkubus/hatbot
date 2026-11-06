@@ -307,6 +307,11 @@ export async function deleteEpisode(id: number, conversationId = state.conversat
   await api(`/conversations/${conversationId}/episodes/${id}`, { method: "DELETE" });
 }
 
+/** message.deleted and conversation.deleted take it off the screen. */
+export async function clearChat(conversationId: number, notes: boolean) {
+  await api(`/conversations/${conversationId}/clear`, { body: { notes } });
+}
+
 /** Opens a thread beside the chat, or closes it (null). */
 export function openSide(id: number | null) {
   if ((state.side?.conversationId ?? null) === id) return;
@@ -1121,8 +1126,10 @@ function apply(e: HatbotEvent) {
       return set({ botIds: state.botIds.filter((id) => id !== e.id) });
     case "conversation.updated":
       return putConversation(e.conversation);
-    case "conversation.deleted":
-      return set({ conversations: state.conversations.filter((c) => c.id !== e.id) });
+    case "conversation.deleted": {
+      const { [e.id]: _, ...threads } = state.threads;
+      return set({ conversations: state.conversations.filter((c) => c.id !== e.id), threads });
+    }
   }
 }
 

@@ -8,6 +8,8 @@ type Question = {
   cancel: string;
   danger: boolean;
   input?: string;
+  /** A box to tick, whose answer is "1" when it's ticked. */
+  check?: string;
   answer: (value: string | null) => void;
 };
 
@@ -53,6 +55,16 @@ export async function ask(o: {
   return r !== null;
 }
 
+/** With a box to tick; null if cancelled. */
+export async function askChecked(o: {
+  text: string;
+  ok: string;
+  check: string;
+}): Promise<{ checked: boolean } | null> {
+  const r = await put({ cancel: "Cancel", danger: true, ...o });
+  return r === null ? null : { checked: r === "1" };
+}
+
 export function askText(o: {
   text: string;
   ok: string;
@@ -91,6 +103,7 @@ export function Dialogs() {
   if (q) last.current = q;
   const shown = q ?? last.current;
   const [value, setValue] = useState("");
+  const [checked, setChecked] = useState(false);
   useEffect(() => {
     hosts++;
     return () => {
@@ -102,6 +115,7 @@ export function Dialogs() {
     if (!d) return;
     if (q && !d.open) {
       setValue("");
+      setChecked(false);
       d.showModal();
       // A destructive one starts on Cancel, the first button; one with a field, in the field.
       d.querySelector("input")?.focus();
@@ -122,7 +136,7 @@ export function Dialogs() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (shown.input === undefined) shown.answer("");
+            if (shown.input === undefined) shown.answer(checked ? "1" : "");
             else if (value.trim()) shown.answer(value.trim());
           }}
         >
@@ -136,6 +150,17 @@ export function Dialogs() {
               spellCheck={false}
               onChange={(e) => setValue(e.target.value)}
             />
+          )}
+          {shown.check !== undefined && (
+            <label className="ask-check">
+              <input
+                type="checkbox"
+                className="todo-box"
+                checked={checked}
+                onChange={(e) => setChecked(e.target.checked)}
+              />
+              {shown.check}
+            </label>
           )}
           <div className="ask-actions">
             <button type="button" className="btn" onClick={() => shown.answer(null)}>

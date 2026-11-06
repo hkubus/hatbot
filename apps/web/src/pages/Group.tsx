@@ -4,7 +4,15 @@ import { ask, useLeaveGuard } from "../confirm";
 import { toggled, useStoredForm } from "../form";
 import { PageLoad, useLoad } from "../load";
 import { navigate } from "../router";
-import { chatPath, createGroup, deleteGroup, loadBots, saveGroup, useStore } from "../store";
+import {
+  chatPath,
+  clearChat,
+  createGroup,
+  deleteGroup,
+  loadBots,
+  saveGroup,
+  useStore,
+} from "../store";
 import { Switch } from "../switch";
 import { BackHead, SaveBar } from "../ui";
 
@@ -73,10 +81,29 @@ export function GroupPage({ id, toast }: { id: string; toast: (t: string) => voi
     });
   };
 
+  const clear = async () => {
+    if (
+      !(await ask({
+        text: `Clear ${stored?.title || "this group"}? Its messages are deleted for good, and its bots forget them. Tasks stay.`,
+        ok: "Clear",
+      }))
+    )
+      return;
+    await run(async () => {
+      await clearChat(Number(id), false);
+      toast("Cleared");
+    });
+  };
+
   return (
     <section className="view">
       <div className="page narrow">
         <BackHead to={back} label="Chat">
+          {!isNew && (
+            <button type="button" className="btn sm danger-text" onClick={clear}>
+              Clear chat
+            </button>
+          )}
           {!isNew && (
             <button type="button" className="btn sm danger-text" onClick={remove}>
               Delete

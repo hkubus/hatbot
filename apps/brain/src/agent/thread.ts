@@ -1257,18 +1257,43 @@ export class Thread {
       )
       .all(this.conversationId)
       .map((r) => r.id);
-    await this.purge(ids, null);
+    await this.purge(ids, { incognito: true });
   }
 
   /**
-   * For good: out of the write-ahead log too, not only the tables. `episodeId` null: the incognito
-   * ones. `also` runs in the same transaction.
+   * Everything said here but what's incognito, the summary too, for good. Tasks stay on Tasks. The
+   * reply in progress is stopped; those already waiting are written, then deleted.
    */
-  private async purge(ids: number[], episodeId: number | null, also?: () => void) {
+  async clear() {
+    if (this.current && !this.currentIncognito) this.current.abort(STOPPED);
+    await this.enqueue(() =>
+      this.inSummaryTurn(async () => {
+        const ids = this.d.db
+          .query<{ id: number }, [number]>(
+            "SELECT id FROM messages WHERE conversation_id = ? AND incognito = 0",
+          )
+          .all(this.conversationId)
+          .map((r) => r.id);
+        await this.purge(ids, { incognito: false }, () => this.saveSummary(""));
+        this.summaryFailures.clear();
+      }),
+    );
+  }
+
+  /**
+   * For good: out of the write-ahead log too, not only the tables. `episodes`: one, or this chat's
+   * incognito ones or all its others. `also` runs in the same transaction.
+   */
+  private async purge(ids: number[], episodes: number | { incognito: boolean }, also?: () => void) {
     const { db } = this.d;
-    const where = episodeId === null ? "conversation_id = ? AND incognito = 1" : "id = ?";
-    const is = episodeId ?? this.conversationId;
-    const episodes = `(SELECT id FROM episodes WHERE ${where})`;
+    const one = typeof episodes === "number";
+    const where = one
+      ? "id = ?"
+      : `conversation_id = ? AND incognito = ${episodes.incognito ? 1 : 0}`;
+    const is = one ? episodes : this.conversationId;
+    // Incognito messages are never in the search index.
+    const indexed = one || !episodes.incognito;
+    const episodeIds = `(SELECT id FROM episodes WHERE ${where})`;
     await this.d.attachments?.removeFor(ids);
     const list = ids.map(() => "?").join(", ");
     db.transaction(() => {
@@ -1276,15 +1301,16 @@ export class Thread {
         db.query(`DELETE FROM attachments WHERE message_id IN (${list})`).run(...ids);
         db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
       }
-      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodes}`).run(is);
-      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodes}`).run(is);
+      db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodeIds}`).run(is);
+      db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodeIds}`).run(
+        is,
+      );
       db.query(`DELETE FROM episodes WHERE ${where}`).run(is);
       also?.();
     })();
-    if (episodeId === null && !ids.length) return;
-    // Out of the search index's segments too; incognito messages are never in it.
-    if (episodeId !== null)
-      db.query("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')").run();
+    if (!indexed && !ids.length) return;
+    // Out of the search index's segments too.
+    if (indexed) db.query("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')").run();
     db.query("PRAGMA wal_checkpoint(TRUNCATE)").get();
     if (ids.length) this.d.events.emit({ type: "message.deleted", ids });
   }
