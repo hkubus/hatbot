@@ -84,7 +84,7 @@ const FinishTask = z.object({
   notify: z
     .boolean()
     .describe(
-      "true if the owner should hear about this now: they asked to be told, something changed or needs them, or it failed. false for a routine result (nothing new, all fine); it stays in the Tasks list",
+      "true only if the owner should hear about this now: something needs them, went wrong or changed in a way they care about. false for a routine result (nothing new, all fine, much like last time); it stays in the Tasks list. A scheduled run is routine unless it found something",
     ),
 });
 
