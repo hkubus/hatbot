@@ -1138,4 +1138,6 @@ export const migrations: string[] = [
   `,
   // 77: an approval that asks you to type in a secret, by the name it's kept under; never its value.
   `ALTER TABLE approvals ADD COLUMN secret TEXT;`,
+  // 78: whether a task's end was notified, so the desktop app shows only those.
+  `ALTER TABLE tasks ADD COLUMN notified INTEGER NOT NULL DEFAULT 0;`,
 ];

@@ -257,6 +257,8 @@ export type Task = {
   tainted: boolean;
   /** The first untrusted thing it read, or what started it tainted. Null before this was kept. */
   taintedBy: string | null;
+  /** Its end was notified; a routine result isn't. */
+  notified: boolean;
   summary: string | null;
   costUsd: number;
   steps: number;

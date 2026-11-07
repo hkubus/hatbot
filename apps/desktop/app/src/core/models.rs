@@ -64,6 +64,9 @@ pub struct Task {
     pub status: TaskStatus,
     #[serde(default)]
     pub summary: Option<String>,
+    /// Its end was notified: a routine result isn't shown.
+    #[serde(default)]
+    pub notified: bool,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]

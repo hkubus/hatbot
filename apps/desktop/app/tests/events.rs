@@ -10,8 +10,12 @@ const SNAPSHOT: &str = r#"{"type":"snapshot","paused":false,
  "unread":[12]}"#;
 
 fn task(status: &str) -> String {
+    ended(status, true)
+}
+
+fn ended(status: &str, notified: bool) -> String {
     format!(
-        r#"{{"type":"task.updated","task":{{"id":2,"botId":"hatbot","title":"Book it","status":"{status}","createdAt":"2026-10-29T10:00:00.000Z"}}}}"#
+        r#"{{"type":"task.updated","task":{{"id":2,"botId":"hatbot","title":"Book it","status":"{status}","notified":{notified},"createdAt":"2026-10-29T10:00:00.000Z"}}}}"#
     )
 }
 
@@ -53,6 +57,13 @@ fn only_a_task_seen_running_that_ends_is_told() {
     w.apply(Event::parse(&task("running")));
     assert_eq!(w.apply(Event::parse(&task("failed"))).map(|t| t.status), Some(TaskStatus::Failed));
     assert!(w.apply(Event::parse(&task("failed"))).is_none());
+}
+
+#[test]
+fn a_routine_result_the_brain_didnt_notify_isnt_told() {
+    let mut w = Watch::default();
+    w.apply(Event::parse(&task("running")));
+    assert!(w.apply(Event::parse(&ended("done", false))).is_none());
 }
 
 #[test]

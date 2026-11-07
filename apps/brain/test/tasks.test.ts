@@ -595,6 +595,37 @@ test("a background task waits without a slot, wakes on an event, and can notify 
   expect(t.notifier.sent.map((n) => n.message)).toEqual(["The backup started late."]);
 });
 
+test("a task's end says whether it was notified, so the desktop app shows only those", async () => {
+  const work = new FakeModel([
+    done("Nothing new."),
+    {
+      content: [
+        toolUse("finish_task", { outcome: "done", summary: "A disk failed.", notify: true }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const run = (runKey: string) =>
+    t.tasks.createBackgroundTask({
+      title: "Check the disks",
+      goal: "Check the disks",
+      origin: "schedule",
+      source: "nightly",
+      runKey,
+    }) as Task;
+  const routine = run("schedule:1");
+  await t.tasks.idle();
+  const found = run("schedule:2");
+  await t.tasks.idle();
+  const ended = (id: number) =>
+    t.events.findLast(
+      (e) => e.type === "task.updated" && e.task.id === id && e.task.status === "done",
+    );
+  expect(ended(routine.id)).toMatchObject({ task: { notified: false } });
+  expect(ended(found.id)).toMatchObject({ task: { notified: true } });
+  expect(t.notifier.sent.map((n) => n.message)).toEqual(["A disk failed."]);
+});
+
 test("a Haiku desktop task out of steps carries on, once, on Opus; one its budget stopped doesn't", async () => {
   const shot = { content: [computer("screenshot")] };
   const work = new FakeModel([shot, shot, shot, finish("Booked on Opus.")]);

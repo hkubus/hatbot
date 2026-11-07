@@ -97,6 +97,7 @@ type Row = {
   status: TaskStatus;
   tainted: number;
   tainted_by: string | null;
+  notified: number;
   injection_suspected: number;
   budget_usd: number;
   summary: string | null;
@@ -144,6 +145,7 @@ const toTask = (r: Row): Task => ({
   status: r.status,
   tainted: Boolean(r.tainted),
   taintedBy: r.tainted_by,
+  notified: Boolean(r.notified),
   summary: r.summary,
   costUsd: r.cost_usd ?? 0,
   steps: r.steps,
@@ -1080,7 +1082,7 @@ export class Tasks {
     { ntfy = true } = {},
   ) {
     this.d.db
-      .query("UPDATE tasks SET status = ?, summary = ?, finished_at = ? WHERE id = ?")
+      .query("UPDATE tasks SET status = ?, summary = ?, finished_at = ?, notified = 0 WHERE id = ?")
       .run(status, summary, this.now(), id);
     const task = this.get(id);
     if (!task) return;
@@ -1088,6 +1090,7 @@ export class Tasks {
     const text = `Task #${id}: ${task.title}. ${word}: ${summary}`;
     // A desktop task run by a background task reports to it, not to you.
     const tell = !task.parentId && (notify || status === "failed");
+    if (tell && ntfy) this.d.db.query("UPDATE tasks SET notified = 1 WHERE id = ?").run(id);
     const card = this.d.db
       .query("UPDATE messages SET text = ? WHERE kind = 'task' AND task_id = ?")
       .run(text, id);

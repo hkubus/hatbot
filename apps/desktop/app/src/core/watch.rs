@@ -45,6 +45,7 @@ impl Watch {
                 let before = self.tasks.insert(task.id, task.status);
                 if before.is_some_and(TaskStatus::is_active)
                     && matches!(task.status, TaskStatus::Done | TaskStatus::Failed)
+                    && task.notified
                 {
                     return Some(task);
                 }
