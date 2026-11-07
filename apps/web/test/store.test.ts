@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import type { Approval, Proposal, Task, ThreadMessage } from "@hatbot/shared";
 import { FakeSocket, installDom, type Request, settle } from "./dom";
 import { chat, msg } from "./fixtures";
@@ -225,6 +225,43 @@ test("a reconnect reloads what may have changed while the stream was down", asyn
   expect(after.proposals[8]?.status).toBe("pending");
   expect(after.plugins.ssh?.enabled).toBe(true);
   expect(after.negotiationMessages[4]).toHaveLength(2);
+  store.disconnect();
+});
+
+test("a socket that died without closing is found by a ping and opened again, and the chat catches up", async () => {
+  const store = await freshStore("dead-socket");
+  let thread = [msg(1)];
+  serve(() => thread);
+  jest.useFakeTimers();
+  try {
+    store.connect();
+    const dead = FakeSocket.last;
+    dead.open();
+    await store.loadThread();
+    // Quiet, it's pinged; one that answers stays.
+    jest.advanceTimersByTime(25_000);
+    expect(dead.sent).toEqual(["ping"]);
+    dead.emit({ type: "pong" });
+    jest.advanceTimersByTime(10_000);
+    expect(FakeSocket.last).toBe(dead);
+    // It died, and the reply came meanwhile: back in front, it's pinged at once, and opened again.
+    thread = [msg(1), msg(2, { role: "user", botId: null }), msg(3, { text: "Hi." })];
+    dead.sent = [];
+    dom.window.dispatchEvent(new Event("focus"));
+    expect(dead.sent).toEqual(["ping"]);
+    jest.advanceTimersByTime(11_000);
+    expect(FakeSocket.last).not.toBe(dead);
+    FakeSocket.last.open();
+  } finally {
+    jest.useRealTimers();
+  }
+  await settle();
+  await settle();
+  expect(shown(store)).toEqual([
+    [1, "Message 1", "done"],
+    [2, "Message 2", "done"],
+    [3, "Hi.", "done"],
+  ]);
   store.disconnect();
 });
 

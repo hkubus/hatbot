@@ -536,6 +536,8 @@ export type HatbotEvent =
   | { type: "memory.committed"; sha: string; message: string; author: string }
   | { type: "proposal.updated"; proposal: Proposal }
   | { type: "paused"; paused: boolean }
+  /** The answer to a client's "ping": a browser can't ping a socket, to find one that died unclosed. */
+  | { type: "pong" }
   | { type: "task.updated"; task: Task }
   | { type: "task.step"; step: TaskStep }
   | { type: "task.progress"; taskId: number; text: string }

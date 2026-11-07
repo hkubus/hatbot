@@ -35,6 +35,8 @@ export class FakeSocket {
   onopen: ((e: unknown) => void) | null = null;
   onmessage: ((e: { data: string }) => void) | null = null;
   onclose: ((e: unknown) => void) | null = null;
+  /** What the app sent up the socket. */
+  sent: string[] = [];
   constructor(readonly url: string) {
     FakeSocket.all.push(this);
   }
@@ -43,6 +45,9 @@ export class FakeSocket {
   }
   emit(e: HatbotEvent) {
     this.onmessage?.({ data: JSON.stringify(e) });
+  }
+  send(data: string) {
+    this.sent.push(data);
   }
   close() {
     this.onclose?.({});

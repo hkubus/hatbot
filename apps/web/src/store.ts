@@ -1268,6 +1268,13 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
 let opened = false;
 let listening = false;
+/** Pings the open socket, unless it's been asked already. */
+let probe: (() => void) | null = null;
+
+// A proxy or a sleep can drop a socket without closing it, and only a ping finds out. A quiet one is
+// pinged, and one that doesn't answer is opened again.
+const QUIET_MS = 25_000;
+const PONG_MS = 10_000;
 
 export function connect() {
   stopped = false;
@@ -1285,11 +1292,42 @@ export function connect() {
   }
   const ws = openSocket("/stream");
   socket = ws;
+  probe = null;
   let wasOpen = false;
+  let heard = false;
+  let waiting: ReturnType<typeof setTimeout> | null = null;
+  let quiet: ReturnType<typeof setInterval> | null = null;
+  const lost = () => {
+    if (quiet) clearInterval(quiet);
+    if (waiting) clearTimeout(waiting);
+    socket = null;
+    probe = null;
+    set({ connected: false });
+    if (stopped) return;
+    // A refused socket looks the same whether the brain is down or you're signed out; ask which.
+    if (!wasOpen) void checkSignedIn();
+    retryTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** retry++));
+  };
+  const ping = () => {
+    if (ws !== socket || waiting) return;
+    ws.send("ping");
+    waiting = setTimeout(() => {
+      if (ws !== socket) return;
+      retry = 0;
+      lost();
+      ws.close();
+    }, PONG_MS);
+  };
   // A socket that's been replaced (StrictMode opens two) says nothing more.
   ws.onopen = () => {
     if (ws !== socket) return;
     wasOpen = true;
+    probe = ping;
+    quiet = setInterval(() => {
+      if (ws !== socket) return clearInterval(quiet ?? undefined);
+      if (!heard) ping();
+      heard = false;
+    }, QUIET_MS);
     void catchUp(opened);
     opened = true;
     retry = 0;
@@ -1298,6 +1336,9 @@ export function connect() {
   let first = true;
   ws.onmessage = (ev) => {
     if (ws !== socket) return;
+    heard = true;
+    if (waiting) clearTimeout(waiting);
+    waiting = null;
     const e = JSON.parse(ev.data) as HatbotEvent;
     if (first) {
       first = false;
@@ -1306,13 +1347,7 @@ export function connect() {
     apply(e);
   };
   ws.onclose = () => {
-    if (ws !== socket) return;
-    socket = null;
-    set({ connected: false });
-    if (stopped) return;
-    // A refused socket looks the same whether the brain is down or you're signed out; ask which.
-    if (!wasOpen) void checkSignedIn();
-    retryTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** retry++));
+    if (ws === socket) lost();
   };
 }
 
@@ -1321,8 +1356,10 @@ async function checkSignedIn() {
   if (me && !me.authenticated) window.dispatchEvent(new Event("hatbot:unauthorized"));
 }
 
+/** Opens the stream now if it's down; an open one is pinged, in case it died without closing. */
 export function reconnectNow() {
-  if (stopped || socket) return;
+  if (stopped) return;
+  if (socket) return probe?.();
   retry = 0;
   connect();
 }

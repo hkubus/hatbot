@@ -102,6 +102,9 @@ export const streamRoutes = new Hono<AppEnv>().get(
         batch = batchText(send);
         off = events.on(batch.push);
       },
+      onMessage(e, ws) {
+        if (e.data === "ping") ws.send(JSON.stringify({ type: "pong" } satisfies HatbotEvent));
+      },
       onClose() {
         off?.();
         batch?.stop();

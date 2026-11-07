@@ -91,3 +91,25 @@ test("the stream opens with what's live, so an app needn't ask: then paused, for
     brain.stop(true);
   }
 });
+
+test("the stream answers a ping, so a browser finds a socket that died without closing", async () => {
+  const t = await testApp();
+  const { cookie } = signIn(t);
+  const brain = Bun.serve({ port: 0, fetch: (req, srv) => t.app.fetch(req, srv), websocket });
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${brain.port}/api/v1/stream`, {
+      headers: { cookie, origin: ORIGIN },
+    } as unknown as string[]);
+    const pong = new Promise<void>((done) => {
+      ws.onmessage = (e) => {
+        const event = JSON.parse(String(e.data)) as HatbotEvent;
+        if (event.type === "paused") ws.send("ping");
+        if (event.type === "pong") done();
+      };
+    });
+    await pong;
+    ws.close();
+  } finally {
+    brain.stop(true);
+  }
+});
