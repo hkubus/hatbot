@@ -1,4 +1,4 @@
-import { describeEvery, HATBOT_ID } from "@hatbot/shared";
+import { describeEvery, HATBOT_ID, type Script } from "@hatbot/shared";
 import { useCallback, useEffect, useState } from "react";
 import { errorText } from "./api";
 import { plainText } from "./format";
@@ -10,7 +10,7 @@ import { Panel, Select } from "./ui";
 
 /** `missing` once everything has loaded without it, or it's been deleted. */
 export function useListed(
-  kind: "schedules" | "triggers" | "watchers",
+  kind: "schedules" | "triggers" | "watchers" | "scripts",
   id: number | null,
   stored: object | null | undefined,
 ) {
@@ -34,21 +34,21 @@ export function useListed(
 export function Runs({
   filter,
 }: {
-  filter: { scheduleId: number } | { triggerId: number } | { watcherId: number };
+  filter:
+    | { scheduleId: number }
+    | { triggerId: number }
+    | { watcherId: number }
+    | { scriptId: number };
 }) {
   const tasks = useStore((s) => s.tasks);
   const key = JSON.stringify(filter);
   const loaded = useLoad(() => loadTasks({ ...filter, view: "card" }), [key]);
+  const [field, id] = Object.entries(filter)[0] as [
+    "scheduleId" | "triggerId" | "watcherId" | "scriptId",
+    number,
+  ];
   const shown = Object.values(tasks)
-    .filter(
-      (t) =>
-        !t.parentId &&
-        ("scheduleId" in filter
-          ? t.scheduleId === filter.scheduleId
-          : "watcherId" in filter
-            ? t.watcherId === filter.watcherId
-            : t.triggerId === filter.triggerId),
-    )
+    .filter((t) => (field === "scriptId" || !t.parentId) && t[field] === id)
     .sort((a, b) => b.id - a.id)
     .slice(0, 20);
   if (!loaded.data && !loaded.error) return null;
@@ -80,6 +80,38 @@ export function BotPicker({ value, onChange }: { value: string; onChange: (id: s
         options={(ids.includes(value) ? ids : [...ids, value]).map(
           (id) => [id, bots[id]?.name ?? id] as const,
         )}
+        onChange={onChange}
+      />
+    </div>
+  );
+}
+
+/** What it runs: a task from what to do (0), or one of its bot's scripts. Shown once there are any. */
+export function ScriptPicker({
+  botId,
+  value,
+  onChange,
+}: {
+  botId: string;
+  value: number;
+  onChange: (id: number) => void;
+}) {
+  const scripts = useStore((s) => s.scripts);
+  const mine = Object.values(scripts)
+    .filter((x): x is Script => !!x && (x.botId === botId || x.id === value))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!mine.length && !value) return null;
+  return (
+    <div className="form-row">
+      <span className="label">Runs</span>
+      <Select
+        className="field"
+        label="Runs"
+        value={value}
+        options={[
+          [0, "A task"] as const,
+          ...mine.map((x) => [x.id, `The script ${x.name}`] as const),
+        ]}
         onChange={onChange}
       />
     </div>

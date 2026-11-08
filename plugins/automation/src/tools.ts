@@ -4,6 +4,7 @@ import {
   type CallContext,
   clip,
   type Place,
+  PluginError,
   type PluginTool,
   tool,
 } from "@hatbot/plugin-sdk";
@@ -26,7 +27,7 @@ import { conditionOf, describeLook, WatchError, type Watchers, watcherLine } fro
 
 type Parts = { schedules: Schedules; triggers: Triggers; watchers: Watchers } & Pick<
   Deps,
-  "bots" | "settings"
+  "bots" | "settings" | "scripts"
 >;
 
 const CHAT: Place[] = ["chat"];
@@ -37,7 +38,7 @@ const local = (iso: string | null) =>
 const cut = (s: string) => clip(s, 300);
 
 const scheduleLine = (s: Schedule) =>
-  `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  Does: ${s.prompt}`;
+  `#${s.id} "${s.name}": ${s.cron ? `${describeCron(s.cron)} (cron ${s.cron})` : `once, ${local(s.runAt)}`}; ${s.enabled ? `next run ${local(s.nextRunAt)}` : "off"}${s.lastRunAt ? `; last ran ${local(s.lastRunAt)}${s.lastTaskId ? ` (task #${s.lastTaskId})` : ""}` : ""}\n  ${s.scriptId ? `Runs script #${s.scriptId}` : `Does: ${s.prompt}`}`;
 
 /** All of the change, in words for its approval, since it all goes ahead once approved. */
 function changing(what: string, changes: string[]): string {
@@ -96,7 +97,20 @@ const watchFields = {
     .describe(
       "What to do when it counts, as a background task that's told the old and new value and can't see this conversation. Leave out to just tell the owner",
     ),
+  script: z
+    .string()
+    .optional()
+    .describe(
+      "Or one of your scripts to run when it counts, without a model, by name: it gets input.value and input.previous. An empty string takes it away",
+    ),
 };
+
+const scriptField = z
+  .string()
+  .optional()
+  .describe(
+    "Or one of your scripts to run instead of a prompt, by name: each run does its steps without a model. An empty string takes it away",
+  );
 
 const scheduleWhen = {
   cron: z
@@ -114,13 +128,16 @@ const CreateSchedule = z.object({
     .string()
     .min(1)
     .max(4000)
+    .optional()
     .describe("What each run does and when it should tell the owner, with every detail it needs"),
+  script: scriptField,
   ...scheduleWhen,
 });
 const UpdateSchedule = z.object({
   id: z.number().int(),
   name: z.string().min(1).max(80).optional(),
   prompt: z.string().min(1).max(4000).optional(),
+  script: scriptField,
   enabled: z.boolean().optional(),
   ...scheduleWhen,
 });
@@ -159,6 +176,14 @@ const UpdateTrigger = z.object({
 
 export function automationTools(p: Parts): PluginTool[] {
   const { schedules, triggers, watchers, bots } = p;
+  /** A script of the bot's by name: its id, null for "", or why there's none. */
+  const scriptOf = (name: string | undefined, call: CallContext): number | null | undefined => {
+    if (name === undefined) return undefined;
+    if (!name) return null;
+    const found = p.scripts()?.byName(call.bot?.id ?? HATBOT_ID, name);
+    if (!found) throw new PluginError(`You have no script called ${name}. See script_list.`);
+    return found.id;
+  };
   const untrustedAsks = () => p.settings.get().safety.untrusted;
   /** The bot was deleted while it wrote this reply: what it makes now would run as nobody's. */
   const gone = (call: CallContext) => Boolean(call.bot && !bots.active(call.bot.id));
@@ -221,11 +246,19 @@ export function automationTools(p: Parts): PluginTool[] {
       description:
         "Schedule a background task that runs on its own, repeating (cron) or once (at). Each run gets your memory and tools, can use the desktop, and reports back in this thread, with a notification when there's something to tell. Write `prompt` as complete instructions for that future run: it can't see this conversation. If the owner's timing is vague, ask before creating it. The owner sees it in Schedules, where they can change or turn it off.",
       schema: CreateSchedule,
-      run: async ({ name, prompt, cron, at }, call) => {
+      run: async ({ name, prompt, script, cron, at }, call) => {
         if (gone(call)) return BOT_GONE;
         if (Boolean(cron) === Boolean(at)) return "Give either cron or at.";
+        if (Boolean(prompt) === Boolean(script)) return "Give either a prompt or a script.";
         const s = schedules.create(
-          { name, prompt, cron, at, botId: call.bot?.id ?? HATBOT_ID },
+          {
+            name,
+            prompt,
+            scriptId: scriptOf(script, call),
+            cron,
+            at,
+            botId: call.bot?.id ?? HATBOT_ID,
+          },
           "chat",
           call.tainted?.() ?? null,
         );
@@ -252,8 +285,10 @@ export function automationTools(p: Parts): PluginTool[] {
       description:
         "Change a schedule: its name, what it does, its timing, or turn it on or off. Only the fields you give change.",
       schema: UpdateSchedule,
-      run: async ({ id, ...patch }, call) => {
-        if (patch.cron && patch.at) return "Give either cron or at, not both.";
+      run: async ({ id, script, ...fields }, call) => {
+        if (fields.cron && fields.at) return "Give either cron or at, not both.";
+        if (fields.prompt && script) return "Give either a prompt or a script, not both.";
+        const patch = { ...fields, scriptId: scriptOf(script, call) };
         const current = schedules.get(id);
         // On, it looks after something: after reading untrusted content, anything but switching it
         // on asks, since a new time or prompt can silence it as surely as switching it off. A new
@@ -268,6 +303,13 @@ export function automationTools(p: Parts): PluginTool[] {
               ...renamed,
               ...(patch.prompt !== undefined && patch.prompt !== current.prompt
                 ? [`make it do: ${cut(patch.prompt)}`]
+                : []),
+              ...(patch.scriptId !== undefined && patch.scriptId !== current.scriptId
+                ? [
+                    patch.scriptId
+                      ? `make it run the script ${script}`
+                      : "stop it running its script",
+                  ]
                 : []),
               ...(patch.cron !== undefined && patch.cron !== current.cron
                 ? [`run it ${describeCron(patch.cron).toLowerCase()}`]
@@ -321,6 +363,8 @@ export function automationTools(p: Parts): PluginTool[] {
         const condition = conditionOf(input);
         if (typeof condition === "string") return condition;
         const prompt = input.prompt?.trim() ?? "";
+        if (prompt && input.script) return "Give either a prompt or a script.";
+        const scriptId = scriptOf(input.script, call) ?? null;
         const source: WatchSource = {
           kind: input.url ? "page" : "tool",
           ...(input.url
@@ -337,6 +381,7 @@ export function automationTools(p: Parts): PluginTool[] {
               source,
               condition,
               prompt,
+              scriptId,
               everyMinutes: Math.max(minWatchMinutes(source), input.every_minutes ?? 60),
               once: input.once ?? false,
               enabled: true,
@@ -374,6 +419,8 @@ export function automationTools(p: Parts): PluginTool[] {
       run: async ({ id, ...input }, call) => {
         const w = watchers.get(id);
         if (!w) return `No watcher #${id}.`;
+        if (input.prompt && input.script) return "Give either a prompt or a script, not both.";
+        const scriptId = scriptOf(input.script, call);
         const condition = input.when ? conditionOf(input) : undefined;
         if (typeof condition === "string") return condition;
         if (input.render !== undefined && w.source.kind !== "page")
@@ -408,6 +455,13 @@ export function automationTools(p: Parts): PluginTool[] {
                       : "make it only tell the owner",
                   ]
                 : []),
+              ...(scriptId !== undefined && scriptId !== w.scriptId
+                ? [
+                    scriptId
+                      ? `make it run the script ${input.script}`
+                      : "stop it running its script",
+                  ]
+                : []),
               ...(condition ? [`count when it ${describeCondition(condition).toLowerCase()}`] : []),
               ...(source ? [`look at ${describeLook(source)}`] : []),
               ...(input.every_minutes !== undefined && input.every_minutes !== w.everyMinutes
@@ -433,6 +487,7 @@ export function automationTools(p: Parts): PluginTool[] {
               enabled: input.enabled,
               condition,
               prompt: input.prompt?.trim(),
+              scriptId,
               everyMinutes: every === undefined ? undefined : Math.max(min, every),
               once: input.once,
               source,

@@ -4,6 +4,7 @@ import type { Box } from "./box";
 import type { Negotiation } from "./negotiate";
 import type { PluginInfo } from "./plugin";
 import type { Schedule, Trigger } from "./schedule";
+import type { Script } from "./script";
 import { SecretValue } from "./secret";
 import type { Watcher } from "./watch";
 
@@ -15,6 +16,7 @@ export * from "./negotiate";
 export * from "./onboarding";
 export * from "./plugin";
 export * from "./schedule";
+export * from "./script";
 export * from "./search";
 export * from "./secret";
 export * from "./templates";
@@ -249,6 +251,8 @@ export type Task = {
   research: boolean;
   /** The plugin task runner it runs on, e.g. "research"; null for a task's own loop. */
   runner: string | null;
+  /** The script a script's run runs. */
+  scriptId: number | null;
   reportPath: string | null;
   /** The to-do item it works on, ticked off when it ends done. */
   todo: string | null;
@@ -554,6 +558,8 @@ export type HatbotEvent =
   | { type: "trigger.deleted"; id: number }
   | { type: "watcher.updated"; watcher: Watcher }
   | { type: "watcher.deleted"; id: number }
+  | { type: "script.updated"; script: Script }
+  | { type: "script.deleted"; id: number }
   | { type: "negotiation.updated"; negotiation: Negotiation }
   | { type: "box.updated"; box: Box }
   | { type: "box.deleted"; id: number }

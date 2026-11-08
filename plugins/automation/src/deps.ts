@@ -1,4 +1,4 @@
-import type { Db, Hosts, PluginStore, Sandbox } from "@hatbot/plugin-sdk";
+import type { Db, Hosts, PluginStore, Sandbox, ScriptsService } from "@hatbot/plugin-sdk";
 import { HATBOT_ID } from "@hatbot/shared";
 
 export const NEEDS = [
@@ -19,6 +19,8 @@ export const NEEDS = [
 export type Deps = Pick<Hosts, (typeof NEEDS)[number]> & {
   db: Db;
   desktop?: Sandbox;
+  /** Null while nothing gives them. */
+  scripts: () => ScriptsService | null;
   store: PluginStore;
   publicUrl: string;
   clock: () => number;

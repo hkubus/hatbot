@@ -38,6 +38,8 @@ export type Watcher = {
   condition: WatchCondition;
   /** What the bot does when it counts, as a background task. Empty: you're only told. */
   prompt: string;
+  /** Runs this script when it counts instead, with the value and the one before as input. */
+  scriptId: number | null;
   everyMinutes: number;
   /** Switches itself off after the first time it counts. */
   once: boolean;
@@ -105,6 +107,7 @@ const fields = {
   source: WatchSourceInput,
   condition: WatchConditionInput,
   prompt: z.string().trim().max(4000),
+  scriptId: z.number().int().positive().nullable(),
   everyMinutes: z.number().int().min(MIN_WATCH_MINUTES).max(MAX_WATCH_MINUTES),
   once: z.boolean(),
   enabled: z.boolean(),
@@ -115,6 +118,7 @@ export const CreateWatcher = z.object({
   ...fields,
   condition: fields.condition.default({ when: "changed" }),
   prompt: fields.prompt.default(""),
+  scriptId: fields.scriptId.default(null),
   everyMinutes: fields.everyMinutes.default(60),
   once: fields.once.default(false),
   enabled: fields.enabled.default(true),

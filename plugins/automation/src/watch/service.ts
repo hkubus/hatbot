@@ -44,7 +44,8 @@ export type WatchersDeps = Pick<
   | "desktop"
   | "plugins"
   | "bots"
-> & { publicUrl: string; clock?: () => number };
+> &
+  Partial<Pick<Deps, "scripts">> & { publicUrl: string; clock?: () => number };
 
 type Row = {
   id: number;
@@ -53,6 +54,7 @@ type Row = {
   source: string;
   condition: string;
   prompt: string;
+  script_id: number | null;
   every_minutes: number;
   once: number;
   enabled: number;
@@ -80,6 +82,7 @@ const toWatcher = (r: Row): Watcher => ({
   source: JSON.parse(r.source),
   condition: JSON.parse(r.condition),
   prompt: r.prompt,
+  scriptId: r.script_id,
   everyMinutes: r.every_minutes,
   once: Boolean(r.once),
   enabled: Boolean(r.enabled),
@@ -158,24 +161,27 @@ export class Watchers {
    * than on every check.
    */
   async create(
-    input: z.output<typeof CreateWatcher>,
+    input: Omit<z.output<typeof CreateWatcher>, "scriptId"> & { scriptId?: number | null },
     via: "chat" | "owner",
     taintedBy: string | null = null,
   ): Promise<Watcher> {
     taintedBy = via === "chat" ? taintedBy : null;
     oftenEnough(input.source, input.everyMinutes);
+    const scriptId = input.scriptId ?? null;
+    this.checkScript(scriptId, input.botId);
     const first = await this.read(input.source, input.botId);
     const row = this.d.db
       .query<{ id: number }, (string | number | null)[]>(
-        `INSERT INTO watchers (bot_id, name, source, condition, prompt, every_minutes, once, enabled, created_via, tainted, tainted_by, created_at, next_check_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO watchers (bot_id, name, source, condition, prompt, script_id, every_minutes, once, enabled, created_via, tainted, tainted_by, created_at, next_check_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.botId,
         input.name,
         saved(input.source),
         JSON.stringify(input.condition),
-        input.prompt,
+        scriptId ? "" : input.prompt,
+        scriptId,
         input.everyMinutes,
         input.once ? 1 : 0,
         input.enabled ? 1 : 0,
@@ -201,13 +207,22 @@ export class Watchers {
     if (!w) return null;
     const source = patch.source ?? w.source;
     const botId = patch.botId ?? w.botId;
+    // A prompt and a script take each other's place.
+    const scriptId = patch.prompt
+      ? null
+      : patch.scriptId !== undefined
+        ? patch.scriptId
+        : w.scriptId;
+    const prompt = scriptId ? "" : (patch.prompt ?? w.prompt);
+    this.checkScript(scriptId, botId);
     const every = patch.everyMinutes ?? w.everyMinutes;
     oftenEnough(source, every);
     const sourceChanged = patch.source && saved(patch.source) !== saved(w.source);
     const first = sourceChanged ? await this.read(source, botId) : null;
     const enabled = patch.enabled ?? w.enabled;
     // What it does or where it looks: yours to trust again.
-    const rewritten = patch.prompt !== undefined || patch.source !== undefined;
+    const rewritten =
+      patch.prompt !== undefined || patch.scriptId !== undefined || patch.source !== undefined;
     const tainted =
       by.via === "owner" ? !rewritten && w.tainted : Boolean(by.taintedBy) || w.tainted;
     const taintedBy = tainted
@@ -222,7 +237,7 @@ export class Watchers {
     const next = !enabled ? null : recount || every !== w.everyMinutes ? this.now() : w.nextCheckAt;
     this.d.db
       .query(
-        `UPDATE watchers SET name = ?, bot_id = ?, source = ?, condition = ?, prompt = ?, every_minutes = ?, once = ?,
+        `UPDATE watchers SET name = ?, bot_id = ?, source = ?, condition = ?, prompt = ?, script_id = ?, every_minutes = ?, once = ?,
          enabled = ?, tainted = ?, tainted_by = ?, next_check_at = ?,
          last_value = CASE WHEN ? THEN NULL ELSE last_value END, errors = CASE WHEN ? THEN 0 ELSE errors END,
          last_error = CASE WHEN ? THEN NULL ELSE last_error END,
@@ -233,7 +248,8 @@ export class Watchers {
         botId,
         saved(source),
         JSON.stringify(patch.condition ?? w.condition),
-        patch.prompt ?? w.prompt,
+        prompt,
+        scriptId,
         every,
         (patch.once ?? w.once) ? 1 : 0,
         enabled ? 1 : 0,
@@ -253,6 +269,14 @@ export class Watchers {
     if (!updated) return null;
     if (first) await this.saw(updated, first.value, first.untrusted);
     return this.changed(id);
+  }
+
+  /** A script it runs is its bot's own. */
+  private checkScript(scriptId: number | null, botId: string) {
+    if (!scriptId) return;
+    const script = this.d.scripts?.()?.get(scriptId);
+    if (!script || script.botId !== botId)
+      throw new WatchError(`${this.d.bots.nameOf(botId)} has no such script.`);
   }
 
   trust(id: number): Watcher | null {
@@ -433,7 +457,23 @@ export class Watchers {
       previous === null
         ? `Now: ${value}`
         : `Was: ${short(previous, 1500)}\nNow: ${short(value, 1500)}`;
-    if (w.prompt) {
+    const script = w.scriptId ? this.d.scripts?.()?.get(w.scriptId) : null;
+    if (script) {
+      const task = this.d.scripts?.()?.start(script, {
+        origin: "watch",
+        source: w.name,
+        watcherId: w.id,
+        runKey: `watch:${w.id}`,
+        input: { value, previous },
+        taintedBy: untrusted
+          ? `What the watcher "${w.name}" saw`
+          : w.tainted
+            ? `Its watcher, which the chat wrote after reading: ${w.taintedBy ?? "untrusted content"}`
+            : null,
+      });
+      if (task) return;
+      console.log(`watcher ${w.id} "${w.name}": its script's last run is still going`);
+    } else if (w.prompt) {
       const task = this.d.tasks.createBackgroundTask({
         title: w.name,
         goal: w.prompt,
@@ -578,7 +618,7 @@ export function watcherLine(w: Watcher, untrusted = false): string {
   return [
     `#${w.id} "${w.name}": ${describeLook(w.source)}; when it ${describeCondition(w.condition).toLowerCase()}; every ${w.everyMinutes} min${w.once ? ", once" : ""}${w.enabled ? "" : "; off"}`,
     `  Now: ${w.lastError ? `failing: ${w.lastError}` : w.lastValue === null ? "not checked yet" : untrusted ? `<value trusted="false">${tagJson(short(w.lastValue, 200))}</value>` : short(w.lastValue, 200)}${w.lastFiredAt ? `; last counted ${w.lastFiredAt.slice(0, 16).replace("T", " ")} UTC` : ""}`,
-    `  ${w.prompt ? `Does: ${w.prompt}` : "Tells the owner."}`,
+    `  ${w.scriptId ? `Runs script #${w.scriptId}.` : w.prompt ? `Does: ${w.prompt}` : "Tells the owner."}`,
   ].join("\n");
 }
 

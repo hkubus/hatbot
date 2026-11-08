@@ -10,6 +10,8 @@ export type Schedule = {
   runAt: string | null;
   /** What the run does: instructions for a background task that can't see the chat. */
   prompt: string;
+  /** Runs this script instead, without the model; `prompt` is then empty. */
+  scriptId: number | null;
   enabled: boolean;
   createdVia: "chat" | "owner";
   createdAt: string;
@@ -35,19 +37,24 @@ const when = {
 
 const botId = z.string().regex(BOT_ID);
 
+const scriptId = z.number().int().positive().nullable();
+
 export const CreateSchedule = z
   .object({
     name,
-    prompt,
+    prompt: prompt.optional(),
+    scriptId: scriptId.default(null),
     enabled: z.boolean().default(true),
     botId: botId.default("hatbot"),
     ...when,
   })
-  .refine((s) => Boolean(s.cron) !== Boolean(s.at), "set either cron or at");
+  .refine((s) => Boolean(s.cron) !== Boolean(s.at), "set either cron or at")
+  .refine((s) => Boolean(s.prompt) !== Boolean(s.scriptId), "set either a prompt or a script");
 export const UpdateSchedule = z
-  .object({ name, prompt, enabled: z.boolean(), botId, ...when })
+  .object({ name, prompt, scriptId, enabled: z.boolean(), botId, ...when })
   .partial()
-  .refine((s) => !(s.cron && s.at), "set either cron or at");
+  .refine((s) => !(s.cron && s.at), "set either cron or at")
+  .refine((s) => !(s.prompt && s.scriptId), "set either a prompt or a script");
 
 export type TriggerKind = "webhook" | "kuma";
 

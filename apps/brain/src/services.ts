@@ -52,6 +52,9 @@ import { DeadManPing } from "./ping";
 import { Installer } from "./plugins/installer";
 import { Plugins } from "./plugins/registry";
 import { Questions } from "./questions";
+import { scriptsPlugin } from "./scripts/plugin";
+import { Repeats } from "./scripts/repeats";
+import { ScriptStore } from "./scripts/store";
 import { fillSecrets, Secrets } from "./secrets";
 import { SettingsStore } from "./settings";
 import { requestCeiling, Spend } from "./spend";
@@ -107,6 +110,8 @@ export async function createServices(o: Outside) {
   const archive = new Archive(config.archiveDir, clock);
   const attachments = new Attachments({ db, archive, events }, clock);
   const storage = new Storage({ db, archive, clock });
+  const scripts = new ScriptStore(db, events, clock);
+  const repeats = new Repeats(db, scripts, clock);
   const files = {
     attachments,
     screens: {
@@ -133,6 +138,7 @@ export async function createServices(o: Outside) {
     researchPlugin,
     boxesPlugin(o.hatbox),
     secretsPlugin(secrets),
+    scriptsPlugin(() => ({ store: scripts, tasks, bots, events })),
     ...corePlugins(() => ({
       db,
       clock,
@@ -305,6 +311,7 @@ export async function createServices(o: Outside) {
     approvals,
     attachments,
     negotiations,
+    repeats,
   });
 
   const updates = new Updates(config, clock);
@@ -370,6 +377,7 @@ export async function createServices(o: Outside) {
     proxmox,
     checks,
     secrets,
+    scripts,
   };
   return { ...services, app: createApp(services) };
 }

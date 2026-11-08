@@ -54,6 +54,7 @@ import {
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
+import type { Repeats } from "../scripts/repeats";
 import type { SettingsStore } from "../settings";
 import { priceOf, requestCeiling, type Spend, searchesIn, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
@@ -205,6 +206,8 @@ export type ThreadDeps = {
   approvals?: Approvals;
   negotiations?: Negotiations;
   attachments?: Attachments;
+  /** Notices a bot doing the same for you again, to offer a script. */
+  repeats?: Repeats;
   db: Db;
   memory: MemoryStore;
   events: EventBus;
@@ -2053,7 +2056,11 @@ export class Thread {
     const cited: Source[] = [];
     const fetched = new Map<string, string>();
     let choices: string[][] = [];
+    // The plugins' tools this reply to you called, to notice it doing the same again.
+    const called: string[] = [];
+    const repeats = user && !this.currentHandoff && !incognito ? this.d.repeats : undefined;
     const finish = (status: "done" | "error", note?: string): Said => {
+      if (status === "done") repeats?.record(bot.id, called);
       // A chart being fixed is out of view; the reply ends with what's shown.
       chartFix = null;
       // A task's reply that came to nothing still says how the task went.
@@ -2458,6 +2465,13 @@ export class Thread {
           });
           return toolResult(call.id, r.content, r.isError, r.images);
         });
+        if (repeats) {
+          for (const call of toolUses)
+            if (plugins.pluginOf(call.name) && !plugins.pluginOf(call.name)?.internal)
+              called.push(call.name);
+          const offer = repeats.offer(bot.id, called);
+          if (offer) results.push({ type: "text", text: offer });
+        }
         this.appendTurn(episode.id, bot.id, "user", results);
       }
     } catch (err) {

@@ -108,6 +108,7 @@ const VIEW_OF: Record<string, string> = {
   read: "/memory",
   triggers: "/schedules",
   watchers: "/schedules",
+  scripts: "/schedules",
 };
 const viewOf = (path: string) => {
   const first = path.split("/")[1] ?? "";
@@ -137,8 +138,8 @@ function subTitle(s: ReturnType<typeof getState>, path: string) {
   if (SUB_TITLE[path]) return SUB_TITLE[path];
   const plugin = /^\/settings\/plugins\/([a-z0-9]+)$/.exec(path)?.[1];
   if (plugin) return s.plugins[plugin]?.name;
-  const m = /^\/(schedules|triggers|watchers)\/(\d+)$/.exec(path);
-  if (m) return s[m[1] as "schedules" | "triggers" | "watchers"][Number(m[2])]?.name;
+  const m = /^\/(schedules|triggers|watchers|scripts)\/(\d+)$/.exec(path);
+  if (m) return s[m[1] as "schedules" | "triggers" | "watchers" | "scripts"][Number(m[2])]?.name;
 }
 
 export function App() {

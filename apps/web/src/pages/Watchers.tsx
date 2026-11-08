@@ -17,6 +17,7 @@ import {
   EverySelect,
   OnPanel,
   Runs,
+  ScriptPicker,
   TaintedNote,
   useListed,
 } from "../automations";
@@ -64,6 +65,7 @@ type Form = {
   everyMinutes: number;
   once: boolean;
   prompt: string;
+  scriptId: number;
   botId: string;
 };
 
@@ -84,6 +86,7 @@ export const blank: Form = {
   everyMinutes: 60,
   once: false,
   prompt: "",
+  scriptId: 0,
   botId: HATBOT_ID,
 };
 
@@ -104,6 +107,7 @@ const formOf = (w: Watcher): Form => ({
   everyMinutes: w.everyMinutes,
   once: w.once,
   prompt: w.prompt,
+  scriptId: w.scriptId ?? 0,
   botId: w.botId,
 });
 
@@ -145,7 +149,8 @@ export function bodyOf(f: Form): { source: WatchSource; condition: WatchConditio
 
 const fieldsOf = (f: Form) => ({
   name: f.name.trim(),
-  prompt: f.prompt.trim(),
+  prompt: f.scriptId ? "" : f.prompt.trim(),
+  scriptId: f.scriptId || null,
   everyMinutes: f.everyMinutes,
   once: f.once,
   botId: f.botId,
@@ -486,18 +491,25 @@ export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) 
             <span className="label">Turn off after it counts</span>
             <Switch on={form.once} onChange={(once) => set({ once })} />
           </div>
-          <label>
-            <span className="label">What to do, optional</span>
-            <textarea
-              className="field"
-              rows={4}
-              maxLength={4000}
-              value={form.prompt}
-              placeholder="Leave empty to just be told. Or: Check whether it ships to Germany and tell me the total."
-              onChange={(e) => set({ prompt: e.target.value })}
-            />
-          </label>
-          <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
+          <ScriptPicker
+            botId={form.botId}
+            value={form.scriptId}
+            onChange={(scriptId) => set({ scriptId })}
+          />
+          {!form.scriptId && (
+            <label>
+              <span className="label">What to do, optional</span>
+              <textarea
+                className="field"
+                rows={4}
+                maxLength={4000}
+                value={form.prompt}
+                placeholder="Leave empty to just be told. Or: Check whether it ships to Germany and tell me the total."
+                onChange={(e) => set({ prompt: e.target.value })}
+              />
+            </label>
+          )}
+          <BotPicker value={form.botId} onChange={(botId) => set({ botId, scriptId: 0 })} />
           {stored?.tainted && (
             <TaintedNote
               taintedBy={stored.taintedBy}
@@ -547,7 +559,7 @@ export function WatcherEdit({ id, toast }: { id: number | null; toast: Toast }) 
             </div>
           </Panel>
         )}
-        {stored?.prompt && <Runs filter={{ watcherId: stored.id }} />}
+        {(stored?.prompt || stored?.scriptId) && <Runs filter={{ watcherId: stored.id }} />}
       </div>
     </section>
   );

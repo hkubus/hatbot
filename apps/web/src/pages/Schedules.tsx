@@ -9,7 +9,15 @@ import {
 import { type ReactNode, useState } from "react";
 import { useAction } from "../action";
 import { api, errorText } from "../api";
-import { BotPicker, deleteText, OnPanel, Runs, TaintedNote, useListed } from "../automations";
+import {
+  BotPicker,
+  deleteText,
+  OnPanel,
+  Runs,
+  ScriptPicker,
+  TaintedNote,
+  useListed,
+} from "../automations";
 import { ask, useLeaveGuard } from "../confirm";
 import { Copyable } from "../copy";
 import { useStoredForm } from "../form";
@@ -33,6 +41,7 @@ import type { Toast } from "../toast";
 import { BackHead, Group, LinkRow, Panel, SaveBar, Seg } from "../ui";
 import { BuiltInGroup } from "./BuiltIn";
 import { HeartbeatPage } from "./Heartbeat";
+import { patchScript, ScriptEdit } from "./Scripts";
 import { patchWatcher, trouble, WatcherEdit } from "./Watchers";
 
 const KIND = { webhook: "Webhook", kuma: "Uptime Kuma" } as const;
@@ -53,9 +62,11 @@ export function SchedulesView({
   toast: Toast;
 }) {
   if (path === "/schedules/heartbeat") return <HeartbeatPage toast={toast} />;
-  const m = /^\/(schedules|triggers|watchers)\/(new|\d+)$/.exec(path);
+  const m = /^\/(schedules|triggers|watchers|scripts)\/(new|\d+)$/.exec(path);
   if (!m) return <List toast={toast} />;
   const id = m[2] === "new" ? null : Number(m[2]);
+  if (m[1] === "scripts")
+    return id === null ? <List toast={toast} /> : <ScriptEdit key={path} id={id} toast={toast} />;
   if (m[1] === "watchers") return <WatcherEdit key={path} id={id} toast={toast} />;
   return m[1] === "schedules" ? (
     <ScheduleEdit key={path} id={id} toast={toast} />
@@ -75,6 +86,7 @@ function List({ toast }: { toast: Toast }) {
   const schedules = useStore((s) => s.schedules);
   const triggers = useStore((s) => s.triggers);
   const watchers = useStore((s) => s.watchers);
+  const scripts = useStore((s) => s.scripts);
 
   return (
     <section className="view">
@@ -118,6 +130,15 @@ function List({ toast }: { toast: Toast }) {
               bad={(w) => !!w.lastError && w.errors > 0}
               toggle={(w, enabled) => patchWatcher(w.id, { enabled })}
               empty="None yet. Add one here, or ask Hatbot in chat."
+              onError={setError}
+            />
+            <RoutineGroup
+              title="Scripts"
+              items={scripts}
+              path="/scripts"
+              value={(x) => (x.enabled ? x.description : "Off")}
+              toggle={(x, enabled) => patchScript(x.id, { enabled })}
+              empty="None yet. Ask Hatbot in chat to save one."
               onError={setError}
             />
             <RoutineGroup
@@ -190,6 +211,7 @@ const NEW_SCHEDULE = {
   cron: "0 8 * * *",
   at: "",
   prompt: "",
+  scriptId: 0,
   botId: HATBOT_ID,
 };
 
@@ -199,6 +221,7 @@ const scheduleForm = (s: Schedule): typeof NEW_SCHEDULE => ({
   cron: s.cron ?? "0 8 * * *",
   at: s.runAt ? localInput(s.runAt) : "",
   prompt: s.prompt,
+  scriptId: s.scriptId ?? 0,
   botId: s.botId,
 });
 
@@ -235,13 +258,14 @@ function ScheduleEdit({ id, toast }: { id: number | null; toast: Toast }) {
   const changed = !stored || stored.tainted || edited;
   const cron = form.cron.trim();
   const described = form.repeat ? describeCron(cron) : "";
+  const does = form.scriptId ? { scriptId: form.scriptId } : { prompt: form.prompt };
 
   const save = () =>
     run(async () => {
       if (stored) {
         const s = await saveSchedule(stored.id, {
           name: form.name,
-          prompt: form.prompt,
+          ...does,
           botId: form.botId,
           ...when,
           ...(!stored.enabled && !stored.cron ? { enabled: true } : {}),
@@ -250,7 +274,7 @@ function ScheduleEdit({ id, toast }: { id: number | null; toast: Toast }) {
         toast("Saved");
       } else {
         const s = await api<Schedule>("/schedules", {
-          body: { name: form.name, prompt: form.prompt, botId: form.botId, ...when },
+          body: { name: form.name, ...does, botId: form.botId, ...when },
         });
         putSchedule(s);
         release();
@@ -361,18 +385,25 @@ function ScheduleEdit({ id, toast }: { id: number | null; toast: Toast }) {
               />
             </label>
           )}
-          <label>
-            <span className="label">What to do</span>
-            <textarea
-              className="field"
-              rows={5}
-              maxLength={4000}
-              value={form.prompt}
-              placeholder="Check whether the Framework 16 is in stock in the EU store. Tell me only if it is."
-              onChange={(e) => set({ prompt: e.target.value })}
-            />
-          </label>
-          <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
+          <ScriptPicker
+            botId={form.botId}
+            value={form.scriptId}
+            onChange={(scriptId) => set({ scriptId })}
+          />
+          {!form.scriptId && (
+            <label>
+              <span className="label">What to do</span>
+              <textarea
+                className="field"
+                rows={5}
+                maxLength={4000}
+                value={form.prompt}
+                placeholder="Check whether the Framework 16 is in stock in the EU store. Tell me only if it is."
+                onChange={(e) => set({ prompt: e.target.value })}
+              />
+            </label>
+          )}
+          <BotPicker value={form.botId} onChange={(botId) => set({ botId, scriptId: 0 })} />
           {stored?.tainted && (
             <TaintedNote
               taintedBy={stored.taintedBy}
@@ -388,7 +419,9 @@ function ScheduleEdit({ id, toast }: { id: number | null; toast: Toast }) {
           )}
           <SaveBar
             error={error}
-            disabled={busy || !changed || !form.name.trim() || !form.prompt.trim()}
+            disabled={
+              busy || !changed || !form.name.trim() || (!form.scriptId && !form.prompt.trim())
+            }
             onSave={save}
             label={stored ? "Save" : "Create"}
           />

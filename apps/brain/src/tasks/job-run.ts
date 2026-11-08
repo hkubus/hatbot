@@ -94,7 +94,7 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
     const job = task.runner ? d.plugins.job(task.runner) : null;
     if (!job)
       throw new Stop("failed", `Stopped: the plugin that runs "${task.runner}" tasks is off.`);
-    const summary = await job.run({
+    const ran = await job.run({
       task,
       input: tasks.jobOf(id),
       signal,
@@ -104,7 +104,8 @@ export async function runJob(tasks: Tasks, id: number, signal: AbortSignal): Pro
       progress: tasks.progress(id),
       reply: () => replyOf(tasks, id),
     });
-    tasks.finish(id, "done", summary);
+    const { summary, notify } = typeof ran === "string" ? { summary: ran, notify: true } : ran;
+    tasks.finish(id, "done", summary, notify);
   } catch (err) {
     const ended =
       !signal.aborted && err instanceof JobStop

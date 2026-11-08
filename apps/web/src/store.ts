@@ -20,6 +20,7 @@ import {
   type Proposal,
   type Question,
   type Schedule,
+  type Script,
   type Seen,
   type Snapshot,
   type SpendSummary,
@@ -74,6 +75,7 @@ type State = {
   schedules: Record<number, Schedule | null>;
   triggers: Record<number, Trigger | null>;
   watchers: Record<number, Watcher | null>;
+  scripts: Record<number, Script | null>;
   /** The open ones, and any a chat or page has shown. */
   negotiations: Record<number, Negotiation>;
   negotiationMessages: Record<number, NegotiationMessage[]>;
@@ -135,6 +137,7 @@ let state: State = {
   schedules: {},
   triggers: {},
   watchers: {},
+  scripts: {},
   negotiations: {},
   negotiationMessages: {},
   boxes: {},
@@ -561,6 +564,7 @@ export async function loadTasks(
     scheduleId?: number;
     triggerId?: number;
     watcherId?: number;
+    scriptId?: number;
     ids?: number[];
     view?: "card";
   } = {},
@@ -578,18 +582,21 @@ export async function loadTasks(
 }
 
 export async function loadSchedules() {
-  const [schedules, triggers, watchers] = await Promise.all([
+  const [schedules, triggers, watchers, scripts] = await Promise.all([
     api<Schedule[]>("/schedules"),
     api<Trigger[]>("/triggers"),
     api<Watcher[]>("/watchers"),
+    api<Script[]>("/scripts"),
   ]);
   merge("schedules", schedules);
   merge("triggers", triggers);
   merge("watchers", watchers);
+  merge("scripts", scripts);
   return {
     schedules: schedules.map((s) => s.id),
     triggers: triggers.map((t) => t.id),
     watchers: watchers.map((w) => w.id),
+    scripts: scripts.map((x) => x.id),
   };
 }
 
@@ -671,6 +678,7 @@ async function refreshProposals() {
 export const putSchedule = (s: Schedule) => put("schedules", s.id, s);
 export const putTrigger = (t: Trigger) => put("triggers", t.id, t);
 export const putWatcher = (w: Watcher) => put("watchers", w.id, w);
+export const putScript = (x: Script) => put("scripts", x.id, x);
 export async function loadNegotiation(id: number) {
   const d = await api<NegotiationDetail>(`/negotiations/${id}`);
   put("negotiations", id, d.negotiation);
@@ -1104,6 +1112,10 @@ function apply(e: HatbotEvent) {
       return putWatcher(e.watcher);
     case "watcher.deleted":
       return put("watchers", e.id, null);
+    case "script.updated":
+      return putScript(e.script);
+    case "script.deleted":
+      return put("scripts", e.id, null);
     case "negotiation.updated":
       // An open page shows every message, which the event doesn't carry.
       if (state.negotiationMessages[e.negotiation.id])
@@ -1225,7 +1237,8 @@ async function catchUp(reconnected: boolean) {
   if (
     Object.keys(state.schedules).length ||
     Object.keys(state.triggers).length ||
-    Object.keys(state.watchers).length
+    Object.keys(state.watchers).length ||
+    Object.keys(state.scripts).length
   )
     void loadSchedules().catch(() => {});
   // A card in the chat whose one fetch failed tries again.
