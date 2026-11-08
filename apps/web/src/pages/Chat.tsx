@@ -88,8 +88,6 @@ import {
 import { Empty, Group, LinkRow } from "../ui";
 import { splitWaiting } from "../waiting";
 
-const SEEN_AFTER_MS = 1500;
-
 const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
 const DAY_YEAR = new Intl.DateTimeFormat("en-GB", {
   weekday: "long",
@@ -1207,42 +1205,24 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
     return () => ro.disconnect();
   }, []);
 
-  // An unread message that has been on screen for a moment, with the window in front, is seen; so is
-  // all of the chat once its bottom has been, the messages not loaded too. One timer, so a change to
-  // the unread list doesn't start the moment again.
+  // Open with the window in front, the chat is read: all of it, the messages not loaded too. What was
+  // unread when you came stays in view in its fold until you leave.
+  const looking = useLooking();
+  const [kept, setKept] = useState<Set<number>>(() => new Set());
+  const sent = useRef("");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: starts over in another chat
+  useEffect(() => setKept(new Set()), [id]);
   useEffect(() => {
-    let since = new Map<number, number>();
-    let bottomSince = 0;
-    let sent = "";
-    const timer = setInterval(() => {
-      const el = scroller.current;
-      if (!el || document.visibilityState !== "visible" || !document.hasFocus()) {
-        bottomSince = 0;
-        since = new Map();
-        return;
-      }
-      const s = getState();
-      const view = el.getBoundingClientRect();
-      const now = Date.now();
-      const shown = new Map<number, number>();
-      for (const id of s.unread) {
-        const r = el.querySelector(`[data-id="${id}"]`)?.getBoundingClientRect();
-        if (r && r.top < view.bottom && r.bottom > view.top) shown.set(id, since.get(id) ?? now);
-      }
-      since = shown;
-      const seen = [...since].filter(([, t]) => now - t >= SEEN_AFTER_MS).map(([id]) => id);
-      const chat = side ? s.threads[id] : s.conversations.find((c) => c.id === id);
-      const last = listed(side).at(-1);
-      const key = `${last?.id}:${chat?.unread}`;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      if (!atBottom || !last || !chat?.unread || incognito || key === sent) bottomSince = 0;
-      else bottomSince ||= now;
-      const through = bottomSince && now - bottomSince >= SEEN_AFTER_MS ? last?.id : undefined;
-      if (through) sent = key;
-      if (seen.length || through) markSeen(seen, through);
-    }, 500);
-    return () => clearInterval(timer);
-  }, [id, side, incognito]);
+    if (!ready || !looking || incognito) return;
+    const here = messages.filter((m) => m.conversationId === id);
+    const last = here.at(-1)?.id;
+    const mine = here.filter((m) => unread.includes(m.id)).map((m) => m.id);
+    const key = `${last}:${chat?.unread}:${mine}`;
+    if (!last || (!mine.length && !chat?.unread) || key === sent.current) return;
+    sent.current = key;
+    if (mine.length) setKept((k) => new Set([...k, ...mine]));
+    markSeen(mine, last);
+  }, [ready, looking, incognito, id, unread, chat?.unread, messages]);
 
   const lastTop = useRef(0);
   const onScroll = () => {
@@ -1366,7 +1346,7 @@ function ChatPane({ id, side = false }: { id: number; side?: boolean }) {
               const id = g.episodeId;
               const open = unfolded.has(id);
               // A message you haven't seen stays in view.
-              const waiting = g.messages.filter((m) => unread.includes(m.id));
+              const waiting = g.messages.filter((m) => unread.includes(m.id) || kept.has(m.id));
               const first = rows[rowOf.get(g.messages[0] as ThreadMessage) as number];
               const day = first ? dayOf(first.label) : null;
               return (
@@ -1447,6 +1427,23 @@ export function spoken(m: ThreadMessage, name: string): string {
 }
 
 const NONE: ThreadMessage[] = [];
+const isLooking = () => document.visibilityState === "visible" && document.hasFocus();
+function useLooking() {
+  const [on, setOn] = useState(isLooking);
+  useEffect(() => {
+    const f = () => setOn(isLooking());
+    window.addEventListener("focus", f);
+    window.addEventListener("blur", f);
+    document.addEventListener("visibilitychange", f);
+    return () => {
+      window.removeEventListener("focus", f);
+      window.removeEventListener("blur", f);
+      document.removeEventListener("visibilitychange", f);
+    };
+  }, []);
+  return on;
+}
+
 const listed = (side: boolean) =>
   side ? (getState().side?.messages ?? NONE) : getState().messages;
 
