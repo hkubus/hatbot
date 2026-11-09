@@ -26,7 +26,7 @@ import { describeCall, offered, runPluginTool } from "../plugins/registry";
 import { requestCeiling } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { HELPER_PROMPT } from "./prompt";
-import { imageBlocks, liveTool } from "./tools";
+import { imageBlocks, liveTool, startEarly } from "./tools";
 import { tagText } from "./untrusted";
 
 export const MAX_HELPERS = 5;
@@ -215,6 +215,38 @@ async function runHelper(c: HelperCall, part: Part, offeredTools: PluginTool[]):
         episodeId: c.episodeId,
         botId: c.bot.id,
       });
+    const run = async (
+      call: Anthropic.Beta.BetaToolUseBlock,
+    ): Promise<Anthropic.Beta.BetaContentBlockParam> => {
+      const error = (content: string) =>
+        ({ type: "tool_result", tool_use_id: call.id, content, is_error: true }) as const;
+      const found = offeredTools.find((t) => t.name === call.name);
+      if (!found) return error(`Unknown tool "${call.name}".`);
+      const now = c.tasks.d.bots.get(c.bot.id) ?? c.bot;
+      const t = liveTool(
+        found,
+        c.tasks.d.plugins.tools(now.plugins, c.tasks.d.bots.leftToOthers(now)),
+        {
+          bot: c.bot.name,
+          since: "since the helper started",
+          onlyLooks: ONLY_LOOKS,
+        },
+      );
+      if (typeof t === "string") return error(t);
+      const what = describeCall(t, call.input);
+      step(c, t.name, `${part.topic}: ${what}`);
+      const r = await runPluginTool(t, call.input, cc, c.tasks.d.plugins.hideSecrets);
+      if (r.untrusted) untrusted.push(what);
+      return {
+        type: "tool_result",
+        tool_use_id: call.id,
+        content: r.images?.length
+          ? [{ type: "text", text: r.content }, ...imageBlocks(r.images)]
+          : r.content,
+        ...(r.isError ? { is_error: true } : {}),
+      };
+    };
+    const early = startEarly((call) => call.name !== "report", run);
     let res: Anthropic.Beta.BetaMessage;
     try {
       res = await d.model.stream(
@@ -244,7 +276,12 @@ async function runHelper(c: HelperCall, part: Part, offeredTools: PluginTool[]):
           ...(container ? { container } : {}),
           messages,
         },
-        { signal: c.signal, onFailedUsage: record },
+        {
+          signal: c.signal,
+          onFailedUsage: record,
+          onBlock: early.onBlock,
+          onRetry: early.onRetry,
+        },
       );
     } finally {
       release();
@@ -259,6 +296,7 @@ async function runHelper(c: HelperCall, part: Part, offeredTools: PluginTool[]):
       step(c, "web", `${part.topic}: ${read}`);
       untrusted.push(read);
     }
+    if (res.stop_reason !== "tool_use") await early.settled();
     paused = res.stop_reason === "pause_turn";
     if (paused) continue;
     if (res.stop_reason === "refusal") return stopped("The helper declined this part.");
@@ -267,42 +305,27 @@ async function runHelper(c: HelperCall, part: Part, offeredTools: PluginTool[]):
     );
     const report = calls.find((b) => b.name === "report");
     const parsed = report && !cutOff(res) ? Report.safeParse(report.input) : undefined;
-    if (parsed?.success)
+    if (parsed?.success) {
+      await early.settled();
       return { topic: part.topic, found: parsed.data.found, gaps: parsed.data.gaps, untrusted };
+    }
     if (cutOff(res)) mustReport = true;
     const results = await Promise.all(
-      calls.map(async (call): Promise<Anthropic.Beta.BetaContentBlockParam> => {
+      calls.map((call): Promise<Anthropic.Beta.BetaContentBlockParam> => {
         const error = (content: string) =>
-          ({ type: "tool_result", tool_use_id: call.id, content, is_error: true }) as const;
+          Promise.resolve({
+            type: "tool_result",
+            tool_use_id: call.id,
+            content,
+            is_error: true,
+          } as const);
+        const started = early.started(call);
+        if (started) return started;
         if (cutOff(res)) return error("Cut off at max_tokens. Report what you have, shorter.");
         if (call === report)
           return error(parsed && !parsed.success ? invalidInput(parsed.error) : "Not reported.");
         if (call.name === "report") return error("Call report once.");
-        const found = offeredTools.find((t) => t.name === call.name);
-        if (!found) return error(`Unknown tool "${call.name}".`);
-        const now = c.tasks.d.bots.get(c.bot.id) ?? c.bot;
-        const t = liveTool(
-          found,
-          c.tasks.d.plugins.tools(now.plugins, c.tasks.d.bots.leftToOthers(now)),
-          {
-            bot: c.bot.name,
-            since: "since the helper started",
-            onlyLooks: ONLY_LOOKS,
-          },
-        );
-        if (typeof t === "string") return error(t);
-        const what = describeCall(t, call.input);
-        step(c, t.name, `${part.topic}: ${what}`);
-        const r = await runPluginTool(t, call.input, cc, c.tasks.d.plugins.hideSecrets);
-        if (r.untrusted) untrusted.push(what);
-        return {
-          type: "tool_result",
-          tool_use_id: call.id,
-          content: r.images?.length
-            ? [{ type: "text", text: r.content }, ...imageBlocks(r.images)]
-            : r.content,
-          ...(r.isError ? { is_error: true } : {}),
-        };
+        return run(call);
       }),
     );
     const nudge =

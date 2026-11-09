@@ -9,6 +9,8 @@ export type Scripted = {
   model?: string;
   /** The response waits for this, as a slow model would. */
   wait?: Promise<unknown>;
+  /** Waited for once its blocks have streamed: the end of a message still coming. */
+  rest?: Promise<unknown>;
   usage?: Partial<Anthropic.Beta.BetaUsage>;
   /** Streamed first, then dropped: the stream failed there and was tried again. */
   failedWith?: string;
@@ -67,7 +69,9 @@ export class FakeModel implements ModelClient {
     for (const b of next.content) {
       if (b.type === "text") h.onText?.(b.text);
       if (b.type === "server_tool_use") h.onServerTool?.(b.name, b.input);
+      h.onBlock?.(b);
     }
+    if (next.rest) await next.rest;
     const stop =
       next.stop_reason ??
       (next.content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn");

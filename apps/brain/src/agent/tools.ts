@@ -914,6 +914,43 @@ export async function inBatches<C, R>(
   return out;
 }
 
+type ToolCall = Anthropic.Beta.BetaToolUseBlock;
+
+/**
+ * Starts a reply's first calls `eager` allows as each completes, while the rest streams. Any other
+ * block stops it there, so what follows a change or a web read still waits for it.
+ */
+export function startEarly<R>(
+  eager: (call: ToolCall) => boolean,
+  run: (call: ToolCall) => Promise<R>,
+  starting?: (call: ToolCall) => void,
+) {
+  let started = new Map<string, Promise<R>>();
+  let ahead = true;
+  return {
+    onBlock: (b: Anthropic.Beta.BetaContentBlock) => {
+      if (!ahead || b.type === "text" || b.type === "thinking") return;
+      if (b.type !== "tool_use" || !eager(b)) {
+        ahead = false;
+        return;
+      }
+      starting?.(b);
+      const p = run(b);
+      p.catch(() => {});
+      started.set(b.id, p);
+    },
+    /** Another try streams the reply from the start. */
+    onRetry: () => {
+      started = new Map();
+      ahead = true;
+    },
+    /** Whether `call` started early: it was complete, so it keeps its result when the reply was cut off. */
+    started: (call: ToolCall) => started.get(call.id),
+    /** What started ends before a reply whose calls don't run after all ends its step. */
+    settled: () => Promise.allSettled(started.values()),
+  };
+}
+
 /** The core's tool names, which plugin tools can't take. */
 export const CORE_TOOL_NAMES = [
   ...TOOLS.map((t) => t.name),

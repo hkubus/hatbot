@@ -27,6 +27,7 @@ import {
   missingSkill,
   NeedsYou,
   serverToolWaiting,
+  startEarly,
   ThreadOpenInput,
   type ToolImage,
   toolParam,
@@ -821,22 +822,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         origin?.overLimit &&
         ((limit: "daily" | "monthly") => origin.overLimit?.(limit, task) ?? "");
       requests.hold(reserveUsd, overLimit);
-      const res = await requests.stream(params);
-      record("assistant", res.content);
-      container = containerOf(res, container);
-      for (const read of webReads(res.content)) {
-        tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
-        taint(read);
-      }
-      addNotes(tasks, id, res);
-      const calls = callsOf(res, nudge);
-      if (!calls) continue;
 
       let finished: z.infer<typeof FinishTask> | null = null;
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
-      const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
-        if (cutOff(res)) return false;
+      const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
         const t = pluginTools.has(call.name) ? current(call.name) : null;
         if (!t || typeof t === "string") return false;
         if (t.access === "read") return true;
@@ -848,10 +838,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           return false;
         return !untrustedOf(t, parsed.data) && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
       };
-      const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
+      const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
-        if (cutOff(res))
-          return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (!sent.has(call.name)) return result(call, `Unknown tool "${call.name}".`, true);
         if (call.name === "finish_task") {
@@ -911,7 +899,52 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           return pluginCall(plugin, call);
         }
         return result(call, `Unknown tool "${call.name}".`, true);
+      };
+
+      let seen: Anthropic.Beta.BetaContentBlock[] = [];
+      let noted = 0;
+      const early = startEarly(
+        (call) => parallel(call) === true,
+        run,
+        // Its notes go in the timeline first, as they came.
+        () => {
+          addNotes(tasks, id, { content: seen.slice(noted) });
+          noted = seen.length;
+        },
+      );
+      const res = await requests.stream(params, {
+        onBlock: (b) => {
+          seen.push(b);
+          early.onBlock(b);
+        },
+        onRetry: () => {
+          seen = [];
+          noted = 0;
+          early.onRetry();
+        },
       });
+      record("assistant", res.content);
+      container = containerOf(res, container);
+      for (const read of webReads(res.content)) {
+        tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
+        taint(read);
+      }
+      addNotes(tasks, id, { content: res.content.slice(noted) });
+      if (res.stop_reason !== "tool_use") await early.settled();
+      const calls = callsOf(res, nudge);
+      if (!calls) continue;
+
+      const results: BlockParam[] = await inBatches(
+        calls,
+        (call) => !cutOff(res) && parallel(call),
+        (call) =>
+          early.started(call) ??
+          (cutOff(res)
+            ? Promise.resolve(
+                result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
+              )
+            : run(call)),
+      );
       // Set inside the calls above, which TypeScript can't see.
       const ended = finished as z.infer<typeof FinishTask> | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);

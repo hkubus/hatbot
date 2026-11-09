@@ -83,6 +83,8 @@ export class AnthropicModelClient implements ModelProvider {
         if (event.type === "content_block_stop") {
           const call = server.get(event.index);
           if (call) handlers.onServerTool?.(call.name, parseInput(call.json));
+          const block = stream.currentMessage?.content[event.index];
+          if (block && handlers.onBlock) handlers.onBlock(block);
         }
         if (event.type !== "content_block_delta") continue;
         if (event.delta.type === "text_delta") handlers.onText?.(event.delta.text);

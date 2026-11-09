@@ -6,6 +6,7 @@ import {
   fixedTokens,
   modelErrorText,
   SandboxError,
+  type StreamHandlers,
   type StreamParams,
 } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
@@ -71,11 +72,15 @@ export function requestsFor(tasks: Tasks, task: Task, signal: AbortSignal) {
       }
     },
 
-    async stream(params: Params): Promise<Anthropic.Beta.BetaMessage> {
+    async stream(
+      params: Params,
+      more: Pick<StreamHandlers, "onBlock" | "onRetry"> = {},
+    ): Promise<Anthropic.Beta.BetaMessage> {
       const sent = tasks.clock();
       const progress = (text: string) => d.events.emit({ type: "task.progress", taskId: id, text });
       const res = await d.model
         .stream(params, {
+          ...more,
           onText: progress,
           onThinking: progress,
           onFailedUsage: (model, usage) =>
@@ -128,7 +133,7 @@ export const textOf = (res: Anthropic.Beta.BetaMessage) =>
 export function addNotes(
   tasks: Tasks,
   id: number,
-  res: Anthropic.Beta.BetaMessage,
+  res: Pick<Anthropic.Beta.BetaMessage, "content">,
   url: string | null = null,
 ) {
   for (const b of res.content) {
