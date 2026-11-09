@@ -158,6 +158,7 @@ export async function testApp(
     updateDir,
     events: seen,
     call,
+    clock,
     advance: (ms: number) => {
       nowMs += ms;
     },

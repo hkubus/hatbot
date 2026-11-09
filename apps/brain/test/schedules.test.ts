@@ -186,6 +186,7 @@ test("a signed webhook starts an untrusted task; oversized, unsigned or replayed
     t.tasks,
     { send: async () => {} },
     ORIGIN,
+    t.clock,
   );
   const sig = { "x-hub-signature-256": `sha256=${hmac(created.secret, other)}` };
   expect(
