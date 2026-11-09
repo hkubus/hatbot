@@ -5,6 +5,10 @@ import { HATBOT_ID } from "@hatbot/shared";
 import { z } from "zod";
 import { ModelError } from "./models";
 
+/** In the description of a tool that starts work from the chat: the reply ends there. */
+export const ENDS_REPLY =
+  "Once it has started, your reply ends if it already says what you started: make any other calls (saving a note, say) before it.";
+
 /** JSON to put in a prompt: `<` can't close a tag around it. */
 export const tagJson = (value: unknown): string =>
   (JSON.stringify(value) ?? "null").replace(/</g, "\\u003c");

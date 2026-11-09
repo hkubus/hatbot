@@ -666,6 +666,47 @@ test("a reply its task's result takes the place of, or that's written again, kee
   expect(shown(told.id)?.text).toBe("The router is fine.");
 });
 
+test("a reply that says what it's starting ends once the task starts; one that hasn't said yet, or looked something up alongside, goes on", async () => {
+  const slow = Promise.withResolvers<void>();
+  const chat = new FakeModel([
+    {
+      content: [
+        text("Looking at the NAS in a task."),
+        toolUse("run_task", { title: "NAS", goal: "Look at the NAS" }),
+      ],
+    },
+    { content: [toolUse("run_task", { title: "Router", goal: "Look at the router" })] },
+    { content: [text("Looking at the router in a task.")] },
+    {
+      content: [
+        text("Looking at the switch in a task."),
+        toolUse("memory_list", {}),
+        toolUse("run_task", { title: "Switch", goal: "Look at the switch" }),
+      ],
+    },
+    { content: [text("It knows the switch's address from your notes.")] },
+  ]);
+  const finish = {
+    content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })],
+  };
+  const work = new FakeModel([
+    { wait: slow.promise, ...finish },
+    { wait: slow.promise, ...finish },
+    { wait: slow.promise, ...finish },
+  ]);
+  const t = await testApp(chat, work);
+  await t.thread.post("look at the nas").done;
+  expect(chat.requests).toHaveLength(1);
+  expect(t.thread.list().at(-1)?.text).toBe("Looking at the NAS in a task.");
+  await t.thread.post("look at the router").done;
+  expect(chat.requests).toHaveLength(3);
+  expect(t.thread.list().at(-1)?.text).toBe("Looking at the router in a task.");
+  await t.thread.post("look at the switch").done;
+  expect(chat.requests).toHaveLength(5);
+  slow.resolve();
+  await t.tasks.idle();
+});
+
 test("a task a deleted bot started ends with its result; the bot isn't asked again", async () => {
   const slow = Promise.withResolvers<void>();
   const chat = new FakeModel([

@@ -5,6 +5,7 @@ import {
   botFolder,
   clip,
   containerOf,
+  ENDS_REPLY,
   invalidInput,
   serverToolWaiting,
   toolParam,
@@ -529,8 +530,7 @@ export const TOOLS = [
   }),
   def({
     name: "run_desktop_task",
-    description:
-      "Start a task on your Linux desktop (Chromium, plus a shell), for anything that needs a real browser: booking, buying, filling in forms, pages that need a login. To compute or run a script, use code_run when the Code plugin is on; to look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live, and it asks them only before buying, paying or account changes. It answers cookie and consent dialogs itself. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation.",
+    description: `Start a task on your Linux desktop (Chromium, plus a shell), for anything that needs a real browser: booking, buying, filling in forms, pages that need a login. To compute or run a script, use code_run when the Code plugin is on; to look something up, web_search and web_fetch are quicker. It runs in the background on a separate model and its progress and result show under your reply; the owner can watch it live, and it asks them only before buying, paying or account changes. It answers cookie and consent dialogs itself. You're told how it ended at the start of a later turn. Give it everything it needs to know: it can't see this conversation. ${ENDS_REPLY}`,
     schema: DesktopTaskInput,
     run: async (
       { title, goal, success_criteria, skill, screen },
@@ -554,13 +554,12 @@ export const TOOLS = [
         taintedBy: chatTaint(tainted?.()),
         request: ownerSaid?.(),
       });
-      return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
+      return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it. If your reply already says what you started, end it here; otherwise say so in a line.`;
     },
   }),
   def({
     name: "run_task",
-    description:
-      "Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs. For a command or two, use the plugin tools yourself instead.",
+    description: `Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs. For a command or two, use the plugin tools yourself instead. ${ENDS_REPLY}`,
     schema: RunTaskInput,
     run: async (
       { title, goal, effort },
@@ -580,13 +579,12 @@ export const TOOLS = [
         askedIn: answering,
       });
       if (!task) return "The task couldn't start.";
-      return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it.`;
+      return `Started task #${task.id}. It's running in the background; the owner sees its progress and result under this reply. Don't wait for it. If your reply already says what you started, end it here; otherwise say so in a line.`;
     },
   }),
   def({
     name: "todo_work",
-    description:
-      "Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It can't see this conversation, so put what it needs beyond the item in details.",
+    description: `Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It can't see this conversation, so put what it needs beyond the item in details. ${ENDS_REPLY}`,
     schema: z.object({
       item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
       details: z
@@ -615,13 +613,12 @@ export const TOOLS = [
         askedIn: answering,
       });
       if (!task) return `A task is already working on "${t.text}".`;
-      return `Started task #${task.id} on "${t.text}". The owner sees its progress and result under this reply; the item is ticked off if it ends done. Don't wait for it.`;
+      return `Started task #${task.id} on "${t.text}". The owner sees its progress and result under this reply; the item is ticked off if it ends done. Don't wait for it. If your reply already says what you started, end it here; otherwise say so in a line.`;
     },
   }),
   def({
     name: "ask_bot",
-    description:
-      "Hand work to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner in a sentence or two what it did and whether it's finished, since they read its answer in its chat. It can't see this conversation, so give it everything it needs. Don't wait for it.",
+    description: `Hand work to another of the owner's bots, the one whose role or plugins it needs: your request goes to its own chat with the owner, as from you, and it answers there with its own role, memory folder and plugins. Its progress shows under your reply, and you're told its answer at the start of a later turn; then tell the owner in a sentence or two what it did and whether it's finished, since they read its answer in its chat. It can't see this conversation, so give it everything it needs. Don't wait for it. ${ENDS_REPLY}`,
     schema: AskBotInput,
     run: async (
       { bot: to, request },
@@ -639,7 +636,7 @@ export const TOOLS = [
         ownerSaid: ownerSaid?.(),
       });
       if (typeof task === "string") return task;
-      return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply.`;
+      return `Asked ${tasks.d.bots.nameOf(task.botId)}: task #${task.id}. The owner sees its progress under this reply. If your reply already says what you started, end it here; otherwise say so in a line.`;
     },
   }),
   def({
