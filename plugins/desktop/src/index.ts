@@ -28,7 +28,7 @@ export { TEACH_PROMPT } from "./teach/prompt";
 export { type FieldCheck, OffPage, Recorder } from "./teach/recorder";
 export { Teach } from "./teach/service";
 
-const CHAT = `- run_desktop_task loads when you need it: find it with tool_search_tool_regex, then call it. Use it only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript). It runs on its own; its progress and result show under your reply.
+const CHAT = `- run_desktop_task loads when you need it: find it with tool_search_tool_regex, then call it. Use it only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript). When web_fetch can't read a page you need, like a parcel tracker or a shop, that's what it's for: start it in the same reply, rather than offer it or send the owner to the page. It asks them itself before buying, paying or account changes. It runs on its own; its progress and result show under your reply.
 - A desktop task answers cookie and consent dialogs itself, rejecting where it can: that's routine, not the owner's call. Never tell it to leave one alone, and don't ask the owner about one.
 - Skills (skills/ in memory, listed in INDEX.md) are chores the owner showed you how to do. When a desktop task matches one, pass its name as skill, and put the values for its {{placeholders}} in the goal.`;
 

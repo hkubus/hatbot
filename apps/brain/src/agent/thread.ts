@@ -1960,7 +1960,7 @@ export class Thread {
           ? `the bot you asked ended. ${rewrite ? "What you write now replaces your reply that asked it. " : ""}In a sentence or two, say what it did and whether it's finished, without repeating its answer: the owner reads that in its chat, linked from here. If it needs something only the owner can say, ask that.`
           : `a task they started from the chat ended. ${
               rewrite
-                ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
+                ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation, and keep its chart blocks as they are. Leave out what it didn't do."
                 : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
             }`
       })`;
