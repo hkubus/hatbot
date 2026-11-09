@@ -333,6 +333,20 @@ const lab = definePlugin({
     ]),
 });
 
+test("the code bot has Code and a way to the owner's repositories; a bot with Code alone isn't it", async () => {
+  const t = await testApp();
+  const tutor = t.bots.create({
+    name: "Tutor",
+    instructions: "Checks homework.",
+    chatModel: null,
+    chatEffort: null,
+    plugins: ["code"],
+  });
+  expect(t.bots.codeBot()).toBeNull();
+  t.bots.update(tutor.id, { plugins: ["code", "forgejo"] });
+  expect(t.bots.codeBot()?.id).toBe(tutor.id);
+});
+
 test("Hatbot hands the others their work: a plugin another bot has is its alone, and every answer comes back with what was read for it", async () => {
   // Ops answers in its own chat; its second answer waits until Hatbot has heard the first.
   const later = Promise.withResolvers<void>();

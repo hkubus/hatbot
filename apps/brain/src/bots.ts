@@ -40,15 +40,22 @@ export function slugOf(name: string): string {
 
 /** Plugins that write code. The code bot's are its alone: the others hand that work to it. */
 const CODE_PLUGINS = ["code", "t3", "self"];
+const REPOS = ["github", "forgejo", "t3"];
 
 /**
- * The bot all code and boxes go to: the first made, other than Hatbot, with the Code plugin. Null
+ * The bot all code and boxes go to: the first made, other than Hatbot, with the Code plugin and a way
+ * to the owner's repositories. A bot with Code alone, like a tutor checking sums, isn't it. Null
  * without one: then every bot writes its own.
  */
 export function codeBotOf(bots: Bot[]): Bot | null {
   return (
     bots
-      .filter((b) => b.id !== HATBOT_ID && b.plugins?.includes("code"))
+      .filter(
+        (b) =>
+          b.id !== HATBOT_ID &&
+          b.plugins?.includes("code") &&
+          REPOS.some((id) => b.plugins?.includes(id)),
+      )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0] ?? null
   );
 }
