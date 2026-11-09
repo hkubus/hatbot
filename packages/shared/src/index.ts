@@ -673,6 +673,37 @@ export type Conversation = {
   /** A thread its bot marked as needing your answer, until you write in it or it's resolved. */
   needsYou: boolean;
 };
+/** GET /conversations/export: every chat, group and thread you can see, without incognito. */
+export type ConversationsExport = {
+  exportedAt: string;
+  /** Every bot, deleted ones too, for the names of who wrote what. */
+  bots: { id: string; name: string; deleted: boolean }[];
+  conversations: ExportedConversation[];
+};
+export type ExportedConversation = {
+  id: number;
+  kind: Conversation["kind"];
+  title: string | null;
+  botIds: string[];
+  parentId: number | null;
+  createdAt: string;
+  resolvedAt: string | null;
+  outcome: string | null;
+  messages: ExportedMessage[];
+};
+export type ExportedMessage = {
+  id: number;
+  /** The bot that wrote it; null for yours. */
+  botId: string | null;
+  kind: ThreadMessage["kind"];
+  text: string;
+  status: ThreadMessage["status"];
+  createdAt: string;
+  editedAt: string | null;
+  /** The files' names only: their bytes stay on the brain. */
+  attachments?: Pick<Attachment, "name" | "mediaType" | "size">[];
+  sources?: Source[];
+};
 /** You open a thread on one of a bot's messages in its chat. */
 export const ReplyInThread = z.object({ messageId: z.number().int() });
 /** Clears a chat; `notes`: its bot's own folder in memory too. */

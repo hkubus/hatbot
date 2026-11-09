@@ -149,6 +149,17 @@ export const threadRoutes = new Hono<AppEnv>()
       ? c.json({ ok: true })
       : c.json({ error: "That's gone." }, 404),
   )
+  .get("/conversations/export", (c) => {
+    const data = c.var.chats.exportAll();
+    return new Response(JSON.stringify(data, null, 2), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="hatbot-conversations-${data.exportedAt.slice(0, 10)}.json"`,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  })
   .get("/conversations/:id", (c) => found(c, c.var.chats.get(idParam(c))))
   .get("/conversations/:id/threads", (c) => c.json(c.var.chats.threads(idParam(c))))
   .post("/conversations/:id/threads", json(ReplyInThread), (c) => {
