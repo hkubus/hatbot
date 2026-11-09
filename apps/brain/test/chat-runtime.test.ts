@@ -212,6 +212,50 @@ test("a stream that fails is tried three times at most, after retry-after; not o
   expect(failed).toEqual(Array(3).fill({ model: "claude-opus-5-5", output: 40 }));
 });
 
+test("text after a web search starts a paragraph; text split by its citations runs on", async () => {
+  const client = new AnthropicModelClient("sk-test");
+  const start = (index: number, type: string) => ({
+    type: "content_block_start",
+    index,
+    content_block: { type, ...(type === "server_tool_use" ? { name: "web_search" } : {}) },
+  });
+  const say = (index: number, text: string) => ({
+    type: "content_block_delta",
+    index,
+    delta: { type: "text_delta", text },
+  });
+  const events = [
+    start(0, "text"),
+    say(0, "Looking it up."),
+    start(1, "server_tool_use"),
+    start(2, "web_search_tool_result"),
+    start(3, "text"),
+    say(3, "It arrives on "),
+    start(4, "text"),
+    say(4, "Friday"),
+    start(5, "text"),
+    say(5, "."),
+  ];
+  (client as unknown as { client: unknown }).client = {
+    beta: {
+      messages: {
+        stream: () => ({
+          async *[Symbol.asyncIterator]() {
+            yield* events;
+          },
+          finalMessage: async () => ({}),
+        }),
+      },
+    },
+  };
+  let shown = "";
+  await client.stream(
+    { model: "claude-haiku-5-5", max_tokens: 10, messages: [] },
+    { onText: (t) => (shown += t), onFailedUsage: () => {} },
+  );
+  expect(shown).toBe("Looking it up.\n\nIt arrives on Friday.");
+});
+
 test("a reply as it's written: shown with what it has done and saved so far, started over when its stream is tried again, with the failed try billed, and kept through a restart", async () => {
   const first = Promise.withResolvers<void>();
   const second = Promise.withResolvers<void>();
