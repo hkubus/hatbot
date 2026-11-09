@@ -511,7 +511,7 @@ export const CASES: Case[] = [
       "Finds out itself: searches the tracking number, and since its web tools can't open tracking sites, starts a desktop task to check them (17TRACK, the carrier's site) in the same reply, without asking for a go-ahead.",
     history: [],
     at: "2026-11-06T15:38:00Z",
-    owner: "Figure out when this package is coming CH123456785LT",
+    owner: "Figure out when this package is coming CH583027197LT",
     check: (o) => [
       ...(called(o, /^run_desktop_task$/).length || o.tasks.length ? [] : ["no desktop task"]),
       ...(asked(o) ? ["asked for a go-ahead"] : []),
