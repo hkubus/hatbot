@@ -1,4 +1,5 @@
 // Host keys are pinned the first time Hatbot connects; a changed key stops it.
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -69,6 +70,14 @@ const KEEP_BYTES = 1024 * 1024;
 const FLOOD_BYTES = 256 * 1024 * 1024;
 const SSH_OPTIONS =
   "BatchMode=yes IdentitiesOnly=yes StrictHostKeyChecking=accept-new ConnectTimeout=10 ServerAliveInterval=15 LogLevel=ERROR";
+// Calls to a host share one login, through OpenSSH's control socket, until it has been idle for five
+// minutes. A login is retired after ten, so a key taken off the host stops working by then.
+const SHARED_IDLE_S = 300;
+const SHARED_MAX_MS = 10 * 60_000;
+/** Under sshd's default MaxSessions of 10 a login: more at once log in on their own. */
+const SHARED_SESSIONS = 8;
+/** What ssh says when it logs in on its own after all, which isn't the command's. */
+const SHARED_NOTE = /^mux_client_\S+: .*\n?/gm;
 /** Printed on the host before the command runs, so a failed command isn't taken for a failed login. */
 const CONNECTED = "hatbot-ssh-connected\n";
 /** A command's result that holds nothing it printed, only how it ended: nobody else wrote that. */
@@ -196,7 +205,7 @@ export const sshPlugin = definePlugin({
   uses: ["sandbox"],
   needs: ["secrets"],
   config: Config,
-  start: ({ env, config, files, configOf, optional, service }) => {
+  start: ({ env, config, files, configOf, optional, service, dataDir, clock }) => {
     const secrets = service<SecretsHost>("secrets");
     const home = env.HOME ?? homedir();
     const key = env.HATBOT_SSH_KEY ?? join(home, ".ssh/id_ed25519");
@@ -228,11 +237,56 @@ export const sshPlugin = definePlugin({
     };
     const target = (h: Host) => (h.port === 22 ? h.address : `[${h.address}]:${h.port}`);
 
+    // A socket's path holds 107 bytes on Linux: this folder, %C's 40 and the 17 ssh adds making it.
+    const sockets = join(dataDir, "logins");
+    const sharing = Buffer.byteLength(sockets) <= 49 && madeDir(sockets);
+    const logins = new Map<string, { since: number; last: number; open: number }>();
+    const shared = [
+      "-o",
+      "ControlMaster=auto",
+      "-o",
+      `ControlPath=${sockets}/%C`,
+      "-o",
+      `ControlPersist=${SHARED_IDLE_S}`,
+    ];
+    /** Calls still running on its login finish; the next logs in afresh. */
+    const retire = (h: Host) =>
+      ssh(["-p", String(h.port), "-l", h.user, ...shared, "-O", "stop", "--", h.address], {
+        timeoutMs: 5000,
+      }).catch(() => {});
+    /** The options for a call to `h`, and what to do once it's done. */
+    const share = async (h: Host): Promise<{ args: string[]; done: () => void }> => {
+      const alone = { args: ["-o", "ControlPath=none"], done: () => {} };
+      if (!sharing) return alone;
+      const now = clock();
+      let l = logins.get(h.name);
+      if (l && !l.open && now - l.last > SHARED_IDLE_S * 1000) l = undefined;
+      if (!l) {
+        l = { since: now, last: now, open: 0 };
+        logins.set(h.name, l);
+      }
+      if (l.open >= SHARED_SESSIONS) return alone;
+      if (now - l.since > SHARED_MAX_MS) {
+        await retire(h);
+        l.since = now;
+      }
+      const used = l;
+      used.open++;
+      return {
+        args: shared,
+        done: () => {
+          used.open--;
+          used.last = clock();
+        },
+      };
+    };
+
     const connect = async (
       h: Host,
       command: string,
       opts: { timeoutMs: number; signal?: AbortSignal; input?: Uint8Array; keepBytes?: number },
     ) => {
+      const login = await share(h);
       const r = await ssh(
         [
           "-i",
@@ -242,6 +296,7 @@ export const sshPlugin = definePlugin({
           ...SSH_OPTIONS.split(" ").flatMap((o) => ["-o", o]),
           "-o",
           `UserKnownHostsFile=${knownHosts}`,
+          ...login.args,
           "-l",
           h.user,
           "--",
@@ -249,7 +304,8 @@ export const sshPlugin = definePlugin({
           `echo ${CONNECTED.trim()}; ${command}`,
         ],
         opts,
-      );
+      ).finally(login.done);
+      r.stderr = r.stderr.replace(SHARED_NOTE, "");
       // Once the marker is there, ssh connected: the command's own errors (and exit code 255) are
       // its own, whatever they say.
       const at = r.stdout.indexOf(CONNECTED);
@@ -724,6 +780,9 @@ export const sshPlugin = definePlugin({
         const { name } = z.object({ name: z.string() }).parse(args);
         const h = hostOf(name);
         await keygen(["-R", target(h), "-f", knownHosts], { timeoutMs: 5000 });
+        // Its login was made with the old key: the next connects afresh and pins the new one.
+        await retire(h);
+        logins.delete(h.name);
         return { name, key: null };
       },
     };
@@ -752,6 +811,15 @@ export const sshPlugin = definePlugin({
         return lines.join("\n");
       },
       actions,
+      stop: async () => {
+        await Promise.all(
+          [...logins.keys()].flatMap((name) => {
+            const h = hosts.get(name);
+            return h ? [retire(h)] : [];
+          }),
+        );
+        logins.clear();
+      },
     });
   },
 });
@@ -814,6 +882,15 @@ const into = (path: string, name: string) =>
 /** A shell word for a path; ~/ stays unquoted so the remote shell expands it. */
 function shellPath(path: string): string {
   return path.startsWith("~/") ? `~/${quote(path.slice(2))}` : quote(path);
+}
+
+function madeDir(path: string): boolean {
+  try {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;

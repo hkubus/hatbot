@@ -615,6 +615,42 @@ test("output is kept to its start and end, endless output is stopped, and a comm
   ).toBe("Exit code 255\nstderr:\nHost key verification failed.");
 });
 
+test("calls to a host share one login, eight at most at once; it's retired after ten minutes, when its key is forgotten and when SSH stops", async () => {
+  const t = await ssh();
+  const exec = t.tool("ssh_exec");
+  writeFileSync(join(dir, "ssh.log"), "");
+  const logged = () => readFileSync(join(dir, "ssh.log"), "utf8").split("\n").filter(Boolean);
+  const go = join(dir, "go");
+  const nine = Array.from({ length: 9 }, () =>
+    exec.run({ host: "nas", command: `until [ -e ${go} ]; do sleep 0.01; done; echo went` }, call),
+  );
+  await waitFor(() => logged().length === 9);
+  expect(
+    logged().filter((l) => /ControlMaster=auto .*ControlPath=\S+\/logins\/%C/.test(l)),
+  ).toHaveLength(8);
+  expect(logged().filter((l) => l.includes("ControlPath=none"))).toHaveLength(1);
+  writeFileSync(go, "");
+  expect(await Promise.all(nine)).toEqual(Array(9).fill("Exit code 0\nwent"));
+
+  // What ssh says when it logs in on its own after all isn't the command's.
+  const note = "mux_client_request_session: session request failed: Session open refused by peer";
+  expect(await exec.run({ host: "nas", command: `echo '${note}' >&2; echo ok` }, call)).toBe(
+    "Exit code 0\nok",
+  );
+
+  const stops = () => logged().filter((l) => l.includes("-O stop"));
+  for (let i = 0; i < 3; i++) {
+    t.advance(4 * 60_000);
+    await exec.run({ host: "nas", command: "true" }, call);
+  }
+  expect(stops()).toEqual([expect.stringContaining("-p 22 -l hatbot")]);
+  await t.plugins.action("ssh", "forget", { name: "nas" });
+  expect(stops()).toHaveLength(2);
+  await exec.run({ host: "router", command: "true" }, call);
+  await t.plugins.update("ssh", { enabled: false });
+  expect(stops().at(-1)).toContain("-p 2222 -l hatbot");
+});
+
 test("write_file writes exactly its content, on stdin when big; read_file reads it back a stretch at a time or from the end, on a host or in a container, and a feed up to 1 MB", async () => {
   const t = await ssh({ hosts: [...HOSTS, PVE] });
   const write = (path: string, content: string) =>
