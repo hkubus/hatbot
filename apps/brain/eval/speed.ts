@@ -329,14 +329,19 @@ const chat = async (text: string, waitForTask = false) => {
   const task = brain.db
     .query<{ id: number }, [number]>("SELECT id FROM tasks WHERE id > ? LIMIT 1")
     .get(before);
+  let how = "";
   if (waitForTask && task) {
     await until(() => brain.tasks.get(task.id)?.finishedAt);
-    // The chat tells you how it went in a reply of its own.
+    // The chat writes the reply again only when the task notifies; otherwise its summary stands.
     await thread.idle();
+    how =
+      lastReply()?.text === brain.tasks.get(task.id)?.summary
+        ? "[as the task wrote it] "
+        : "[written again] ";
   }
   const reply = (lastReply()?.text ?? "").slice(0, 160).replace(/\s+/g, " ");
   await thread.post("/new").done;
-  return reply;
+  return how + reply;
 };
 
 const SCENARIOS: Record<string, () => Promise<string>> = {
