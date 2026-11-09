@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import type { StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
-import { type AskResult, type ThreadMessage, threadGroups } from "@hatbot/shared";
+import {
+  type AskResult,
+  type ConversationsExport,
+  type ThreadMessage,
+  threadGroups,
+} from "@hatbot/shared";
 import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
@@ -1019,6 +1024,82 @@ test("clearing a bot's chat deletes its messages, files, summary and threads, an
   await chef.post("anything?").done;
   expect(lastUserText(model.requests.at(-1))).not.toContain("tea");
   expect(lastUserText(model.requests.at(-1))).not.toContain("51820");
+});
+
+test("exporting gives every chat, group and thread with its messages and file names, deleted bots' too, but no incognito or deleted groups", async () => {
+  const t = await testApp(
+    new FakeModel([
+      { content: [text("Got it.")] },
+      { content: [text("Shh.")] },
+      { content: [text("Soup.")] },
+    ]),
+  );
+  const { cookie } = signIn(t);
+  const a = await t.attachments.save({
+    bytes: new TextEncoder().encode("wg0.conf"),
+    name: "wg0.conf",
+    mediaType: "text/plain",
+    from: "owner",
+  });
+  await t.thread.post("here's my config", [a.id]).done;
+  await t.thread.post("a secret", [], true).done;
+  const { conversation: side } = t.chats.openThread({
+    botId: "hatbot",
+    title: "Wireguard",
+    message: "Which port?",
+  });
+  bot(t, "Chef");
+  await t.chats.direct("chef").post("soup?").done;
+  t.bots.delete("chef");
+  bot(t, "Ops");
+  const gone = t.chats.createGroup("Gone", ["hatbot", "ops"]);
+  t.chats.thread(gone.id)?.add({ text: "hello group" });
+  t.chats.deleteGroup(gone.id);
+
+  const res = await t.call("GET", "/conversations/export", undefined, { cookie });
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-disposition")).toMatch(
+    /^attachment; filename="hatbot-conversations-\d{4}-\d\d-\d\d\.json"$/,
+  );
+  const data = (await res.json()) as ConversationsExport;
+  const said = data.conversations.map((c) => [
+    c.kind,
+    c.botIds,
+    c.messages.map((m) => [m.botId, m.text]),
+  ]);
+  expect(said).toEqual([
+    [
+      "direct",
+      ["hatbot"],
+      [
+        [null, "here's my config"],
+        ["hatbot", "Got it."],
+        ["hatbot", "Wireguard"],
+      ],
+    ],
+    ["thread", ["hatbot"], [["hatbot", "Which port?"]]],
+    [
+      "direct",
+      ["chef"],
+      [
+        [null, "soup?"],
+        ["chef", "Soup."],
+      ],
+    ],
+  ]);
+  expect(data.conversations[0]?.messages[0]?.attachments).toEqual([
+    { name: "wg0.conf", mediaType: "text/plain", size: 8 },
+  ]);
+  expect(data.conversations[1]).toMatchObject({
+    id: side.id,
+    title: "Wireguard",
+    parentId: t.thread.conversationId,
+  });
+  expect(data.bots.find((b) => b.id === "chef")).toEqual({
+    id: "chef",
+    name: "Chef",
+    deleted: true,
+  });
 });
 
 test("only a bot's own chat clears with notes: not Hatbot's, whose notes are every bot's, nor a group's", async () => {

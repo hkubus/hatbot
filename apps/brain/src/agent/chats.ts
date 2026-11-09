@@ -2,6 +2,8 @@ import { botFolder } from "@hatbot/plugin-sdk";
 import {
   type Box,
   type Conversation,
+  type ConversationsExport,
+  type ExportedConversation,
   HATBOT_ID,
   MAX_OPEN_THREADS,
   type MessageLink,
@@ -11,7 +13,15 @@ import {
 } from "@hatbot/shared";
 import { BotError } from "../bots";
 import { UserError } from "../errors";
-import { resultText, Thread, type ThreadDeps, titleOf } from "./thread";
+import {
+  MESSAGE_COLUMNS,
+  type MessageRow,
+  messageOf,
+  resultText,
+  Thread,
+  type ThreadDeps,
+  titleOf,
+} from "./thread";
 
 type Parts = Pick<ThreadDeps, "tasks" | "approvals" | "attachments" | "negotiations" | "repeats">;
 
@@ -38,6 +48,8 @@ type Row = {
 };
 
 const LATEST_CHARS = 200;
+/** Messages given their files at a time, well under SQLite's limit on a query's values. */
+const EXPORT_BATCH = 500;
 
 /** A thread opened again gives up its key while a newer one on the subject is open. */
 const KEY_IF_FREE = `thread_key = CASE WHEN EXISTS (SELECT 1 FROM conversations o
@@ -639,6 +651,66 @@ export class Chats {
       "INSERT INTO conversation_bots (conversation_id, bot_id, position) VALUES (?, ?, ?)",
     );
     for (const [i, b] of botIds.entries()) add.run(id, b, i);
+  }
+
+  /** Every chat with something in it, deleted bots' too, but none of incognito's. */
+  exportAll(): ConversationsExport {
+    const { db, attachments } = this.d;
+    const rows = db
+      .query<Row & { created_at: string }, []>(
+        `SELECT c.id, c.kind, c.title, c.parent_id, c.resolved_at, c.outcome, c.created_at,
+           (SELECT json_group_array(bot_id) FROM
+             (SELECT bot_id FROM conversation_bots WHERE conversation_id = c.id ORDER BY position, bot_id)) AS bot_ids
+         FROM conversations c WHERE c.deleted_at IS NULL ORDER BY c.id`,
+      )
+      .all();
+    const messages = db.query<MessageRow, [number]>(
+      `SELECT ${MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ? AND incognito = 0 ORDER BY id`,
+    );
+    const conversations: ExportedConversation[] = [];
+    for (const r of rows) {
+      const list = messages.all(r.id).map(messageOf);
+      if (!list.length) continue;
+      const filled = [];
+      for (let i = 0; i < list.length; i += EXPORT_BATCH) {
+        const batch = list.slice(i, i + EXPORT_BATCH);
+        filled.push(...(attachments?.fill(batch) ?? batch));
+      }
+      conversations.push({
+        id: r.id,
+        kind: r.kind,
+        title: r.title,
+        botIds: r.bot_ids ? (JSON.parse(r.bot_ids) as string[]) : [],
+        parentId: r.parent_id,
+        createdAt: r.created_at,
+        resolvedAt: r.resolved_at,
+        outcome: r.outcome,
+        messages: filled.map((m) => ({
+          id: m.id,
+          botId: m.botId,
+          kind: m.kind,
+          text: m.text,
+          status: m.status,
+          createdAt: m.createdAt,
+          editedAt: m.editedAt,
+          ...(m.attachments && {
+            attachments: m.attachments.map(({ name, mediaType, size }) => ({
+              name,
+              mediaType,
+              size,
+            })),
+          }),
+          ...(m.sources && { sources: m.sources }),
+        })),
+      });
+    }
+    const bots = db
+      .query<{ id: string; name: string; deleted: number }, []>(
+        "SELECT id, name, deleted_at IS NOT NULL AS deleted FROM bots ORDER BY created_at, id",
+      )
+      .all()
+      .map((b) => ({ ...b, deleted: b.deleted === 1 }));
+    return { exportedAt: this.now(), bots, conversations };
   }
 
   changed(conversationId: number) {

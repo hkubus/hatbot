@@ -1,10 +1,11 @@
-import type {
-  Approval,
-  ApprovalRule,
-  AppSettings,
-  ChecksInfo,
-  Limits,
-  UpdateInfo,
+import {
+  API_PREFIX,
+  type Approval,
+  type ApprovalRule,
+  type AppSettings,
+  type ChecksInfo,
+  type Limits,
+  type UpdateInfo,
 } from "@hatbot/shared";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAction } from "../action";
@@ -305,6 +306,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             <button type="button" className="btn sm" onClick={setUpAgain}>
               Run setup again
             </button>
+          </Row>
+          <Row label="Your conversations">
+            <a className="btn sm" href={`${API_PREFIX}/conversations/export`}>
+              Export
+            </a>
           </Row>
           <Row label="Sign out">
             <button type="button" className="btn sm" onClick={signOut}>
