@@ -10,7 +10,13 @@ import {
   untrustedOf,
   type Verdict,
 } from "@hatbot/plugin-sdk";
-import type { ApprovalKind, ApprovalScope, Bot, Task } from "@hatbot/shared";
+import {
+  type ApprovalKind,
+  type ApprovalScope,
+  type Bot,
+  chartBlocks,
+  type Task,
+} from "@hatbot/shared";
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { agentPrompt, CHART_GUESS } from "../agent/prompt";
@@ -74,13 +80,24 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 ];
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 
+const SUMMARY_WORDS = 2000;
+// Chart blocks don't count: five listings with their photos' addresses take most of it.
+const wordsOf = (summary: string) =>
+  chartBlocks(summary).reduceRight((s, b) => s.slice(0, b.start) + s.slice(b.end), summary);
+
 const FinishTask = z.object({
   outcome: z.enum(["done", "failed"]),
   summary: z
     .string()
     .min(1)
-    .max(2000)
-    .describe("What you found or did, for the owner. Lead with the answer"),
+    .max(20_000)
+    .refine(
+      (s) => wordsOf(s).length <= SUMMARY_WORDS,
+      `Too long: at most ${SUMMARY_WORDS} characters, not counting chart blocks.`,
+    )
+    .describe(
+      `What you found or did, for the owner. Lead with the answer. At most ${SUMMARY_WORDS} characters besides chart blocks`,
+    ),
   notify: z
     .boolean()
     .describe(
