@@ -21,6 +21,7 @@ export const taskRoutes = new Hono<AppEnv>()
         scheduleId: z.coerce.number().int().optional(),
         triggerId: z.coerce.number().int().optional(),
         watcherId: z.coerce.number().int().optional(),
+        scriptId: z.coerce.number().int().optional(),
         before: z.coerce.number().int().optional(),
         limit: z.coerce.number().int().min(1).max(200).default(50),
         botId: z.string().max(40).optional(),

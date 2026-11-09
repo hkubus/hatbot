@@ -1140,4 +1140,38 @@ export const migrations: string[] = [
   `ALTER TABLE approvals ADD COLUMN secret TEXT;`,
   // 78: whether a task's end was notified, so the desktop app shows only those.
   `ALTER TABLE tasks ADD COLUMN notified INTEGER NOT NULL DEFAULT 0;`,
+  // 79: scripts, which the brain runs without the model, and the calls a bot's replies made, to
+  // notice when you ask for the same thing again.
+  `CREATE TABLE scripts (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    -- JSON: ScriptInput[] and ScriptStep[].
+    inputs TEXT NOT NULL,
+    steps TEXT NOT NULL,
+    -- JSON: the tools it changes things with, when it was saved.
+    writes TEXT NOT NULL,
+    approved INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_via TEXT NOT NULL CHECK (created_via IN ('chat', 'owner')),
+    tainted INTEGER NOT NULL DEFAULT 0,
+    tainted_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_run_at TEXT,
+    UNIQUE (bot_id, name)
+  );
+  ALTER TABLE schedules ADD COLUMN script_id INTEGER REFERENCES scripts(id);
+  ALTER TABLE watchers ADD COLUMN script_id INTEGER REFERENCES scripts(id);
+  CREATE TABLE reply_calls (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    -- The tools a reply called, in order, one after another repeated once.
+    calls TEXT NOT NULL,
+    at TEXT NOT NULL,
+    -- You were offered a script for these calls.
+    offered INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX reply_calls_by ON reply_calls (bot_id, calls);`,
 ];

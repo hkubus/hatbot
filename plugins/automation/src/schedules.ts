@@ -2,6 +2,7 @@ import {
   type Db,
   type EventsHost,
   PluginError,
+  type ScriptsService,
   type SearchRoutine,
   type SettingsHost,
   type TaskOrigin,
@@ -22,6 +23,7 @@ type Row = {
   cron: string | null;
   run_at: string | null;
   prompt: string;
+  script_id: number | null;
   enabled: number;
   created_via: Schedule["createdVia"];
   created_at: string;
@@ -42,6 +44,7 @@ const toSchedule = (r: Row): Schedule => ({
   cron: r.cron,
   runAt: r.run_at,
   prompt: r.prompt,
+  scriptId: r.script_id,
   enabled: Boolean(r.enabled),
   createdVia: r.created_via,
   createdAt: r.created_at,
@@ -56,6 +59,8 @@ const toSchedule = (r: Row): Schedule => ({
 export type ScheduleInput = {
   name?: string;
   prompt?: string;
+  /** Runs this script instead of a prompt; null takes it away. */
+  scriptId?: number | null;
   enabled?: boolean;
   cron?: string;
   at?: string;
@@ -71,8 +76,17 @@ export class Schedules {
     private settings: SettingsHost,
     private tasks: TasksHost,
     clock?: () => number,
+    private scripts: () => ScriptsService | null = () => null,
   ) {
     this.clock = clock ?? Date.now;
+  }
+
+  /** A script it runs is its bot's own. */
+  private checkScript(scriptId: number | null | undefined, botId: string) {
+    if (!scriptId) return;
+    const script = this.scripts()?.get(scriptId);
+    if (!script || script.botId !== botId)
+      throw new ScheduleError(`${botId === HATBOT_ID ? "Hatbot" : "That bot"} has no such script.`);
   }
 
   private now() {
@@ -89,11 +103,15 @@ export class Schedules {
   }
 
   create(
-    input: ScheduleInput & { name: string; prompt: string },
+    input: ScheduleInput & { name: string },
     via: "chat" | "owner",
     taintedBy: string | null = null,
   ): Schedule {
     taintedBy = via === "chat" ? taintedBy : null;
+    const scriptId = input.scriptId ?? null;
+    if (Boolean(scriptId) === Boolean(input.prompt))
+      throw new ScheduleError("Give it either a prompt or a script.");
+    this.checkScript(scriptId, input.botId ?? HATBOT_ID);
     const when = this.when(input.cron, input.at);
     const enabled = input.enabled ?? true;
     const row = this.db
@@ -111,16 +129,17 @@ export class Schedules {
           number,
           string | null,
           string,
+          number | null,
         ]
       >(
-        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted, tainted_by, bot_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO schedules (name, cron, run_at, prompt, enabled, created_via, created_at, next_run_at, tainted, tainted_by, bot_id, script_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.name,
         when.cron,
         when.runAt,
-        input.prompt,
+        scriptId ? "" : (input.prompt ?? ""),
         enabled ? 1 : 0,
         via,
         this.now(),
@@ -128,6 +147,7 @@ export class Schedules {
         taintedBy ? 1 : 0,
         taintedBy,
         input.botId ?? HATBOT_ID,
+        scriptId,
       );
     return this.changed(row?.id ?? -1) as Schedule;
   }
@@ -139,6 +159,16 @@ export class Schedules {
   ): Schedule | null {
     const current = this.get(id);
     if (!current) return null;
+    // A prompt and a script take each other's place.
+    const scriptId =
+      patch.prompt !== undefined
+        ? null
+        : patch.scriptId !== undefined
+          ? patch.scriptId
+          : current.scriptId;
+    const prompt = scriptId ? "" : (patch.prompt ?? current.prompt);
+    if (!scriptId && !prompt) throw new ScheduleError("Give it either a prompt or a script.");
+    this.checkScript(scriptId, patch.botId ?? current.botId);
     const timeChanged = patch.cron !== undefined || patch.at !== undefined;
     const enabled = patch.enabled ?? current.enabled;
     let { cron, runAt, nextRunAt } = current;
@@ -153,7 +183,7 @@ export class Schedules {
     // Your saving its instructions clears the mark; switching it on or off doesn't.
     const tainted =
       by.via === "owner"
-        ? patch.prompt === undefined && current.tainted
+        ? patch.prompt === undefined && patch.scriptId === undefined && current.tainted
         : Boolean(by.taintedBy) || current.tainted;
     // The first thing that tainted it stays.
     const taintedBy = tainted
@@ -163,11 +193,12 @@ export class Schedules {
       : null;
     this.db
       .query(
-        "UPDATE schedules SET name = ?, prompt = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ?, tainted_by = ?, bot_id = ? WHERE id = ?",
+        "UPDATE schedules SET name = ?, prompt = ?, script_id = ?, cron = ?, run_at = ?, enabled = ?, next_run_at = ?, tainted = ?, tainted_by = ?, bot_id = ? WHERE id = ?",
       )
       .run(
         patch.name ?? current.name,
-        patch.prompt ?? current.prompt,
+        prompt,
+        scriptId,
         cron,
         runAt,
         enabled ? 1 : 0,
@@ -224,18 +255,33 @@ export class Schedules {
       this.changed(s.id);
       return null;
     }
-    const task = this.tasks.createBackgroundTask({
-      title: s.name,
-      goal: s.prompt,
-      origin: "schedule",
-      source: s.name,
-      scheduleId: s.id,
-      botId: s.botId,
-      runKey: `schedule:${s.id}`,
-      taintedBy: s.tainted
-        ? `Its schedule, which the chat wrote after reading: ${s.taintedBy ?? "untrusted content"}`
-        : null,
-    });
+    const taintedBy = s.tainted
+      ? `Its schedule, which the chat wrote after reading: ${s.taintedBy ?? "untrusted content"}`
+      : null;
+    const script = s.scriptId ? this.scripts()?.get(s.scriptId) : null;
+    if (s.scriptId && !script) {
+      console.log(`schedule ${s.id} "${s.name}": its script is gone`);
+      return null;
+    }
+    const task = script
+      ? this.scripts()?.start(script, {
+          origin: "schedule",
+          source: s.name,
+          scheduleId: s.id,
+          runKey: `schedule:${s.id}`,
+          input: {},
+          taintedBy,
+        })
+      : this.tasks.createBackgroundTask({
+          title: s.name,
+          goal: s.prompt,
+          origin: "schedule",
+          source: s.name,
+          scheduleId: s.id,
+          botId: s.botId,
+          runKey: `schedule:${s.id}`,
+          taintedBy,
+        });
     if (!task) return null;
     this.db.query("UPDATE schedules SET last_run_at = ? WHERE id = ?").run(this.now(), s.id);
     this.changed(s.id);

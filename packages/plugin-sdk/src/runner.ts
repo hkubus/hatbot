@@ -88,8 +88,11 @@ export class JobStop extends Error {
 export type TaskJob = {
   /** Said to a bot that tries to steer task `id`. */
   unsteerable: (id: number) => string;
-  /** Its summary when it's done; a PluginError fails it with its message, a JobStop as it says. */
-  run: (job: JobRun) => Promise<string>;
+  /**
+   * Its summary when it's done, and whether that's news to send you (yes for a bare summary); a
+   * PluginError fails it with its message, a JobStop as it says.
+   */
+  run: (job: JobRun) => Promise<string | { summary: string; notify: boolean }>;
 };
 
 export type JobRun = {

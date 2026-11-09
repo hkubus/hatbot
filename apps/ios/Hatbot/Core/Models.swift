@@ -238,6 +238,7 @@ struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   var research: Bool?
   /// The plugin runner that runs it, e.g. "research".
   var runner: String?
+  var scriptId: Int?
   var reportPath: String?
   /// The to-do item it works on, ticked off when it ends done.
   var todo: String?
@@ -408,7 +409,9 @@ struct Schedule: Codable, Identifiable, Equatable, Sendable {
   var name: String
   var cron: String?
   var runAt: String?
+  /// Empty when it runs a script instead.
   var prompt: String
+  var scriptId: Int?
   var enabled: Bool
   var createdVia: String
   var createdAt: String

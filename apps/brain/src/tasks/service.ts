@@ -92,6 +92,7 @@ type Row = {
   effort: Task["effort"];
   research: number;
   runner: string | null;
+  job: string | null;
   report_path: string | null;
   todo: string | null;
   status: TaskStatus;
@@ -140,6 +141,7 @@ const toTask = (r: Row): Task => ({
   effort: r.effort,
   research: Boolean(r.research),
   runner: r.runner,
+  scriptId: r.runner === "script" && r.job ? (JSON.parse(r.job).script ?? null) : null,
   reportPath: r.report_path,
   todo: r.todo,
   status: r.status,
@@ -258,6 +260,7 @@ export class Tasks {
       scheduleId?: number;
       triggerId?: number;
       watcherId?: number;
+      scriptId?: number;
       limit?: number;
       before?: number;
       botId?: string;
@@ -283,6 +286,7 @@ export class Tasks {
       [opts.scheduleId, "t.schedule_id = ? AND t.parent_id IS NULL"],
       [opts.triggerId, "t.trigger_id = ? AND t.parent_id IS NULL"],
       [opts.watcherId, "t.watcher_id = ? AND t.parent_id IS NULL"],
+      [opts.scriptId, "t.runner = 'script' AND json_extract(t.job, '$.script') = ?"],
       [opts.before, "t.id < ?"],
       [opts.botId, "t.bot_id = ?"],
       [opts.origin, "t.origin = ?"],

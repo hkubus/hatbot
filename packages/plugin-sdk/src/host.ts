@@ -8,6 +8,7 @@ import type {
   Commit,
   HatbotEvent,
   PluginInfo,
+  Script,
   SearchResults,
   Task,
   TaskStep,
@@ -113,6 +114,21 @@ export type BackgroundTask = {
   /** What a job works from. */
   job?: unknown;
 };
+
+/** The core's scripts, as `scripts` in `uses`: what schedules and watchers run without the model. */
+export interface ScriptsService {
+  get(id: number): Script | null;
+  byName(botId: string, name: string): Script | null;
+  /** A run, as a background task with `input`; null while its last run from `runKey` still goes. */
+  start(
+    script: Script,
+    o: Pick<BackgroundTask, "origin" | "source" | "scheduleId" | "watcherId" | "runKey"> & {
+      input: Record<string, unknown>;
+      /** What started it had read untrusted content, this. */
+      taintedBy?: string | null;
+    },
+  ): Task | null;
+}
 
 export interface TasksHost {
   createBackgroundTask(input: BackgroundTask): Task | null;

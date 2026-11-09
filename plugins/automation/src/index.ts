@@ -1,6 +1,6 @@
 // Schedules, triggers and watchers, which start background tasks on their own, and the heartbeat and
 // weekly report, which look over everything else.
-import { definePlugin, hosts, ready, type Sandbox } from "@hatbot/plugin-sdk";
+import { definePlugin, hosts, ready, type Sandbox, type ScriptsService } from "@hatbot/plugin-sdk";
 import { HATBOT_ID } from "@hatbot/shared";
 import { z } from "zod";
 import { type Deps, like, moveFrom, NEEDS } from "./deps";
@@ -32,17 +32,18 @@ export const automationPlugin = definePlugin({
     `UPDATE settings SET key = 'automation:heartbeat' WHERE key = 'heartbeat:state';
      UPDATE settings SET key = 'automation:report' WHERE key = 'report:last';`,
   ],
-  uses: ["sandbox"],
+  uses: ["sandbox", "scripts"],
   start: (ctx) => {
     const d: Deps = {
       ...hosts(ctx, NEEDS),
       db: ctx.db,
       desktop: ctx.optional<Sandbox>("sandbox") ?? undefined,
+      scripts: () => ctx.optional<ScriptsService>("scripts"),
       store: ctx.store,
       publicUrl: ctx.publicUrl,
       clock: ctx.clock,
     };
-    const schedules = new Schedules(d.db, d.events, d.settings, d.tasks, d.clock);
+    const schedules = new Schedules(d.db, d.events, d.settings, d.tasks, d.clock, d.scripts);
     const triggers = new Triggers(
       d.db,
       d.events,
@@ -107,7 +108,7 @@ export const automationPlugin = definePlugin({
       ],
       prompt: {
         chat: `- The tools for schedules, watchers and triggers load when you need them: find them with tool_search_tool_regex (a pattern like "automation_schedule" or "automation_watch").
-- When the owner wants something done later or regularly ("every morning at 8, check X"), create a schedule. Each run is a background task that can't see this chat, so its prompt must say everything: what to do, what counts as news, and when to tell the owner. It can name a skill.
+- When the owner wants something done later or regularly ("every morning at 8, check X"), create a schedule. Where the same fixed steps would do every run, save them as a script and have the schedule run it: it costs no model. Each run is a background task that can't see this chat, so its prompt must say everything: what to do, what counts as news, and when to tell the owner. It can name a skill.
 - Webhooks and Uptime Kuma alerts are triggers the owner sets up in the app. You can see and adjust them, but not create them.`,
       },
       stop: unlisten,
