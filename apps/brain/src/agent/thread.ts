@@ -51,6 +51,7 @@ import {
   offered,
   type Plugins,
   runPluginTool,
+  targetOf,
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
@@ -689,7 +690,7 @@ export class Thread {
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
     if (verdict.action === "ask") {
-      const call = { tool: t.name, input, what, target: t.target?.(input as never) ?? null };
+      const call = { tool: t.name, input, what, target: targetOf(t, input) };
       const asked = await this.approve(episodeId, bot, call, verdict, signal, progress);
       if ("content" in asked) return asked;
       note = asked.note;

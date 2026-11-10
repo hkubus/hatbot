@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicModelClient } from "@hatbot/plugin-anthropic";
 import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { startEarly } from "../src/agent/tools";
+import { inBatches, startEarly } from "../src/agent/tools";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { testApp } from "./helpers";
 import { finish } from "./plugin-helpers";
@@ -234,4 +234,23 @@ test("the Anthropic client hands over each block once it's complete, a call with
     { type: "tool_use", id: "toolu_1", name: "lab_df", input: { host: "nas" } },
   ]);
   expect(res.stop_reason).toBe("tool_use");
+});
+
+test("writes run at once on different targets; one on several waits for each", async () => {
+  const log: string[] = [];
+  const calls = [
+    { id: "a", on: ["nas", "web"] },
+    { id: "b", on: ["mc"] },
+    { id: "c", on: ["web"] },
+  ];
+  await inBatches(
+    calls,
+    (c) => c.on,
+    async (c) => {
+      log.push(`+${c.id}`);
+      await Promise.resolve();
+      log.push(`-${c.id}`);
+    },
+  );
+  expect(log).toEqual(["+a", "+b", "-a", "-b", "+c", "-c"]);
 });

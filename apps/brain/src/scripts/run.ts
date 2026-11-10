@@ -11,7 +11,7 @@ import {
   type Task,
 } from "@hatbot/shared";
 import { levelOf, scopable } from "../agent/review";
-import { describeCall, offered, runPluginTool, verdictFor } from "../plugins/registry";
+import { describeCall, offered, runPluginTool, targetOf, verdictFor } from "../plugins/registry";
 import { askOwner } from "../tasks/loop";
 import type { Tasks } from "../tasks/service";
 import type { ScriptStore } from "./store";
@@ -231,7 +231,7 @@ export async function runScript(
         summary: what,
         reason: verdict.why,
         sources: tainted ? [tainted] : [],
-        call: { tool: t.name, input, target: t.target?.(input as never) ?? null },
+        call: { tool: t.name, input, target: targetOf(t, input) },
       },
       null,
       (wait) => {

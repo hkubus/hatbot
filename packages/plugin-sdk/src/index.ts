@@ -215,8 +215,11 @@ export type PluginTool<I = unknown> = {
   untrustedDefinition?: boolean;
   label?: string;
   describe?: (input: I) => string;
-  /** Writes on different targets may run at once; ones on the same target keep their order. */
-  target?: (input: I) => string;
+  /**
+   * Writes on different targets may run at once; ones on the same target keep their order. A write on
+   * several waits for each.
+   */
+  target?: (input: I) => string | string[];
   /** Write tools that pay, buy or change accounts: Haiku's review never answers for them. */
   kind?: ApprovalKind;
   /** How many commands a write runs, for the chat's limit. Without it, one. */

@@ -890,21 +890,21 @@ export async function runOffered(
  */
 export async function inBatches<C, R>(
   calls: C[],
-  parallel: (call: C) => boolean | string,
+  parallel: (call: C) => boolean | string | string[],
   run: (call: C) => Promise<R>,
 ): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < calls.length; ) {
     const first = parallel(calls[i] as C);
-    const targets = new Set<string>();
-    if (typeof first === "string") targets.add(first);
+    const targets = new Set(typeof first === "boolean" ? [] : [first].flat());
     let j = i + 1;
     while (first !== false && j < calls.length) {
       const next = parallel(calls[j] as C);
-      if (typeof next !== typeof first || next === false) break;
-      if (typeof next === "string") {
-        if (targets.has(next)) break;
-        targets.add(next);
+      if (next === false || (typeof next === "boolean") !== (typeof first === "boolean")) break;
+      if (typeof next !== "boolean") {
+        const each = [next].flat();
+        if (each.some((t) => targets.has(t))) break;
+        for (const t of each) targets.add(t);
       }
       j++;
     }

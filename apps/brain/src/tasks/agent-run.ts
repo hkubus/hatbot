@@ -44,6 +44,7 @@ import {
   describeCall,
   offered,
   runPluginTool,
+  targetOf,
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
@@ -455,7 +456,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         botId: bot.id,
         tool: t.name,
         input: call.input,
-        target: t.target?.(call.input as never) ?? null,
+        target: targetOf(t, call.input),
         taskId: id,
         scheduleOnly: !scopable(verdict),
       });
@@ -530,7 +531,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
     if (verdict.action === "ask") {
       const check = await reviewed(t, call, what, verdict);
-      const target = t.target?.(call.input as never) ?? null;
+      const target = targetOf(t, call.input);
       // Never for money, accounts or what you said to always ask about; doors only in one schedule.
       const scopes = scopable(verdict)
         ? (["always"] as const)
@@ -837,7 +838,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       let said = "";
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
-      const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
+      const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string[] => {
         const t = pluginTools.has(call.name) ? current(call.name) : null;
         if (!t || typeof t === "string") return false;
         if (t.access === "read") return true;
@@ -847,7 +848,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const cc = { task: { id, tainted: task.tainted }, signal };
         if (verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety).action !== "allow")
           return false;
-        return !untrustedOf(t, parsed.data) && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
+        const plugin = t.name.split("_")[0];
+        return (
+          !untrustedOf(t, parsed.data) &&
+          [t.target(parsed.data)].flat().map((x) => `${plugin}:${x}`)
+        );
       };
       const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
