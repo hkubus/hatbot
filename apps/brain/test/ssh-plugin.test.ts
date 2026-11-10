@@ -32,6 +32,9 @@ script(
   join(dir, "ssh"),
   `#!/bin/sh
 printf '%s\\n' "$*" >> ${dir}/ssh.log
+case "$*" in
+  *"-- 10.0.0.99 "*) echo "ssh: connect to host 10.0.0.99 port 22: No route to host" >&2; exit 255 ;;
+esac
 for last; do :; done
 case "$last" in
   *fail-connect*) echo "ssh: connect to host 10.0.0.9 port 22: No route to host" >&2; exit 255 ;;
@@ -350,18 +353,42 @@ test("command output is untrusted unless the command only checks status: a log c
   expect(await untrusted("true")).toBe(false);
   expect(await untrusted("printf ''; exit 3")).toBe(false);
   // What it prints includes names others chose: a unit, a container, a process.
-  const check = t.tool("ssh_check").untrusted as (i: { host: string; what: string }) => boolean;
+  const check = t.tool("ssh_check").untrusted as (i: { hosts: string[]; what: string }) => boolean;
   const whats = ["overview", "failed", "service", "ports", "logs", "errors"];
-  expect(whats.filter((what) => check({ host: "nas", what }))).toEqual(whats);
+  expect(whats.filter((what) => check({ hosts: ["nas"], what }))).toEqual(whats);
 
   // A host whose output you trust: its logs, files and commands are your words, not strangers'.
-  const own = await ssh({ hosts: [{ name: "nas", address: "10.0.0.5", trustOutput: true }] });
+  const own = await ssh({
+    hosts: [
+      { name: "nas", address: "10.0.0.5", trustOutput: true },
+      { name: "web", address: "10.0.0.6" },
+    ],
+  });
   expect(
     (await runPluginTool(own.tool("ssh_exec"), { host: "nas", command: `tail -n 1 ${log}` }, call))
       .untrusted,
   ).toBe(false);
   const ownCheck = own.tool("ssh_check").untrusted as typeof check;
-  expect(ownCheck({ host: "nas", what: "logs" })).toBe(false);
+  expect(ownCheck({ hosts: ["nas"], what: "logs" })).toBe(false);
+  // Looked at with one you don't, it's all as untrusted as that one's.
+  expect(ownCheck({ hosts: ["nas", "web"], what: "logs" })).toBe(true);
+});
+
+test("ssh_check looks at several hosts in one call, each under its name; one it can't reach doesn't hide the rest", async () => {
+  const gone = (name: string) => ({ name, address: "10.0.0.99" });
+  const t = await ssh({ hosts: [...HOSTS, gone("gone"), gone("lost")] });
+  const check = t.tool("ssh_check");
+  const out = textOf(await check.run({ hosts: ["nas", "gone"], what: "overview" }, call));
+  expect(out).toStartWith("nas:\nExit code 0\nuptime here");
+  expect(out).toContain("\n\ngone:\nCouldn't connect to gone");
+  // A script saved before still names one host.
+  expect((await runPluginTool(check, { host: "nas", what: "overview" }, call)).text).toStartWith(
+    "Exit code 0\nuptime here",
+  );
+  // When none answers, the call failed.
+  await expect(check.run({ hosts: ["gone", "lost"], what: "overview" }, call)).rejects.toThrow(
+    "Couldn't connect to lost",
+  );
 });
 
 test("a careful host always asks; writing outside home, as root or to keys asks, by write or by copy", async () => {
