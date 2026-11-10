@@ -7,8 +7,8 @@ struct SpendView: View {
   @State private var error: String?
 
   var body: some View {
-    List {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledList {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if let summary {
         Section {
           LabeledContent("Today", value: spendText(summary.todayUsd, limit: summary.limits.dailyUsd))
@@ -79,8 +79,8 @@ struct LimitsView: View {
   @State private var unreadable: Set<String> = []
 
   var body: some View {
-    Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if limits != nil {
         Section {
           field("Per day", \.dailyUsd)
@@ -199,8 +199,8 @@ struct DevicesView: View {
   @State private var error: String?
 
   var body: some View {
-    List {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledList {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       Section("API tokens") {
         if let tokens, tokens.isEmpty {
           Text("Nothing is signed in with a token.").foregroundStyle(.secondary)
@@ -208,7 +208,7 @@ struct DevicesView: View {
         ForEach(tokens ?? []) { t in
           VStack(alignment: .leading, spacing: 3) {
             Text(t.name)
-            Text(line(t)).font(.footnote).foregroundStyle(.secondary)
+            Text(line(t)).font(.sans(.footnote)).foregroundStyle(.secondary)
           }
           .swipeActions {
             Button("Revoke", role: .destructive) { revoking = t }

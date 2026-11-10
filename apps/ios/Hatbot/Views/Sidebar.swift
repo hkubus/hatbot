@@ -74,7 +74,7 @@ struct Count: View {
 
   var body: some View {
     Text("\(n)")
-      .font(.caption2.weight(.semibold).monospacedDigit())
+      .font(.sans(.caption2, .semibold).monospacedDigit())
       .foregroundStyle(Color.onBrand)
       .padding(.horizontal, 5)
       .frame(minWidth: 18, minHeight: 18)
@@ -154,7 +154,7 @@ struct Sidebar<Content: View>: View {
 
   private var panel: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: 0) {
         if store.conversations.isEmpty {
           row(AppTab.chat.title, icon: AppTab.chat.icon, selected: tab == .chat, count: store.unread.count) {
             tab = .chat
@@ -174,7 +174,7 @@ struct Sidebar<Content: View>: View {
           if store.botIds.count > 1 {
             row("New group", icon: "person.3", selected: false, count: 0) { newGroup = true }
           }
-          Divider().padding(.vertical, 6).padding(.horizontal, 14)
+          Divider().overlay(Color.line).padding(.vertical, 8).padding(.horizontal, 16)
         }
         ForEach(AppTab.allCases.filter { $0 != .chat }, id: \.self) { t in
           row(t.title, icon: t.icon, selected: t == tab, count: t == .tasks ? store.needsYou : 0) {
@@ -186,7 +186,13 @@ struct Sidebar<Content: View>: View {
       .padding(.top, 8)
     }
     .frame(maxHeight: .infinity)
-    .background(Color(uiColor: .secondarySystemBackground).ignoresSafeArea())
+    // Over the page, Material's modal drawer, with its outer corners rounded.
+    .background(
+      UnevenRoundedRectangle(
+        bottomTrailingRadius: docked ? 0 : 16, topTrailingRadius: docked ? 0 : 16, style: .continuous
+      )
+      .fill(Color.surface1)
+      .ignoresSafeArea())
     .sheet(isPresented: $newBot) {
       NavigationStack {
         BotView(id: nil) { bot in
@@ -220,17 +226,21 @@ struct Sidebar<Content: View>: View {
       action()
       setOpen(false)
     } label: {
-      HStack(spacing: 14) {
-        Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.accentColor : .primary))
+      HStack(spacing: 12) {
+        Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.text : Color.text2))
         Text(title).lineLimit(1)
         Spacer()
         if count > 0 { Count(n: count) }
       }
-      .font(.body.weight(selected ? .semibold : .regular))
-      .foregroundStyle(selected ? Color.accentColor : .primary)
-      .padding(.horizontal, 14)
-      .padding(.vertical, 12)
-      .background(selected ? Color.brand.opacity(0.14) : .clear, in: .capsule)
+      .font(.sans(.callout, .medium))
+      .foregroundStyle(selected ? Color.text : Color.text2)
+      .padding(.horizontal, 16)
+      .frame(minHeight: 56)
+      // Material's indicator, grown out from its middle.
+      .background {
+        if selected { Capsule().fill(Color.brandSoft).transition(.scale(scale: 0.2).combined(with: .opacity)) }
+      }
+      .animation(.expressive, value: selected)
       .contentShape(.capsule)
     }
     .buttonStyle(.plain)

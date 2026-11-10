@@ -13,7 +13,7 @@ struct TasksView: View {
 
   var body: some View {
     NavigationStack(path: $path) {
-      List {
+      TiledList {
         if let request = store.desktop?.request {
           Section {
             NavigationLink(value: Route.live(taskId: request.taskId)) {
@@ -51,7 +51,7 @@ struct TasksView: View {
         }
         Section {
           if let error {
-            Text(error).foregroundStyle(.red)
+            Text(error).foregroundStyle(Color.danger)
           } else if shown.isEmpty && (filter == .active ? activeLoaded : finishedIds != nil) {
             Text(filter == .active ? "Nothing running." : "No tasks yet.").foregroundStyle(.secondary)
           }
@@ -132,7 +132,7 @@ private struct TaskRow: View {
         Text(Format.statusLabel(task.status)).foregroundStyle(task.status.tint)
         Text((task.startedAt ?? task.createdAt).stampText).foregroundStyle(.secondary)
       }
-      .font(.footnote)
+      .font(.sans(.footnote))
     }
   }
 }
@@ -168,9 +168,9 @@ struct TaskDetailView: View {
     let asked = store.pendingQuestions.filter { $0.taskId == taskId }
     let screen = task.lane == .screen && task.isActive
     let showLive = screen && (watch || store.desktop?.request?.taskId == taskId)
-    return List {
+    return TiledList {
       if let error {
-        Text(error).foregroundStyle(.red)
+        Text(error).foregroundStyle(Color.danger)
       }
       ForEach(store.sendingApprovals.filter { $0.taskId == taskId }) { a in
         Section { SendingBody(approval: a) }
@@ -196,8 +196,8 @@ struct TaskDetailView: View {
       }
       Section {
         VStack(alignment: .leading, spacing: 6) {
-          Text(task.title).font(.title3.bold())
-          Text(Format.statusLabel(task.status)).font(.subheadline).foregroundStyle(task.status.tint)
+          Text(task.title).font(.sans(.title3, .bold))
+          Text(Format.statusLabel(task.status)).font(.sans(.subheadline)).foregroundStyle(task.status.tint)
         }
         .padding(.vertical, 2)
         if task.isActive {
@@ -231,7 +231,7 @@ struct TaskDetailView: View {
     }
     .sheet(item: Binding(get: { rerunGoal.map(Goal.init) }, set: { rerunGoal = $0?.text })) { _ in
       NavigationStack {
-        Form {
+        TiledForm {
           TextField("Goal", text: Binding(get: { rerunGoal ?? "" }, set: { rerunGoal = $0 }), axis: .vertical)
             .lineLimit(4...16)
         }
@@ -302,7 +302,7 @@ private struct TaskDetails: View {
       VStack(alignment: .leading, spacing: 6) {
         Text("Event")
         ScrollView(.horizontal) {
-          Text(payload).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+          Text(payload).font(.code(.caption)).textSelection(.enabled)
         }
       }
     }
@@ -327,15 +327,15 @@ private struct StepRow: View {
           Text(step.detail).foregroundStyle(.secondary)
         }
         if step.kind == .page, let url = step.url.flatMap(URL.init(string:)) {
-          Link(url.host() ?? url.absoluteString, destination: url).font(.footnote)
+          Link(url.host() ?? url.absoluteString, destination: url).font(.sans(.footnote))
         }
         if step.screenshot != nil {
           Screenshot(taskId: step.taskId, stepId: step.id)
         }
-        Text(step.createdAt.timeText).font(.caption2).foregroundStyle(.secondary)
+        Text(step.createdAt.timeText).font(.sans(.caption2)).foregroundStyle(.secondary)
       }
     }
-    .font(.subheadline)
+    .font(.sans(.subheadline))
   }
 
   private var icon: String {

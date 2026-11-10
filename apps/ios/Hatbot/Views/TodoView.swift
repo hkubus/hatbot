@@ -12,9 +12,9 @@ struct TodoView: View {
   var body: some View {
     let list = store.todos
     NavigationStack(path: $path) {
-      List {
+      TiledList {
         if let error {
-          Text(error).foregroundStyle(.red)
+          Text(error).foregroundStyle(Color.danger)
         }
         let open = list?.items.filter { !$0.done } ?? []
         let done = Array((list?.items.filter(\.done) ?? []).reversed())
@@ -76,7 +76,7 @@ struct TodoView: View {
       } else if let due = t.due {
         let overdue = due < Self.today()
         Text(overdue ? "Overdue, \(Self.day(due))" : Self.dueText(due, at: t.at))
-          .foregroundStyle(overdue ? .red : .secondary)
+          .foregroundStyle(overdue ? Color.danger : .secondary)
           .fixedSize()
       }
     }
@@ -103,7 +103,7 @@ struct TodoView: View {
 
   private var addSheet: some View {
     NavigationStack {
-      Form {
+      TiledForm {
         TextField("What's to do", text: $newItem, axis: .vertical)
         Toggle("Due", isOn: $hasDue)
         if hasDue {

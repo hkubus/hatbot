@@ -18,6 +18,7 @@ struct HatbotApp: App {
         vault: vault, signedOut: KeychainVault(account: "signed-out", accessGroup: nil), defaults: AppGroup.defaults,
         cacheDir: AppGroup.cacheDir))
     PrivacyCover.shared.start()
+    Typeface.applyToUIKit()
   }
 
   var body: some Scene {
@@ -32,6 +33,7 @@ struct HatbotApp: App {
         }
       }
       .environment(session)
+      .font(.sans())
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
       .environment(\.openURL, OpenURLAction { url in AppLink.tapped(url).map { .systemAction($0) } ?? .discarded })
       // Back from the web app, perhaps with the setup finished.
@@ -263,7 +265,7 @@ private struct Toast: View {
   var body: some View {
     if let text = store.toast {
       Text(text)
-        .font(.footnote)
+        .font(.sans(.footnote))
         .lineLimit(2)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

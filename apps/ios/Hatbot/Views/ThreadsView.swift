@@ -22,8 +22,9 @@ struct ThreadsView: View {
         ThreadLine(t: t, title: "")
       }
       .foregroundStyle(.primary)
-      .listRowBackground(store.threadNeedsYou(t) ? Color.attention.opacity(0.18) : nil)
+      .tiles(store.threadNeedsYou(t) ? .brandSoft : .surface1)
     }
+    .tiledPage()
     .overlay {
       if list.isEmpty {
         ContentUnavailableView(
@@ -50,8 +51,8 @@ struct ThreadCard: View {
       ThreadLine(t: store.threads[id], title: title)
         .padding(12)
         .background(
-          needsYou ? AnyShapeStyle(Color.attention.opacity(0.18)) : AnyShapeStyle(.fill.tertiary),
-          in: .rect(cornerRadius: 14))
+          needsYou ? Color.brandSoft : Color.surface2,
+          in: .rect(cornerRadius: 16))
     }
     .buttonStyle(.plain)
   }
@@ -68,7 +69,7 @@ struct ThreadLine: View {
         .foregroundStyle(.secondary)
       VStack(alignment: .leading, spacing: 2) {
         Text(verbatim: t?.title ?? title).fontWeight(.semibold).lineLimit(1)
-        if let line { Text(verbatim: line).font(.subheadline).foregroundStyle(.secondary).lineLimit(2) }
+        if let line { Text(verbatim: line).font(.sans(.subheadline)).foregroundStyle(.secondary).lineLimit(2) }
       }
       Spacer(minLength: 8)
       if unread > 0 { Count(n: unread) }

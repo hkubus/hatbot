@@ -37,14 +37,14 @@ struct ChatView: View {
   fileprivate enum Row: Identifiable {
     case time(String, before: Int)
     case fold(ThreadGroup)
-    /// `joined`: it follows a message from the same sender; `tail`: it's the last of them.
-    case message(ThreadMessage, joined: Bool = false, tail: Bool = true)
+    /// `joined`: it follows a message from the same sender.
+    case message(ThreadMessage, joined: Bool = false)
 
     var id: String {
       switch self {
       case let .time(_, before): "t\(before)"
       case let .fold(g): "f\(g.id)"
-      case let .message(m, _, _): "m\(m.id)"
+      case let .message(m, _): "m\(m.id)"
       }
     }
   }
@@ -95,16 +95,14 @@ struct ChatView: View {
   /// In a group each bot is a sender of its own, and a box's notes are the box's, not its bot's.
   private static func grouped(_ rows: [Row]) -> [Row] {
     func sender(_ row: Row?) -> String? {
-      if case let .message(m, _, _)? = row, !m.isNote { key(m) } else { nil }
+      if case let .message(m, _)? = row, !m.isNote { key(m) } else { nil }
     }
     func key(_ m: ThreadMessage) -> String {
       m.role == .user ? "owner" : m.kind == .box ? "box:\(m.boxId ?? 0)" : "bot:\(m.botId ?? "")"
     }
     return rows.indices.map { i in
-      guard case let .message(m, _, _) = rows[i] else { return rows[i] }
-      let before = i > 0 ? rows[i - 1] : nil
-      let after = i + 1 < rows.count ? rows[i + 1] : nil
-      return .message(m, joined: sender(before) == key(m), tail: sender(after) != key(m))
+      guard case let .message(m, _) = rows[i] else { return rows[i] }
+      return .message(m, joined: sender(i > 0 ? rows[i - 1] : nil) == key(m))
     }
   }
 
@@ -153,7 +151,7 @@ struct ChatView: View {
             ForEach(rows) { row in
               switch row {
               case let .time(time, _):
-                Text(time).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Text(time).font(.sans(.caption, .medium)).foregroundStyle(.secondary)
                   .padding(.top, 14)
                   .padding(.bottom, 4)
               case let .fold(g):
@@ -169,17 +167,17 @@ struct ChatView: View {
                   }
                 }
                 .padding(.top, 10)
-              case let .message(m, joined, tail):
+              case let .message(m, joined):
                 let named = group && !joined && m.role == .assistant && !m.isNote && m.kind != .box
                 if named {
                   Text(store.botName(m.botId))
-                    .font(.caption.weight(.semibold))
+                    .font(.sans(.caption, .semibold))
                     .foregroundStyle(m.botId.flatMap { store.bots[$0]?.color.color } ?? .secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 10)
                 }
                 // A question's choices can be tapped until anything comes after it.
-                MessageRow(m: m, tail: tail, answerable: m.id == store.messages.last?.id)
+                MessageRow(m: m, joined: joined, answerable: m.id == store.messages.last?.id)
                   .equatable()
                   .padding(.top, joined || named ? 2 : 10)
               }
@@ -488,7 +486,7 @@ private struct Composer: View {
           }
           if waiting.here.count > 1 {
             Text("\(waiting.here.count - 1) more waiting")
-              .font(.footnote)
+              .font(.sans(.footnote))
               .foregroundStyle(.secondary)
           }
           if waiting.rest > 0 {
@@ -497,7 +495,7 @@ private struct Composer: View {
             Button("\(count) waiting in \(place)") {
               openElsewhere(waiting.elsewhere)
             }
-            .font(.footnote)
+            .font(.sans(.footnote))
             .buttonStyle(.borderless)
           }
         }
@@ -506,7 +504,7 @@ private struct Composer: View {
         .glassSurface(in: .rect(cornerRadius: 22))
       }
       if let error {
-        Text(error).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
+        Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger).frame(maxWidth: .infinity, alignment: .leading)
       }
       if !files.isEmpty {
         ComposerFiles(files: files) { id in files.removeAll { $0.id == id } }
@@ -516,7 +514,7 @@ private struct Composer: View {
           failed.map { "\($0.name): \($0.error ?? "")" }.joined(separator: " ")
             + (failed.count > 1 ? " Take them off to send." : " Take it off to send.")
         )
-        .font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
+        .font(.sans(.footnote)).foregroundStyle(Color.danger).frame(maxWidth: .infinity, alignment: .leading)
       }
       if !mentionable.isEmpty {
         mentionList
@@ -656,7 +654,7 @@ private struct Composer: View {
           HStack(alignment: .firstTextBaseline) {
             name(item)
             Spacer(minLength: 12)
-            Text(about(item)).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+            Text(about(item)).font(.sans(.footnote)).foregroundStyle(.secondary).lineLimit(1)
           }
           .padding(.horizontal, 16)
           .padding(.vertical, 10)
@@ -728,7 +726,7 @@ private struct Banner<Trailing: View>: View {
       Spacer()
       trailing
     }
-    .font(.subheadline)
+    .font(.sans(.subheadline))
     .padding(.horizontal, 16)
     .padding(.vertical, 10)
     .glassSurface(in: .capsule)
@@ -751,9 +749,9 @@ private struct FoldRow: View {
         Text(group.fold ?? "")
           .multilineTextAlignment(.leading)
           .frame(maxWidth: .infinity, alignment: .leading)
-        Text(group.messages[0].date?.formatted(date: .omitted, time: .shortened) ?? "").font(.caption2)
+        Text(group.messages[0].date?.formatted(date: .omitted, time: .shortened) ?? "").font(.sans(.caption2))
       }
-      .font(.subheadline)
+      .font(.sans(.subheadline))
       .foregroundStyle(.secondary)
       .padding(.vertical, 6)
       .contentShape(.rect)
@@ -769,7 +767,7 @@ private struct FoldRow: View {
 /// reads from the store still redraws it.
 private struct MessageRow: View, Equatable {
   let m: ThreadMessage
-  let tail: Bool
+  let joined: Bool
   var answerable = false
   @Environment(\.openRoute) private var router
   @Environment(AppStore.self) private var store
@@ -777,19 +775,23 @@ private struct MessageRow: View, Equatable {
   var body: some View {
     if m.isNote {
       Text(m.text)
-        .font(.footnote)
+        .font(.sans(.footnote))
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
     } else if m.role == .user {
-      let shape = Bubble(tail: tail, side: .trailing)
+      // The web's bubble, with its corner by you small, and the one by the message before in a run.
+      let shape = UnevenRoundedRectangle(
+        topLeadingRadius: 20, bottomLeadingRadius: 20, bottomTrailingRadius: 4, topTrailingRadius: joined ? 4 : 20,
+        style: .continuous)
       VStack(alignment: .trailing, spacing: 4) {
         if let list = m.attachments, !list.isEmpty { MessageFiles(list: list, alignment: .trailing) }
         if !m.text.isEmpty {
           Text(m.text)
             .foregroundStyle(Color.onBrand)
             .textSelection(.enabled)
-            .padding(Bubble.insets(.trailing))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
             .background(Color.userBubble, in: shape)
             .contentShape(.contextMenuPreview, shape)
             .contextMenu { copyButton(m.text) }
@@ -809,7 +811,7 @@ private struct MessageRow: View, Equatable {
         // The task's result changed this message after it was sent.
         if m.status != .streaming, let editedAt {
           Text("Edited \(editedAt.timeText)")
-            .font(.caption2)
+            .font(.sans(.caption2))
             .foregroundStyle(Color.accentColor)
         }
       }
@@ -945,7 +947,7 @@ private struct MessageRow: View, Equatable {
   private func open(_ route: Route) { router?.open(route) }
 
   nonisolated static func == (a: Self, b: Self) -> Bool {
-    a.m == b.m && a.tail == b.tail && a.answerable == b.answerable
+    a.m == b.m && a.joined == b.joined && a.answerable == b.answerable
   }
 }
 
@@ -1020,7 +1022,7 @@ private struct ReplyMessage: View {
     }
     if ended, m.status != .streaming, let link = m.link {
       Button(store.openLabel(link)) { router?.message(link) }
-        .glassButton()
+        .buttonStyle(.material(.outlined))
         .controlSize(.small)
     }
   }
@@ -1059,11 +1061,11 @@ private struct StreamingReply: View {
     if !reply.text.isEmpty { MarkdownText(text: reply.text, streaming: true) }
     if reply.text.isEmpty && dots { TypingDots() }
     if let note = Format.lastLine(reply.progress) {
-      Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+      Text(note).font(.sans(.footnote)).foregroundStyle(.secondary).lineLimit(2)
     }
     if let used = reply.usage {
       Text("\(Format.tokens(used.tokens)) tokens · \(String(format: "$%.3f", used.costUsd))")
-        .font(.footnote.monospacedDigit())
+        .font(.sans(.footnote).monospacedDigit())
         .foregroundStyle(.secondary)
     }
   }
@@ -1080,7 +1082,7 @@ private struct TaskResult: View {
           let note = runningNote(task)
           TypingDots()
           if note != "Working…" {
-            Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+            Text(note).font(.sans(.footnote)).foregroundStyle(.secondary).lineLimit(2)
           }
         } else if task.status == .done {
           MarkdownText(text: task.summary ?? "Done.")
@@ -1113,7 +1115,7 @@ private struct BoxResult: View {
         Text(box.title).fontWeight(.semibold).lineLimit(2)
         Spacer(minLength: 8)
         Button("Open") { router?.open(.box(boxId)) }
-          .glassButton()
+          .buttonStyle(.material(.outlined))
           .controlSize(.small)
       }
     }
@@ -1152,7 +1154,7 @@ private struct HandoffMessage: View {
   var body: some View {
     Button { open.toggle() } label: {
       Text("\(Text(verbatim: "\(store.botName(m.botId)) asked:").bold()) \(Text(verbatim: open ? "" : oneLine))")
-        .font(.footnote)
+        .font(.sans(.footnote))
         .foregroundStyle(.secondary)
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1172,11 +1174,11 @@ private struct HandoffMessage: View {
     MarkdownText(text: m.text)
     if let link = m.link {
       Button(store.openLabel(link)) { router?.message(link) }
-        .glassButton()
+        .buttonStyle(.material(.outlined))
         .controlSize(.small)
     } else if let taskId = m.taskId {
       Button("Open task") { router?.open(.task(taskId)) }
-        .glassButton()
+        .buttonStyle(.material(.outlined))
         .controlSize(.small)
     }
   }
@@ -1192,7 +1194,7 @@ private struct TaskMessage: View {
         MarkdownText(text: text(task))
         if let result = result(task) { MarkdownText(text: result) }
         if task.isActive {
-          Text(note(task)).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+          Text(note(task)).font(.sans(.footnote)).foregroundStyle(.secondary).lineLimit(2)
         }
       }
     }
@@ -1273,7 +1275,7 @@ struct ApprovalBody: View {
     }
     if !a.reason.isEmpty && (shown || warns) { Text(a.reason).textSelection(.enabled) }
     if !a.sources.isEmpty {
-      Text("After reading \(a.sources.joined(separator: ", "))").font(.footnote).foregroundStyle(.secondary)
+      Text("After reading \(a.sources.joined(separator: ", "))").font(.sans(.footnote)).foregroundStyle(.secondary)
     }
     if shown, let taskId = a.taskId, let stepId = a.screenshotStepId {
       Screenshot(taskId: taskId, stepId: stepId)
@@ -1281,34 +1283,33 @@ struct ApprovalBody: View {
     if let name = a.secret {
       SecureField(name, text: $secret)
         .textContentType(.password)
-        .textFieldStyle(.roundedBorder)
+        .materialField()
         .onSubmit { if !secret.isEmpty { decide(.approve) } }
     }
     if shown && a.takesNote {
       TextField("Tell it what to do instead, or how to go ahead", text: $note, axis: .vertical)
         .lineLimit(1...6)
-        .textFieldStyle(.roundedBorder)
+        .materialField()
     }
     if opens != nil || folds {
       HStack(spacing: 16) {
         if let taskId = opens { Button("Open task") { router?.open(.task(taskId)) } }
         if folds { Button(more ? "Less" : "More") { withAnimation(.snappy) { more.toggle() } } }
       }
-      .font(.subheadline)
+      .font(.sans(.subheadline))
       .buttonStyle(.borderless)
     }
     if let error {
-      Text(error).font(.footnote).foregroundStyle(.red)
+      Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
     }
     // Full-size and well apart, so neither is pressed for the other.
     HStack(spacing: 16) {
       Button(role: .destructive) { decide(.deny) } label: { Text("Deny").frame(maxWidth: .infinity) }
-        .glassButton()
+        .buttonStyle(.material(.tonal))
       Button { decide(.approve) } label: {
         Text(a.secret != nil ? "Save" : "Approve").frame(maxWidth: .infinity)
       }
-      .glassButton(prominent: true)
-      .tint(.attention)
+      .buttonStyle(.material(.filled))
       .disabled(a.secret != nil && secret.isEmpty)
     }
     .controlSize(.large)
@@ -1335,7 +1336,7 @@ struct ApprovalBody: View {
           Button(answer) { decide(.approve, answer: answer) }
         }
       }
-      .font(.subheadline)
+      .font(.sans(.subheadline))
       .buttonStyle(.borderless)
       .disabled(busy)
     }
@@ -1350,7 +1351,7 @@ struct ApprovalBody: View {
           }
         }
       }
-      .font(.subheadline)
+      .font(.sans(.subheadline))
       .buttonStyle(.borderless)
     }
   }
@@ -1387,10 +1388,10 @@ struct SendingBody: View {
         Text(approval.summary).textSelection(.enabled)
         Text(left > 0 ? "Sending in \(left) s" : "Sending").foregroundStyle(.secondary)
         if let error {
-          Text(error).font(.footnote).foregroundStyle(.red)
+          Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
         }
         Button(role: .destructive) { stop() } label: { Text("Stop").frame(maxWidth: .infinity) }
-          .glassButton()
+          .buttonStyle(.material(.tonal))
           .controlSize(.large)
           .disabled(busy || left == 0)
       }
@@ -1428,13 +1429,13 @@ struct BlockedBody: View {
       Text("\(Text("Blocked:").bold()) \(a.summary)").textSelection(.enabled)
       if !a.reason.isEmpty { Text(a.reason).textSelection(.enabled) }
       if let error {
-        Text(error).font(.footnote).foregroundStyle(.red)
+        Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
       }
       HStack(spacing: 16) {
         Button { act { try await store.dismissBlocked(a.id) } } label: {
           Text("Dismiss").frame(maxWidth: .infinity)
         }
-        .glassButton()
+        .buttonStyle(.material(.tonal))
         if live {
           Button {
             act {
@@ -1444,8 +1445,7 @@ struct BlockedBody: View {
           } label: {
             Text("Run anyway").frame(maxWidth: .infinity)
           }
-          .glassButton(prominent: true)
-          .tint(.attention)
+          .buttonStyle(.material(.filled))
         }
       }
       .controlSize(.large)
@@ -1457,7 +1457,7 @@ struct BlockedBody: View {
             if live { try await onRan?() }
           }
         }
-        .font(.subheadline)
+        .font(.sans(.subheadline))
         .buttonStyle(.borderless)
       }
     }
@@ -1488,20 +1488,21 @@ struct QuestionBody: View {
     Text(q.question).bold().textSelection(.enabled)
     if let sources = q.sources, !sources.isEmpty {
       // Shown as written, like the question: a page's name could hold Markdown.
-      Text("After reading \(sources.joined(separator: ", "))").font(.footnote).foregroundStyle(.secondary)
+      Text("After reading \(sources.joined(separator: ", "))").font(.sans(.footnote)).foregroundStyle(.secondary)
     }
     Group {
       ForEach(q.choices, id: \.self) { c in
         Button { answer(c) } label: { Text(c).frame(maxWidth: .infinity) }
-          .glassButton(prominent: true)
+          .buttonStyle(.material(.outlined))
           .controlSize(.large)
       }
       HStack(spacing: 8) {
         TextField(q.choices.isEmpty ? "Your answer" : "Or write your own", text: $own)
-          .textFieldStyle(.roundedBorder)
+          .materialField()
           .submitLabel(.send)
           .onSubmit { answer(own) }
         Button("Send") { answer(own) }
+          .buttonStyle(.material(.filled))
           .disabled(own.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
     }
@@ -1509,11 +1510,11 @@ struct QuestionBody: View {
     .sensoryFeedback(.success, trigger: answered)
     if linksTask, let router {
       Button("Open task") { router.open(.task(q.taskId)) }
-        .font(.subheadline)
+        .font(.sans(.subheadline))
         .buttonStyle(.borderless)
     }
     if let error {
-      Text(error).font(.footnote).foregroundStyle(.red)
+      Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
     }
   }
 
@@ -1551,7 +1552,7 @@ private struct Choices: View {
       if lists.count == 1, let one = lists.first {
         ForEach(one, id: \.self) { c in
           Button(c) { send(c) }
-            .glassButton()
+            .buttonStyle(.material(.outlined))
         }
       } else {
         ForEach(lists.indices, id: \.self) { i in
@@ -1560,11 +1561,11 @@ private struct Choices: View {
             Text("\(i + 1).").foregroundStyle(.secondary).monospacedDigit()
             if lists[i].isEmpty {
               TextField("Answer \(i + 1)", text: $answers[i])
-                .textFieldStyle(.roundedBorder)
+                .materialField()
             } else {
               ForEach(lists[i], id: \.self) { c in
                 Button(c) { answers[i] = c }
-                  .glassButton(prominent: answers[i] == c)
+                  .buttonStyle(.material(answers[i] == c ? .chosen : .outlined))
                   .accessibilityAddTraits(answers[i] == c ? .isSelected : [])
               }
             }
@@ -1574,11 +1575,11 @@ private struct Choices: View {
           send(answers.enumerated().map { "\($0 + 1). \($1.trimmingCharacters(in: .whitespacesAndNewlines))" }
             .joined(separator: "\n"))
         }
-        .glassButton(prominent: true)
+        .buttonStyle(.material(.filled))
         .disabled(answers.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
       }
       if let error {
-        Text(error).font(.footnote).foregroundStyle(.red)
+        Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
       }
     }
     .disabled(busy)
@@ -1615,51 +1616,12 @@ private struct ScheduleMessage: View {
   }
 }
 
-/// The tail's room is kept even without one, so a run of bubbles lines up.
-private struct Bubble: Shape {
-  var tail: Bool
-  var side: HorizontalEdge
-  static let tailWidth: CGFloat = 6
-
-  static func insets(_ side: HorizontalEdge) -> EdgeInsets {
-    EdgeInsets(
-      top: 7, leading: 12 + (side == .leading ? tailWidth : 0),
-      bottom: 7, trailing: 12 + (side == .trailing ? tailWidth : 0))
-  }
-
-  func path(in rect: CGRect) -> Path {
-    // Drawn with the tail on the right, then flipped for the left.
-    let w = rect.width
-    let h = rect.height
-    let body = w - Self.tailWidth
-    let r = min(18, h / 2, body / 2)
-    var p = Path()
-    p.move(to: CGPoint(x: r, y: 0))
-    p.addArc(tangent1End: CGPoint(x: body, y: 0), tangent2End: CGPoint(x: body, y: h), radius: r)
-    if tail && h >= r + 10 {
-      p.addLine(to: CGPoint(x: body, y: h - 10))
-      p.addCurve(to: CGPoint(x: w, y: h), control1: CGPoint(x: body, y: h - 3), control2: CGPoint(x: w - 2, y: h))
-      p.addCurve(
-        to: CGPoint(x: body - 9, y: h - 1.5),
-        control1: CGPoint(x: w - 4, y: h - 0.5), control2: CGPoint(x: body - 3, y: h - 1.5))
-      p.addQuadCurve(to: CGPoint(x: body - 13, y: h), control: CGPoint(x: body - 11, y: h))
-    } else {
-      p.addArc(tangent1End: CGPoint(x: body, y: h), tangent2End: CGPoint(x: 0, y: h), radius: r)
-    }
-    p.addArc(tangent1End: CGPoint(x: 0, y: h), tangent2End: CGPoint(x: 0, y: 0), radius: r)
-    p.addArc(tangent1End: CGPoint(x: 0, y: 0), tangent2End: CGPoint(x: body, y: 0), radius: r)
-    p.closeSubpath()
-    let flip = side == .leading ? CGAffineTransform(scaleX: -1, y: 1).translatedBy(x: -w, y: 0) : .identity
-    return p.applying(flip.concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
-  }
-}
-
 private struct MessageSources: View {
   let list: [Source]
 
   var body: some View {
     Text(line)
-      .font(.footnote)
+      .font(.sans(.footnote))
       .foregroundStyle(.secondary)
       .tint(.secondary)
   }

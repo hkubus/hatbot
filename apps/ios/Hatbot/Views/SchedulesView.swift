@@ -9,8 +9,8 @@ struct SchedulesView: View {
   @State private var error: String?
 
   var body: some View {
-    List {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledList {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       BuiltInSection(error: $error)
       Section("Schedules") {
         let schedules = store.schedules.values.sorted { $0.id < $1.id }
@@ -34,7 +34,7 @@ struct SchedulesView: View {
           NavigationLink(value: Route.watcher(w.id)) {
             VStack(alignment: .leading, spacing: 3) {
               Text(w.name).foregroundStyle(w.enabled ? .primary : .secondary)
-              Text(line(w)).font(.footnote).foregroundStyle(w.lastError == nil ? Color.secondary : .red)
+              Text(line(w)).font(.sans(.footnote)).foregroundStyle(w.lastError == nil ? Color.secondary : Color.danger)
             }
           }
         }
@@ -85,7 +85,7 @@ struct SchedulesView: View {
     var body: some View {
       VStack(alignment: .leading, spacing: 3) {
         Text(name).foregroundStyle(enabled ? .primary : .secondary)
-        Text(enabled ? detail : "Off").font(.footnote).foregroundStyle(.secondary)
+        Text(enabled ? detail : "Off").font(.sans(.footnote)).foregroundStyle(.secondary)
       }
     }
   }
@@ -244,16 +244,16 @@ struct ScheduleDetailView: View {
     let f = form.wrappedValue
     // A tainted one saves as it is too: saving it yourself is what clears it.
     let changed = stored.map { $0.tainted == true || Form($0) != f } ?? true
-    return SwiftUI.Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    return TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if let stored, stored.tainted == true {
         let read = stored.taintedBy.map { " (\($0))" } ?? ""
         Label(
           "Made or changed by the chat after it read untrusted content\(read), so its runs ask before changing anything. Saving it yourself clears this.",
           systemImage: "exclamationmark.shield"
         )
-        .font(.footnote)
-        .foregroundStyle(.orange)
+        .font(.sans(.footnote))
+        .foregroundStyle(Color.attention)
       }
       Section {
         TextField("Name", text: form.name)
@@ -272,7 +272,7 @@ struct ScheduleDetailView: View {
         .pickerStyle(.segmented)
         if f.repeats {
           TextField("Cron", text: form.cron)
-            .font(.body.monospaced())
+            .font(.code(.body))
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
           Text(Format.describeCron(f.cron)).foregroundStyle(.secondary)
@@ -380,8 +380,8 @@ struct TriggerDetailView: View {
 
   private func form(_ t: Trigger) -> some View {
     let changed = name != t.name || prompt != t.prompt
-    return Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    return TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if let secret {
         Section {
           Text(
@@ -389,10 +389,10 @@ struct TriggerDetailView: View {
               ? "Paste this Post URL into Uptime Kuma's Webhook notification. It holds the secret and isn't shown again."
               : "Use this as the webhook's secret. It isn't shown again."
           )
-          .font(.footnote)
+          .font(.sans(.footnote))
           let value = t.kind == .kuma ? secret.postURL : secret.secret
           // Not selectable: the system's Copy would put it on every device's pasteboard, for good.
-          Text(value).font(.footnote.monospaced())
+          Text(value).font(.code(.footnote))
           // Kept off your other devices' pasteboards, and only for two minutes.
           Button("Copy", systemImage: "doc.on.doc") {
             UIPasteboard.general.setItems(
@@ -431,7 +431,7 @@ struct TriggerDetailView: View {
       }
       Section {
         LabeledContent(t.kind == .kuma ? "Uptime Kuma" : "Webhook") {
-          Text(t.url).font(.footnote.monospaced()).textSelection(.enabled)
+          Text(t.url).font(.code(.footnote)).textSelection(.enabled)
         }
         if let last = t.lastTaskId {
           NavigationLink("Last run", value: Route.task(last))

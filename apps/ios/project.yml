@@ -35,6 +35,16 @@ targets:
       path: Hatbot/Info.plist
       properties:
         HatbotBundlePrefix: $(BUNDLE_PREFIX)
+        # Resources/Fonts, made by make-fonts.py.
+        UIAppFonts:
+          - GoogleSansFlex-Regular.ttf
+          - GoogleSansFlex-Italic.ttf
+          - GoogleSansFlex-Medium.ttf
+          - GoogleSansFlex-SemiBold.ttf
+          - GoogleSansFlex-Bold.ttf
+          - GoogleSansFlex-BoldItalic.ttf
+          - GoogleSansCode-Regular.ttf
+          - GoogleSansCode-Bold.ttf
         CFBundleURLTypes:
           - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
             CFBundleURLSchemes: [hatbot]
