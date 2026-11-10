@@ -737,9 +737,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
         : "";
     const startedBy = `Started by ${
-      task.origin === "chat"
-        ? "the owner, from the chat"
-        : (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
+      task.origin !== "chat"
+        ? (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
+        : tasks.retold(task)
+          ? "the bot in the chat, which answers the owner from your summary"
+          : "the owner, from the chat"
     }`;
     record("user", [
       {
