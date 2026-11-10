@@ -577,6 +577,8 @@ test("a task started from the chat keeps your words for its approval check; /tas
       ],
     },
     { content: [text("On it.")] },
+    // A routine result of its own task: it writes the reply again all the same.
+    { content: [text("Jellyfin is back.")] },
     { content: [text("It's running.")] },
   ]);
   const work = new FakeModel([
@@ -586,6 +588,8 @@ test("a task started from the chat keeps your words for its approval check; /tas
   const t = await testApp(model, work);
   await t.thread.post("please restart jellyfin").done;
   await t.tasks.idle();
+  await t.thread.idle();
+  expect(t.thread.list().at(-1)?.text).toBe("Jellyfin is back.");
   const asked = t.tasks.list({}).at(-1);
   expect(t.tasks.requestOf(asked?.id as number)).toContain("please restart jellyfin");
   expect(asked?.conversationId).toBe(t.thread.conversationId);
