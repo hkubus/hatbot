@@ -56,6 +56,7 @@ import {
   requestsFor,
   Stop,
   steerNote,
+  textOf,
   thinkingFor,
 } from "./loop";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
@@ -81,7 +82,10 @@ const FinishTask = z.object({
     .string()
     .min(1)
     .max(2000)
-    .describe("What you found or did, for the owner. Lead with the answer"),
+    .optional()
+    .describe(
+      "What you found or did, for the owner. Lead with the answer. Leave it out only when the text you just wrote says it: that text is the summary",
+    ),
   notify: z
     .boolean()
     .describe(
@@ -754,17 +758,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     let nudged = false;
+    /** A reply that called no tool, which finish_task may keep as the summary rather than write again. */
+    let wrote = "";
     /** Only finish_task (or the runner's own) ends a task: asked once, then it has failed. */
-    const nudge = () => {
+    const nudge = (said: string) => {
       if (nudged && runner) throw new Stop("failed", runner.nudge.stopped);
       if (nudged) return false;
       nudged = true;
+      wrote = said;
       record("user", [
         {
           type: "text",
           text: runner
             ? runner.nudge.text
-            : "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on.)",
+            : `(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome${said ? ", leaving summary out if what you just wrote is it" : ""}. Otherwise carry on.)`,
         },
       ]);
       return true;
@@ -823,7 +830,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ((limit: "daily" | "monthly") => origin.overLimit?.(limit, task) ?? "");
       requests.hold(reserveUsd, overLimit);
 
-      let finished: z.infer<typeof FinishTask> | null = null;
+      let finished: (z.infer<typeof FinishTask> & { summary: string }) | null = null;
+      /** What this reply wrote alongside its calls. */
+      let said = "";
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
       const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
@@ -844,16 +853,25 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         if (!sent.has(call.name)) return result(call, `Unknown tool "${call.name}".`, true);
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
+          if (!p.success) return result(call, invalidInput(p.error), true);
+          const summary = p.data.summary || said || wrote;
+          if (!summary) return result(call, "Not finished: give the summary.", true);
+          if (summary.length > 2000)
+            return result(
+              call,
+              "Not finished: what you wrote is too long to keep. Give a summary.",
+              true,
+            );
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
-          const broken = p.success ? await checkCharts(p.data.summary) : "";
+          const broken = await checkCharts(summary);
           if (broken)
             return result(
               call,
               `Not finished: ${broken} Call finish_task again with it fixed. ${CHART_GUESS}`,
               true,
             );
-          if (p.success) finished = p.data;
-          return result(call, p.success ? "Finished." : invalidInput(p.error), !p.success);
+          finished = { ...p.data, summary };
+          return result(call, "Finished.");
         }
         if (state && runnerTools.has(call.name)) {
           const r = await state.call(call.name, call.input, { checkCharts, step });
@@ -931,8 +949,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       }
       addNotes(tasks, id, { content: res.content.slice(noted) });
       if (res.stop_reason !== "tool_use") await early.settled();
-      const calls = callsOf(res, nudge);
+      const calls = callsOf(res, () => nudge(textOf(res)));
       if (!calls) continue;
+      said = textOf(res);
 
       const results: BlockParam[] = await inBatches(
         calls,
@@ -945,8 +964,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               )
             : run(call)),
       );
+      wrote = "";
       // Set inside the calls above, which TypeScript can't see.
-      const ended = finished as z.infer<typeof FinishTask> | null;
+      const ended = finished as (z.infer<typeof FinishTask> & { summary: string }) | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
       const stopped = gaveUp as string | null;
       if (stopped)

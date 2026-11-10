@@ -894,3 +894,32 @@ test("a task started from the chat that fails says so on its own card, not on a 
   expect(cards).toHaveLength(1);
   expect(cards[0]?.text).toContain("Failed");
 });
+
+test("a task that answered in text finishes without writing it again; with nothing written, it's asked for a summary", async () => {
+  const work = new FakeModel([
+    { content: [text("The nas disk is **71%** full.")] },
+    { content: [toolUse("finish_task", { outcome: "done", notify: false })] },
+    { content: [toolUse("finish_task", { outcome: "done", notify: false })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const kept = t.tasks.createBackgroundTask({
+    title: "Disk",
+    goal: "Check the disk",
+    origin: "chat",
+  });
+  await waitFor(() => t.tasks.get(kept?.id ?? 0)?.finishedAt);
+  expect(t.tasks.get(kept?.id ?? 0)).toMatchObject({
+    status: "done",
+    summary: "The nas disk is **71%** full.",
+  });
+
+  const asked = t.tasks.createBackgroundTask({
+    title: "Load",
+    goal: "Check the load",
+    origin: "chat",
+  });
+  await waitFor(() => t.tasks.get(asked?.id ?? 0)?.finishedAt);
+  expect(lastText(work.requests[3])).toContain('"is_error":true');
+  expect(t.tasks.get(asked?.id ?? 0)?.summary).toBe("Fine.");
+});
