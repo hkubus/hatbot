@@ -1,12 +1,14 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type {
-  Db,
-  EventsHost,
-  Notifier,
-  SearchRoutine,
-  SettingsHost,
-  TaskOrigin,
-  TasksHost,
+import {
+  type Db,
+  type EventsHost,
+  type Notifier,
+  PluginError,
+  type ScriptsService,
+  type SearchRoutine,
+  type SettingsHost,
+  type TaskOrigin,
+  type TasksHost,
 } from "@hatbot/plugin-sdk";
 import {
   API_PREFIX,
@@ -37,6 +39,7 @@ type Row = {
   secret: string;
   trusted: number;
   prompt: string;
+  script_id: number | null;
   enabled: number;
   confirm_checks: number;
   created_at: string;
@@ -83,7 +86,17 @@ export class Triggers {
     private notifier: Notifier,
     private publicUrl: string,
     private clock: () => number = Date.now,
+    private scripts: () => ScriptsService | null = () => null,
   ) {}
+
+  /** Only a webhook runs a script, and only one of its bot's own. */
+  private checkScript(scriptId: number | null, kind: Trigger["kind"], botId: string) {
+    if (!scriptId) return;
+    if (kind !== "webhook") throw new PluginError("Only a webhook can run a script.");
+    const script = this.scripts()?.get(scriptId);
+    if (!script || script.botId !== botId)
+      throw new PluginError(`${botId === HATBOT_ID ? "Hatbot" : "That bot"} has no such script.`);
+  }
 
   private toTrigger = (r: Row): Trigger => ({
     id: r.id,
@@ -91,6 +104,7 @@ export class Triggers {
     kind: r.kind,
     trusted: r.kind === "kuma" || Boolean(r.trusted),
     prompt: r.prompt,
+    scriptId: r.script_id,
     enabled: Boolean(r.enabled),
     confirmChecks: r.confirm_checks,
     url: `${this.publicUrl}${API_PREFIX}/hooks/${r.kind === "kuma" ? "kuma/" : ""}${r.id}`,
@@ -116,26 +130,36 @@ export class Triggers {
   create(input: {
     name: string;
     kind: Trigger["kind"];
-    prompt: string;
+    prompt?: string;
+    scriptId?: number | null;
     trusted?: boolean;
     confirmChecks?: number;
     botId?: string;
   }): TriggerWithSecret {
+    const scriptId = input.scriptId ?? null;
+    const botId = input.botId ?? HATBOT_ID;
+    if (Boolean(scriptId) === Boolean(input.prompt))
+      throw new PluginError("Give it either a prompt or a script.");
+    this.checkScript(scriptId, input.kind, botId);
     const secret = newSecret();
     const row = this.db
-      .query<{ id: number }, [string, string, string, number, string, number, string, string]>(
-        `INSERT INTO triggers (name, kind, secret, trusted, prompt, confirm_checks, created_at, bot_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      .query<
+        { id: number },
+        [string, string, string, number, string, number | null, number, string, string]
+      >(
+        `INSERT INTO triggers (name, kind, secret, trusted, prompt, script_id, confirm_checks, created_at, bot_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       )
       .get(
         input.name,
         input.kind,
         secret,
         input.trusted ? 1 : 0,
-        input.prompt,
+        scriptId ? "" : (input.prompt ?? ""),
+        scriptId,
         input.confirmChecks ?? 0,
         this.now(),
-        input.botId ?? HATBOT_ID,
+        botId,
       );
     const trigger = this.changed(row?.id ?? -1) as Trigger;
     return { ...trigger, secret };
@@ -146,6 +170,8 @@ export class Triggers {
     patch: {
       name?: string;
       prompt?: string;
+      /** Runs this script instead of a prompt; null takes it away. */
+      scriptId?: number | null;
       trusted?: boolean;
       enabled?: boolean;
       confirmChecks?: number;
@@ -154,13 +180,24 @@ export class Triggers {
   ): Trigger | null {
     const r = this.db.query<Row, [number]>(`${SELECT} WHERE g.id = ?`).get(id);
     if (!r) return null;
+    // A prompt and a script take each other's place.
+    const scriptId =
+      patch.prompt !== undefined
+        ? null
+        : patch.scriptId !== undefined
+          ? patch.scriptId
+          : r.script_id;
+    const prompt = scriptId ? "" : (patch.prompt ?? r.prompt);
+    if (!scriptId && !prompt) throw new PluginError("Give it either a prompt or a script.");
+    this.checkScript(scriptId, r.kind, patch.botId ?? r.bot_id);
     this.db
       .query(
-        "UPDATE triggers SET name = ?, prompt = ?, trusted = ?, enabled = ?, confirm_checks = ?, bot_id = ? WHERE id = ?",
+        "UPDATE triggers SET name = ?, prompt = ?, script_id = ?, trusted = ?, enabled = ?, confirm_checks = ?, bot_id = ? WHERE id = ?",
       )
       .run(
         patch.name ?? r.name,
-        patch.prompt ?? r.prompt,
+        prompt,
+        scriptId,
         (patch.trusted ?? Boolean(r.trusted)) ? 1 : 0,
         (patch.enabled ?? Boolean(r.enabled)) ? 1 : 0,
         patch.confirmChecks ?? r.confirm_checks,
@@ -245,17 +282,27 @@ export class Triggers {
     this.fired(t.id);
     const blocked = this.blocked(t) ?? this.limited(t);
     if (blocked) return blocked;
-    const task = this.tasks.createBackgroundTask({
-      title: t.name,
-      goal: t.prompt,
+    const event = {
       origin: "webhook",
       source: t.name,
       triggerId: t.id,
-      botId: t.botId,
       runKey: `trigger:${t.id}`,
       payload: pretty(body),
       trusted: t.trusted,
-    });
+    };
+    const script = t.scriptId ? this.scripts()?.get(t.scriptId) : null;
+    if (t.scriptId && !script) {
+      console.log(`trigger ${t.id} "${t.name}": its script is gone`);
+      return { status: "skipped", reason: "disabled" };
+    }
+    const task = script
+      ? this.scripts()?.start(script, { ...event, input: { payload: parsed(body) } })
+      : this.tasks.createBackgroundTask({
+          ...event,
+          title: t.name,
+          goal: t.prompt,
+          botId: t.botId,
+        });
     if (!task) return { status: "skipped", reason: "running" };
     this.started(t);
     return { status: "started", task };
@@ -541,12 +588,15 @@ export class Triggers {
   origins(): Record<"webhook" | "alert", TaskOrigin> {
     const standing = (task: Task) => {
       const kind = task.origin === "alert" ? "Uptime Kuma alert" : "webhook";
+      const trigger = this.db
+        .query<{ trusted: number; script_id: number | null }, [number]>(
+          "SELECT trusted, script_id FROM triggers WHERE id = ?",
+        )
+        .get(task.triggerId ?? -1);
+      // A script's task is the script's words, filled in with what it found, not yours.
+      if (task.origin === "webhook" && (!trigger || trigger.script_id !== null)) return null;
       const head = `Standing instructions for the ${kind} "${task.source ?? ""}":\n${task.goal}`;
-      const trustedEvent =
-        task.origin === "alert" ||
-        this.db
-          .query<{ trusted: number }, [number]>("SELECT trusted FROM triggers WHERE id = ?")
-          .get(task.triggerId ?? -1)?.trusted === 1;
+      const trustedEvent = task.origin === "alert" || trigger?.trusted === 1;
       // An alert's message can be written by whoever reaches the service: not shown either.
       const alert = task.origin === "alert" && task.payload ? alertParts(task.payload) : null;
       const event = alert
@@ -636,6 +686,15 @@ export function alertParts(payload: string): { alert: string; message: string } 
 }
 
 export const alertMessageSource = (monitor: string) => `The message in the alert for "${monitor}"`;
+
+/** A script reads a JSON event's fields, and any other as its text. */
+function parsed(body: string): unknown {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+}
 
 function pretty(body: string): string {
   let text = body;

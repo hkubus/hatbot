@@ -379,7 +379,8 @@ struct TriggerDetailView: View {
   }
 
   private func form(_ t: Trigger) -> some View {
-    let changed = name != t.name || prompt != t.prompt
+    let script = t.scriptId != nil
+    let changed = name != t.name || (!script && prompt != t.prompt)
     return TiledForm {
       if let error { Text(error).foregroundStyle(Color.danger) }
       if let secret {
@@ -427,7 +428,11 @@ struct TriggerDetailView: View {
         }
       }
       Section("What it does") {
-        TextField("Instructions", text: $prompt, axis: .vertical).lineLimit(4...16)
+        if script {
+          Text("Runs a script. Change it on the web.").foregroundStyle(.secondary)
+        } else {
+          TextField("Instructions", text: $prompt, axis: .vertical).lineLimit(4...16)
+        }
       }
       Section {
         LabeledContent(t.kind == .kuma ? "Uptime Kuma" : "Webhook") {
@@ -447,13 +452,14 @@ struct TriggerDetailView: View {
         Button("Save") {
           Task {
             await attempt($error) {
-              _ = try await store.saveTrigger(id, AppStore.TriggerChange(name: name, prompt: prompt))
+              // A prompt would take the script's place.
+              _ = try await store.saveTrigger(id, AppStore.TriggerChange(name: name, prompt: script ? nil : prompt))
               store.toast = "Saved"
             }
           }
         }
         .disabled(!changed || name.trimmingCharacters(in: .whitespaces).isEmpty
-          || prompt.trimmingCharacters(in: .whitespaces).isEmpty)
+          || (!script && prompt.trimmingCharacters(in: .whitespaces).isEmpty))
       }
     }
     .confirmationDialog(

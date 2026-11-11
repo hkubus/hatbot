@@ -1200,4 +1200,6 @@ export const migrations: string[] = [
   );
   CREATE INDEX flip_takedowns_task ON flip_takedowns (task_id);
   `,
+  // 81: a webhook that runs one of its bot's scripts, with the event as its input.
+  "ALTER TABLE triggers ADD COLUMN script_id INTEGER REFERENCES scripts(id);",
 ];

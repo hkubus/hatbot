@@ -162,6 +162,12 @@ const UpdateTrigger = z.object({
   id: z.number().int(),
   name: z.string().min(1).max(80).optional(),
   prompt: z.string().min(1).max(4000).optional(),
+  script: z
+    .string()
+    .optional()
+    .describe(
+      "Webhooks only: one of your scripts to run instead of a prompt, by name, without a model; it gets the event as input.payload",
+    ),
   enabled: z.boolean().optional(),
   confirmChecks: z
     .number()
@@ -533,7 +539,7 @@ export function automationTools(p: Parts): PluginTool[] {
           .list()
           .map(
             (t) =>
-              `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"}${t.confirmChecks ? `, waits for ${t.confirmChecks} more failed check${t.confirmChecks > 1 ? "s" : ""}` : ""})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  Does: ${t.prompt}${whose(t.botId, call.bot)}`,
+              `#${t.id} "${t.name}" (${t.kind === "kuma" ? "Uptime Kuma" : "webhook"}${t.trusted ? ", trusted" : ""}${t.enabled ? "" : ", off"}${t.confirmChecks ? `, waits for ${t.confirmChecks} more failed check${t.confirmChecks > 1 ? "s" : ""}` : ""})${t.lastFiredAt ? `; last event ${local(t.lastFiredAt)}` : ""}\n  ${t.scriptId ? `Runs script #${t.scriptId}` : `Does: ${t.prompt}`}${whose(t.botId, call.bot)}`,
           )
           .join("\n") || "No triggers.",
     }),
@@ -544,15 +550,25 @@ export function automationTools(p: Parts): PluginTool[] {
       description:
         "Change what a trigger's runs do, rename it, turn it on or off, or how many more failed checks an Uptime Kuma alert waits for. Only the fields you give change.",
       schema: UpdateTrigger,
-      run: async ({ id, ...patch }, call) => {
+      run: async ({ id, script, ...fields }, call) => {
+        if (fields.prompt && script) return "Give either a prompt or a script, not both.";
+        const patch = { ...fields, scriptId: scriptOf(script, call) };
         const current = triggers.get(id);
         // A trigger's runs trust its instructions, so the review checks a rewrite after untrusted content.
-        const rewrite =
+        const does =
           current && patch.prompt !== undefined && patch.prompt !== current.prompt
+            ? `does: ${cut(patch.prompt)}`
+            : current && patch.scriptId !== undefined && patch.scriptId !== current.scriptId
+              ? patch.scriptId
+                ? `runs: the script ${script}`
+                : "runs: no script"
+              : null;
+        const rewrite =
+          current && does
             ? await asked(call, {
                 name: "automation_trigger_update",
-                input: { id, ...patch },
-                what: `Change what the trigger #${id} "${current.name}" does: ${cut(patch.prompt)}`,
+                input: { id, script, ...fields },
+                what: `Change what the trigger #${id} "${current.name}" ${does}`,
               })
             : "";
         const note = rewrite + (await stoppingTrigger(call, id, patch));
