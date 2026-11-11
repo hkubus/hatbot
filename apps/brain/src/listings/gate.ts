@@ -78,24 +78,31 @@ export function listingRefused(
     return "Put text with line breaks in with form_input, which keeps them: type presses Enter at each.";
   if (typesText(name, input) && !allowedText(g, text))
     return `Type only the approved title, description and price, or a short search or choice (up to ${MAX_FREE_TEXT} characters, with no links, e-mail addresses or phone numbers).`;
-  const stay = `A listing task stays on ${g.host}. Open ${g.addUrl} with navigate.`;
+  if (name === "navigate" && typeof input.url !== "string")
+    return "navigate takes the address as text.";
+  return leaves(g.host, name, input, text)
+    ? `A listing task stays on ${g.host}. Open ${g.addUrl} with navigate.`
+    : null;
+}
+
+const withScheme = (where: string) =>
+  /^[a-z][a-z0-9+.-]*:/i.test(where) ? where : `https://${where}`;
+
+/** Off `host`, by its address or the browser's own bar. */
+function leaves(host: string, name: string, input: Record<string, unknown>, text: string): boolean {
   if (name === "navigate") {
-    if (typeof input.url !== "string") return "navigate takes the address as text.";
+    if (typeof input.url !== "string") return false;
     const where = input.url.trim();
-    const url = /^[a-z][a-z0-9+.-]*:/i.test(where) ? where : `https://${where}`;
-    const host = hostOf(url);
-    if (!["back", "forward", "reload"].includes(where) && !(host && onHost(host, g.host)))
-      return stay;
+    const to = hostOf(withScheme(where));
+    return !["back", "forward", "reload"].includes(where) && !(to && onHost(to, host));
   }
-  if (
+  return (
     (name === "key" || name === "hold_key") &&
     combosIn(text).some((t) => {
       const c = readCombo(t);
       return c !== null && toAddress(c);
     })
-  )
-    return stay;
-  return null;
+  );
 }
 
 /** `held`: the ordinary check's answer for this element. */
@@ -155,4 +162,43 @@ export function listingAddress(g: ListingGate, url: string): string | null {
     return `That isn't an address on ${g.host}.`;
   if (uploadPage(url)) return "That's the add-listing page, not the new listing's.";
   return null;
+}
+
+/** A sold flip's listing coming down: its task stays on that marketplace and posts nothing. */
+export type TakeDownGate = {
+  channel: string;
+  host: string;
+  /** The listing Hatbot posted, where the task starts. */
+  url: string;
+  title: string;
+};
+
+/** What a take-down task may never do, before the click and Enter checks. */
+export function takeDownRefused(
+  g: TakeDownGate,
+  name: string,
+  input: Record<string, unknown>,
+): string | null {
+  if (UNSEEN_MOUSE.has(name)) return `${name} isn't available in a take-down task; use left_click.`;
+  const value = name === "form_input" ? input.value : input.text;
+  const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
+  if (typesText(name, input)) {
+    const t = exact(text);
+    if (t && t !== exact(g.title) && (t.length > MAX_FREE_TEXT || CONTACT.test(t)))
+      return `Type only the listing's title, or a short search or choice (up to ${MAX_FREE_TEXT} characters, with no links, e-mail addresses or phone numbers).`;
+  }
+  if (name === "navigate" && typeof input.url !== "string")
+    return "navigate takes the address as text.";
+  if (leaves(g.host, name, input, text))
+    return `A take-down task stays on ${g.host}. Open ${g.url} with navigate.`;
+  if (name === "navigate" && uploadPage(withScheme(String(input.url).trim())))
+    return "A take-down task posts nothing: stay off the add-listing page.";
+  return null;
+}
+
+/** A click or Enter on the add-listing page posts something, which a take-down task never does. */
+export function takeDownCheck(el: AgentElement | null, lastUrl: string | null): string | null {
+  return uploadPage(el?.url ?? lastUrl)
+    ? "A take-down task posts nothing: stay off the add-listing page."
+    : null;
 }

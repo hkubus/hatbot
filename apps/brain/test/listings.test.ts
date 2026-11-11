@@ -6,7 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mcpPlugin } from "@hatbot/plugin-mcp";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { type ListingGate, listingCheck, listingRefused } from "../src/listings/gate";
+import {
+  type ListingGate,
+  listingCheck,
+  listingRefused,
+  type TakeDownGate,
+  takeDownCheck,
+  takeDownRefused,
+} from "../src/listings/gate";
 import { browser, FakeModel, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 
@@ -29,6 +36,9 @@ type Flip = {
   photos: { id: number; mime: string }[];
   channels: Record<string, string>;
   listed?: Record<string, unknown>[];
+  soldOn?: string;
+  saleChannel?: string;
+  delisted?: string[];
 };
 
 const flip = (over: Partial<Flip> = {}): Flip => ({
@@ -67,6 +77,8 @@ async function withScout(t: TestApp, flips: Flip[], listed = "allow") {
       scout_flip: "chat",
       scout_flip_photo: "chat",
       scout_flip_listed: listed,
+      scout_flips_to_take_down: "chat",
+      scout_flip_taken_down: listed,
     },
   };
   await t.plugins.update("mcp", { enabled: true, config: { servers: [server] } });
@@ -450,4 +462,162 @@ test("Scout isn't told without asking when its write asks first; the chat says s
   expect(scout.calls("scout_flip_listed")).toEqual([]);
   expect(t.thread.list().filter((m) => m.text.includes("Plugins → MCP"))).toHaveLength(1);
   await t.plugins.stopAll();
+});
+
+/** Flip 7, sold on Vinted, and up on OLX and Vinted where Hatbot posted it. Nothing left to post. */
+const sold = (over: Partial<Flip> = {}) =>
+  flip({
+    channels: {},
+    soldOn: "2026-10-20",
+    saleChannel: "Vinted",
+    listed: [
+      { channel: "OLX", status: "listed", url: OLX_URL },
+      { channel: "Vinted", status: "listed", url: VINTED_URL },
+    ],
+    ...over,
+  });
+
+/** The listing's own page, with the seller's "Zakończ" (ref_5), which ends it. */
+function listingPage(t: TestApp) {
+  t.agent.health = { features: ["profiles", "exec", "files", "fields", "upload"] };
+  t.agent.page = { url: "https://www.olx.pl/", title: "OLX", text: "" };
+  Object.defineProperty(t.agent, "element", {
+    get: (): AgentElement => ({
+      tag: "button",
+      role: null,
+      type: "button",
+      label: "Zakończ",
+      inForm: false,
+      url: t.agent.page.url ?? "",
+      editable: false,
+      fields: [],
+    }),
+    configurable: true,
+  });
+  t.agent.afterAction = (name, input) => {
+    if (name === "navigate") t.agent.page = { url: String(input.url), title: TITLE, text: "" };
+  };
+}
+
+const takeDowns = (t: TestApp) =>
+  t.db
+    .query<{ channel: string; status: string }, []>(
+      "SELECT channel, status FROM flip_takedowns ORDER BY id",
+    )
+    .all();
+
+test("a sold flip's listing comes down on the other marketplace without asking, and Scout ticks it", async () => {
+  const work = new FakeModel([
+    { content: [browser("navigate", { url: OLX_URL })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_5" } })] },
+    { content: [toolUse("record_taken_down", {})] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Ended." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const scout = await withScout(t, [sold()]);
+  listingPage(t);
+
+  await t.listings.tick();
+  await waitFor(() => scout.calls("scout_flip_taken_down").length === 1);
+  await t.tasks.idle();
+
+  // Not on Vinted, where it went: the buyer may still be paying there.
+  expect(scout.calls("scout_flip_taken_down")).toEqual([{ flipId: 7, channel: "OLX" }]);
+  expect(scout.flips()[0]?.delisted).toEqual(["OLX"]);
+  const [task] = t.tasks.list();
+  expect(task?.title).toBe(`Take down on OLX: ${TITLE}`);
+  expect(task?.status).toBe("done");
+  expect(task?.goal).toContain(OLX_URL);
+  expect(task?.goal).toContain('trusted="false"');
+  expect(task?.tainted).toBe(true);
+  expect(clicks(t)).toBe(1);
+  expect(t.approvals.list(false)).toEqual([]);
+  expect(takeDowns(t)).toEqual([{ channel: "OLX", status: "down" }]);
+  // Only its own tool: it has nothing to post.
+  const tools = (work.requests[0]?.tools ?? []).map((x) => ("name" in x ? x.name : ""));
+  expect(tools).toContain("record_taken_down");
+  expect(tools).not.toContain("record_listing");
+
+  // Scout has it: nothing more comes down.
+  await t.listings.tick();
+  expect(t.tasks.list()).toHaveLength(1);
+  await t.plugins.stopAll();
+});
+
+test("a take-down task stays on the marketplace and posts nothing, and one that can't is left to the owner", async () => {
+  const work = new FakeModel([
+    { content: [browser("navigate", { url: "https://www.google.com/" })] },
+    { content: [browser("navigate", { url: OLX_ADD })] },
+    { content: [browser("type", { text: "Zadzwoń 600 600 600" })] },
+    { content: [toolUse("record_listing", { url: OLX_URL })] },
+    { content: [browser("navigate", { url: OLX_URL })] },
+    { content: [toolUse("finish_task", { outcome: "failed", summary: "There's no Zakończ." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const scout = await withScout(t, [sold()]);
+  listingPage(t);
+  t.settings.update({ desktopEscalate: false });
+  await t.listings.tick();
+  await waitFor(() => t.thread.list().some((m) => m.text.includes("Take it down yourself")));
+  await t.tasks.idle();
+
+  const said = (i: number) => JSON.stringify(work.requests[i]?.messages.at(-1));
+  expect(said(1)).toContain("stays on olx.pl");
+  expect(said(2)).toContain("posts nothing");
+  expect(said(3)).toContain("phone numbers");
+  expect(t.agent.browserCalls.map((c) => c.input.url ?? c.input.text)).toEqual([OLX_URL]);
+  expect(scout.calls("scout_flip_taken_down")).toEqual([]);
+  expect(takeDowns(t)).toEqual([{ channel: "OLX", status: "failed" }]);
+  expect(t.thread.list().find((m) => m.text.includes("yourself"))?.text).toContain(
+    "There's no Zakończ.",
+  );
+
+  // A failure waits for the owner: it isn't tried again on its own.
+  t.advance(60_000);
+  await t.listings.tick();
+  expect(t.tasks.list()).toHaveLength(1);
+  await t.plugins.stopAll();
+});
+
+test("a listing the owner ticks in Scout first, or a sale taken back, isn't taken down", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  const scout = await withScout(t, [sold({ saleChannel: "Other" })]);
+  listingPage(t);
+  // The desktop is down, so they wait.
+  const status = t.agent.status.bind(t.agent);
+  t.agent.status = async () => {
+    throw new Error("down");
+  };
+  await t.listings.tick();
+  expect(takeDowns(t)).toEqual([
+    { channel: "OLX", status: "queued" },
+    { channel: "Vinted", status: "queued" },
+  ]);
+  scout.set([sold({ saleChannel: "Other", delisted: ["OLX"] })]);
+  await t.listings.tick();
+  scout.set([sold({ soldOn: undefined, saleChannel: undefined })]);
+  t.agent.status = status;
+  await t.listings.tick();
+  expect(takeDowns(t)).toEqual([
+    { channel: "OLX", status: "cancelled" },
+    { channel: "Vinted", status: "cancelled" },
+  ]);
+  expect(t.tasks.list()).toEqual([]);
+  await t.plugins.stopAll();
+});
+
+test("a take-down task's gate", () => {
+  const g: TakeDownGate = { channel: "OLX", host: "olx.pl", url: OLX_URL, title: TITLE };
+  expect(takeDownRefused(g, "navigate", { url: "www.olx.pl/mojolx/ogloszenia" })).toBeNull();
+  expect(takeDownRefused(g, "navigate", { url: "back" })).toBeNull();
+  expect(takeDownRefused(g, "navigate", { url: "olx.pl.evil.example" })).toContain("stays on");
+  expect(takeDownRefused(g, "navigate", { url: "olx.pl/d/adding" })).toContain("posts nothing");
+  expect(takeDownRefused(g, "key", { text: "ctrl+l" })).toContain("stays on");
+  expect(takeDownRefused(g, "type", { text: TITLE })).toBeNull();
+  expect(takeDownRefused(g, "type", { text: "Sprzedałem gdzie indziej" })).toBeNull();
+  expect(takeDownRefused(g, "type", { text: "x".repeat(61) })).toContain("short");
+  expect(takeDownRefused(g, "type", { text: "kup na allegro.pl" })).toContain("links");
+  expect(takeDownRefused(g, "left_click_drag", {})).toContain("left_click");
+  expect(takeDownCheck(formButton("Dodaj ogłoszenie"), null)).toContain("posts nothing");
+  expect(takeDownCheck(formButton("Zakończ", { url: OLX_URL }), OLX_ADD)).toBeNull();
 });

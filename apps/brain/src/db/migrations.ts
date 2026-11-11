@@ -1174,4 +1174,30 @@ export const migrations: string[] = [
     offered INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX reply_calls_by ON reply_calls (bot_id, calls);`,
+  // 80: a sold flip's listings Hatbot posted, taken down on the other marketplaces, one row each. A
+  // row's task takes it down, and its gate comes from the row.
+  `
+  CREATE TABLE flip_takedowns (
+    id INTEGER PRIMARY KEY,
+    flip_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    bot_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    -- Where it went: OLX, Allegro Lokalnie, Vinted or Other.
+    sale_channel TEXT,
+    -- queued, working, down, failed or cancelled.
+    status TEXT NOT NULL,
+    task_id INTEGER,
+    -- When the task said it's down.
+    down_at TEXT,
+    error TEXT,
+    -- When Scout was told it's down.
+    reported_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (flip_id, channel)
+  );
+  CREATE INDEX flip_takedowns_task ON flip_takedowns (task_id);
+  `,
 ];

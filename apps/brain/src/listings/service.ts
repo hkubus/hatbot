@@ -1,5 +1,7 @@
 // Flips Scout marks ready to list: marking one is the owner's go-ahead, so the bot that holds the
-// marketplace logins posts each in a desktop task of its own, and Scout hears how it went.
+// marketplace logins posts each in a desktop task of its own, and Scout hears how it went. Once a sale
+// is recorded, the same bot takes the listings it posted down on the other marketplaces, and Scout
+// ticks each in its delist checklist.
 // Scout's tools are called by name through its plugin (or the MCP plugin), without the model.
 
 import { randomUUID } from "node:crypto";
@@ -11,9 +13,10 @@ import type { Bots } from "../bots";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
 import { readScout, scoutTool } from "../negotiate/appraise";
+import { quotedTitle } from "../negotiate/mandate";
 import { type Plugins, runPluginTool, verdictFor } from "../plugins/registry";
 import type { Tasks } from "../tasks/service";
-import { type ListingGate, listingAddress } from "./gate";
+import { type ListingGate, listingAddress, type TakeDownGate } from "./gate";
 import {
   addUrl,
   CHANNELS,
@@ -24,6 +27,10 @@ import {
   listingGoal,
   listingRequest,
   skillFor,
+  type TakeDown,
+  takeDownGoal,
+  takeDownRequest,
+  takeDownSkillFor,
 } from "./text";
 
 export type ListingsDeps = {
@@ -55,6 +62,23 @@ type Row = {
   reported_at: string | null;
 };
 
+type DownStatus = "queued" | "working" | "down" | "failed" | "cancelled";
+
+type DownRow = {
+  id: number;
+  flip_id: number;
+  channel: Channel;
+  bot_id: string;
+  url: string;
+  title: string;
+  sale_channel: string | null;
+  status: DownStatus;
+  task_id: number | null;
+  down_at: string | null;
+  error: string | null;
+  reported_at: string | null;
+};
+
 /** Not posted yet: a change or a cancel in Scout still stops it. */
 const OPEN: ListingStatus[] = ["queued", "posting"];
 /** Ends Scout hears of. A cancel came from Scout. */
@@ -82,6 +106,30 @@ function readyFlips(out: Record<string, unknown>) {
     return [{ id: o.id, updatedAt: str(o.updatedAt), channels }];
   });
 }
+
+/** scout_flips_to_take_down's answer: one per listing to take down. */
+function takeDowns(out: Record<string, unknown>): TakeDown[] {
+  return (Array.isArray(out.flips) ? out.flips : []).flatMap((f) => {
+    const o = obj(f);
+    if (typeof o.id !== "number") return [];
+    const flipId = o.id;
+    return (Array.isArray(o.channels) ? o.channels : []).map(obj).flatMap((c) =>
+      CHANNELS.includes(c.channel as Channel) && str(c.url)
+        ? [
+            {
+              flipId,
+              channel: c.channel as Channel,
+              url: str(c.url),
+              title: str(o.title).trim() || `Flip #${flipId}`,
+              saleChannel: str(o.saleChannel) || null,
+            },
+          ]
+        : [],
+    );
+  });
+}
+
+const downKey = (flipId: number, channel: string) => `${flipId}:${channel}`;
 
 function draftOf(out: Record<string, unknown>): Draft | null {
   const delivery = obj(out.delivery);
@@ -118,6 +166,9 @@ export class Listings {
   private starting = false;
   /** Rows whose report Scout wouldn't take, already said in the chat. */
   private told = new Set<number>();
+  private toldDown = new Set<number>();
+  /** scout_flips_to_take_down failed last time, as said in the log. */
+  private noTakeDowns = false;
 
   constructor(readonly d: ListingsDeps) {
     this.clock = d.clock ?? Date.now;
@@ -137,15 +188,34 @@ export class Listings {
       .all(...args);
   }
 
-  private set(id: number, cols: Record<string, string | number | null>) {
+  private downs(where = "1", ...args: (string | number)[]): DownRow[] {
+    return this.d.db
+      .query<DownRow, (string | number)[]>(
+        `SELECT * FROM flip_takedowns WHERE ${where} ORDER BY id`,
+      )
+      .all(...args);
+  }
+
+  private set(id: number, cols: Record<string, string | number | null>, table = "flip_listings") {
     const all = { ...cols, updated_at: this.now() };
     this.d.db
       .query(
-        `UPDATE flip_listings SET ${Object.keys(all)
+        `UPDATE ${table} SET ${Object.keys(all)
           .map((k) => `${k} = ?`)
           .join(", ")} WHERE id = ?`,
       )
       .run(...Object.values(all), id);
+  }
+
+  private setDown(id: number, cols: Record<string, string | number | null>) {
+    this.set(id, cols, "flip_takedowns");
+  }
+
+  /** A desktop task of ours is running: one at a time. */
+  private busy() {
+    return (
+      this.rows("status = 'posting'").length > 0 || this.downs("status = 'working'").length > 0
+    );
   }
 
   /** The bot that posts: one whose tools include Scout's, Haggler first. */
@@ -176,6 +246,7 @@ export class Listings {
     const signal = AbortSignal.timeout(60_000);
     for (const r of this.rows("reported_at IS NULL"))
       if (TOLD.includes(r.status)) await this.report(r);
+    for (const r of this.downs("status = 'down' AND reported_at IS NULL")) await this.reportDown(r);
     const readAt = this.now();
     const flips = readyFlips(await readScout(list, {}, signal));
     const want = new Map<string, string>();
@@ -203,7 +274,63 @@ export class Listings {
         queue.set(f.id, [...(queue.get(f.id) ?? []), c]);
       }
     for (const [flip, channels] of queue) await this.queue(l, flip, channels, signal);
+    await this.takeDownSync(l, readAt, signal);
     await this.next();
+  }
+
+  /** Sold flips' listings Scout says are still up elsewhere: each queued to come down. */
+  private async takeDownSync(
+    l: { bot: Bot; tools: PluginTool[] },
+    readAt: string,
+    signal: AbortSignal,
+  ) {
+    const t = scoutTool(l.tools, "scout_flips_to_take_down");
+    if (!t) return;
+    // An older Scout hasn't the tool: posting goes on without it.
+    const out = await readScout(t, {}, signal).catch((err) => {
+      if (!this.noTakeDowns) console.error("Scout's scout_flips_to_take_down failed", err);
+      this.noTakeDowns = true;
+      return null;
+    });
+    if (!out) return;
+    this.noTakeDowns = false;
+    const want = new Map(takeDowns(out).map((x) => [downKey(x.flipId, x.channel), x]));
+    // Ticked in Scout by the owner, or the sale taken back: left as it is.
+    for (const r of this.downs("status IN ('queued', 'working')"))
+      if (!want.has(downKey(r.flip_id, r.channel))) this.dropDown(r);
+    const rows = new Map(this.downs().map((r) => [downKey(r.flip_id, r.channel), r]));
+    const now = this.now();
+    for (const [key, x] of want) {
+      const r = rows.get(key);
+      // Sold again after Scout heard it was down, or after a cancel. A failure waits for the owner.
+      const again =
+        r &&
+        (r.status === "cancelled" ||
+          (r.status === "down" && r.reported_at !== null && r.reported_at < readAt));
+      if (r && !again) continue;
+      if (r) this.d.db.query("DELETE FROM flip_takedowns WHERE id = ?").run(r.id);
+      this.d.db
+        .query(
+          `INSERT INTO flip_takedowns (flip_id, channel, bot_id, url, title, sale_channel, status,
+             created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+        )
+        .run(x.flipId, x.channel, l.bot.id, x.url, x.title, x.saleChannel, now, now);
+    }
+  }
+
+  private dropDown(r: DownRow) {
+    this.setDown(r.id, { status: "cancelled" });
+    if (r.status === "working" && r.task_id) this.d.tasks.cancel(r.task_id);
+  }
+
+  private takeDownOf(r: DownRow): TakeDown {
+    return {
+      flipId: r.flip_id,
+      channel: r.channel,
+      url: r.url,
+      title: r.title,
+      saleChannel: r.sale_channel,
+    };
   }
 
   /** `status` null: the row goes, to be queued again. */
@@ -245,27 +372,67 @@ export class Listings {
     return JSON.parse(r.draft) as Draft;
   }
 
-  /** One posting at a time: the next queued channel, once the last one ended. */
+  /**
+   * One task at a time: the next listing to take down, then the next queued channel to post, once the
+   * last one ended. Something sold comes down first, so it can't sell twice.
+   */
   async next() {
-    if (this.starting || this.d.tasks.paused() || this.rows("status = 'posting'").length) return;
-    const r = this.rows("status = 'queued'")[0];
-    if (!r) return;
+    if (this.starting || this.d.tasks.paused() || this.busy()) return;
+    const down = this.downs("status = 'queued'")[0];
+    const r = down ? null : this.rows("status = 'queued'")[0];
+    if (!down && !r) return;
     const l = this.lister();
     if (!l) return;
     this.starting = true;
     let started = true;
     try {
-      started = await this.post(l, r);
+      if (down) started = await this.takeDown(down);
+      else if (r) started = await this.post(l, r);
     } catch (err) {
       const why =
         err instanceof PluginError || err instanceof Error ? err.message : "Something went wrong.";
-      this.end(r, "failed", `Couldn't start posting it: ${why}`);
-      await this.report({ ...r, status: "failed", error: why });
+      if (down) this.downFailed(down, `Couldn't start taking it down: ${why}`);
+      else if (r) {
+        this.end(r, "failed", `Couldn't start posting it: ${why}`);
+        await this.report({ ...r, status: "failed", error: why });
+      }
     } finally {
       this.starting = false;
     }
-    if (started && this.rows("status = 'queued'").length && !this.rows("status = 'posting'").length)
-      await this.next();
+    const more = this.downs("status = 'queued'").length || this.rows("status = 'queued'").length;
+    if (started && more && !this.busy()) await this.next();
+  }
+
+  /** False: the desktop is down, and it's tried again on the next tick. */
+  private async takeDown(r: DownRow): Promise<boolean> {
+    const status = await this.d
+      .desktop()
+      ?.agent.status()
+      .catch(() => null);
+    if (!status) return false;
+    const t = this.takeDownOf(r);
+    this.setDown(r.id, { status: "working", error: null, down_at: null });
+    this.d.tasks.createDesktopTask({
+      title: `Take down on ${r.channel}: ${r.title}`.slice(0, 80),
+      goal: takeDownGoal(t),
+      successCriteria: "The listing shows as ended or gone, and record_taken_down was called.",
+      origin: "chat",
+      botId: r.bot_id,
+      skill: takeDownSkillFor(r.channel),
+      taintedBy: `Scout's listing title for flip #${r.flip_id}`,
+      request: takeDownRequest(t),
+      // Before it runs: its gate comes from this row.
+      created: (id) => this.setDown(r.id, { task_id: id }),
+    });
+    return true;
+  }
+
+  private downFailed(r: DownRow, error: string) {
+    this.setDown(r.id, { status: "failed", error });
+    this.d.chats.note(
+      r.bot_id,
+      `Couldn't take ${quotedTitle(r.title)} down on ${r.channel} (${r.url}): ${error} Take it down yourself, then tick it in Scout's delist checklist.`,
+    );
   }
 
   /** False: the desktop is down, and it's tried again on the next tick. */
@@ -315,6 +482,20 @@ export class Listings {
     return true;
   }
 
+  takeDownGateFor(taskId: number): TakeDownGate | null {
+    const r = this.downs("task_id = ? AND status = 'working'", taskId)[0];
+    const page = r && channelPage(r.channel);
+    if (!r || !page) return null;
+    return { channel: r.channel, host: page.host, url: r.url, title: r.title };
+  }
+
+  recordTakenDown(taskId: number): { text: string; ok: boolean } {
+    const r = this.downs("task_id = ? AND status = 'working'", taskId)[0];
+    if (!r) return { text: "This task has no listing to take down.", ok: false };
+    if (!r.down_at) this.setDown(r.id, { down_at: this.now() });
+    return { text: "Recorded. Finish the task now.", ok: true };
+  }
+
   gateFor(taskId: number): ListingGate | null {
     const r = this.rows("task_id = ? AND status = 'posting'", taskId)[0];
     const page = r && channelPage(r.channel);
@@ -361,6 +542,8 @@ export class Listings {
   }
 
   private async taskEnded(task: Task) {
+    const down = this.downs("task_id = ?", task.id)[0];
+    if (down) return this.takeDownEnded(down, task);
     const r = this.rows("task_id = ?", task.id)[0];
     if (!r) return;
     if (r.stage)
@@ -380,6 +563,15 @@ export class Listings {
         };
     this.end(r, ended.status, ended.error);
     await this.report(ended);
+    await this.next();
+  }
+
+  private async takeDownEnded(r: DownRow, task: Task) {
+    if (r.status !== "working") return;
+    if (r.down_at) {
+      this.setDown(r.id, { status: "down" });
+      await this.reportDown({ ...r, status: "down" });
+    } else this.downFailed(r, (task.summary ?? `The task ended: ${task.status}.`).slice(0, 500));
     await this.next();
   }
 
@@ -411,5 +603,27 @@ export class Listings {
     }
     const res = await runPluginTool(t, input, { task: null, signal });
     if (!res.isError) this.set(r.id, { reported_at: this.now() });
+  }
+
+  /** Scout ticks it in the delist checklist. Tried again each tick until Scout has it. */
+  private async reportDown(r: DownRow) {
+    const l = this.lister();
+    const t = l && scoutTool(l.tools, "scout_flip_taken_down");
+    if (!t) return;
+    const input = { flipId: r.flip_id, channel: r.channel };
+    const signal = AbortSignal.timeout(60_000);
+    if (verdictFor(t, input, { task: null, signal }, false).action !== "allow") {
+      if (!this.toldDown.has(r.id))
+        this.d.chats.note(
+          r.bot_id,
+          `Scout's scout_flip_taken_down asks before each use, so Scout wasn't told flip #${r.flip_id} is down on ${r.channel}. Set it to Allow in Settings → Plugins → MCP, or tick it in Scout yourself.`,
+        );
+      this.toldDown.add(r.id);
+      return;
+    }
+    const res = await runPluginTool(t, input, { task: null, signal });
+    // The sale was taken back, or the flip deleted, meanwhile: nothing left to tick.
+    const gone = res.isError && /no sale recorded|not found/i.test(res.text);
+    if (!res.isError || gone) this.setDown(r.id, { reported_at: this.now() });
   }
 }

@@ -1731,6 +1731,7 @@ async function selling(t: TestApp, flip: Record<string, unknown> = {}) {
       scout_conversation: "chat",
       scout_flips: "chat",
       scout_flip_update: "allow",
+      scout_flips_to_take_down: "chat",
     },
     { SCOUT_INBOX: inbox, SCOUT_FLIPS: flips },
   );
@@ -1859,6 +1860,12 @@ test("a sale is recorded in Scout and told in the chat, and the other buyers hea
     negotiateTools(t, t.plugins.brainTools(t.bots.hatbot().plugins)),
     "negotiate_close",
   );
+  // Also up on Vinted, which comes down by itself once Scout has the sale.
+  t.db.run(
+    `INSERT INTO flip_listings (flip_id, channel, bot_id, flip_updated_at, status, draft, url, created_at, updated_at)
+     SELECT flip_id, 'Vinted', bot_id, flip_updated_at, status, draft, 'https://www.vinted.pl/items/555-karta',
+       created_at, updated_at FROM flip_listings WHERE channel = 'OLX'`,
+  );
   const agreed = close.schema.parse({ negotiation: first.id, outcome: "agreed", price: 1150 });
   expect(verdictFor(close, agreed, call(), true).action).toBe("allow");
   expect((await runPluginTool(close, agreed, call())).text).toContain("Scout has the sale.");
@@ -1872,6 +1879,7 @@ test("a sale is recorded in Scout and told in the chat, and the other buyers hea
     .get()?.text;
   expect(note).toContain("**Sold**");
   expect(note).toContain("1,150 zł");
+  expect(note).toContain("Taking it off Vinted next.");
   expect(t.negotiations.get(second.id)?.status).toBe("abandoned");
 
   messageBox(t, buyerUrl(2));
