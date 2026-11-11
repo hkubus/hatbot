@@ -25,13 +25,13 @@ struct MeterList: View {
         Spacer(minLength: 0)
         Text("\(value) / \(limit)").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
       }
-      .font(.caption)
+      .font(.sans(.caption))
       RoundedRectangle(cornerRadius: 4).fill(.quaternary)
         .frame(height: 8)
         .overlay(alignment: .leading) {
           GeometryReader { geo in
             RoundedRectangle(cornerRadius: 4)
-              .fill(r.warning ? Color.red : ChartView.palette[0])
+              .fill(r.warning ? Color.danger : ChartView.palette[0])
               .frame(width: geo.size.width * full)
           }
         }
@@ -79,7 +79,7 @@ struct CalendarGrid: View {
           Color.clear.frame(width: 1, height: Self.monthsHeight)
           ForEach(0..<7, id: \.self) { d in
             Text(d == 0 ? "Mon" : d == 2 ? "Wed" : d == 4 ? "Fri" : "")
-              .font(.caption2)
+              .font(.sans(.caption2))
               .foregroundStyle(.secondary)
               .fixedSize()
               .frame(height: Self.cell)
@@ -92,7 +92,7 @@ struct CalendarGrid: View {
                 Color.clear.frame(width: Self.cell, height: Self.monthsHeight)
                   .overlay(alignment: .topLeading) {
                     if let m = month(weeks[w]) {
-                      Text(m).font(.caption2).foregroundStyle(.secondary).fixedSize()
+                      Text(m).font(.sans(.caption2)).foregroundStyle(.secondary).fixedSize()
                     }
                   }
               }
@@ -112,7 +112,7 @@ struct CalendarGrid: View {
       }
       if let picked {
         Text("\(dayText(picked)): \(values[picked].map { ChartSpec.format($0, unit: unit) } ?? "–")")
-          .font(.caption2)
+          .font(.sans(.caption2))
           .monospacedDigit()
       }
     }
@@ -164,7 +164,7 @@ struct TreemapPlot: View {
       .frame(height: 220)
       if let i = picked, treemap.items.indices.contains(i) {
         let item = treemap.items[i]
-        Text("\(item.label): \(ChartSpec.format(item.value, unit: unit))").font(.caption2).monospacedDigit()
+        Text("\(item.label): \(ChartSpec.format(item.value, unit: unit))").font(.sans(.caption2)).monospacedDigit()
       }
     }
   }
@@ -178,8 +178,8 @@ struct TreemapPlot: View {
       .overlay(alignment: .topLeading) {
         if t.w >= 56 && t.h >= 30 {
           VStack(alignment: .leading, spacing: 1) {
-            Text(item.label).font(.caption).lineLimit(2)
-            Text(value).font(.caption2).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+            Text(item.label).font(.sans(.caption)).lineLimit(2)
+            Text(value).font(.sans(.caption2)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
           }
           .padding(5)
         }
@@ -209,7 +209,7 @@ struct CompareGrid: View {
           Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
           ForEach(compare.columns.indices, id: \.self) { c in
             Text(compare.columns[c])
-              .font(.caption.weight(.semibold))
+              .font(.sans(.caption, .semibold))
               .foregroundStyle(.secondary)
               .lineLimit(2)
               .frame(maxWidth: 160, alignment: .leading)
@@ -219,7 +219,7 @@ struct CompareGrid: View {
         ForEach(compare.rows.indices, id: \.self) { r in
           GridRow {
             Text(compare.rows[r].label)
-              .font(.caption)
+              .font(.sans(.caption))
               .foregroundStyle(.secondary)
               .lineLimit(2)
               .frame(maxWidth: 120, alignment: .leading)
@@ -234,7 +234,7 @@ struct CompareGrid: View {
     let value = row.values[c]
     let best = row.best == c
     return Text(value ?? "–")
-      .font(.caption.weight(best ? .semibold : .regular))
+      .font(.sans(.caption, best ? .semibold : .regular))
       .foregroundStyle(value == nil || row.alike ? HierarchicalShapeStyle.secondary : .primary)
       .lineLimit(3)
       .padding(.horizontal, 8)
@@ -289,7 +289,7 @@ struct OffersPlot: View {
             position: .top, alignment: .trailing, spacing: 2,
             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
           ) {
-            Text("Limit").font(.caption2).foregroundStyle(.secondary)
+            Text("Limit").font(.sans(.caption2)).foregroundStyle(.secondary)
           }
           .accessibilityLabel("Limit")
           .accessibilityValue(ChartSpec.format(limit, unit: unit))

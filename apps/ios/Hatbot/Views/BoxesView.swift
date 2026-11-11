@@ -15,8 +15,8 @@ struct BoxesView: View {
 
   var body: some View {
     NavigationStack(path: $path) {
-      List {
-        if let error { Text(error).foregroundStyle(.red) }
+      TiledList {
+        if let error { Text(error).foregroundStyle(Color.danger) }
         if let boxes, boxes.isEmpty {
           Text("No boxes yet. Ask Hatbot for a tracker, a calculator or a planner to keep.")
             .foregroundStyle(.secondary)
@@ -66,8 +66,8 @@ struct BoxView: View {
         VStack(spacing: 0) {
           if let shown = error ?? loadError {
             Text(shown)
-              .font(.footnote)
-              .foregroundStyle(.red)
+              .font(.sans(.footnote))
+              .foregroundStyle(Color.danger)
               .frame(maxWidth: .infinity, alignment: .leading)
               .padding(.horizontal)
               .padding(.vertical, 6)
@@ -398,11 +398,11 @@ private struct SourceText: UIViewRepresentable {
   func makeUIView(context: Context) -> UITextView {
     let view = UITextView()
     view.isEditable = false
-    let mono = UIFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+    let mono = UIFont(name: Typeface.code(.regular), size: 13) ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
     view.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(for: mono)
     view.adjustsFontForContentSizeCategory = true
-    view.textColor = .label
-    view.backgroundColor = .systemBackground
+    view.textColor = UIColor(Color.text)
+    view.backgroundColor = UIColor(Color.surface)
     view.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
     view.dataDetectorTypes = []
     return view

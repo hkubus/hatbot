@@ -21,8 +21,8 @@ struct GroupView: View {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
     let changed = stored.map { trimmed != ($0.title ?? "") || members != $0.botIds } ?? true
     let valid = (2...Self.most).contains(members.count)
-    Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       Section {
         TextField("Name", text: $title)
       }

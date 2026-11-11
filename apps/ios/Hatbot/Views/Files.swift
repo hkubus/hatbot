@@ -50,7 +50,7 @@ private struct PictureFile: View {
       }
     }
     .frame(maxWidth: Self.side, maxHeight: Self.side)
-    .clipShape(.rect(cornerRadius: 14))
+    .clipShape(.rect(cornerRadius: 16))
     .contentShape(.rect)
     .onTapGesture { if image != nil { full = true } }
     .fullScreenCover(isPresented: $full) {
@@ -126,11 +126,11 @@ private struct FileChip: View {
       if loading { ProgressView().controlSize(.small) } else { Image(systemName: "doc") }
       Text(name).lineLimit(1).truncationMode(.middle)
     }
-    .font(.subheadline)
+    .font(.sans(.subheadline))
     .padding(.horizontal, 12)
     .padding(.vertical, 9)
     .frame(maxWidth: 260, alignment: .leading)
-    .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12))
+    .background(Color.surface2, in: .rect(cornerRadius: 12))
   }
 }
 
@@ -174,16 +174,16 @@ struct ComposerFiles: View {
                 Image(systemName: "doc")
                 Text(f.name).lineLimit(1).truncationMode(.middle)
               }
-              .font(.footnote)
+              .font(.sans(.footnote))
               .padding(.horizontal, 10)
               .frame(maxWidth: 200, minHeight: 56)
             }
           }
-          .background(.quaternary.opacity(0.6))
+          .background(Color.surface2)
           .clipShape(.rect(cornerRadius: 12))
           .overlay {
             RoundedRectangle(cornerRadius: 12)
-              .strokeBorder(f.error == nil ? Color.clear : Color.red, lineWidth: 1)
+              .strokeBorder(f.error == nil ? Color.clear : Color.danger, lineWidth: 1)
           }
           .opacity(f.attachment == nil && f.error == nil ? 0.5 : 1)
           .overlay(alignment: .topTrailing) {

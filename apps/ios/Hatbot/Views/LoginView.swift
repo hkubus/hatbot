@@ -19,7 +19,7 @@ struct LoginView: View {
   var body: some View {
     @Bindable var session = session
     NavigationStack {
-      Form {
+      TiledForm {
         Section {
           TextField("Address", text: $session.server, prompt: Text("hatbot.example.com"))
             .textContentType(.URL)
@@ -43,7 +43,7 @@ struct LoginView: View {
               if code.count == 6 && !password.isEmpty { signIn() }
             }
         } footer: {
-          if let error { Text(error).foregroundStyle(.red) }
+          if let error { Text(error).foregroundStyle(Color.danger) }
         }
         Section {
           Button(action: signIn) {
