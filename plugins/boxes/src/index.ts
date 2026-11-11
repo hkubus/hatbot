@@ -1,9 +1,10 @@
 // Boxes: small web apps a bot makes, kept and opened from the chat. The brain serves their pages
 // sandboxed; their backends build and run on the boxes guest.
 import type { DesktopService } from "@hatbot/plugin-desktop";
-import { definePlugin, hosts, ready } from "@hatbot/plugin-sdk";
+import { definePlugin, hosts, ready, type ScriptsService } from "@hatbot/plugin-sdk";
 import type { T3Code } from "@hatbot/plugin-t3/client";
 import { z } from "zod";
+import { ACTION_MIGRATIONS, ACTION_TABLES, BoxActions } from "./actions";
 import { Backends } from "./backends";
 import { Boxes } from "./boxes";
 import { type HatboxAgent, HttpHatboxAgent } from "./client";
@@ -36,7 +37,9 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
       { name: "HATBOX_AGENT_TOKEN", secret: true, optional: true },
     ],
     needs: NEEDS,
-    uses: ["desktop", "t3"],
+    uses: ["desktop", "t3", "scripts"],
+    migrations: ACTION_MIGRATIONS,
+    tables: ACTION_TABLES,
     provides: ["boxes"],
     routes: ["/boxes"],
     publicRoutes: ["/boxes/:id/frame"],
@@ -49,6 +52,7 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
         clock: ctx.clock,
         desktop: () => ctx.optional<DesktopService>("desktop")?.agent ?? null,
         t3: () => ctx.optional<T3Code>("t3"),
+        scripts: () => ctx.optional<ScriptsService>("scripts"),
       };
       const boxes = new Boxes(d);
       const guest =
@@ -60,6 +64,7 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
         );
       boxes.backends = new Backends(boxes, guest, d.settings, d.clock);
       boxes.feeds = new BoxFeeds(d);
+      boxes.actions = new BoxActions(boxes, d);
       const backends = boxes.backends;
       const feeds = boxes.feeds;
 
@@ -78,6 +83,7 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
           { name: "backends", everyMs: 10_000, run: () => backends.tick() },
           { name: "feeds", everyMs: 10_000, run: () => feeds.tick() },
         ],
+        origins: { box: { startedBy: (s) => `the box "${s}", whose page ran one of its actions` } },
         prompt: { chat: CHAT },
         stop: unlisten,
       });

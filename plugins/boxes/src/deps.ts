@@ -1,5 +1,5 @@
 import type { DesktopAgent } from "@hatbot/plugin-desktop";
-import type { Db, Hosts, PluginVault } from "@hatbot/plugin-sdk";
+import type { Db, Hosts, PluginVault, ScriptsService } from "@hatbot/plugin-sdk";
 import type { T3Code } from "@hatbot/plugin-t3/client";
 
 /** What boxes reach in the core and other plugins. */
@@ -24,4 +24,5 @@ export type Deps = Pick<Hosts, (typeof NEEDS)[number]> & {
   /** Null while there's none. */
   desktop: () => DesktopAgent | null;
   t3: () => T3Code | null;
+  scripts: () => ScriptsService | null;
 };

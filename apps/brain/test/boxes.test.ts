@@ -2,11 +2,11 @@
 import { expect, test } from "bun:test";
 import { FRAME_CSP, previewed } from "@hatbot/plugin-boxes";
 import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
-import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
+import type { BoxActionRun, BoxDetail, BoxFeedValue, Script } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, type TestApp, testApp, toolNames } from "./helpers";
+import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 
 const PAGE = "<!doctype html><title>Habits</title><button>Walk</button>";
 const open = async (t: TestApp, id: number) => {
@@ -390,4 +390,127 @@ test("after reading untrusted content, a feed for a box goes to the review, whic
   const [blocked] = t.approvals.list(false);
   expect(blocked).toMatchObject({ status: "blocked" });
   expect(blocked?.summary).toContain("box #2");
+});
+
+/** A VM to start, and a payment. */
+function starter(done: string[]) {
+  return definePlugin({
+    id: "lab",
+    name: "Lab",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready([
+        tool({
+          name: "lab_vms",
+          description: "",
+          access: "read",
+          schema: z.object({}),
+          run: async () => "web, db",
+        }),
+        tool({
+          name: "lab_start",
+          description: "",
+          access: "write",
+          schema: z.object({ name: z.string() }),
+          run: async ({ name }) => {
+            done.push(`start ${name}`);
+            return "Started.";
+          },
+        }),
+        tool({
+          name: "lab_pay",
+          description: "",
+          access: "write",
+          schema: z.object({ usd: z.number() }),
+          run: async () => "Paid.",
+        }),
+      ]),
+  });
+}
+
+test("box actions: one that changes things is yours to approve once; the page runs it as the script's task, 20 times a day, not while paused, and not once the script changes more", async () => {
+  const done: string[] = [];
+  const action = (name: string, script: string, input?: object) => ({
+    content: [toolUse("boxes_action", { box: 1, name, script, ...(input ? { input } : {}) })],
+  });
+  const model = new FakeModel([
+    action("list", "list-vms"),
+    { content: [text("Added.")] },
+    action("start", "start-vm", { name: "web" }),
+    { content: [text("Added.")] },
+  ]);
+  const t = await testApp(model, new FakeModel(), {}, [starter(done)]);
+  await t.plugins.update("lab", { enabled: true });
+  const save = (name: string, steps: Script["steps"], writes: string[], id?: number) =>
+    t.scripts.save(
+      {
+        botId: "hatbot",
+        name,
+        description: name,
+        inputs: [{ name: "name", description: "The VM" }],
+        steps,
+        writes,
+        enabled: true,
+      },
+      { ...(id ? { id } : {}), via: "owner", approved: true, taintedBy: null },
+    );
+  save("list-vms", [{ call: "lab_vms", as: "vms" }], []);
+  const start = save(
+    "start-vm",
+    [{ call: "lab_start", input: { name: "{{input.name}}" } }],
+    ["lab_start"],
+  );
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Lab", html: PAGE }, {});
+  const press = (name: string, check?: true) => page(t, { op: "action", name, check });
+  expect((await press("start")).status).toBe(404);
+
+  // One that only reads is added without asking.
+  await t.thread.post("add a button that lists the VMs").done;
+  expect(t.approvals.list(true)).toHaveLength(0);
+  const reply = t.thread.post("add a button that starts web").done;
+  const asked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(asked.summary).toContain("start-vm");
+  expect(asked.summary).toContain("lab_start");
+  t.approvals.decide(asked.id, "approve", "web");
+  await reply;
+
+  const res = await press("start");
+  expect(res.status).toBe(200);
+  const ran = ((await res.json()) as { value: BoxActionRun }).value;
+  expect(ran.status).toBe("done");
+  expect(done).toEqual(["start web"]);
+  expect(t.tasks.get(ran.task)).toMatchObject({ origin: "box", source: "Lab", runner: "script" });
+  expect(await (await press("start", true)).json()).toEqual({ value: ran });
+  const detail = (await (
+    await t.call("GET", "/boxes/1", undefined, signIn(t))
+  ).json()) as BoxDetail;
+  expect(detail.actions.map((a) => [a.name, a.script, a.input, a.last?.task])).toEqual([
+    ["list", "list-vms", {}, undefined],
+    ["start", "start-vm", { name: "web" }, ran.task],
+  ]);
+
+  t.settings.update({ paused: true });
+  expect((await press("start")).status).toBe(409);
+  t.settings.update({ paused: false });
+
+  for (let i = 1; i < 20; i++) expect((await press("list")).status).toBe(200);
+  expect((await press("start")).status).toBe(429);
+  t.advance(86_400_000);
+
+  // A script that now changes more needs the action added again.
+  save(
+    "start-vm",
+    [
+      { call: "lab_start", input: { name: "{{input.name}}" } },
+      { call: "lab_pay", input: { usd: 5 } },
+    ],
+    ["lab_start", "lab_pay"],
+    start.id,
+  );
+  expect((await press("start")).status).toBe(403);
+  expect(done).toEqual(["start web"]);
+
+  expect((await t.call("DELETE", "/boxes/1/actions/start", undefined, signIn(t))).status).toBe(200);
+  expect((await press("start")).status).toBe(404);
 });

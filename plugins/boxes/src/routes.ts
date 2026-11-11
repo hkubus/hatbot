@@ -80,6 +80,13 @@ export function routes(boxes: Boxes) {
         if (!boxes.get(idParam(c))) return c.json(GONE, 404);
         return c.json(await boxes.call(idParam(c), call));
       })
+      // Yours, on the box's page; the bot adds them.
+      .delete("/boxes/:id/actions/:name", (c) => {
+        if (!boxes.get(idParam(c))) return c.json(GONE, 404);
+        return boxes.actions?.remove(idParam(c), c.req.param("name"))
+          ? c.json({ ok: true })
+          : c.json({ error: "That action is gone." }, 404);
+      })
       .delete("/boxes/:id", (c) =>
         boxes.delete(idParam(c)) ? c.json({ ok: true }) : c.json(GONE, 404),
       )

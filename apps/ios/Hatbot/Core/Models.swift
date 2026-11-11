@@ -199,7 +199,7 @@ enum TaskStatus: String, LenientEnum {
 /// Not `Task`, which is Swift's.
 struct AgentTask: Codable, Identifiable, Equatable, Sendable {
   enum Origin: String, LenientEnum {
-    case chat, schedule, webhook, alert, watch, heartbeat
+    case chat, schedule, webhook, alert, watch, heartbeat, box
     static let fallback = Origin.chat
   }
 

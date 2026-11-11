@@ -14,9 +14,11 @@ import {
 import {
   type Bot,
   type Box,
+  type BoxActionInfo,
   BoxCall,
   HATBOT_ID,
   localDay,
+  MAX_BOX_ACTION_NAME,
   MAX_BOX_FEED_NAME,
   MAX_BOX_HTML,
   MAX_WATCH_MINUTES,
@@ -41,6 +43,7 @@ import {
   MAX_BOX_SOURCE,
 } from "@hatbot/shared/hatbox";
 import { z } from "zod";
+import { ACTION_RUNS_PER_DAY, MAX_BOX_ACTIONS } from "./actions";
 import { type Backends, cronProblem, NO_GUEST } from "./backends";
 import { BoxError, type Boxes, FRAME_CSP, previewed } from "./boxes";
 import type { Deps } from "./deps";
@@ -266,6 +269,13 @@ async function secretsAsked(
 }
 
 /** Their names and whether each is set, never a value. */
+function actionsLine(ctx: ToolContext, id: number): string {
+  const list = ctx.boxes.actions?.list(id) ?? [];
+  const line = (a: BoxActionInfo) =>
+    `"${a.name}": ${a.script} ${JSON.stringify(a.input)}${a.last ? `; last run task #${a.last.task}, ${a.last.status}` : ""}`;
+  return list.length ? `Actions:\n${list.map(line).join("\n")}` : "";
+}
+
 function secretsLine(ctx: ToolContext, id: number): string {
   const list = ctx.boxes.secrets(id) ?? [];
   return list.length
@@ -375,7 +385,7 @@ async function checked(
 
 /** Shared by the chat's boxes_create and T3 Code (boxes_t3). */
 export const BOX_PAGE_RULES =
-  "A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. localStorage, sessionStorage, indexedDB and cookies are blocked. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes, and hatbox.feed(name) for what a feed you give it with boxes_feed last read (with {fresh: true}, read again when over a minute old).";
+  "A box is one self-contained HTML page, its CSS and JavaScript inline. It can't load or reach anything outside itself (no CDNs, fonts, pictures from the web or requests), so write plain JavaScript and draw with SVG or canvas. alert, confirm and prompt don't work; show messages and confirmations in the page. localStorage, sessionStorage, indexedDB and cookies are blocked. It keeps its data with hatbox.store: await hatbox.store.get(key), .set(key, value), .delete(key) and .keys(), with JSON values, up to 5 MB in all; load on start, save on each change. Use the app's colours, which follow light and dark: var(--hb-bg), --hb-surface, --hb-text, --hb-muted, --hb-line, --hb-accent (with --hb-on-accent text on it), --hb-attention, --hb-danger, --hb-success, and --hb-font. Make it work on a phone too. It can also await hatbox.ask(prompt, {system, maxTokens}) for Haiku's answer as text (no tools, a small daily limit), hatbox.send(text) for a short note in this chat, which you see the next time the owner writes,, hatbox.feed(name) for what a feed you give it with boxes_feed last read (with {fresh: true}, read again when over a minute old), and hatbox.action(name) to run one of your scripts that you give it as an action with boxes_action.";
 
 export const BOX_FILES_RULES =
   'For more than a page, give files instead, built on the boxes guest into one page: index.html, which loads its scripts and styles by path (<script type="module" src="./app.ts">; inline scripts aren\'t built, so import and TypeScript fail there), the modules they import, npm packages in box.json, and server.ts for a backend (`export default { fetch(req), scheduled?() }` on Bun, keeping data with bun:sqlite in its working folder), which the page calls with await hatbox.fetch(path, init), answered like fetch. The backend reaches only the hosts box.json lists, and cron runs scheduled(), at most every 5 minutes, which may return {notify: "text"} to notify the owner, up to 10 times a day. An API key goes in box.json\'s secrets by name, read as process.env.NAME; the owner sets it on the box\'s page and you never see it: {"hosts": ["shop.example.com"], "cron": "0 * * * *", "packages": {"chart.js": "^4"}, "secrets": ["SHOP_KEY"]}.';
@@ -629,13 +639,13 @@ const TOOLS = [
     name: "boxes_data",
     label: "Reading what a box saved",
     description:
-      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, and which of its secrets the owner has set.",
+      "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, its actions, and which of its secrets the owner has set.",
     schema: z.object({ box: z.number().int() }),
     run: async ({ box: id }, ctx) => {
       const box = ownBox(ctx, id);
       const data = ctx.boxes.data(id) ?? {};
       const feeds = ctx.boxes.feeds?.list(id) ?? [];
-      const secrets = secretsLine(ctx, id);
+      const secrets = [actionsLine(ctx, id), secretsLine(ctx, id)].filter(Boolean).join("\n\n");
       if (!Object.keys(data).length && !feeds.length)
         return `Nothing saved yet.${secrets && `\n\n${secrets}`}`;
       // What the page saved is whatever its code and the owner's typing made of it; what its feeds
@@ -830,6 +840,72 @@ const TOOLS = [
       });
       // Not what it gave: that's untrusted, and would make adding the next feed ask too.
       return `Added the feed "${name}": it ran and gave ${kindOf(first.value)}. It runs every ${every} min; the page reads it with await hatbox.feed(${JSON.stringify(name)}).${note}`;
+    },
+  }),
+  def({
+    name: "boxes_action",
+    label: "Giving a box an action",
+    change: true,
+    description: `Give one of your boxes an action: one of your scripts, with a fixed input, that its page runs with await hatbox.action(name), such as a button that restarts a service or sends a report. Each run is a task, like the script's other runs; the page gets {task, status, summary, at} once it ends, or as it is after 30 seconds, and hatbox.action(name, {check: true}) gives how its last run went without running it. Since the page may run it whenever its code asks, the owner approves an action whose script changes things; each run then follows the script's rules. At most ${MAX_BOX_ACTIONS} a box, run at most ${ACTION_RUNS_PER_DAY} times a day in all. The same name changes it; leave out script to remove it.`,
+    schema: z.object({
+      box: z.number().int(),
+      name: z
+        .string()
+        .min(1)
+        .max(MAX_BOX_ACTION_NAME)
+        .describe('What the page asks hatbox.action for, e.g. "restart"'),
+      script: z
+        .string()
+        .optional()
+        .describe("Your script's name, from script_list. Leave out to remove the action"),
+      input: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("The script's input, the same on every run"),
+    }),
+    run: async ({ box: id, name, script, input = {} }, ctx, signal) => {
+      const box = ownBox(ctx, id);
+      const actions = ctx.boxes.actions;
+      if (!actions) return "Boxes aren't available here.";
+      if (!script)
+        return actions.remove(id, name)
+          ? `Removed the action "${name}".`
+          : `Box #${id} has no action "${name}".`;
+      const s = actions.script(id, ctx.bot?.id ?? HATBOT_ID, { name, script, input });
+      // The page runs it whenever its code asks. After untrusted content, or for a page written after
+      // it, even a script that only reads gives the page what it read, as a feed does.
+      const chat = ctx.tainted?.() ?? null;
+      let note = "";
+      if (s.writes.length || chat || ctx.boxes.taintedBy(id)) {
+        if (!ctx.approve)
+          return "Not added: this needs the owner's approval, which can't be asked here.";
+        const hosts = ctx.boxes.hosts(id);
+        const r = await ctx.approve(
+          {
+            tool: "boxes_action",
+            input: { box: id, name, script: s.name, input },
+            what: [
+              `Let box #${id} "${box.title}" run the script ${s.name} ${JSON.stringify(input)} whenever its page asks, as the action "${name}", up to ${ACTION_RUNS_PER_DAY} times a day.`,
+              s.writes.length && `It changes things with ${s.writes.join(", ")}.`,
+              hosts.length &&
+                `The box can reach ${hosts.join(", ")}, so it could send what the script gives back there.`,
+            ]
+              .filter(Boolean)
+              .join(" "),
+            why: s.writes.length
+              ? "A box's page runs its actions whenever its code asks, so one that changes things is yours to allow."
+              : chat
+                ? "This conversation has read untrusted content, so giving a box your data is checked first."
+                : "This box's page was written after reading untrusted content, so giving it your data is checked first.",
+            ...(s.writes.length ? { always: true } : {}),
+          },
+          signal,
+        );
+        if (r.isError) return r.content;
+        note = r.content;
+      }
+      actions.set(id, name, s, input);
+      return `Added the action "${name}": the page runs ${s.name} with await hatbox.action(${JSON.stringify(name)}).${note}`;
     },
   }),
   def({

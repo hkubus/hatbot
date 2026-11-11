@@ -34,6 +34,7 @@ import {
   boxConfig,
   MAX_BOX_NOTIFY,
 } from "@hatbot/shared/hatbox";
+import type { BoxActions } from "./actions";
 import type { Backends } from "./backends";
 import type { Deps } from "./deps";
 import type { BoxFeeds } from "./feeds";
@@ -106,6 +107,7 @@ export class Boxes {
   private asking = 0;
   backends?: Backends;
   feeds?: BoxFeeds;
+  actions?: BoxActions;
   private previewing = new Map<string, Promise<Uint8Array | null>>();
   private drawing: Promise<unknown> = Promise.resolve();
   private failedPreviews = new Map<string, number>();
@@ -149,7 +151,7 @@ export class Boxes {
         `SELECT ${VERSION_COLUMNS} FROM box_versions WHERE box_id = ? ORDER BY n`,
       )
       .all(id);
-    return { ...box, versions, secrets: this.secrets(id) };
+    return { ...box, versions, secrets: this.secrets(id), actions: this.actions?.list(id) ?? [] };
   }
 
   page(id: number, n?: number): BoxPage | null {
@@ -452,6 +454,11 @@ export class Boxes {
           ? await this.feeds?.fresh(id, c.name)
           : this.feeds?.latest(id, c.name);
         return latest ? { value: latest } : {};
+      }
+      case "action": {
+        if (!this.actions) throw new BoxError("Actions aren't available here.");
+        const run = c.check ? this.actions.check(id, c.name) : await this.actions.press(id, c.name);
+        return run ? { value: run } : {};
       }
     }
   }
@@ -757,6 +764,7 @@ const HATBOX = `(() => {
     },
     send: (text) => call("send", { text: String(text) }),
     feed: (name, o) => call("feed", o?.fresh ? { name: String(name), fresh: true } : { name: String(name) }),
+    action: (name, o) => call("action", o?.check ? { name: String(name), check: true } : { name: String(name) }),
     fetch: boxFetch,
     theme,
   });
