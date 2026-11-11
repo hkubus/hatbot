@@ -75,16 +75,16 @@ Built 2026-11-02, not tried live: N5, selling (`negotiate/selling.ts`). Where a 
 - **Maybe later**: `scout_send_message`, if sending from the desktop turns out too slow.
 
 ### 3.2 Scout's part
-This goes in Scout's own repo, as a handoff there, in the shapes the brain reads. Read tools, all `readOnlyHint`:
-- **`scout_price_reference {query, sources}`** → `best.{typicalPrice, p25, samples, name, basis, ready}`. P0-4 in Scout's `HAT_DEALS_HANDOFF.md`, never built; that handoff is otherwise stale. Until it exists the appraisal uses `scout_watch_analytics`.
-- **`scout_comparables {listingKey}`** → `comparables|listings|items[].{title, price, url}`: live alternatives for the same item, the fallback and honest leverage.
-- **`scout_listing_detail`** gains days listed, price drops, relists, the seller's other listings and the negotiable flag, and `live: true` (P1-3), to check the listing before an offer and before paying. The brain already reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`.
+Built in Scout (price reference, comparables, outcomes and the listing detail's negotiation block on 2026-10-16), in the shapes the brain reads; Hatbot's Scout plugin offers them since 2026-11-11. Read tools, all `readOnlyHint`:
+- **`scout_price_reference {query, sources}`** → `best.{typicalPrice, p25, samples, name, basis, ready}`: the appraisal's typical price; when it has none, the appraisal uses `scout_watch_analytics`.
+- **`scout_comparables {listingKey}`** → `comparables[].{title, price, url}`: live alternatives for the same item, the fallback and honest leverage.
+- **`scout_listing_detail`** has a `negotiation` block (days listed, price drops, the negotiable flag, the seller and their other listings, relists), `live: true` to check the listing on the marketplace now and `sellerListings: true`. The brain reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`. Still to do: check the listing with `live: true` before an offer and before paying (P1-3).
 - **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions (N3, built in Scout): Scout's plugin offers them to the brain alone; over the MCP plugin they need Chat.
 
 For logins (built in Scout, 2026-10-26): **`scout_shared_sessions`** → `sessions[].{marketplace, label, revision}` and **`scout_shared_session {marketplace}`** → `{revision, storageState}`, Playwright storage state. Only connected apps get them, only for the sessions you shared, and the brain alone calls them (`desktop/logins.ts`); desktop-agent takes cookies only for the marketplaces' sites.
 
 One write tool:
-- **`scout_record_outcome {listingKey, outcome, price, asking, currency}`**: the final price, kept apart from Scout's asking-price statistics, as flips are, and shown as a figure of its own ("you pay about 84% of asking for GPUs on OLX").
+- **`scout_record_outcome {negotiationId, listingKey, outcome, price, asking, currency}`**: the final price, kept apart from Scout's asking-price statistics, as flips are, and shown as a figure of its own ("you pay about 84% of asking for GPUs on OLX"). The brain sends it when the bot closes a buying negotiation with `negotiate_close`, keyed `hatbot:<id>`, in PLN only. Scout's plugin offers it to the brain alone; over the MCP plugin it needs Allow.
 
 For N6, Scout's handoff is `../scout/docs/hatbot-listing-plan.md`. In short:
 - `scout_flips_to_list` (read): flips marked ready, each with `id, updatedAt, channels[]` and each channel's `{status, url?, error?}`.
