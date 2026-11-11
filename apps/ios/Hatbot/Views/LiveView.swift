@@ -281,15 +281,24 @@ private struct TouchSurface: UIViewRepresentable {
     let doubleTap = UITapGestureRecognizer(target: c, action: #selector(Coordinator.doubleTap))
     doubleTap.numberOfTapsRequired = 2
     let long = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.longPress))
+    // A finger's long press is the right click; a mouse or trackpad has its own.
+    long.allowedTouchTypes = [UITouch.TouchType.direct, .pencil].map { $0.rawValue as NSNumber }
+    let rightClick = UITapGestureRecognizer(target: c, action: #selector(Coordinator.rightClick))
+    rightClick.buttonMaskRequired = .secondary
     let pan = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.pan))
     pan.maximumNumberOfTouches = 1
     let scroll = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.scroll))
     scroll.minimumNumberOfTouches = 2
+    // A mouse wheel or a trackpad's two-finger scroll: scroll events, not touches.
+    let wheel = UIPanGestureRecognizer(target: c, action: #selector(Coordinator.scroll))
+    wheel.allowedScrollTypesMask = .all
+    wheel.allowedTouchTypes = []
+    let hover = UIHoverGestureRecognizer(target: c, action: #selector(Coordinator.hover))
     let pinch = UIPinchGestureRecognizer(target: c, action: #selector(Coordinator.pinch))
-    for g in [tap, doubleTap, long, pan, scroll, pinch] as [UIGestureRecognizer] {
+    for g in [tap, doubleTap, long, rightClick, pan, scroll, wheel, hover, pinch] as [UIGestureRecognizer] {
       view.addGestureRecognizer(g)
     }
-    c.recognizers = (tap, doubleTap, long, pan, scroll)
+    c.recognizers = (tap, doubleTap, long, rightClick, pan, scroll, wheel, hover)
     update(c)
     return view
   }
@@ -304,7 +313,10 @@ private struct TouchSurface: UIViewRepresentable {
     guard let r = c.recognizers else { return }
     r.tap.isEnabled = control
     r.long.isEnabled = control
+    r.rightClick.isEnabled = control
     r.scroll.isEnabled = control
+    r.wheel.isEnabled = control
+    r.hover.isEnabled = control
     r.doubleTap.isEnabled = !control
     // Watching an unzoomed screen, a drag scrolls the page.
     r.pan.isEnabled = control || zoom.scale > 1
@@ -317,7 +329,8 @@ private struct TouchSurface: UIViewRepresentable {
     var parent: TouchSurface
     var recognizers: (
       tap: UIGestureRecognizer, doubleTap: UIGestureRecognizer, long: UIGestureRecognizer,
-      pan: UIGestureRecognizer, scroll: UIGestureRecognizer
+      rightClick: UIGestureRecognizer, pan: UIGestureRecognizer, scroll: UIGestureRecognizer,
+      wheel: UIGestureRecognizer, hover: UIGestureRecognizer
     )?
     /// The zoom as the gestures see it; it's ahead of the view's while a pinch goes on.
     var zoom = Zoom()
@@ -349,6 +362,10 @@ private struct TouchSurface: UIViewRepresentable {
 
     @objc func longPress(_ g: UILongPressGestureRecognizer) {
       if g.state == .began { click(g, button: 3) }
+    }
+
+    @objc func rightClick(_ g: UITapGestureRecognizer) {
+      click(g, button: 3)
     }
 
     @objc func doubleTap(_ g: UITapGestureRecognizer) {
@@ -392,6 +409,14 @@ private struct TouchSurface: UIViewRepresentable {
       default:
         parent.send(.button(1, down: false, x: x, y: y))
       }
+    }
+
+    /// The pointer over the screen with no button down, like the web view's.
+    @objc func hover(_ g: UIHoverGestureRecognizer) {
+      guard g.state == .began || g.state == .changed, Date().timeIntervalSince(lastMove) > 0.05 else { return }
+      lastMove = Date()
+      let (x, y) = point(g)
+      parent.send(.move(x: x, y: y))
     }
 
     private func move(_ g: UIPanGestureRecognizer) {

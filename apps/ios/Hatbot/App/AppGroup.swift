@@ -8,10 +8,16 @@ enum AppGroup {
   static let prefix = Bundle.main.object(forInfoDictionaryKey: "HatbotBundlePrefix") as? String ?? "com.example"
   static let base = "group.\(prefix).hatbot"
 
-  static let id: String? = {
-    let candidates = (teamID.map { ["\(base).\($0)"] } ?? []) + [base]
-    return candidates.first { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
-  }()
+  #if targetEnvironment(macCatalyst)
+    // None on the Mac, where the extensions aren't. There a container comes back for any group, signed
+    // for or not.
+    static let id: String? = nil
+  #else
+    static let id: String? = {
+      let candidates = (teamID.map { ["\(base).\($0)"] } ?? []) + [base]
+      return candidates.first { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) != nil }
+    }()
+  #endif
 
   static var cacheDir: URL? {
     let root =

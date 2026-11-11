@@ -56,6 +56,19 @@ jobs:
           path: apps/ios/build/Hatbot.ipa
           if-no-files-found: error
 
+  # The same app for the Mac (Mac Catalyst), unsigned: only to show that it builds. It doesn't hold up
+  # publishing the IPA.
+  mac:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+      - run: brew install xcodegen
+      - name: Build for the Mac
+        run: apps/ios/build-mac.sh
+
   publish:
     if: github.ref == 'refs/heads/main'
     needs: build

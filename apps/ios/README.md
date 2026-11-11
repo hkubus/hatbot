@@ -35,6 +35,24 @@ apps/ios/build-ipa.sh        # → apps/ios/build/Hatbot.ipa, unsigned
 
 To work on it in Xcode: `cd apps/ios && xcodegen generate && open Hatbot.xcodeproj`.
 
+## Run it on a Mac
+
+The same app runs on a Mac through Mac Catalyst: the iPad layout in a window, without the share
+extension and the widget. It needs signing with your Apple ID, or it can't keep your token in the
+Keychain. Add the Apple ID in Xcode's Settings → Accounts, then either:
+
+- in Xcode, pick the destination **My Mac (Mac Catalyst)**, choose your team under the Hatbot
+  target's Signing & Capabilities, and run it; or
+- build it with your team ID and move it to Applications:
+
+  ```sh
+  security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject   # OU= is the team ID
+  TEAM=<team ID> apps/ios/build-mac.sh    # → apps/ios/build/mac/Hatbot.app
+  ```
+
+In Live, once you've taken control, the mouse or trackpad drives the desktop: click, right click,
+drag and scroll, and its pointer follows yours. Turn on Keyboard to type there.
+
 ## Test the core (Mac or Linux)
 
 ```sh
