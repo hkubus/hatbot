@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BoxBuild, BoxFile } from "@hatbot/shared/hatbox";
+import type { BoxBuild, BoxFile, HatboxCheck } from "@hatbot/shared/hatbox";
 import { publicAddress } from "../src/egress";
 import { Guest, IDLE_MS } from "../src/guest";
 import { routes } from "../src/routes";
@@ -137,6 +137,29 @@ export default {
   expect(await (await a.send("/boxes")).json()).toEqual([]);
   expect(existsSync(join(a.state, "logs", "1.log"))).toBe(false);
   expect((await a.send("/boxes/1/http/")).status).toBe(409);
+}, 60_000);
+
+const selfTest = async (a: ReturnType<typeof agent>) =>
+  (await (await a.send("/check", { method: "POST" })).json()) as HatboxCheck;
+
+test("the self-test builds and asks a box of its own, finds plain processes aren't fenced in, and leaves nothing behind", async () => {
+  const a = agent();
+  expect(await selfTest(a)).toEqual({ ok: true, ownUser: false, ownNetwork: false });
+  expect(await (await a.send("/boxes")).json()).toEqual([]);
+  expect(existsSync(join(a.state, "boxes", "0"))).toBe(false);
+  expect(existsSync(join(a.state, "logs", "0.log"))).toBe(false);
+  // The brain can't reach it.
+  expect((await a.send("/boxes/0/http/")).status).toBe(404);
+}, 60_000);
+
+test("the self-test fails when a box's unit won't start, and leaves nothing behind", async () => {
+  const a = agent();
+  const units = (a.guest as unknown as { o: { units: LocalUnits } }).o.units;
+  units.start = async () => {
+    throw new Error("Couldn't start the backend: Access denied");
+  };
+  expect((await selfTest(a)).ok).toBe(false);
+  expect(existsSync(join(a.state, "boxes", "0"))).toBe(false);
 }, 60_000);
 
 test("a box's files are plain files inside it: other paths and package files are refused", async () => {
