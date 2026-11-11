@@ -67,6 +67,8 @@ export class AnthropicModelClient implements ModelProvider {
     });
     const server = new Map<number, { name: string; json: string }>();
     let used: { model: string; usage: Anthropic.Beta.BetaUsage } | null = null;
+    let wrote = false;
+    let searched = false;
     try {
       for await (const event of stream) {
         if (event.type === "message_start")
@@ -79,6 +81,11 @@ export class AnthropicModelClient implements ModelProvider {
           if (event.content_block.type === "thinking") handlers.onThinking?.("\n");
           if (event.content_block.type === "server_tool_use")
             server.set(event.index, { name: event.content_block.name, json: "" });
+          // Text after a search or fetch starts a paragraph; text split up by its citations doesn't.
+          if (event.content_block.type === "text") {
+            if (wrote && searched) handlers.onText?.("\n\n");
+            searched = false;
+          } else if (event.content_block.type !== "thinking") searched = true;
         }
         if (event.type === "content_block_stop") {
           const call = server.get(event.index);
@@ -87,8 +94,11 @@ export class AnthropicModelClient implements ModelProvider {
           if (block && handlers.onBlock) handlers.onBlock(block);
         }
         if (event.type !== "content_block_delta") continue;
-        if (event.delta.type === "text_delta") handlers.onText?.(event.delta.text);
-        else if (event.delta.type === "thinking_delta") handlers.onThinking?.(event.delta.thinking);
+        if (event.delta.type === "text_delta") {
+          wrote = true;
+          handlers.onText?.(event.delta.text);
+        } else if (event.delta.type === "thinking_delta")
+          handlers.onThinking?.(event.delta.thinking);
         else if (event.delta.type === "input_json_delta") {
           const call = server.get(event.index);
           if (call) call.json += event.delta.partial_json;

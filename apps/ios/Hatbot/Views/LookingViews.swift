@@ -9,8 +9,8 @@ struct SearchView: View {
 
   var body: some View {
     NavigationStack {
-      List {
-        if let error { Text(error).foregroundStyle(.red) }
+      TiledList {
+        if let error { Text(error).foregroundStyle(Color.danger) }
         if let r = results {
           if r.isEmpty {
             Text("Nothing found.").foregroundStyle(.secondary)
@@ -23,7 +23,7 @@ struct SearchView: View {
                 } label: {
                   VStack(alignment: .leading, spacing: 3) {
                     Text("\(m.botId.map { store.botName($0) } ?? "You"), \(m.createdAt.stampText)")
-                      .font(.footnote).foregroundStyle(.secondary)
+                      .font(.sans(.footnote)).foregroundStyle(.secondary)
                     Snippet(text: m.snippet)
                   }
                 }
@@ -43,7 +43,7 @@ struct SearchView: View {
               ForEach(r.memory) { m in
                 NavigationLink(value: Route.memoryFile(m.path)) {
                   VStack(alignment: .leading, spacing: 3) {
-                    Text(m.path).font(.footnote).foregroundStyle(.secondary)
+                    Text(m.path).font(.sans(.footnote)).foregroundStyle(.secondary)
                     Text(m.text).lineLimit(3)
                   }
                 }
@@ -144,8 +144,8 @@ struct WatcherDetailView: View {
   }
 
   private func content(_ w: Watcher) -> some View {
-    Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       Section {
         Toggle(
           "On",
@@ -174,10 +174,10 @@ struct WatcherDetailView: View {
       }
       Section("Last look") {
         if let e = w.lastError {
-          Text(e).foregroundStyle(.red)
+          Text(e).foregroundStyle(Color.danger)
         }
         if let v = w.lastValue {
-          Text(v).font(.system(.callout, design: .monospaced)).lineLimit(8).textSelection(.enabled)
+          Text(v).font(.code(.callout)).lineLimit(8).textSelection(.enabled)
         }
         if let at = w.lastCheckedAt { LabeledContent("Looked", value: at.stampText) }
         if let taskId = w.lastTaskId { NavigationLink("Its last task", value: Route.task(taskId)) }
@@ -197,9 +197,9 @@ struct WatcherDetailView: View {
         Section("Values") {
           ForEach(values) { v in
             VStack(alignment: .leading, spacing: 3) {
-              Text(v.value).font(.system(.callout, design: .monospaced)).lineLimit(3)
+              Text(v.value).font(.code(.callout)).lineLimit(3)
               Text(v.fired ? "\(v.createdAt.stampText), counted" : v.createdAt.stampText)
-                .font(.footnote).foregroundStyle(v.fired ? Color.accentColor : .secondary)
+                .font(.sans(.footnote)).foregroundStyle(v.fired ? Color.accentColor : .secondary)
             }
           }
         }
@@ -233,8 +233,8 @@ struct ChecksView: View {
   @State private var error: String?
 
   var body: some View {
-    List {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledList {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if let report {
         Section {
           ForEach(report.results) { r in
@@ -243,7 +243,7 @@ struct ChecksView: View {
               VStack(alignment: .leading, spacing: 3) {
                 Text(r.name)
                 if !r.detail.isEmpty {
-                  Text(r.detail).font(.footnote).foregroundStyle(.secondary)
+                  Text(r.detail).font(.sans(.footnote)).foregroundStyle(.secondary)
                 }
               }
             }
@@ -287,9 +287,9 @@ struct TestApprovalRow: View {
       VStack(alignment: .leading, spacing: 3) {
         Text("Test approval")
         if let error {
-          Text(error).font(.footnote).foregroundStyle(.red)
+          Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
         } else if let a = approvalId.flatMap({ store.approvals[$0] }) {
-          Text(answer(a)).font(.footnote).foregroundStyle(.secondary)
+          Text(answer(a)).font(.sans(.footnote)).foregroundStyle(.secondary)
         }
       }
       Spacer()
@@ -333,9 +333,9 @@ extension CheckResult.State {
 
   var tint: Color {
     switch self {
-    case .ok: .green
-    case .warn: .orange
-    case .fail: .red
+    case .ok: .success
+    case .warn: .attention
+    case .fail: .danger
     case .skip: .secondary
     }
   }
@@ -354,8 +354,8 @@ struct HeartbeatView: View {
   @State private var error: String?
 
   var body: some View {
-    Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if let s = Binding($settings) {
         Section {
           Toggle("Heartbeat", isOn: s.enabled).onChange(of: s.wrappedValue.enabled) { save() }
@@ -459,13 +459,13 @@ struct ProposalView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
-        Text(proposal.title).font(.headline)
+        Text(proposal.title).font(.sans(.headline))
         Text(proposal.reason)
-        if let error { Text(error).foregroundStyle(.red) }
+        if let error { Text(error).foregroundStyle(Color.danger) }
         ForEach(proposal.changes, id: \.path) { c in
           VStack(alignment: .leading, spacing: 6) {
             Text(c.before == nil ? "\(c.path) (new)" : c.after == nil ? "\(c.path) (deleted)" : c.path)
-              .font(.subheadline.weight(.semibold))
+              .font(.sans(.subheadline, .semibold))
             if let lines = diffs?[c.path] { DiffLines(lines: lines) } else { ProgressView() }
           }
         }
@@ -528,10 +528,10 @@ struct DiffLines: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
               line.kind == .added
-                ? Color.green.opacity(0.15) : line.kind == .removed ? Color.red.opacity(0.15) : Color.clear)
+                ? Color.successSoft : line.kind == .removed ? Color.dangerSoft : Color.clear)
         }
       }
-      .font(.system(.caption, design: .monospaced))
+      .font(.code(.caption))
       .textSelection(.enabled)
     }
   }

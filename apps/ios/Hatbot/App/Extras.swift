@@ -62,7 +62,7 @@ final class PrivacyCover {
     if windows[id] != nil { return }
     let window = UIWindow(windowScene: scene)
     let blank = UIViewController()
-    blank.view.backgroundColor = .systemBackground
+    blank.view.backgroundColor = UIColor(Color.surface)
     window.rootViewController = blank
     window.windowLevel = .alert + 1
     window.isHidden = false

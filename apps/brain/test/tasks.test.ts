@@ -923,3 +923,35 @@ test("a task that answered in text finishes without writing it again; with nothi
   expect(lastText(work.requests[3])).toContain('"is_error":true');
   expect(t.tasks.get(asked?.id ?? 0)?.summary).toBe("Fine.");
 });
+
+test("a task's summary may run past its limit with chart blocks, but not with words", async () => {
+  const item = (i: number) => ({
+    title: `SSD ${i}`,
+    price: 150 + i,
+    url: `https://www.vinted.pl/items/${1000 + i}`,
+    photo: `https://images1.vinted.net/t/0${i}_abcdefghijk/310x430/ffffffff.webp`,
+    site: "Vinted",
+    note: "used, shipped",
+  });
+  const items = Array.from({ length: 12 }, (_, i) => item(i));
+  const chart = `\`\`\`chart\n${JSON.stringify({ type: "listings", title: "SSDs", unit: "zł", items })}\n\`\`\``;
+  const summary = `The cheapest is **SSD 0**.\n\n${chart}`;
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("finish_task", {
+          outcome: "done",
+          summary: "Too wordy. ".repeat(200),
+          notify: false,
+        }),
+      ],
+    },
+    { content: [toolUse("finish_task", { outcome: "done", summary, notify: false })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({ title: "SSDs", goal: "g", origin: "chat" }) as Task;
+  await t.tasks.idle();
+  expect(summary.length).toBeGreaterThan(2000);
+  expect(JSON.stringify(work.requests[1]?.messages)).toContain("not counting chart blocks");
+  expect(t.tasks.get(task.id)?.summary).toBe(summary);
+});

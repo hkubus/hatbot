@@ -2,6 +2,7 @@
 // checks what it cites against what the pages said, and ends in a saved, cited report.
 import {
   definePlugin,
+  ENDS_REPLY,
   hosts,
   invalidInput,
   ready,
@@ -81,8 +82,7 @@ const CHAT_LINE = `- For a question that needs many searches and pages (comparin
 const researchTool = (d: Deps) =>
   tool({
     name: "research",
-    description:
-      "Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead.",
+    description: `Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead. ${ENDS_REPLY}`,
     schema: ResearchInput,
     access: "own",
     places: ["chat"],
@@ -105,7 +105,7 @@ const researchTool = (d: Deps) =>
         runner: "research",
       });
       if (!task) return "The research couldn't start.";
-      return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it.`;
+      return `Started research task #${task.id}. It runs in the background for a few minutes; the owner sees its progress and answer under this reply. Don't wait for it. If your reply already says what you started, end it here; otherwise say so in a line.`;
     },
   });
 

@@ -156,11 +156,11 @@ struct LiveView: View {
       }
       if control {
         banner(icon: "hand.raised.fill", text: "You're in control. Hatbot is paused.") {
-          Button("Hand back") { run { try await store.handback(id) } }.glassButton(prominent: true)
+          Button("Hand back") { run { try await store.handback(id) } }.buttonStyle(.material(.filled))
         }
       } else if let request = desktop?.request {
         banner(icon: "hand.raised.fill", text: "**Hatbot needs you:** \(request.reason)") {
-          Button("Take over") { run { try await store.takeover(id) } }.glassButton(prominent: true)
+          Button("Take over") { run { try await store.takeover(id) } }.buttonStyle(.material(.filled))
         }
       }
 
@@ -169,22 +169,20 @@ struct LiveView: View {
       HStack {
         if control {
           Button("Keyboard", systemImage: "keyboard") { typing.toggle() }
-            .glassButton(prominent: typing)
-            .tint(.attention)
+            .buttonStyle(.material(typing ? .chosen : .tonal))
         } else if desktop?.request == nil && desktop?.online == true
           // A computer only during a task.
           && (id == nil || desktop?.activeTaskId != nil)
         {
           Button("Take over", systemImage: "hand.raised") { run { try await store.takeover(id) } }
-            .glassButton()
-            .tint(.attention)
+            .buttonStyle(.material(.tonal))
         }
         Spacer()
       }
       .background { if control { KeyCatcher(active: $typing, send: { feed.key($0) }) } }
 
       if let error {
-        Text(error).font(.footnote).foregroundStyle(.red)
+        Text(error).font(.sans(.footnote)).foregroundStyle(Color.danger)
       }
       if showsTask, let id = activeTaskId { ScreenTask(taskId: id) }
     }
@@ -197,9 +195,9 @@ struct LiveView: View {
   private func banner<A: View>(icon: String, text: LocalizedStringKey, @ViewBuilder action: () -> A) -> some View {
     HStack(spacing: 10) {
       Image(systemName: icon).foregroundStyle(Color.attention)
-      Text(text).font(.subheadline)
+      Text(text).font(.sans(.subheadline))
       Spacer(minLength: 0)
-      action().controlSize(.small).tint(.attention)
+      action().controlSize(.small)
     }
   }
 
@@ -215,15 +213,15 @@ struct LiveView: View {
       }
       if !online || feed.conn != .live {
         Text(!online || feed.conn == .offline ? "\(screenName) isn't answering." : "Connecting…")
-          .font(.subheadline)
+          .font(.sans(.subheadline))
           .foregroundStyle(.white.opacity(0.8))
       }
       TouchSurface(desktopSize: size, control: control, zoom: zoom, setZoom: { zoom = $0 }, send: { feed.send($0) })
     }
     .aspectRatio(size.width / size.height, contentMode: .fit)
-    .clipShape(.rect(cornerRadius: 10))
+    .clipShape(.rect(cornerRadius: 12))
     .overlay {
-      RoundedRectangle(cornerRadius: 10)
+      RoundedRectangle(cornerRadius: 12)
         .strokeBorder(control ? Color.attention : Color(uiColor: .separator), lineWidth: control ? 2 : 0.5)
     }
     .accessibilityLabel(screenName)
@@ -243,14 +241,14 @@ private struct ScreenTask: View {
       if let task = store.tasks[taskId] {
         NavigationLink(value: Route.task(taskId)) {
           HStack {
-            Text(task.title).font(.headline).foregroundStyle(.primary)
+            Text(task.title).font(.sans(.headline)).foregroundStyle(.primary)
             Spacer()
             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
           }
         }
         .buttonStyle(.plain)
         Text(Format.taskLine(task, progress: store.taskProgress[taskId]))
-          .font(.subheadline)
+          .font(.sans(.subheadline))
           .foregroundStyle(.secondary)
         ForEach((store.steps[taskId] ?? []).latestNoteOnly.suffix(6).reversed()) { step in
           HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -259,7 +257,7 @@ private struct ScreenTask: View {
               .foregroundStyle(step.kind == .approval || step.kind == .takeover ? Color.attention : .primary)
               .lineLimit(2)
           }
-          .font(.footnote)
+          .font(.sans(.footnote))
         }
       }
     }

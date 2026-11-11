@@ -101,7 +101,7 @@ struct ChartView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       if let title = spec.title, !title.isEmpty {
-        Text(title).font(.footnote.weight(.semibold))
+        Text(title).font(.sans(.footnote, .semibold))
       }
       switch spec.type {
       case .line, .bar:
@@ -178,7 +178,7 @@ struct ChartView: View {
           .symbol { Self.dot(Self.palette[p.series]) }
           .annotation(position: .trailing, spacing: 4, overflowResolution: .init(x: .padScale, y: .disabled)) {
             if single && selected == nil {
-              Text(spec.format(p.value)).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+              Text(spec.format(p.value)).font(.sans(.caption2)).monospacedDigit().foregroundStyle(.secondary)
             }
           }
       }
@@ -267,7 +267,7 @@ struct ChartView: View {
         .opacity(selected == nil || selected == b.index ? 1 : 0.45)
         .annotation(position: b.end < 0 ? .leading : .trailing, spacing: 4, overflowResolution: .init(x: .padScale, y: .disabled)) {
           if let tip = b.tip {
-            Text(tip).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+            Text(tip).font(.sans(.caption2)).monospacedDigit().foregroundStyle(.secondary)
           }
         }
         .accessibilityLabel(spec.x[b.index])
@@ -338,7 +338,7 @@ struct ChartView: View {
   }
 
   private func refLabel(_ ref: ChartSpec.Ref) -> some View {
-    Text(ref.label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+    Text(ref.label).font(.sans(.caption2)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
   }
 
   /// Bars label every category while there's room for a word; otherwise every step-th x, as many as fit.
@@ -361,7 +361,7 @@ struct ChartView: View {
       .fill(color)
       .frame(width: 8, height: 8)
       .padding(2)
-      .background(Circle().fill(.background))
+      .background(Circle().fill(Color.surface))
   }
 
   private func readout(_ i: Int) -> some View {
@@ -409,11 +409,10 @@ struct Readout<Content: View>: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 2) { content }
-      .font(.caption2)
+      .font(.sans(.caption2))
       .padding(.horizontal, 8)
       .padding(.vertical, 5)
-      .background(.background, in: .rect(cornerRadius: 8))
-      .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.separator, lineWidth: 0.5) }
+      .background(Color.surface2, in: .rect(cornerRadius: 8))
   }
 }
 
@@ -472,7 +471,7 @@ private struct ScatterPlot: View {
           .opacity(picked.isEmpty || picked.contains { $0.id == p.id } ? 0.9 : 0.35)
           .annotation(position: .top, spacing: 2) {
             if named, let label = p.label {
-              Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+              Text(label).font(.sans(.caption2)).foregroundStyle(.secondary).lineLimit(1)
             }
           }
           .accessibilityLabel(p.label ?? names[p.series])
@@ -503,7 +502,7 @@ private struct ScatterPlot: View {
   }
 
   @ViewBuilder private func axisName(_ name: String?) -> some View {
-    if let name, !name.isEmpty { Text(name).font(.caption2).foregroundStyle(.secondary) }
+    if let name, !name.isEmpty { Text(name).font(.sans(.caption2)).foregroundStyle(.secondary) }
   }
 
   private func spoken(_ p: Point) -> String {
@@ -563,7 +562,7 @@ private struct RangePlot: View {
             Text(markName)
           }
         }
-        .font(.caption2)
+        .font(.sans(.caption2))
         .foregroundStyle(.secondary)
       }
       chart.frame(height: CGFloat(rows.count) * 24 + 24)
@@ -663,13 +662,13 @@ private struct ListingCard: View {
   var body: some View {
     let card = VStack(alignment: .leading, spacing: 2) {
       ListingPhoto(url: item.photo, width: Self.width).padding(.bottom, 4)
-      Text(item.title).font(.footnote).lineLimit(2, reservesSpace: true)
+      Text(item.title).font(.sans(.footnote)).lineLimit(2, reservesSpace: true)
       if let price = item.price {
-        Text(ChartSpec.format(price, unit: unit)).font(.subheadline.weight(.semibold)).monospacedDigit()
+        Text(ChartSpec.format(price, unit: unit)).font(.sans(.subheadline, .semibold)).monospacedDigit()
       }
       let place = item.place
       if !place.isEmpty {
-        Text(place).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        Text(place).font(.sans(.caption2)).foregroundStyle(.secondary).lineLimit(1)
       }
     }
     .frame(width: Self.width, alignment: .leading)
@@ -728,7 +727,7 @@ private struct MatrixGrid: View {
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
             ForEach(matrix.columns.indices, id: \.self) { c in
               Text(matrix.columns[c].name)
-                .font(.caption2.weight(.semibold))
+                .font(.sans(.caption2, .semibold))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(2)
@@ -739,7 +738,7 @@ private struct MatrixGrid: View {
           ForEach(matrix.rows.indices, id: \.self) { r in
             GridRow {
               Text(matrix.rows[r])
-                .font(.caption)
+                .font(.sans(.caption))
                 .lineLimit(2)
                 .frame(maxWidth: 120, alignment: .leading)
                 .gridColumnAlignment(.leading)
@@ -749,7 +748,7 @@ private struct MatrixGrid: View {
         }
       }
       if matrix.rows.count > 1 {
-        Text("Darker is better in each column.").font(.caption2).foregroundStyle(.secondary)
+        Text("Darker is better in each column.").font(.sans(.caption2)).foregroundStyle(.secondary)
       }
     }
   }
@@ -760,7 +759,7 @@ private struct MatrixGrid: View {
     // At most half the hue under the text, so it reads in either mode.
     let shade = matrix.shade(row: r, column: c).map { 0.08 + 0.5 * $0 } ?? 0
     return Text(value ?? "–")
-      .font(.caption)
+      .font(.sans(.caption))
       .monospacedDigit()
       .foregroundStyle(value == nil ? HierarchicalShapeStyle.secondary : .primary)
       .lineLimit(1)
@@ -906,7 +905,7 @@ private struct TimelinePlot: View {
   }
 
   private func name(_ label: String) -> some View {
-    Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+    Text(label).font(.sans(.caption2)).foregroundStyle(.secondary).lineLimit(1).fixedSize()
   }
 
   private func readout(_ e: Event) -> some View {

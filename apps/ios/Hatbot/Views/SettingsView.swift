@@ -17,9 +17,9 @@ struct SettingsView: View {
 
   var body: some View {
     NavigationStack(path: $path) {
-      Form {
+      TiledForm {
         if let error {
-          Text(error).foregroundStyle(.red)
+          Text(error).foregroundStyle(Color.danger)
         }
         Section {
           Toggle(

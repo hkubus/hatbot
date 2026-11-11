@@ -66,8 +66,8 @@ struct BotView: View {
 
   var body: some View {
     let changed = id == nil || (base.map { Form($0) != form } ?? false)
-    SwiftUI.Form {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledForm {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       if id == nil, !templates.isEmpty {
         Section {
           Picker(
@@ -92,7 +92,7 @@ struct BotView: View {
                 .font(.title3)
                 .foregroundStyle(form.color.color)
                 .frame(width: 40, height: 40)
-                .background(form.icon == icon ? Color.secondary.opacity(0.18) : .clear, in: .rect(cornerRadius: 10))
+                .background(form.icon == icon ? Color.brandSoft : .clear, in: .rect(cornerRadius: 12))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(icon.rawValue)

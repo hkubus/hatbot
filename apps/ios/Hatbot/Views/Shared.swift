@@ -2,48 +2,6 @@ import ImageIO
 import SwiftUI
 import UIKit
 
-extension Color {
-  /// Hatbot's lime, the web's `--hue`: a deep green in light mode, where lime itself is too pale on white.
-  /// It's also what needs you, as on the web; red is destructive, green done.
-  static let brand = Color(light: 0x507D12, dark: 0xBBE481)
-  static let attention = Color.brand
-  /// Your messages, on the brand's colour like the web's.
-  static let userBubble = Color.brand
-  /// Text and glyphs on the brand's colour: 5.0:1 in light mode, 13:1 in dark.
-  static let onBrand = Color(light: 0xFAFAF0, dark: 0x12140D)
-
-  init(light: UInt32, dark: UInt32, darkOpacity: CGFloat = 1) {
-    self.init(
-      uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark ? UIColor(hex: dark, alpha: darkOpacity) : UIColor(hex: light, alpha: 1)
-      })
-  }
-}
-
-extension Bot.Tint {
-  var color: Color {
-    switch self {
-    case .amber: .orange
-    case .red: .red
-    case .pink: .pink
-    case .purple: .purple
-    case .indigo: .indigo
-    case .blue: .blue
-    case .teal: .teal
-    case .green: .green
-    case .gray: .gray
-    }
-  }
-}
-
-extension UIColor {
-  convenience init(hex: UInt32, alpha: CGFloat) {
-    self.init(
-      red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
-      blue: CGFloat(hex & 0xFF) / 255, alpha: alpha)
-  }
-}
-
 enum Route: Hashable {
   case task(Int)
   case live(taskId: Int?)
@@ -73,33 +31,41 @@ enum Route: Hashable {
 }
 
 extension View {
+  /// On a navigation stack's first page: the pages it opens, all on Material's surface.
   func routes() -> some View {
     navigationDestination(for: Route.self) { route in
-      switch route {
-      case let .task(id): TaskDetailView(taskId: id)
-      case let .live(taskId): LiveView(taskId: taskId).navigationTitle("Live")
-      case let .memoryFile(path, isNew, edit): MemoryFileView(path: path, isNew: isNew, edit: edit)
-      case let .read(target): ReaderView(target: target)
-      case let .memoryHistory(path): MemoryHistoryView(path: path)
-      case let .commit(c): CommitView(commit: c)
-      case .schedules: SchedulesView()
-      case let .schedule(id): ScheduleDetailView(id: id)
-      case .newSchedule: ScheduleDetailView(id: nil)
-      case let .trigger(id): TriggerDetailView(id: id)
-      case let .bot(id): BotView(id: id)
-      case let .group(id): GroupView(id: id)
-      case let .threads(parentId): ThreadsView(parentId: parentId)
-      case let .watcher(id): WatcherDetailView(id: id)
-      case .checks: ChecksView()
-      case .heartbeat: HeartbeatView()
-      case let .proposal(p): ProposalView(proposal: p)
-      case let .box(id): BoxView(id: id)
-      case let .boxCode(id, version): BoxCodeView(id: id, version: version)
-      case .spend: SpendView()
-      case .limits: LimitsView()
-      case .devices: DevicesView()
-      }
+      destination(route).containerBackground(Color.surface, for: .navigation)
     }
+    .containerBackground(Color.surface, for: .navigation)
+  }
+}
+
+@ViewBuilder
+@MainActor
+private func destination(_ route: Route) -> some View {
+  switch route {
+  case let .task(id): TaskDetailView(taskId: id)
+  case let .live(taskId): LiveView(taskId: taskId).navigationTitle("Live")
+  case let .memoryFile(path, isNew, edit): MemoryFileView(path: path, isNew: isNew, edit: edit)
+  case let .read(target): ReaderView(target: target)
+  case let .memoryHistory(path): MemoryHistoryView(path: path)
+  case let .commit(c): CommitView(commit: c)
+  case .schedules: SchedulesView()
+  case let .schedule(id): ScheduleDetailView(id: id)
+  case .newSchedule: ScheduleDetailView(id: nil)
+  case let .trigger(id): TriggerDetailView(id: id)
+  case let .bot(id): BotView(id: id)
+  case let .group(id): GroupView(id: id)
+  case let .threads(parentId): ThreadsView(parentId: parentId)
+  case let .watcher(id): WatcherDetailView(id: id)
+  case .checks: ChecksView()
+  case .heartbeat: HeartbeatView()
+  case let .proposal(p): ProposalView(proposal: p)
+  case let .box(id): BoxView(id: id)
+  case let .boxCode(id, version): BoxCodeView(id: id, version: version)
+  case .spend: SpendView()
+  case .limits: LimitsView()
+  case .devices: DevicesView()
   }
 }
 
@@ -205,8 +171,8 @@ extension TaskStatus {
     switch self {
     case .waitingApproval, .waitingTakeover, .waitingAnswer: .attention
     case .running: .accentColor
-    case .done: .green
-    case .failed: .red
+    case .done: .success
+    case .failed: .danger
     case .queued, .cancelled: .secondary
     }
   }
@@ -335,8 +301,8 @@ struct Screenshot: View {
           .overlay { if failed { Image(systemName: "photo").foregroundStyle(.secondary) } else { ProgressView() } }
       }
     }
-    .clipShape(.rect(cornerRadius: 10))
-    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator, lineWidth: 0.5))
+    .clipShape(.rect(cornerRadius: 12))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator, lineWidth: 0.5))
     .contentShape(.rect)
     .onTapGesture { if image != nil { full = true } }
     .fullScreenCover(isPresented: $full) {

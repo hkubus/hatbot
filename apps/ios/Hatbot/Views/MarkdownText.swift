@@ -25,7 +25,8 @@ struct MarkdownText: View {
   private func block(_ block: MDBlock) -> some View {
     switch block {
     case let .heading(level, text):
-      Text(inline(text)).font(level == 1 ? .title3.bold() : level == 2 ? .headline : .subheadline.bold())
+      Text(inline(text))
+        .font(level == 1 ? .sans(.title3, .bold) : level == 2 ? .sans(.headline, .semibold) : .sans(.subheadline, .bold))
     case let .paragraph(text):
       Text(inline(text))
     case let .list(items):
@@ -62,7 +63,7 @@ struct MarkdownText: View {
             GridRow { ForEach(rows[r].indices, id: \.self) { Text(inline(rows[r][$0])) } }
           }
         }
-        .font(.subheadline)
+        .font(.sans(.subheadline))
       }
     case .rule:
       Divider()
@@ -131,7 +132,7 @@ private struct FileChart: View {
       if let spec {
         ChartView(spec: spec)
       } else if let error {
-        Text(error).font(.footnote).foregroundStyle(.secondary)
+        Text(error).font(.sans(.footnote)).foregroundStyle(.secondary)
       } else {
         ChartPlaceholder()
       }
@@ -163,11 +164,11 @@ private struct CodeBlock: View {
   var body: some View {
     ScrollView(.horizontal) {
       Text(code)
-        .font(.system(.footnote, design: .monospaced))
+        .font(.code(.footnote))
         .padding(10)
         .padding(.trailing, 24)
     }
-    .background(.fill.tertiary, in: .rect(cornerRadius: 8))
+    .background(Color.surface2, in: .rect(cornerRadius: 12))
     .overlay(alignment: .topTrailing) {
       Button {
         UIPasteboard.general.string = code

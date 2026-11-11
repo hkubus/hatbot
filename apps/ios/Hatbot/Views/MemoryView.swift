@@ -15,9 +15,9 @@ struct MemoryView: View {
   var body: some View {
     let files = store.memoryFiles
     NavigationStack(path: $path) {
-      List {
+      TiledList {
         if let error {
-          Text(error).foregroundStyle(.red)
+          Text(error).foregroundStyle(Color.danger)
         }
         let proposals = store.pendingProposals
         if !proposals.isEmpty {
@@ -33,7 +33,7 @@ struct MemoryView: View {
             ForEach(troubled) { s in
               VStack(alignment: .leading, spacing: 6) {
                 Text(s.name)
-                Text(trouble(s)).font(.footnote).foregroundStyle(.secondary)
+                Text(trouble(s)).font(.sans(.footnote)).foregroundStyle(.secondary)
                 Button(asking == s.name ? "Looking…" : "Suggest a fix") { fix(s.name) }
                   .disabled(asking != nil)
               }
@@ -169,7 +169,7 @@ struct MemoryFileView: View {
         VStack(spacing: 0) {
           if let conflict { conflictBar(conflict) }
           TextEditor(text: $draft)
-            .font(.system(.callout, design: .monospaced))
+            .font(.code(.callout))
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
             .padding(.horizontal, 12)
@@ -177,7 +177,7 @@ struct MemoryFileView: View {
       } else if let content {
         ScrollView {
           VStack(alignment: .leading, spacing: 12) {
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(Color.danger) }
             MarkdownText(text: content)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -262,17 +262,17 @@ struct MemoryFileView: View {
   private func conflictBar(_ c: AppStore.MemoryConflict) -> some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(content == nil ? "There's already a file here." : "Changed while you were editing.")
-        .font(.subheadline.weight(.semibold))
+        .font(.sans(.subheadline, .semibold))
       DisclosureGroup("The saved copy") {
         ScrollView {
           Text(c.content)
-            .font(.system(.caption, design: .monospaced))
+            .font(.code(.caption))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: 200)
       }
-      .font(.subheadline)
+      .font(.sans(.subheadline))
       HStack {
         Button("Reload") {
           content = c.content
@@ -282,12 +282,12 @@ struct MemoryFileView: View {
         }
         Button("Overwrite") { Task { await save(over: c.sha) } }
       }
-      .buttonStyle(.bordered)
+      .buttonStyle(.material(.outlined))
       .disabled(saving)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(12)
-    .background(.fill.tertiary)
+    .background(Color.surface2)
   }
 
   /// `over`: the version to replace, once you've chosen to overwrite one saved meanwhile.
@@ -324,13 +324,13 @@ struct MemoryHistoryView: View {
   @State private var error: String?
 
   var body: some View {
-    List {
-      if let error { Text(error).foregroundStyle(.red) }
+    TiledList {
+      if let error { Text(error).foregroundStyle(Color.danger) }
       ForEach(commits ?? []) { c in
         NavigationLink(value: Route.commit(c)) {
           VStack(alignment: .leading, spacing: 3) {
             Text(c.message).lineLimit(2)
-            Text("\(c.author) · \(c.date.stampText)").font(.footnote).foregroundStyle(.secondary)
+            Text("\(c.author) · \(c.date.stampText)").font(.sans(.footnote)).foregroundStyle(.secondary)
           }
         }
       }
@@ -357,10 +357,10 @@ struct CommitView: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 10) {
-        Text(commit.message).font(.headline)
+        Text(commit.message).font(.sans(.headline))
         Text("\(commit.author) · \(commit.files.joined(separator: ", ")) · \(commit.date.stampText)")
-          .font(.footnote).foregroundStyle(.secondary)
-        if let error { Text(error).foregroundStyle(.red) }
+          .font(.sans(.footnote)).foregroundStyle(.secondary)
+        if let error { Text(error).foregroundStyle(Color.danger) }
         if let lines {
           DiffLines(lines: lines)
         } else {
