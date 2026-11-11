@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BoxBuild, BoxFile, HatboxCheck } from "@hatbot/shared/hatbox";
@@ -161,6 +161,14 @@ test("the self-test fails when a box's unit won't start, and leaves nothing behi
   expect((await selfTest(a)).ok).toBe(false);
   expect(existsSync(join(a.state, "boxes", "0"))).toBe(false);
 }, 60_000);
+
+test("an agent that starts again removes the test box of a check it stopped in the middle of", async () => {
+  const a = agent();
+  mkdirSync(join(a.state, "boxes", "0", "app"), { recursive: true });
+  writeFileSync(join(a.state, "boxes", "0", "app", "index.ts"), "export default {};");
+  await a.guest.stopAll();
+  expect(existsSync(join(a.state, "boxes", "0"))).toBe(false);
+});
 
 test("a box's files are plain files inside it: other paths and package files are refused", async () => {
   const a = agent();

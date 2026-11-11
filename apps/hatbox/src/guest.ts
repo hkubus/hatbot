@@ -504,9 +504,11 @@ export class Guest {
     for (const [id, r] of this.running) if (now - r.used >= IDLE_MS) await this.stop(id);
   }
 
-  /** Every backend the agent knows of, stopped: when it starts, none of their sockets is its own. */
+  /** Every backend the agent knows of, stopped: when it starts, none of their sockets is its own. A
+   * check it stopped in the middle of left its test box, which isn't listed: that goes. */
   async stopAll() {
     for (const { id } of this.list()) await this.stop(id).catch(() => {});
+    if (existsSync(this.dir("boxes", CHECK_BOX))) await this.remove(CHECK_BOX).catch(() => {});
   }
 
   /** Check everything's: a test box, built and asked once through the boxes' own units, then removed. */
