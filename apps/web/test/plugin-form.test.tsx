@@ -65,6 +65,23 @@ test("what the form doesn't show stays, and an emptied number goes back to its d
   expect(CONFIG.quiet.night).toBe(false);
 });
 
+test("text you didn't change stays as it was; what you typed is trimmed", () => {
+  const text = (name: string): PluginField => ({
+    path: [name],
+    label: name,
+    kind: "text",
+    max: null,
+    nullable: false,
+  });
+  const fields = [text("prefix"), text("webhook"), text("name")];
+  const config = { prefix: "> ", name: "desk" };
+  expect(configFrom(fields, config, draftOf(fields, config))).toEqual({ config });
+  const draft = { ...draftOf(fields, config), [keyOf(["name"])]: " front desk " };
+  expect(configFrom(fields, config, draft)).toEqual({
+    config: { prefix: "> ", name: "front desk" },
+  });
+});
+
 test("a list of numbers refuses a line that isn't one, at its field", () => {
   const ids: PluginField = { path: ["ids"], label: "Ids", kind: "list", numbers: true };
   const draft = { [keyOf(["ids"])]: "105\nnas" };

@@ -68,6 +68,10 @@ export function configFrom(
       }
       const v = draft[keyOf(f.path)];
       if (f.kind === "text") {
+        // One you didn't change stays as it was: a separator that ends in a space, or an optional
+        // setting with none, which "" would fail a .url() or .min(1) for. What you typed is trimmed.
+        const was = valueAt(config, f.path);
+        if (String(v ?? "") === (typeof was === "string" ? was : "")) continue;
         const text = String(v ?? "").trim();
         put(out, f.path, !text && f.nullable ? null : text);
       } else if (f.kind === "number") {
