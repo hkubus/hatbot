@@ -807,6 +807,12 @@ export function untrustedDefinitions(tools: PluginTool[]): string | null {
     : null;
 }
 
+/** What a write acts on, kept with its approval. */
+export function targetOf(t: PluginTool, input: unknown): string | null {
+  const parsed = t.target ? t.schema.safeParse(input) : null;
+  return parsed?.success ? [t.target?.(parsed.data) ?? []].flat().join(", ") : null;
+}
+
 export function describeCall(t: PluginTool, input: unknown): string {
   const parsed = t.schema.safeParse(input);
   if (parsed.success && t.describe) return t.describe(parsed.data);

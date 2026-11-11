@@ -32,6 +32,9 @@ script(
   join(dir, "ssh"),
   `#!/bin/sh
 printf '%s\\n' "$*" >> ${dir}/ssh.log
+case "$*" in
+  *"-- 10.0.0.99 "*) echo "ssh: connect to host 10.0.0.99 port 22: No route to host" >&2; exit 255 ;;
+esac
 for last; do :; done
 case "$last" in
   *fail-connect*) echo "ssh: connect to host 10.0.0.9 port 22: No route to host" >&2; exit 255 ;;
@@ -350,18 +353,54 @@ test("command output is untrusted unless the command only checks status: a log c
   expect(await untrusted("true")).toBe(false);
   expect(await untrusted("printf ''; exit 3")).toBe(false);
   // What it prints includes names others chose: a unit, a container, a process.
-  const check = t.tool("ssh_check").untrusted as (i: { host: string; what: string }) => boolean;
+  const check = t.tool("ssh_check").untrusted as (i: { hosts: string[]; what: string }) => boolean;
   const whats = ["overview", "failed", "service", "ports", "logs", "errors"];
-  expect(whats.filter((what) => check({ host: "nas", what }))).toEqual(whats);
+  expect(whats.filter((what) => check({ hosts: ["nas"], what }))).toEqual(whats);
 
   // A host whose output you trust: its logs, files and commands are your words, not strangers'.
-  const own = await ssh({ hosts: [{ name: "nas", address: "10.0.0.5", trustOutput: true }] });
+  const own = await ssh({
+    hosts: [
+      { name: "nas", address: "10.0.0.5", trustOutput: true },
+      { name: "web", address: "10.0.0.6" },
+    ],
+  });
   expect(
     (await runPluginTool(own.tool("ssh_exec"), { host: "nas", command: `tail -n 1 ${log}` }, call))
       .untrusted,
   ).toBe(false);
   const ownCheck = own.tool("ssh_check").untrusted as typeof check;
-  expect(ownCheck({ host: "nas", what: "logs" })).toBe(false);
+  expect(ownCheck({ hosts: ["nas"], what: "logs" })).toBe(false);
+  // Looked at with one you don't, it's all as untrusted as that one's.
+  expect(ownCheck({ hosts: ["nas", "web"], what: "logs" })).toBe(true);
+  // Run on both, it says nothing anyone could have written only if neither printed anything.
+  const onBoth = async (command: string) =>
+    (await runPluginTool(own.tool("ssh_exec"), { hosts: ["nas", "web"], command }, call)).untrusted;
+  expect(await onBoth("printf x")).toBe(true);
+  expect(await onBoth("true")).toBe(false);
+});
+
+test("ssh_check and ssh_exec reach several hosts in one call, each under its name; one they can't reach doesn't hide the rest", async () => {
+  const gone = (name: string) => ({ name, address: "10.0.0.99" });
+  const t = await ssh({ hosts: [...HOSTS, gone("gone"), gone("lost")] });
+  const check = t.tool("ssh_check");
+  const out = textOf(await check.run({ hosts: ["nas", "gone"], what: "overview" }, call));
+  expect(out).toStartWith("nas:\nExit code 0\nuptime here");
+  expect(out).toContain("\n\ngone:\nCouldn't connect to gone");
+  // A script saved before still names one host.
+  expect((await runPluginTool(check, { host: "nas", what: "overview" }, call)).text).toStartWith(
+    "Exit code 0\nuptime here",
+  );
+  // When none answers, the call failed.
+  await expect(check.run({ hosts: ["gone", "lost"], what: "overview" }, call)).rejects.toThrow(
+    "Couldn't connect to lost",
+  );
+  const exec = t.tool("ssh_exec");
+  const ran = textOf(await exec.run({ hosts: ["nas", "gone", "nas"], command: "echo hi" }, call));
+  expect(ran).toStartWith("nas:\nExit code 0\nhi\n\ngone:\nCouldn't connect to gone");
+  expect(exec.describe?.({ hosts: ["nas", "gone", "nas"], command: "echo hi" })).toBe(
+    "On nas, gone: echo hi",
+  );
+  expect(exec.commands?.({ hosts: ["nas", "gone"], command: "a; b" })).toBe(4);
 });
 
 test("a careful host always asks; writing outside home, as root or to keys asks, by write or by copy", async () => {
@@ -378,6 +417,16 @@ test("a careful host always asks; writing outside home, as root or to keys asks,
     always: true,
     kind: "delete",
   });
+  // On several hosts, it asks as the most careful of them would.
+  expect(v("ssh_exec", { hosts: ["nas", "pve"], command: "uptime" }).action).toBe("allow");
+  expect(v("ssh_exec", { hosts: ["nas", "router"], command: "uptime" })).toMatchObject({
+    action: "ask",
+    always: true,
+  });
+  expect(v("ssh_exec", { hosts: ["nas", "pve"], command: "rm -rf /srv" }).action).toBe("ask");
+  expect(
+    v("ssh_exec", { hosts: ["nas", "pve"], command: "sudo pct exec 105 -- reboot" }).action,
+  ).toBe("block");
   const from = { sandbox: "out/x" };
   for (const [to, verdict] of [
     [{ host: "nas", path: "~/notes.txt" }, { action: "allow" }],
@@ -597,22 +646,61 @@ test("output is kept to its start and end, endless output is stopped, and a comm
   const exec = t.tool("ssh_exec");
   const out = textOf(
     await exec.run(
-      { host: "nas", command: "head -c 100000 /dev/zero | tr '\\0' a; echo; echo the end" },
+      { hosts: ["nas"], command: "head -c 100000 /dev/zero | tr '\\0' a; echo; echo the end" },
       call,
     ),
   );
   expect(out.length).toBeLessThan(16_000);
   expect(out).toEndWith("the end");
   // ssh's own 255 is a connection error; once connected, it's the command's.
-  await expect(exec.run({ host: "nas", command: "fail-connect" }, call)).rejects.toThrow(
+  await expect(exec.run({ hosts: ["nas"], command: "fail-connect" }, call)).rejects.toThrow(
     "Couldn't connect to nas",
   );
   expect(
     await exec.run(
-      { host: "nas", command: "echo 'Host key verification failed.' >&2; exit 255" },
+      { hosts: ["nas"], command: "echo 'Host key verification failed.' >&2; exit 255" },
       call,
     ),
   ).toBe("Exit code 255\nstderr:\nHost key verification failed.");
+});
+
+test("calls to a host share one login, eight at most at once; it's retired after ten minutes, when its key is forgotten and when SSH stops", async () => {
+  const t = await ssh();
+  const exec = t.tool("ssh_exec");
+  writeFileSync(join(dir, "ssh.log"), "");
+  const logged = () => readFileSync(join(dir, "ssh.log"), "utf8").split("\n").filter(Boolean);
+  const go = join(dir, "go");
+  const nine = Array.from({ length: 9 }, () =>
+    exec.run(
+      { hosts: ["nas"], command: `until [ -e ${go} ]; do sleep 0.01; done; echo went` },
+      call,
+    ),
+  );
+  await waitFor(() => logged().length === 9);
+  expect(
+    logged().filter((l) => /ControlMaster=auto .*ControlPath=\S+\/logins\/%C/.test(l)),
+  ).toHaveLength(8);
+  expect(logged().filter((l) => l.includes("ControlPath=none"))).toHaveLength(1);
+  writeFileSync(go, "");
+  expect(await Promise.all(nine)).toEqual(Array(9).fill("Exit code 0\nwent"));
+
+  // What ssh says when it logs in on its own after all isn't the command's.
+  const note = "mux_client_request_session: session request failed: Session open refused by peer";
+  expect(await exec.run({ hosts: ["nas"], command: `echo '${note}' >&2; echo ok` }, call)).toBe(
+    "Exit code 0\nok",
+  );
+
+  const stops = () => logged().filter((l) => l.includes("-O stop"));
+  for (let i = 0; i < 3; i++) {
+    t.advance(4 * 60_000);
+    await exec.run({ hosts: ["nas"], command: "true" }, call);
+  }
+  expect(stops()).toEqual([expect.stringContaining("-p 22 -l hatbot")]);
+  await t.plugins.action("ssh", "forget", { name: "nas" });
+  expect(stops()).toHaveLength(2);
+  await exec.run({ hosts: ["router"], command: "true" }, call);
+  await t.plugins.update("ssh", { enabled: false });
+  expect(stops().at(-1)).toContain("-p 2222 -l hatbot");
 });
 
 test("write_file writes exactly its content, on stdin when big; read_file reads it back a stretch at a time or from the end, on a host or in a container, and a feed up to 1 MB", async () => {

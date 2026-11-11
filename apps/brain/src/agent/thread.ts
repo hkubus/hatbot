@@ -51,6 +51,7 @@ import {
   offered,
   type Plugins,
   runPluginTool,
+  targetOf,
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
@@ -82,6 +83,7 @@ import {
   invalidInput,
   liveTool,
   runOffered,
+  startEarly,
   TOOL_SEARCH,
   type ToolImage,
   toolParam,
@@ -688,7 +690,7 @@ export class Thread {
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
     if (verdict.action === "ask") {
-      const call = { tool: t.name, input, what, target: t.target?.(input as never) ?? null };
+      const call = { tool: t.name, input, what, target: targetOf(t, input) };
       const asked = await this.approve(episodeId, bot, call, verdict, signal, progress);
       if ("content" in asked) return asked;
       note = asked.note;
@@ -2281,119 +2283,9 @@ export class Thread {
           ...(container ? { container } : {}),
           messages: markPrevious(messages),
         };
-        // No keep-warm while it runs: its entry's five minutes start when it ends.
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: Number.POSITIVE_INFINITY });
-        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: this.clock() });
-        const res = await model.stream(params, {
-          onText: say,
-          onThinking: shown,
-          onServerTool: (name, input) => {
-            const calls = webCalls(name, input);
-            const queries = calls.flatMap((c) => ("search" in c && c.search ? [c.search] : []));
-            const read = calls.find((c) => "read" in c);
-            if (calls.some((c) => "search" in c))
-              progress(activity("Searching the web", { query: queries.join(", ") }));
-            else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
-          },
-          onRetry: checkpoint(),
-          onFailedUsage: (m, usage) => bill(m, "thread", usage),
-          signal: abort.signal,
-        });
-        held();
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
-        // A paused turn picks up mid-thought; only text after tools starts a new part.
-        separate = res.stop_reason !== "pause_turn";
-        container = containerOf(res, container);
-        if (res.input_transformations?.length)
-          console.warn(
-            `episode ${episode.id}: the API changed the input`,
-            JSON.stringify(res.input_transformations).slice(0, 1000),
-          );
-        // What the declined model did before a fallback partway isn't kept, and its calls don't run.
-        const content = afterFallback(res.content);
-        // The turn first: what the API has answered is kept, whatever recording its cost does.
-        this.appendTurn(episode.id, bot.id, "assistant", content);
-        bill(chatModel, "thread", res.usage, prefix);
-        // The last request's entry was there to read, but most of it was written again.
-        const read = res.usage.cache_read_input_tokens ?? 0;
-        if (cached > 4000 && read < cached / 2)
-          console.warn(
-            `episode ${episode.id}: the cache missed (read ${read} of ${cached} tokens; wrote ${res.usage.cache_creation_input_tokens ?? 0})`,
-          );
-        addSources(cited, fetched, content);
-        // Web pages are untrusted.
-        const web = webReads(res.content);
-        if (web.length) this.taint(episode.id, web[0] as string);
-
-        const toolUses = content.filter(
-          (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
-        );
-        if (res.stop_reason === "pause_turn") continue;
-        if (res.stop_reason === "refusal") {
-          return finish(
-            "done",
-            text ? "_(I stopped there: I can't help with the rest.)_" : "I can't help with that.",
-          );
-        }
-        // Nothing more fits: its calls may be cut short, and another request would fail the same way.
-        if (res.stop_reason === "model_context_window_exceeded")
-          return finish("error", "_(My reply was cut off: this conversation got too long.)_");
-        if (!toolUses.length) {
-          if (cutOff(res)) return finish("error", "_(My reply was cut off.)_");
-          if (chartFix) {
-            // Each chart that now draws takes the broken one's place; one that still doesn't stays code.
-            const fixes = chartBlocks(chartFix.text);
-            const { broken } = chartFix;
-            chartFix = null;
-            for (let i = broken.length - 1; i >= 0; i--) {
-              const b = broken[i] as { start: number; end: number };
-              const fix = fixes[i]?.source;
-              if (fix !== undefined && !(await chartProblemOf(fix, this.d.attachments)))
-                text = `${text.slice(0, b.start)}${fix}\n${text.slice(b.end)}`;
-            }
-            return finish("done");
-          }
-          // A chart that doesn't draw shows the owner a wall of numbers; ask once for it again.
-          const broken = fixedCharts ? [] : await brokenChartsOf(text, this.d.attachments);
-          if (broken.length) {
-            fixedCharts = true;
-            chartFix = { broken, text: "" };
-            progress(broken.length > 1 ? "Fixing charts…" : "Fixing a chart…");
-            this.appendTurn(episode.id, bot.id, "user", [
-              {
-                type: "text",
-                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Long series are easy to miscount by hand. ${CHART_GUESS})`,
-              },
-            ]);
-            continue;
-          }
-          return finish("done");
-        }
-        // A question ends the reply. Its call gets no result now: the owner's next message is the
-        // answer, and answered() puts the result with it.
-        const asked = toolUses.length === 1 && !cutOff(res) && toolUses[0]?.name === "ask_owner";
-        const question = asked ? AskOwner.safeParse(toolUses[0]?.input) : null;
-        if (question?.success) {
-          const { questions } = question.data;
-          const asking = askedText(questions);
-          say(text && !separate ? `\n\n${asking}` : asking);
-          if (questions.some((q) => q.choices.length)) choices = questions.map((q) => q.choices);
-          return finish("done");
-        }
-
-        // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
-        const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
-          !cutOff(res) && pluginTools.find((t) => t.name === call.name)?.access === "read";
-        const hadTask = this.taskOfMessage(out.id) !== null;
-        const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
+        const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
           if (abort.signal.aborted)
             return toolResult(call.id, "Not run: the reply was stopped.", true);
-          if (cutOff(res))
-            return toolResult(
-              call.id,
-              "Input was cut off at max_tokens. Retry with a shorter input.",
-              true,
-            );
           if (!offered.has(call.name))
             return toolResult(call.id, `${call.name} isn't available in this conversation.`, true);
           if (call.name === "ask_owner") {
@@ -2473,7 +2365,135 @@ export class Thread {
             },
           });
           return toolResult(call.id, r.content, r.isError, r.images);
+        };
+        const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
+          pluginTools.find((t) => t.name === call.name)?.access === "read";
+        // Before the stream: lookups can start while it runs.
+        const hadTask = this.taskOfMessage(out.id) !== null;
+        // Not when another model may take over: the declined one's calls never run.
+        const early = startEarly((call) => !("fallbacks" in params) && lookup(call), run);
+        const restore = checkpoint();
+        // No keep-warm while it runs: its entry's five minutes start when it ends.
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: Number.POSITIVE_INFINITY });
+        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: this.clock() });
+        const res = await model.stream(params, {
+          onBlock: early.onBlock,
+          onText: say,
+          onThinking: shown,
+          onServerTool: (name, input) => {
+            const calls = webCalls(name, input);
+            const queries = calls.flatMap((c) => ("search" in c && c.search ? [c.search] : []));
+            const read = calls.find((c) => "read" in c);
+            if (calls.some((c) => "search" in c))
+              progress(activity("Searching the web", { query: queries.join(", ") }));
+            else if (read && "read" in read) progress(`Reading ${read.read || "a web page"}`);
+          },
+          onRetry: () => {
+            restore();
+            early.onRetry();
+          },
+          onFailedUsage: (m, usage) => bill(m, "thread", usage),
+          signal: abort.signal,
         });
+        held();
+        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
+        // A paused turn picks up mid-thought; only text after tools starts a new part.
+        separate = res.stop_reason !== "pause_turn";
+        container = containerOf(res, container);
+        if (res.input_transformations?.length)
+          console.warn(
+            `episode ${episode.id}: the API changed the input`,
+            JSON.stringify(res.input_transformations).slice(0, 1000),
+          );
+        // What the declined model did before a fallback partway isn't kept, and its calls don't run.
+        const content = afterFallback(res.content);
+        // The turn first: what the API has answered is kept, whatever recording its cost does.
+        this.appendTurn(episode.id, bot.id, "assistant", content);
+        bill(chatModel, "thread", res.usage, prefix);
+        // The last request's entry was there to read, but most of it was written again.
+        const read = res.usage.cache_read_input_tokens ?? 0;
+        if (cached > 4000 && read < cached / 2)
+          console.warn(
+            `episode ${episode.id}: the cache missed (read ${read} of ${cached} tokens; wrote ${res.usage.cache_creation_input_tokens ?? 0})`,
+          );
+        addSources(cited, fetched, content);
+        // Web pages are untrusted.
+        const web = webReads(res.content);
+        if (web.length) this.taint(episode.id, web[0] as string);
+
+        const toolUses = content.filter(
+          (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
+        );
+        if (res.stop_reason !== "tool_use") await early.settled();
+        if (res.stop_reason === "pause_turn") continue;
+        if (res.stop_reason === "refusal") {
+          return finish(
+            "done",
+            text ? "_(I stopped there: I can't help with the rest.)_" : "I can't help with that.",
+          );
+        }
+        // Nothing more fits: its calls may be cut short, and another request would fail the same way.
+        if (res.stop_reason === "model_context_window_exceeded")
+          return finish("error", "_(My reply was cut off: this conversation got too long.)_");
+        if (!toolUses.length) {
+          if (cutOff(res)) return finish("error", "_(My reply was cut off.)_");
+          if (chartFix) {
+            // Each chart that now draws takes the broken one's place; one that still doesn't stays code.
+            const fixes = chartBlocks(chartFix.text);
+            const { broken } = chartFix;
+            chartFix = null;
+            for (let i = broken.length - 1; i >= 0; i--) {
+              const b = broken[i] as { start: number; end: number };
+              const fix = fixes[i]?.source;
+              if (fix !== undefined && !(await chartProblemOf(fix, this.d.attachments)))
+                text = `${text.slice(0, b.start)}${fix}\n${text.slice(b.end)}`;
+            }
+            return finish("done");
+          }
+          // A chart that doesn't draw shows the owner a wall of numbers; ask once for it again.
+          const broken = fixedCharts ? [] : await brokenChartsOf(text, this.d.attachments);
+          if (broken.length) {
+            fixedCharts = true;
+            chartFix = { broken, text: "" };
+            progress(broken.length > 1 ? "Fixing charts…" : "Fixing a chart…");
+            this.appendTurn(episode.id, bot.id, "user", [
+              {
+                type: "text",
+                text: `(No message from the owner: the app checked your reply. ${broken.length > 1 ? "These chart blocks don't" : "This chart block doesn't"} draw, so the owner sees ${broken.length > 1 ? "them" : "it"} as code:\n${broken.map((b) => `- chart ${b.n}: ${b.problem}`).join("\n")}\nAnswer with only the corrected chart ${broken.length > 1 ? "blocks, each in its own fenced chart block, in this order" : "block, in a fenced chart block"}, and nothing else: it replaces the broken one in your reply. Long series are easy to miscount by hand. ${CHART_GUESS})`,
+              },
+            ]);
+            continue;
+          }
+          return finish("done");
+        }
+        // A question ends the reply. Its call gets no result now: the owner's next message is the
+        // answer, and answered() puts the result with it.
+        const asked = toolUses.length === 1 && !cutOff(res) && toolUses[0]?.name === "ask_owner";
+        const question = asked ? AskOwner.safeParse(toolUses[0]?.input) : null;
+        if (question?.success) {
+          const { questions } = question.data;
+          const asking = askedText(questions);
+          say(text && !separate ? `\n\n${asking}` : asking);
+          if (questions.some((q) => q.choices.length)) choices = questions.map((q) => q.choices);
+          return finish("done");
+        }
+
+        // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
+        const results = await inBatches(
+          toolUses,
+          (call) => !cutOff(res) && lookup(call),
+          (call) =>
+            early.started(call) ??
+            (cutOff(res)
+              ? Promise.resolve(
+                  toolResult(
+                    call.id,
+                    "Input was cut off at max_tokens. Retry with a shorter input.",
+                    true,
+                  ),
+                )
+              : run(call)),
+        );
         if (repeats) {
           for (const call of toolUses)
             if (plugins.pluginOf(call.name) && !plugins.pluginOf(call.name)?.internal)

@@ -887,21 +887,21 @@ export async function runOffered(
  */
 export async function inBatches<C, R>(
   calls: C[],
-  parallel: (call: C) => boolean | string,
+  parallel: (call: C) => boolean | string | string[],
   run: (call: C) => Promise<R>,
 ): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < calls.length; ) {
     const first = parallel(calls[i] as C);
-    const targets = new Set<string>();
-    if (typeof first === "string") targets.add(first);
+    const targets = new Set(typeof first === "boolean" ? [] : [first].flat());
     let j = i + 1;
     while (first !== false && j < calls.length) {
       const next = parallel(calls[j] as C);
-      if (typeof next !== typeof first || next === false) break;
-      if (typeof next === "string") {
-        if (targets.has(next)) break;
-        targets.add(next);
+      if (next === false || (typeof next === "boolean") !== (typeof first === "boolean")) break;
+      if (typeof next !== "boolean") {
+        const each = [next].flat();
+        if (each.some((t) => targets.has(t))) break;
+        for (const t of each) targets.add(t);
       }
       j++;
     }
@@ -909,6 +909,43 @@ export async function inBatches<C, R>(
     i = j;
   }
   return out;
+}
+
+type ToolCall = Anthropic.Beta.BetaToolUseBlock;
+
+/**
+ * Starts a reply's first calls `eager` allows as each completes, while the rest streams. Any other
+ * block stops it there, so what follows a change or a web read still waits for it.
+ */
+export function startEarly<R>(
+  eager: (call: ToolCall) => boolean,
+  run: (call: ToolCall) => Promise<R>,
+  starting?: (call: ToolCall) => void,
+) {
+  let started = new Map<string, Promise<R>>();
+  let ahead = true;
+  return {
+    onBlock: (b: Anthropic.Beta.BetaContentBlock) => {
+      if (!ahead || b.type === "text" || b.type === "thinking") return;
+      if (b.type !== "tool_use" || !eager(b)) {
+        ahead = false;
+        return;
+      }
+      starting?.(b);
+      const p = run(b);
+      p.catch(() => {});
+      started.set(b.id, p);
+    },
+    /** Another try streams the reply from the start. */
+    onRetry: () => {
+      started = new Map();
+      ahead = true;
+    },
+    /** Whether `call` started early: it was complete, so it keeps its result when the reply was cut off. */
+    started: (call: ToolCall) => started.get(call.id),
+    /** What started ends before a reply whose calls don't run after all ends its step. */
+    settled: () => Promise.allSettled(started.values()),
+  };
 }
 
 /** The core's tool names, which plugin tools can't take. */
