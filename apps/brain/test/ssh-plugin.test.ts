@@ -480,6 +480,20 @@ test("containers: ssh_pct_exec quotes the command for the wrapper, a host's own 
   await expect(pct.run({ host: "nas", guest: 105, command: "ls" }, call)).rejects.toThrow(
     "isn't set up as a Proxmox host",
   );
+  // A look inside one goes through the same wrapper, on its one host, and is untrusted.
+  const check = t.tool("ssh_check");
+  const inside = { hosts: ["pve"], guest: 900, what: "service", unit: "nginx" };
+  expect(await check.run(inside, call)).toBe("Exit code 0\nsystemctl here");
+  expect(lastArgs()).toContain(
+    "sudo -n /usr/local/sbin/hatbot-pct-exec 900 'systemctl status --no-pager --lines=0 -- nginx'",
+  );
+  expect(await runPluginTool(check, inside, call)).toMatchObject({ untrusted: true });
+  await expect(check.run({ ...inside, hosts: ["pve", "nas"] }, call)).rejects.toThrow(
+    "on its one Proxmox host",
+  );
+  await expect(check.run({ ...inside, hosts: ["nas"] }, call)).rejects.toThrow(
+    "isn't set up as a Proxmox host",
+  );
   const long = `${"echo checking; ".repeat(20)}systemctl restart ntfy`;
   expect(pct.describe?.({ host: "pve", guest: 105, command: long })).toBe(
     `In CT 105 on pve: ${long}`,
@@ -571,6 +585,8 @@ test("the brain's and the desktop's containers are refused, and none is reached 
     await expect(t.tool("ssh_pct_exec").run(pct, call)).rejects.toThrow("is the brain");
     const read = { host: "pve", guest, path: "/etc/hatbot/brain.env" };
     await expect(t.tool("ssh_read_file").run(read, call)).rejects.toThrow("is the brain");
+    const look = { hosts: ["pve"], guest, what: "overview" };
+    await expect(t.tool("ssh_check").run(look, call)).rejects.toThrow("is the brain");
   }
 
   const unset = await ssh({ hosts, unset: "HATBOT_BRAIN_ID" });
