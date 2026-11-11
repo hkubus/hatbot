@@ -17,7 +17,10 @@ struct HatbotApp: App {
       initialValue: Session(
         vault: vault, signedOut: KeychainVault(account: "signed-out", accessGroup: nil), defaults: AppGroup.defaults,
         cacheDir: AppGroup.cacheDir))
-    PrivacyCover.shared.start()
+    #if !targetEnvironment(macCatalyst)
+      // A Mac has no app switcher, and its window stops being active whenever you click another app.
+      PrivacyCover.shared.start()
+    #endif
     Typeface.applyToUIKit()
   }
 

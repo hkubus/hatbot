@@ -24,6 +24,11 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1,2"
+        # The iPad app on the Mac too (build-mac.sh), as the same app. The share extension and the widget
+        # stay on iOS, so the Mac build has no App Group to be signed for.
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": ""
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Hatbot
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -69,7 +74,9 @@ targets:
         com.apple.security.application-groups: ["group.$(BUNDLE_PREFIX).hatbot"]
     dependencies:
       - target: HatbotShare
+        platformFilter: iOS
       - target: HatbotWidgets
+        platformFilter: iOS
   # A second App ID in SideStore.
   HatbotShare:
     type: app-extension

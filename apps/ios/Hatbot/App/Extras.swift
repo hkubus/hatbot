@@ -29,6 +29,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 final class SceneDelegate: NSObject, UIWindowSceneDelegate {
+  func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+    #if targetEnvironment(macCatalyst)
+      guard let scene = scene as? UIWindowScene else { return }
+      // The navigation bar is the window's only bar.
+      scene.titlebar?.titleVisibility = .hidden
+      scene.titlebar?.toolbar = nil
+      // Room for the docked sidebar and a phone-wide page beside it.
+      scene.sizeRestrictions?.minimumSize = CGSize(width: 680, height: 520)
+    #endif
+  }
+
   func windowScene(
     _ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
     completionHandler: @escaping (Bool) -> Void
