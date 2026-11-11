@@ -549,7 +549,10 @@ export type Plugin<C = unknown> = {
   id: string;
   name: string;
   description: string;
-  /** Every field needs a default: `parse({})` must succeed. */
+  /**
+   * Every field needs a default: `parse({})` must succeed. Without a web form of its own, its Settings
+   * page has one made from this, each field labelled by its `.describe()`.
+   */
   config: z.ZodType<C>;
   /** Settings wins over /etc/hatbot/*.env; a change there restarts every plugin that reads it. */
   env?: PluginEnvVar[];
