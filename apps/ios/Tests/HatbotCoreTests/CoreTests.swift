@@ -1327,6 +1327,28 @@ final class NetworkTests: XCTestCase {
     }
   }
 
+  /// A box's page lists the secrets its box.json declares; one is set by name and another removed with null,
+  /// and what comes back says only which are set.
+  func testABoxsSecretsAreSetAndRemovedByName() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/boxes/3"] =
+      #"{"id":3,"botId":"hatbot","conversationId":1,"title":"Shop","version":1,"createdAt":"2026-11-11T08:00:00Z","updatedAt":"2026-11-11T08:00:00Z","versions":[{"n":1,"title":"Shop","createdAt":"2026-11-11T08:00:00Z","messageId":5}],"secrets":[{"name":"SHOP_KEY","set":false},{"name":"MAIL_KEY","set":true}]}"#
+    let detail = try await store.loadBox(3)
+    XCTAssertEqual(detail.secrets, [BoxSecret(name: "SHOP_KEY", set: false), BoxSecret(name: "MAIL_KEY", set: true)])
+
+    let sent = { String(decoding: SlowBrain.sent("/boxes/3/secrets") ?? Data(), as: UTF8.self) }
+    SlowBrain.routes["/boxes/3/secrets"] = #"[{"name":"SHOP_KEY","set":true},{"name":"MAIL_KEY","set":true}]"#
+    let set = try await store.setBoxSecrets(3, ["SHOP_KEY": "sk-1"])
+    XCTAssertEqual(set.map(\.set), [true, true])
+    XCTAssertEqual(SlowBrain.requested.last, "PUT /boxes/3/secrets")
+    XCTAssertEqual(sent(), #"{"values":{"SHOP_KEY":"sk-1"}}"#)
+
+    SlowBrain.routes["/boxes/3/secrets"] = #"[{"name":"SHOP_KEY","set":true},{"name":"MAIL_KEY","set":false}]"#
+    let removed = try await store.setBoxSecrets(3, ["MAIL_KEY": nil])
+    XCTAssertEqual(removed.map(\.set), [true, false])
+    XCTAssertEqual(sent(), #"{"values":{"MAIL_KEY":null}}"#)
+  }
+
   func testAChatDeletedElsewhereCloses() async throws {
     let group = Conversation(id: 2, kind: .group, title: "Home", botIds: ["hatbot", "chef"], unread: 0)
     let chefs = Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0)
