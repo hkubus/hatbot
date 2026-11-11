@@ -1236,6 +1236,53 @@ final class AppStore {
     if let i = computers.firstIndex(where: { $0.id == c.id }) { computers[i] = c }
   }
 
+  // MARK: Your computers
+
+  /// False while the Your computers plugin is off.
+  func loadComputers() async throws -> Bool {
+    do {
+      computers = try await api.get("/computers")
+      return true
+    } catch let e as APIError where e.status == 404 {
+      computers = []
+      return false
+    }
+  }
+
+  private func computerPath(_ id: String) -> String {
+    "/computers/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+  }
+
+  func renameComputer(_ id: String, to name: String) async throws {
+    struct Body: Encodable { let name: String }
+    putComputer(try await api.patch(computerPath(id), body: Body(name: name)))
+  }
+
+  func setCareful(_ id: String, _ careful: Bool) async throws {
+    struct Body: Encodable { let careful: Bool }
+    putComputer(try await api.patch(computerPath(id), body: Body(careful: careful)))
+  }
+
+  /// The computer sends its status apart from its answer, so the brain's answer may be from before it.
+  func pauseComputer(_ id: String, _ paused: Bool) async throws {
+    struct Body: Encodable { let paused: Bool }
+    var c: ComputerInfo = try await api.post("\(computerPath(id))/pause", body: Body(paused: paused))
+    c.paused = paused
+    putComputer(c)
+  }
+
+  /// Only the computer can turn it on again.
+  func turnOffComputer(_ id: String) async throws {
+    var c: ComputerInfo = try await api.post("\(computerPath(id))/turn-off", body: Empty())
+    c.enabled = false
+    putComputer(c)
+  }
+
+  func forgetComputer(_ id: String) async throws {
+    let _: Empty = try await api.delete(computerPath(id))
+    computers.removeAll { $0.id == id }
+  }
+
   /// The live view's socket: JPEG frames out, your input in while you have control.
   func liveSocket(_ screen: String? = nil) -> Socket {
     let api = self.api

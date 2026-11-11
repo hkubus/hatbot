@@ -1422,6 +1422,58 @@ final class NetworkTests: XCTestCase {
     let shown = await MainActor.run { store.conversationId }
     XCTAssertEqual(shown, 1)
   }
+
+  private static func computer(paused: Bool = false, enabled: Bool = true, name: String = "laptop") -> String {
+    #"{"id":"m1","name":"\#(name)","online":true,"enabled":\#(enabled),"paused":\#(paused),"locked":false,"ownerActive":false,"careful":false,"control":"hatbot","activeTaskId":null,"lastSeenAt":null}"#
+  }
+
+  /// Settings → Your computers: listed, renamed, made careful and forgotten; with the plugin off, there's none.
+  func testYourComputersAreListedChangedAndForgotten() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/computers"] = "[\(Self.computer())]"
+    let on = try await store.loadComputers()
+    XCTAssertTrue(on)
+    var names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, ["laptop"])
+
+    SlowBrain.routes["/computers/m1"] = Self.computer(name: "work")
+    try await store.renameComputer("m1", to: "work")
+    var sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/computers/m1"))) as? NSDictionary)
+    XCTAssertEqual(sent, ["name": "work"])
+    names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, ["work"])
+    try await store.setCareful("m1", true)
+    sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/computers/m1"))) as? NSDictionary)
+    XCTAssertEqual(sent, ["careful": true])
+
+    SlowBrain.routes["/computers/m1"] = #"{"ok":true}"#
+    try await store.forgetComputer("m1")
+    names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, [])
+    XCTAssertEqual(
+      SlowBrain.requested, ["GET /computers", "PATCH /computers/m1", "PATCH /computers/m1", "DELETE /computers/m1"])
+
+    SlowBrain.routes["/computers"] = nil
+    let off = try await store.loadComputers()
+    XCTAssertFalse(off)
+  }
+
+  /// The computer sends its status apart from its answer, so the brain's answer to a pause or turning off
+  /// can be from before it: what the computer did shows anyway.
+  func testAPauseShowsThoughTheBrainsAnswerIsFromBeforeIt() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/computers"] = "[\(Self.computer())]"
+    _ = try await store.loadComputers()
+    SlowBrain.routes["/computers/m1/pause"] = Self.computer()
+    try await store.pauseComputer("m1", true)
+    let paused = await MainActor.run { store.computers.first?.paused }
+    XCTAssertEqual(paused, true)
+
+    SlowBrain.routes["/computers/m1/turn-off"] = Self.computer(paused: true)
+    try await store.turnOffComputer("m1")
+    let enabled = await MainActor.run { store.computers.first?.enabled }
+    XCTAssertEqual(enabled, false)
+  }
 }
 
 extension XCTestCase {
