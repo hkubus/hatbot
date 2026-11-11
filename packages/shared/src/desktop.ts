@@ -269,3 +269,27 @@ export function sessionHost(host: string): boolean {
   const h = host.toLowerCase().replace(/^\./, "");
   return SESSION_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
 }
+
+/**
+ * Words naming a field Teach mustn't keep what's typed in: a password, a one-time, SMS or BLIK code, a PIN,
+ * card details or a key, in English and Polish. Not a promo code, or an email to verify. Read from
+ * hintWords' output; desktop-agent puts both in pages, and the brain reads a computer's fields with them.
+ */
+export const SECRET_HINT =
+  /pass(?:word|wd|wort|phrase|code)|\bpass\b|has[lł]|\bpwd?\b|\bcc(?: ?(?:num(?:ber)?|no)|\b)|\bcard ?(?:num(?:ber)?|no)\b|(?:credit|debit) ?card|\b(?:numer|nr) ?kart|\bcvc|\bcvv|\bcsc\b|\b(?:otp|pin)(?:code)?\b|totp|\b2 ?fa\b|\bmfa\b|\bkod(?! ?(?:poczt|rabat|promo))|(?<!\b(?:zip|post(?:al)?|promo(?:tional)?|coupon|discount|rabat) )\bcode\b|security ?code|one time|\btoken|\bblik|\bsms|verif(?![a-z]* (?:your |the )?e ?mail)|secret|private ?key|api ?key|recovery(?! ?(?:e ?mail|phone))|mnemonic/;
+
+/**
+ * A field's names (its autocomplete, name, id, placeholder, label) as lowercase words, split at camelCase,
+ * capitals and digits, so OTPCode, otp1 and nr_karty read as words. Self-contained: desktop-agent puts its
+ * source in pages.
+ */
+export function hintWords(names: (string | null | undefined)[]): string {
+  return names
+    .join(" ")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])([0-9])/g, "$1 $2")
+    .replace(/([0-9])([A-Za-z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[^a-z0-9ąćęłńóśźż]+/g, " ");
+}

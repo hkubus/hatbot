@@ -738,6 +738,8 @@ export type TeachSession = {
   name: string | null;
   draft: string | null;
   error: string | null;
+  /** One of your computers, by id, it was recorded on; null for the desktop. */
+  screen: string | null;
 };
 export const SaveSkill = z.object({
   name: z.string().regex(SKILL_NAME, "Use lowercase letters, digits and dashes."),

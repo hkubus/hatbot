@@ -92,6 +92,9 @@ export function routes(computers: Computers) {
           let stop: (() => void) | undefined;
           let frames: ReturnType<typeof frameRelay> | undefined;
           let forget: (() => void) | undefined;
+          // Keys this viewer holds down on the computer, let go when it closes.
+          const held = new Set<string>();
+          let sent = false;
           return {
             onOpen(_, ws) {
               forget = c.env.onSignOut(() => ws.close(1008, "Signed out"));
@@ -104,23 +107,35 @@ export function routes(computers: Computers) {
             },
             onMessage(e) {
               const s = computers.screen(id);
-              if (typeof e.data !== "string" || s?.control.get().control !== "owner") return;
+              if (typeof e.data !== "string" || !s || s.control.get().control !== "owner") return;
               let m: unknown;
               try {
                 m = JSON.parse(e.data);
               } catch {
                 return;
               }
-              if (validLiveInput(m))
-                void computers
-                  .linkOf(id)
-                  ?.request({ op: "live_input", input: m }, 5000)
-                  .catch(() => {});
+              if (!validLiveInput(m)) return;
+              if (m.t === "key") {
+                if (m.down) held.add(m.key);
+                else held.delete(m.key);
+              }
+              void computers
+                .linkOf(id)
+                ?.request({ op: "live_input", input: m }, 5000)
+                .catch(() => {});
+              s.live.input(m);
+              sent = true;
             },
             onClose() {
               frames?.stop();
               stop?.();
               forget?.();
+              const link = computers.linkOf(id);
+              for (const key of held)
+                void link
+                  ?.request({ op: "live_input", input: { t: "key", key, down: false } }, 5000)
+                  .catch(() => {});
+              if (sent) computers.screen(id)?.live.viewerGone();
             },
           };
         }),

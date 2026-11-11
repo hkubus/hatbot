@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -7,13 +7,21 @@ import {
   type Live,
   OffPage,
   Recorder,
+  secretField,
   TEACH_PROMPT,
 } from "@hatbot/plugin-desktop";
 import type { TeachSession } from "@hatbot/shared";
+import type { ComputerField, ComputerFocus } from "@hatbot/shared/computer";
 import type { LiveInput } from "@hatbot/shared/desktop";
 import { HATBOT } from "../src/memory/store";
+import { FakeComputer, withComputer } from "./fake-computer";
 import { FakeModel } from "./fake-model";
-import { signIn, type TestApp, testApp, waitFor } from "./helpers";
+import { ORIGIN, signIn, type TestApp, testApp, waitFor } from "./helpers";
+
+const stops: (() => void)[] = [];
+afterEach(() => {
+  for (const s of stops.splice(0)) s();
+});
 
 const SKILL = `---
 name: renew-library-books
@@ -369,4 +377,158 @@ test("saving over a skill that's there needs replace", async () => {
     200,
   );
   expect(await t.memory.read("skills/renew-library-books.md")).toBe(`${SKILL}\n`);
+});
+
+const field = (names: string[], o: Partial<ComputerField> = {}): ComputerField => ({
+  role: "entry",
+  names,
+  password: false,
+  inFrame: false,
+  editable: true,
+  ...o,
+});
+
+test("a computer's field is secret when its app says it takes a password, it's in a page's frame or a terminal, or its names say so", () => {
+  expect(secretField(field(["Password"], { role: "password text", password: true }))).toBe(true);
+  expect(secretField(field(["Card number"]))).toBe(true);
+  expect(secretField(field(["Numer karty", "cardNumber"]))).toBe(true);
+  expect(secretField(field(["One-time code", "otpCode"]))).toBe(true);
+  // Stripe's card fields: an input in a frame from another address.
+  expect(secretField(field([""], { inFrame: true }))).toBe(true);
+  expect(secretField(field(["Terminal"], { role: "terminal" }))).toBe(true);
+  expect(secretField(field(["Search", "q"]))).toBe(false);
+  expect(secretField(field(["Promo code"]))).toBe(false);
+  expect(secretField(field(["Verify your email"]))).toBe(false);
+});
+
+/** A computer that can be taught on, answering where the keyboard is from what the test sets. */
+function teachable() {
+  const computer = new FakeComputer({
+    machineId: "m-laptop",
+    name: "laptop",
+    version: "test",
+    compositor: "niri",
+    enabled: true,
+    features: ["screen", "input", "windows", "atspi", "files", "shell", "live", "teach"],
+  });
+  const at: { field: ComputerField | null; filled: ComputerField[] } = { field: null, filled: [] };
+  computer.answer.focus = (r) => {
+    const o = r as Extract<typeof r, { op: "focus" }>;
+    const focus: ComputerFocus = {
+      window: { title: "Account", appId: "firefox" },
+      url: "https://library.example/account",
+      ...(o.field ? { field: at.field } : {}),
+      ...(o.filled ? { filled: at.filled } : {}),
+    };
+    return { op: "focus", focus };
+  };
+  return { computer, at };
+}
+
+test("Teach on a computer: what you do from Live is recorded and reaches the computer, its secrets stay out, keys you held are let go, and the skill says where it runs", async () => {
+  const { t, work, call } = await teachApp();
+  const { computer, at } = teachable();
+  const c = await withComputer(t, computer);
+  stops.push(c.stop);
+  const res = await call("POST", "/teach/start", { screen: "m-laptop" });
+  expect(res.status).toBe(200);
+  const session = (await res.json()) as TeachSession;
+  expect(session.screen).toBe("m-laptop");
+  expect(computer.requests).toContainEqual({ op: "claim", taskId: "-2" });
+  expect(t.computers.find("m-laptop")?.control).toBe("owner");
+  // No task starts on it meanwhile.
+  expect(t.computers.screen("m-laptop")?.lane.holderId).not.toBeNull();
+
+  const ws = new WebSocket(`${c.url}/api/v1/computer/live/m-laptop`, {
+    headers: { cookie: signIn(t).cookie, origin: ORIGIN },
+  } as unknown as string[]);
+  await new Promise((resolve) => {
+    ws.onopen = resolve;
+  });
+  const forwarded = () => computer.requests.filter((r) => r.op === "live_input").length;
+  const asked = (k: "field" | "filled") =>
+    computer.requests.filter((r) => r.op === "focus" && r[k]).length;
+  // Waits for the input to reach the computer, and for the checks it sets off to be answered.
+  const send = async (ms: LiveInput[], checks: { field?: number; filled?: number } = {}) => {
+    const before = { input: forwarded(), field: asked("field"), filled: asked("filled") };
+    for (const m of ms) ws.send(JSON.stringify(m));
+    await waitFor(
+      () =>
+        forwarded() === before.input + ms.length &&
+        asked("field") === before.field + (checks.field ?? 0) &&
+        asked("filled") === before.filled + (checks.filled ?? 0),
+    );
+  };
+  await send(click(400, 300), { filled: 1 });
+  // The browser filled in a password: this click's screenshot isn't kept.
+  at.filled = [field(["Password"], { role: "password text", password: true })];
+  await send(click(450, 300), { filled: 1 });
+  at.field = field(["Search", "q"]);
+  at.filled = [field(["Search", "q"])];
+  await send(click(500, 120), { filled: 1 });
+  await send(typeText("Dune"), { field: 1 });
+  await send(press("Enter"), { filled: 1 });
+  at.field = field(["Password"], { role: "password text", password: true });
+  await send(typeText("s3cret-pw"), { field: 1 });
+  await send([{ t: "key", key: "Shift", down: true }]);
+  ws.close();
+  await waitFor(() =>
+    computer.requests.some(
+      (r) =>
+        r.op === "live_input" && r.input.t === "key" && r.input.key === "Shift" && !r.input.down,
+    ),
+  );
+  await waitFor(() => screensOf(t, session.id).length === 3);
+
+  const body = await drafted(t, work, call, session.id);
+  expect(computer.requests).toContainEqual({ op: "release", taskId: "-2" });
+  expect(t.computers.find("m-laptop")?.control).toBe("hatbot");
+  expect(t.computers.screen("m-laptop")?.lane.holderId).toBeNull();
+  expect(body).toContain('The owner\'s own computer \\"laptop\\", on Linux (niri).');
+  expect(body).toContain('window: firefox \\"Account\\" https://library.example/account');
+  expect(body).not.toContain("s3cret");
+  expect(body).toContain('typed \\"Dune\\"');
+  expect(body).toContain("left click at (450, 300)\\n");
+  const content = work.creates.find((p) => p.system === TEACH_PROMPT)?.messages[0]?.content as {
+    type: string;
+    source?: { media_type: string };
+  }[];
+  expect(content.filter((b) => b.type === "image").map((b) => b.source?.media_type)).toEqual([
+    "image/jpeg",
+    "image/jpeg",
+    "image/jpeg",
+  ]);
+  const saved = await call("POST", `/teach/${session.id}/save`, {
+    name: "renew-books",
+    content: SKILL,
+  });
+  expect(saved.status).toBe(200);
+
+  // Recording it again is on the laptop, where it was shown.
+  const again = await call("POST", "/teach/start", { replaces: "renew-books" });
+  expect(((await again.json()) as TeachSession).screen).toBe("m-laptop");
+  await t.teach.discard(t.teach.current().recording?.id ?? 0);
+});
+
+test("Teach on a computer needs its desktop app to know how, and the computer free for Hatbot", async () => {
+  const { t, call } = await teachApp();
+  const old = await withComputer(t);
+  stops.push(old.stop);
+  const res = await call("POST", "/teach/start", { screen: "m-laptop" });
+  expect(res.status).toBe(503);
+  expect(((await res.json()) as { error: string }).error).toBe(
+    "Update Hatbot's desktop app on laptop to teach on it.",
+  );
+  old.stop();
+  await waitFor(() => !t.computers.find("m-laptop")?.online);
+
+  const { computer } = teachable();
+  stops.push((await withComputer(t, computer)).stop);
+  computer.setStatus({ paused: true });
+  await waitFor(() => t.computers.find("m-laptop")?.paused);
+  expect((await call("POST", "/teach/start", { screen: "m-laptop" })).status).toBe(503);
+  expect(computer.requests.some((r) => r.op === "claim")).toBe(false);
+  computer.setStatus({ paused: false });
+  await waitFor(() => !t.computers.find("m-laptop")?.paused);
+  expect((await call("POST", "/teach/start", { screen: "m-laptop" })).status).toBe(200);
 });

@@ -850,11 +850,16 @@ async function loadTeachSessions() {
   set({ teach: sessions });
 }
 
-/** `replaces`: a skill to record again; the draft keeps its name. */
-export async function startTeach(replaces?: string) {
-  putTeach(await api<TeachSession>("/teach/start", { body: replaces ? { replaces } : {} }));
-  // Your input only reaches the desktop once the live view knows you have control.
-  set({ desktop: await api<DesktopState>("/desktop/status") });
+/**
+ * `replaces`: a skill to record again; the draft keeps its name. `screen`: a computer's id, null for the
+ * desktop; a skill recorded again is on the screen it was shown on unless told.
+ */
+export async function startTeach(replaces?: string, screen?: string | null) {
+  const s = await api<TeachSession>("/teach/start", { body: { replaces, screen } });
+  putTeach(s);
+  // Your input only reaches the screen once the live view knows you have control.
+  if (s.screen) set({ computers: await api<ComputerInfo[]>("/computers") });
+  else set({ desktop: await api<DesktopState>("/desktop/status") });
 }
 export async function stopTeach() {
   const s = await api<TeachSession>("/teach/stop", { body: {} });

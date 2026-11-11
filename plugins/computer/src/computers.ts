@@ -2,6 +2,7 @@
 import {
   type Db,
   type EventsHost,
+  Live,
   PluginError,
   type ScreenAgent,
   ScreenControl,
@@ -9,6 +10,7 @@ import {
 } from "@hatbot/plugin-sdk";
 import type { ComputerInfo } from "@hatbot/shared";
 import {
+  type ComputerFocus,
   type ComputerHello,
   type ComputerMessage,
   type ComputerWindow,
@@ -49,6 +51,8 @@ class Machine {
   link: Link | null = null;
   readonly lane = new ScreenLane();
   readonly control: ScreenControl;
+  /** What you do from Live while you have control: Teach records it. */
+  readonly live = new Live();
   readonly viewers = new Set<(frame: ArrayBuffer) => void>();
   readonly waiters = new Set<() => void>();
   /** Tasks and chats that may use it, as the owner approved. */
@@ -86,7 +90,12 @@ export type ComputerScreen = {
   readonly name: string;
   readonly lane: ScreenLane;
   readonly control: ScreenControl;
+  readonly live: Live;
   info(): ComputerInfo;
+  /** What its agent can do, from its hello; none while it's offline. */
+  features(): string[];
+  /** "windows", or the compositor's name on Linux; null while it's offline. */
+  system(): string | null;
   /** Its screenshots' size, once it has said which screen it's on. */
   shot(): { width: number; height: number } | null;
   /** Its requests end when `signal` aborts. */
@@ -99,6 +108,8 @@ export type ComputerScreen = {
   /** Null without the "windows" feature, or when it can't say. */
   windows(signal?: AbortSignal): Promise<ComputerWindow[] | null>;
   focusWindow(id: number, signal?: AbortSignal): Promise<void>;
+  /** For Teach, with the "teach" feature: where the keyboard is, and the filled fields on show. */
+  focus(o: { field?: boolean; filled?: boolean }, signal?: AbortSignal): Promise<ComputerFocus>;
   granted(key: string): boolean;
   grant(key: string): void;
 };
@@ -315,7 +326,10 @@ export class Computers {
       },
       lane: m.lane,
       control: m.control,
+      live: m.live,
       info: () => self.get(id) as ComputerInfo,
+      features: () => m.link?.hello.features ?? [],
+      system: () => m.link?.hello.compositor ?? null,
       shot: () => {
         const s = m.claimed ?? m.link?.status.screen;
         return s ? shotSize(s) : null;
@@ -384,6 +398,8 @@ export class Computers {
       focusWindow: async (windowId, signal) => {
         await link().request({ op: "focus_window", id: windowId }, 10_000, signal);
       },
+      focus: async (o, signal) =>
+        (await link().request({ op: "focus", ...o }, 15_000, signal)).focus,
       granted: (key) => m.grants.has(key),
       grant: (key) => {
         m.grants.add(key);

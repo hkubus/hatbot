@@ -10,7 +10,11 @@ const id = (raw: string) => {
   return n;
 };
 
-const Start = z.object({ replaces: SaveSkill.shape.name.optional() });
+// screen: one of your computers, by its id; the desktop when it's null or left out.
+const Start = z.object({
+  replaces: SaveSkill.shape.name.optional(),
+  screen: z.string().min(1).max(100).nullable().optional(),
+});
 const Save = SaveSkill.extend({ replace: z.boolean().optional() });
 
 /** Teach-by-showing's, on `app`. */
@@ -18,7 +22,10 @@ export const teachRoutes = (app: Hono<PluginEnv>, teach: Teach) =>
   app
     .get("/teach", (c) => c.json(teach.current()))
     // replaces: a skill to record again; the draft keeps its name.
-    .post("/teach/start", async (c) => c.json(await teach.start((await bodyOf(c, Start)).replaces)))
+    .post("/teach/start", async (c) => {
+      const { replaces, screen } = await bodyOf(c, Start);
+      return c.json(await teach.start(replaces, screen));
+    })
     .post("/teach/stop", async (c) => c.json(await teach.stop()))
     .get("/teach/:id", (c) => {
       const session = teach.get(id(c.req.param("id")));

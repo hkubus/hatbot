@@ -1200,4 +1200,6 @@ export const migrations: string[] = [
   );
   CREATE INDEX flip_takedowns_task ON flip_takedowns (task_id);
   `,
+  // 81: the computer a Teach recording was made on; null for the desktop.
+  `ALTER TABLE teach_sessions ADD COLUMN screen TEXT;`,
 ];
