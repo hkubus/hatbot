@@ -92,6 +92,11 @@ export class Repeats {
     return `(No message from the owner: the app noticed this schedule's runs have made these same calls ${n + 1} times in the last 30 days: ${key.split(" ").join(", ")}. Carry on as usual. When you finish, end the summary with a sentence offering to save these steps as a script, which runs them without a model, and switch the schedule to run it. The owner answers in your chat, where it's done; don't save it yourself.)`;
   }
 
+  /** A run that offered a script and then didn't finish: you never saw it, so it may be offered again. */
+  withdraw(taskId: number) {
+    this.db.query("DELETE FROM reply_calls WHERE task_id = ? AND offered = 1").run(taskId);
+  }
+
   /** For the chat that hears how a run ended which offered a script: what to do if the owner says yes. */
   ranOffer(task: Task): string | null {
     const offer = this.db

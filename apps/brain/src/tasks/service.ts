@@ -698,6 +698,14 @@ export class Tasks {
     return task.origin !== "chat" && Boolean(this.d.plugins.origin(task.origin)?.reserve);
   }
 
+  runKeyOf(id: number): string | null {
+    return (
+      this.d.db
+        .query<{ run_key: string | null }, [number]>("SELECT run_key FROM tasks WHERE id = ?")
+        .get(id)?.run_key ?? null
+    );
+  }
+
   requestOf(id: number): string | null {
     return (
       this.d.db

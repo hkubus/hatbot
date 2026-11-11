@@ -349,6 +349,46 @@ test("a schedule whose runs make the same calls offers once, in the chat, to run
   expect(t.schedules.get(id)?.scriptId).toBe(s.id);
 });
 
+test("a run that offered a script and then failed hasn't used the offer up", async () => {
+  const check = () => checking("lab_vms", "lab_counter");
+  const failing = [
+    { content: [toolUse("lab_vms", {}), toolUse("lab_counter", {})] },
+    { content: [toolUse("finish_task", { outcome: "failed", summary: "Broke.", notify: false })] },
+  ];
+  const work = new FakeModel([...check(), ...check(), ...failing, ...check()]);
+  const { t, api } = await lab(new FakeModel(), work);
+  const { ended } = await scheduled(t, api, 4);
+  expect(ended.map((e) => e.status)).toEqual(["done", "done", "failed", "done"]);
+  const told = work.requests.map((r) =>
+    lastText(r).includes("offering to save these steps as a script"),
+  );
+  expect(told).toEqual([false, false, false, false, false, true, false, true]);
+});
+
+test("a schedule that runs a script isn't offered one for what the script's task does", async () => {
+  const check = () => checking("lab_vms", "lab_counter");
+  const work = new FakeModel([...check(), ...check(), ...check()]);
+  const { t, api } = await lab(new FakeModel(), work);
+  const s = await saved(api, [{ task: "Check the lab." }], "lab-task");
+  const created = await api("POST", "/schedules", {
+    name: "Lab check",
+    scriptId: s.id,
+    cron: "0 8 * * *",
+  });
+  const { id } = (await created.json()) as { id: number };
+  for (let i = 1; i <= 3; i++) {
+    const ran = t.schedules.runNow(id) as Task;
+    await waitFor(() => t.tasks.get(ran.id)?.finishedAt);
+    await waitFor(() =>
+      work.requests.length >= 2 * i && !t.tasks.activeFor(`script:${s.id}:task`) ? true : null,
+    );
+  }
+  expect(work.requests).toHaveLength(6);
+  expect(
+    work.requests.some((r) => lastText(r).includes("offering to save these steps as a script")),
+  ).toBe(false);
+});
+
 test("a run that read untrusted content hands the chat its calls as data", async () => {
   const check = () => checking("lab_page", "lab_vms");
   const work = new FakeModel([...check(), ...check(), ...check()]);

@@ -731,9 +731,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** What the next request may cost: work the runner starts meanwhile leaves room for it. */
   let reserveUsd = 0;
-  // A schedule's run notices when its runs keep making the same calls, as the chat does.
+  // A schedule's run notices when its runs keep making the same calls, as the chat does: not a task a
+  // script's step started, as that schedule runs a script already.
   const repeats =
-    task.scheduleId !== null && !task.runner && !task.parentId ? d.repeats : undefined;
+    task.scheduleId !== null &&
+    !task.runner &&
+    !task.parentId &&
+    !tasks.runKeyOf(id)?.startsWith("script:")
+      ? d.repeats
+      : undefined;
   const called: string[] = [];
   let offeredScript = false;
   const state = runner?.start({ task, signal, taint, messages, reserveUsd: () => reserveUsd });
@@ -1046,6 +1052,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ended.summary = await state.unfinished(ended.summary);
     if (ended.status === "done")
       repeats?.record({ botId: task.botId, scheduleId: task.scheduleId ?? undefined }, called);
+    // One that didn't finish never showed you its offer.
+    else if (offeredScript) repeats?.withdraw(id);
     // Its offer is answered in the chat, so a routine run's report goes there too, quietly.
     if (offeredScript && ended.status === "done" && ended.notify === false)
       tasks.finish(id, "done", ended.summary, true, { ntfy: false });
