@@ -189,8 +189,8 @@ private struct BuiltInSection: View {
       if seen == changes && saving == 0 { settings = loaded }
     }
     // Only while the Self plugin is on and set up does it answer.
-    let plugin = try? await store.loadPluginNames().first { $0.id == "self" }
-    if plugin?.state == "ready" || plugin?.state == "needs_setup" {
+    let plugin = try? await store.loadPlugins().first { $0.id == "self" }
+    if plugin?.running == true {
       suggestions = await store.loadCodeSuggestions()
     } else {
       suggestions = nil

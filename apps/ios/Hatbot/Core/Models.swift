@@ -33,6 +33,25 @@ struct LoginResponse: Decodable, Sendable {
   let token: String?
 }
 
+/// Onboarding in packages/shared/src/onboarding.ts: only where the guided setup is.
+struct Onboarding: Decodable, Sendable {
+  let finished: Bool
+  /// No model provider works yet: its form comes first.
+  let needsModels: Bool
+}
+
+/// SETUP_PROVIDERS in packages/shared/src/onboarding.ts.
+enum SetupProvider: String, CaseIterable, Encodable, Sendable {
+  case anthropic, openai
+
+  var name: String {
+    switch self {
+    case .anthropic: "Anthropic"
+    case .openai: "OpenAI-compatible"
+    }
+  }
+}
+
 struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   enum Role: String, LenientEnum {
     case user, assistant
@@ -503,12 +522,38 @@ struct BotTemplate: Decodable, Identifiable, Equatable, Sendable {
   var plugins: [String]?
 }
 
-struct PluginName: Decodable, Identifiable, Equatable, Sendable {
+/// PluginInfo in packages/shared/src/plugin.ts, as far as the app uses it.
+struct PluginInfo: Decodable, Identifiable, Equatable, Sendable {
   let id: String
   var name: String
   var enabled: Bool?
-  /// "off", "starting", "ready", "needs_setup" or "error".
-  var state: String?
+  var state: State
+  /// Where it was installed from; nil for one Hatbot comes with.
+  var source: Source?
+
+  enum State: String, LenientEnum {
+    case off, starting, ready, needsSetup = "needs_setup", error
+    static let fallback = State.off
+
+    /// As the web app's Plugins page says it.
+    var name: String {
+      switch self {
+      case .off: "Off"
+      case .starting: "Starting"
+      case .ready: "On"
+      case .needsSetup: "Needs setup"
+      case .error: "Error"
+      }
+    }
+  }
+
+  struct Source: Decodable, Equatable, Sendable {
+    let url: String
+    let commit: String
+  }
+
+  /// Its actions answer: it's on, or waiting to be set up.
+  var running: Bool { state == .ready || state == .needsSetup }
 }
 
 enum Mention {
@@ -848,12 +893,14 @@ enum HatbotEvent: Decodable, Sendable {
   case watcherDeleted(id: Int)
   case boxUpdated(Box)
   case boxDeleted(id: Int)
+  case pluginUpdated(PluginInfo)
   case unknown(String)
 
   private enum Key: String, CodingKey {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
     case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link, computers
+    case plugin
   }
 
   init(from decoder: Decoder) throws {
@@ -906,6 +953,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "watcher.deleted": self = try .watcherDeleted(id: v(.id))
     case "box.updated": self = try .boxUpdated(v(.box))
     case "box.deleted": self = try .boxDeleted(id: v(.id))
+    case "plugin.updated": self = try .pluginUpdated(v(.plugin))
     default: self = .unknown(type)
     }
   }

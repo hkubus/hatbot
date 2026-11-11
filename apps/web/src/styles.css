@@ -2463,6 +2463,20 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   display: none;
 }
 
+/* In the iOS app's web view (embedded.ts), whose own bar has the title and the way back. */
+.embedded .app {
+  grid-template-columns: minmax(0, 1fr);
+}
+.embedded .sidebar,
+.embedded .toolbar,
+.embedded .tabbar,
+.embedded .page-head > .back {
+  display: none;
+}
+.embedded .main {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 @media (max-width: 899px) {
   :root {
     --gutter: 12px;

@@ -80,6 +80,8 @@ final class AppStore {
   var boxesLoaded = false
   /// Deleted, here or elsewhere: an open box says so, and the chat stops showing it.
   var deletedBoxes = Set<Int>()
+  /// Every plugin, by id, as loaded when the stream opens; none on a brain from before plugins.
+  var plugins: [String: PluginInfo] = [:]
   var toast: String? {
     didSet { if toast != nil { toastId += 1 } }
   }
@@ -263,6 +265,8 @@ final class AppStore {
       try? await loadThread()
       if reconnected && boxesLoaded { _ = try? await loadBoxes() }
     }
+    // Which views show: those of plugins that are off don't. Switched while the stream was down, too.
+    Task { _ = try? await loadPlugins() }
   }
 
   /// An event from the stream; nil, one this app couldn't read.
@@ -388,6 +392,8 @@ final class AppStore {
     case let .boxDeleted(id):
       boxes[id] = nil
       deletedBoxes.insert(id)
+    case let .pluginUpdated(p):
+      plugins[p.id] = p
     case .unknown:
       break
     }
@@ -902,10 +908,6 @@ final class AppStore {
       return
     }
     if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
-  }
-
-  func loadPluginNames() async throws -> [PluginName] {
-    try await api.get("/plugins")
   }
 
   /// None on a brain from before templates.
