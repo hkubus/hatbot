@@ -4,4 +4,5 @@ Hatbot.xcodeproj/
 Hatbot/Info.plist
 *.xcuserstate
 Share/Info.plist
+Widgets/Info.plist
 *.entitlements
