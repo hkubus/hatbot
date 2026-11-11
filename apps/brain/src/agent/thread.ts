@@ -1697,6 +1697,14 @@ export class Thread {
     if (this.currentHandoff?.messageId === messageId) this.current?.abort(STOPPED);
   }
 
+  private taskOfMessage(id: number): number | null {
+    return (
+      this.d.db
+        .query<{ task_id: number | null }, [number]>("SELECT task_id FROM messages WHERE id = ?")
+        .get(id)?.task_id ?? null
+    );
+  }
+
   message(id: number): ThreadMessage | null {
     const row = this.d.db
       .query<MessageRow, [number, number]>(
@@ -1952,7 +1960,7 @@ export class Thread {
           ? `the bot you asked ended. ${rewrite ? "What you write now replaces your reply that asked it. " : ""}In a sentence or two, say what it did and whether it's finished, without repeating its answer: the owner reads that in its chat, linked from here. If it needs something only the owner can say, ask that.`
           : `a task they started from the chat ended. ${
               rewrite
-                ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation."
+                ? "What you write now replaces your reply that started it, and it's all the owner sees of how it went. Tell them what came of it, briefly, with what you know from this conversation, and keep its chart blocks as they are. Leave out what it didn't do."
                 : "Tell them what came of it, briefly, with what you know from this conversation. Don't repeat what they can already see."
             }`
       })`;
@@ -2376,6 +2384,7 @@ export class Thread {
         // Every tool_use needs a result, or the episode can't continue. Lookups in a row run at once.
         const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>
           !cutOff(res) && pluginTools.find((t) => t.name === call.name)?.access === "read";
+        const hadTask = this.taskOfMessage(out.id) !== null;
         const results = await inBatches(toolUses, lookup, async (call): Promise<BlockParam> => {
           if (abort.signal.aborted)
             return toolResult(call.id, "Not run: the reply was stopped.", true);
@@ -2473,6 +2482,11 @@ export class Thread {
           if (offer) results.push({ type: "text", text: offer });
         }
         this.appendTurn(episode.id, bot.id, "user", results);
+        // A reply that has said what it's handing on ends once the work starts: another call would
+        // only say it again. Lookups alongside it may have more to do.
+        const handedOn = !hadTask && this.taskOfMessage(out.id) !== null && !toolUses.some(lookup);
+        const clean = results.every((r) => r.type === "tool_result" && !r.is_error);
+        if (handedOn && clean && text.trim()) return finish("done");
       }
     } catch (err) {
       if (abort.signal.reason === STOPPED)

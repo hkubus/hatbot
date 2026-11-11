@@ -5,6 +5,7 @@ import {
   BOT_GONE,
   type CallContext,
   clip,
+  ENDS_REPLY,
   PluginError,
   type PluginTool,
   type ToolOutput,
@@ -416,8 +417,7 @@ const TOOLS = [
     name: "boxes_t3",
     label: "Handing the box to T3 Code",
     change: true,
-    description:
-      "Have T3 Code make a new box, or change one of yours, as a background task: for a box with more than a little code, or a big change to one. An agent in the owner's T3 Code works on the box's files on its own for a few minutes, and they're saved as the box's next version, shown under your reply. It can't see this conversation, so put everything the box needs in request. You hear when it's done: look at the box with boxes_look then, before you tell the owner. For a small change, use boxes_edit.",
+    description: `Have T3 Code make a new box, or change one of yours, as a background task: for a box with more than a little code, or a big change to one. An agent in the owner's T3 Code works on the box's files on its own for a few minutes, and they're saved as the box's next version, shown under your reply. It can't see this conversation, so put everything the box needs in request. You hear when it's done: look at the box with boxes_look then, before you tell the owner. For a small change, use boxes_edit. ${ENDS_REPLY}`,
     schema: z.object({
       request: z
         .string()
@@ -449,7 +449,7 @@ const TOOLS = [
         job: { request, ...(box ? { box: box.id } : {}), ...(title ? { title } : {}) },
       });
       if (!task) return `Not started: T3 Code is already working on box #${id}.`;
-      return `Started task #${task.id}: T3 Code ${box ? `changes box #${box.id}` : "makes the box"} in the background, and the owner sees its progress under this reply. Don't wait for it.`;
+      return `Started task #${task.id}: T3 Code ${box ? `changes box #${box.id}` : "makes the box"} in the background, and the owner sees its progress under this reply. Don't wait for it. If your reply already says what you started, end it here; otherwise say so in a line.`;
     },
   }),
   def({

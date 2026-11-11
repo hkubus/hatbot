@@ -212,6 +212,50 @@ test("a stream that fails is tried three times at most, after retry-after; not o
   expect(failed).toEqual(Array(3).fill({ model: "claude-opus-5-5", output: 40 }));
 });
 
+test("text after a web search starts a paragraph; text split by its citations runs on", async () => {
+  const client = new AnthropicModelClient("sk-test");
+  const start = (index: number, type: string) => ({
+    type: "content_block_start",
+    index,
+    content_block: { type, ...(type === "server_tool_use" ? { name: "web_search" } : {}) },
+  });
+  const say = (index: number, text: string) => ({
+    type: "content_block_delta",
+    index,
+    delta: { type: "text_delta", text },
+  });
+  const events = [
+    start(0, "text"),
+    say(0, "Looking it up."),
+    start(1, "server_tool_use"),
+    start(2, "web_search_tool_result"),
+    start(3, "text"),
+    say(3, "It arrives on "),
+    start(4, "text"),
+    say(4, "Friday"),
+    start(5, "text"),
+    say(5, "."),
+  ];
+  (client as unknown as { client: unknown }).client = {
+    beta: {
+      messages: {
+        stream: () => ({
+          async *[Symbol.asyncIterator]() {
+            yield* events;
+          },
+          finalMessage: async () => ({}),
+        }),
+      },
+    },
+  };
+  let shown = "";
+  await client.stream(
+    { model: "claude-haiku-5-5", max_tokens: 10, messages: [] },
+    { onText: (t) => (shown += t), onFailedUsage: () => {} },
+  );
+  expect(shown).toBe("Looking it up.\n\nIt arrives on Friday.");
+});
+
 test("a reply as it's written: shown with what it has done and saved so far, started over when its stream is tried again, with the failed try billed, and kept through a restart", async () => {
   const first = Promise.withResolvers<void>();
   const second = Promise.withResolvers<void>();
@@ -620,6 +664,47 @@ test("a reply its task's result takes the place of, or that's written again, kee
   slow.resolve();
   await t.thread.idle();
   expect(shown(told.id)?.text).toBe("The router is fine.");
+});
+
+test("a reply that says what it's starting ends once the task starts; one that hasn't said yet, or looked something up alongside, goes on", async () => {
+  const slow = Promise.withResolvers<void>();
+  const chat = new FakeModel([
+    {
+      content: [
+        text("Looking at the NAS in a task."),
+        toolUse("run_task", { title: "NAS", goal: "Look at the NAS" }),
+      ],
+    },
+    { content: [toolUse("run_task", { title: "Router", goal: "Look at the router" })] },
+    { content: [text("Looking at the router in a task.")] },
+    {
+      content: [
+        text("Looking at the switch in a task."),
+        toolUse("memory_list", {}),
+        toolUse("run_task", { title: "Switch", goal: "Look at the switch" }),
+      ],
+    },
+    { content: [text("It knows the switch's address from your notes.")] },
+  ]);
+  const finish = {
+    content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })],
+  };
+  const work = new FakeModel([
+    { wait: slow.promise, ...finish },
+    { wait: slow.promise, ...finish },
+    { wait: slow.promise, ...finish },
+  ]);
+  const t = await testApp(chat, work);
+  await t.thread.post("look at the nas").done;
+  expect(chat.requests).toHaveLength(1);
+  expect(t.thread.list().at(-1)?.text).toBe("Looking at the NAS in a task.");
+  await t.thread.post("look at the router").done;
+  expect(chat.requests).toHaveLength(3);
+  expect(t.thread.list().at(-1)?.text).toBe("Looking at the router in a task.");
+  await t.thread.post("look at the switch").done;
+  expect(chat.requests).toHaveLength(5);
+  slow.resolve();
+  await t.tasks.idle();
 });
 
 test("a task a deleted bot started ends with its result; the bot isn't asked again", async () => {

@@ -103,8 +103,8 @@ test("a bot changes only its own boxes; with a code bot, every box is its to mak
   expect(lastUserText(model.requests[1])).toContain("is Coder's");
   expect(t.boxes.get(1)?.title).toBe("Builds");
 
-  // Naming the Code plugin makes Coder the code bot: Hatbot hands boxes to it, and it changes Hatbot's.
-  t.bots.update(coder.id, { plugins: ["code"] });
+  // Code and a forge make Coder the code bot: Hatbot hands boxes to it, and it changes Hatbot's.
+  t.bots.update(coder.id, { plugins: ["code", "github"] });
   t.boxes.create({ botId: "hatbot", conversationId: null, title: "Habits", html: PAGE }, {});
   await t.thread.post("make me a timer").done;
   expect(toolNames(model.requests[2])).not.toContain("boxes_create");
