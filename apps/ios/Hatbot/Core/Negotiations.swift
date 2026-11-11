@@ -34,9 +34,10 @@ extension AppStore {
     negotiations.values.filter(\.status.isOpen).sorted { $0.id > $1.id }
   }
 
-  /// The negotiation an approval is about: its mandate, or a hold.
+  /// The negotiation an approval is about: its mandate, or a hold. A mandate for several sellers has one
+  /// approval for all of them: the first stands for it.
   func negotiation(forApproval id: Int) -> Negotiation? {
-    negotiations.values.first { $0.approvalId == id }
+    negotiations.values.filter { $0.approvalId == id }.min { $0.id < $1.id }
   }
 
   /// As `negotiation(forApproval:)`, loading the open ones first when it isn't known. A task's approval
