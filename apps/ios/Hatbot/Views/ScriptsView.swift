@@ -70,7 +70,7 @@ struct ScriptDetailView: View {
         Section("Inputs") {
           ForEach(s.inputs, id: \.name) { i in
             LabeledContent(i.name) {
-              TextField(i.description, text: $input[i.name, default: ""])
+              TextField(i.description, text: Binding(get: { input[i.name] ?? "" }, set: { input[i.name] = $0 }))
                 .multilineTextAlignment(.trailing)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
