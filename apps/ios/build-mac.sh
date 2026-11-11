@@ -13,9 +13,13 @@ xcodegen generate --quiet
 
 if command -v xcbeautify >/dev/null; then log=xcbeautify; else log=cat; fi
 
+# Signed, it's built for this Mac, so Xcode can register it with the team: a development profile only
+# runs on the Macs it lists.
 if [ -n "${TEAM:-}" ]; then
+  destination='platform=macOS,variant=Mac Catalyst'
   signing=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic)
 else
+  destination='generic/platform=macOS,variant=Mac Catalyst'
   signing=(CODE_SIGNING_ALLOWED=NO)
 fi
 
@@ -24,7 +28,7 @@ xcodebuild build \
   -project Hatbot.xcodeproj \
   -scheme Hatbot \
   -configuration Release \
-  -destination 'generic/platform=macOS,variant=Mac Catalyst' \
+  -destination "$destination" \
   -derivedDataPath build/mac/derived \
   BUNDLE_PREFIX="$prefix" \
   ${VERSION:+MARKETING_VERSION=$VERSION} \

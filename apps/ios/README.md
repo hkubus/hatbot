@@ -50,6 +50,8 @@ Keychain. Add the Apple ID in Xcode's Settings → Accounts, then either:
   TEAM=<team ID> apps/ios/build-mac.sh    # → apps/ios/build/mac/Hatbot.app
   ```
 
+  It registers the Mac it's built on with your team, and the app runs only on Macs registered there.
+
 In Live, once you've taken control, the mouse or trackpad drives the desktop: click, right click,
 drag and scroll, and its pointer follows yours. Turn on Keyboard to type there.
 

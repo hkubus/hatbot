@@ -25,10 +25,11 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1,2"
         # The iPad app on the Mac too (build-mac.sh), as the same app. The share extension and the widget
-        # stay on iOS, so the Mac build has no App Group to be signed for.
+        # stay on iOS, so the Mac build has no App Group to be signed for. Its Keychain needs the app's
+        # identifier, which only a provisioning profile gives; Keychain Sharing makes Xcode make one.
         SUPPORTS_MACCATALYST: YES
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
-        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": ""
+        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Hatbot/Mac.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Hatbot
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

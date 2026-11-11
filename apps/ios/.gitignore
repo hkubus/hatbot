@@ -6,3 +6,4 @@ Hatbot/Info.plist
 Share/Info.plist
 Widgets/Info.plist
 *.entitlements
+!Hatbot/Mac.entitlements
