@@ -220,8 +220,12 @@ export type PluginTool<I = unknown> = {
    * several waits for each.
    */
   target?: (input: I) => string | string[];
-  /** Write tools that pay, buy or change accounts: Haiku's review never answers for them. */
-  kind?: ApprovalKind;
+  /**
+   * What a write's calls are, for Safety's settings: Haiku's review never answers for paying, buying
+   * or changing accounts. `send`: it reaches people (a message, comment or post someone else reads),
+   * so it waits as long as Safety's send wait says, for you to stop it, unless you approved it.
+   */
+  kind?: ApprovalKind | ((input: I) => ApprovalKind | undefined);
   /** How many commands a write runs, for the chat's limit. Without it, one. */
   commands?: (input: I) => number;
   /** Without one, a write is allowed. */

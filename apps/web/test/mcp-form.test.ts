@@ -43,6 +43,14 @@ test("the mode shown is the one that applies: a money tool never asks first or c
   expect(modeIn(server({ kinds: { place_order: "none" } }), order)).toBe("ask");
 });
 
+test("a tool that sends to people asks first or chats like any other", () => {
+  const post = tool({ name: "post_message", guess: "send" });
+  expect(modeIn(server(), post)).toBe("ask");
+  expect(
+    modeIn(server({ tools: { post_message: "chat" }, pinned: { post_message: "h1" } }), post),
+  ).toBe("chat");
+});
+
 test("Chat or Allow is kept for the definition it was chosen for", () => {
   const t = tool();
   const chosen = { ...server(), ...withMode(server(), t, "chat") };
