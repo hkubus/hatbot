@@ -7,7 +7,7 @@ use std::pin::Pin;
 use crate::keycode::KeyCode;
 use tokio::sync::oneshot;
 
-use crate::protocol::AgentElement;
+use crate::protocol::{AgentElement, ComputerField};
 use crate::typing::KeyTable;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -111,6 +111,16 @@ pub enum InspectAt {
     Focus { pid: Option<i32> },
 }
 
+/// For Teach, from a window's accessibility tree.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Fields {
+    /// The page's address, when it's a browser's.
+    pub url: Option<String>,
+    pub focused: Option<ComputerField>,
+    /// The text fields showing something; None when they weren't asked for or couldn't all be read.
+    pub filled: Option<Vec<ComputerField>>,
+}
+
 /// What happens on the computer that changes the status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
@@ -145,6 +155,15 @@ pub trait Computer: Send + Sync + 'static {
     fn focus_window(&self, id: u64) -> BoxFuture<'_, Result<()>>;
     /// The element there, from AT-SPI; None when there's no tree.
     fn inspect(&self, at: InspectAt) -> BoxFuture<'_, Result<Option<AgentElement>>>;
+    /// The page in a window (its process and title, else the active one), and when asked for, the field
+    /// with the keyboard and the fields holding something. None when there's no tree.
+    fn fields(
+        &self,
+        pid: Option<i32>,
+        title: Option<String>,
+        field: bool,
+        filled: bool,
+    ) -> BoxFuture<'_, Result<Option<Fields>>>;
 }
 
 #[cfg(test)]

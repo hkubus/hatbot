@@ -109,6 +109,14 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         y: Option<f64>,
     },
+    /// For Teach: the focused window and page, and with these, its field with the keyboard and the text
+    /// fields holding something.
+    Focus {
+        #[serde(default)]
+        field: bool,
+        #[serde(default)]
+        filled: bool,
+    },
     #[serde(rename_all = "camelCase")]
     Exec {
         command: String,
@@ -228,6 +236,41 @@ pub struct AgentElement {
     pub buttons_after: Option<Vec<String>>,
 }
 
+/// A text field, for Teach to tell whether it takes a secret or shows one.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputerField {
+    pub role: String,
+    pub names: Vec<String>,
+    pub password: bool,
+    pub in_frame: bool,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FocusWindow {
+    pub title: String,
+    pub app_id: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ComputerFocus {
+    pub window: Option<FocusWindow>,
+    pub url: Option<String>,
+    /// Asked for: Some, holding None when nothing says what has the keyboard.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
+    pub field: Option<Option<ComputerField>>,
+    /// Asked for and read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filled: Option<Vec<ComputerField>>,
+}
+
+/// A field that's there, even as null.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum ComputerResult {
@@ -257,6 +300,9 @@ pub enum ComputerResult {
     FocusWindow,
     Inspect {
         element: Option<AgentElement>,
+    },
+    Focus {
+        focus: ComputerFocus,
     },
     Exec {
         result: ShellResult,
@@ -341,6 +387,8 @@ mod tests {
         let m = req(json!({"t": "req", "id": 4, "req": {"op": "action", "name": "left_click",
             "input": {"coordinate": [1, 2]}}}));
         assert!(matches!(m, Ok(Message::Req { req: Request::Action { name: ActionName::LeftClick, .. }, .. })));
+        let m = req(json!({"t": "req", "id": 6, "req": {"op": "focus", "filled": true}}));
+        assert_eq!(m, Ok(Message::Req { id: 6, req: Request::Focus { field: false, filled: true } }));
         let m = req(json!({"t": "req", "id": 5, "req": {"op": "live_input",
             "input": {"t": "button", "button": 1, "down": true, "x": 3, "y": 4}}}));
         assert!(matches!(m, Ok(Message::Req { req: Request::LiveInput { input: LiveInput::Button { .. } }, .. })));
@@ -388,6 +436,21 @@ mod tests {
         assert_eq!(v["t"], "hello");
         assert_eq!(v["machineId"], "m");
         assert_eq!(serde_json::from_value::<Message>(v).unwrap(), hello);
+        let focus = ComputerResult::Focus {
+            focus: ComputerFocus {
+                window: Some(FocusWindow { title: "Account".into(), app_id: "firefox".into() }),
+                url: None,
+                field: Some(None),
+                filled: None,
+            },
+        };
+        let v = serde_json::to_value(&focus).unwrap();
+        // Nothing has the keyboard reads as null; what wasn't asked for isn't there.
+        assert_eq!(
+            v,
+            json!({"op": "focus", "focus": {"window": {"title": "Account", "appId": "firefox"}, "url": null, "field": null}})
+        );
+        assert_eq!(serde_json::from_value::<ComputerResult>(v).unwrap(), focus);
         let status = Message::Status { status: ComputerStatus { owner_active: true, ..Default::default() } };
         assert_eq!(serde_json::to_value(&status).unwrap()["status"]["ownerActive"], true);
     }

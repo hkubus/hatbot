@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use crate::keycode::KeyCode;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, SessionEvent, Window};
+use crate::computer::{
+    BoxFuture, Button, Clip, Computer, Fields, Frame, InspectAt, Output, Result, SessionEvent, Window,
+};
 use crate::protocol::AgentElement;
 use crate::typing::KeyTable;
 
@@ -121,7 +123,7 @@ impl Computer for LinuxComputer {
         if self.has_atspi.load(Ordering::Relaxed) {
             f.push("atspi");
         }
-        f.extend(["files", "shell"]);
+        f.extend(["files", "shell", "teach"]);
         f.into_iter().map(String::from).collect()
     }
 
@@ -220,6 +222,21 @@ impl Computer for LinuxComputer {
             match self.atspi().await {
                 Ok(a) => a.inspect(at).await,
                 // No accessibility bus: no tree.
+                Err(_) => Ok(None),
+            }
+        })
+    }
+
+    fn fields(
+        &self,
+        pid: Option<i32>,
+        title: Option<String>,
+        field: bool,
+        filled: bool,
+    ) -> BoxFuture<'_, Result<Option<Fields>>> {
+        Box::pin(async move {
+            match self.atspi().await {
+                Ok(a) => a.fields(pid, title, field, filled).await,
                 Err(_) => Ok(None),
             }
         })
