@@ -30,6 +30,7 @@ import type { Logins } from "../negotiate/logins";
 import type { Negotiations } from "../negotiate/service";
 import type { Plugins } from "../plugins/registry";
 import type { Questions } from "../questions";
+import type { Repeats } from "../scripts/repeats";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { runAgentTask } from "./agent-run";
@@ -59,6 +60,7 @@ export type TasksDeps = {
   memory: MemoryStore;
   plugins: Plugins;
   skills: Skills;
+  repeats?: Repeats;
   /** Set once it exists; it needs the tasks too. */
   clock?: () => number;
 };

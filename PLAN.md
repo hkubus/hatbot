@@ -52,7 +52,7 @@ Built, but not yet deployed or tried live:
 - Check everything has no line for the boxes guest; only `verify.sh` checks it, from the host.
 - Box secrets can only be set in the web app: the iOS app ignores `BoxDetail.secrets`.
 - The iOS app decodes negotiation events but doesn't show negotiations.
-- Scripts: the iOS app doesn't list them or pick one for a schedule; webhook triggers can't run one; repeats are noticed only in the chat, not across a schedule's task runs.
+- Scripts: the iOS app doesn't list them or pick one for a schedule; webhook triggers can't run one.
 
 ---
 
