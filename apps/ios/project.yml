@@ -30,6 +30,8 @@ targets:
         SUPPORTS_MACCATALYST: YES
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Hatbot/Mac.entitlements
+        # mac-agent.sh runs cargo, which reads outside the project.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Hatbot
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -73,6 +75,10 @@ targets:
       path: Hatbot/Hatbot.entitlements
       properties:
         com.apple.security.application-groups: ["group.$(BUNDLE_PREFIX).hatbot"]
+    postBuildScripts:
+      - name: The Mac's agent
+        script: '"$SRCROOT/mac-agent.sh"'
+        basedOnDependencyAnalysis: false
     dependencies:
       - target: HatbotShare
         platformFilter: iOS

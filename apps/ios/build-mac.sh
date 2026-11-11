@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds build/mac/Hatbot.app, the iPad app for the Mac (Mac Catalyst). Runs on a Mac with Xcode and
+# Builds build/mac/Hatbot.app, the iPad app for the Mac (Mac Catalyst). Runs on a Mac with Xcode, Rust and
 # XcodeGen (brew install xcodegen). TEAM, the team ID of an Apple ID added in Xcode's Settings →
 # Accounts, signs it with Xcode's own signing; without it the app is unsigned and won't keep you
 # signed in, which is only for checking that it builds (the iOS workflow does). VERSION, BUILD and
@@ -10,6 +10,10 @@ prefix=${BUNDLE_PREFIX:-$(sed -n 's/^ *BUNDLE_PREFIX: *//p' project.yml | head -
 
 command -v xcodegen >/dev/null || { echo "XcodeGen is missing: brew install xcodegen" >&2; exit 1; }
 xcodegen generate --quiet
+# The agent in the app (mac-agent.sh) is Rust, built for both kinds of Mac.
+rustup=$(command -v rustup || echo "$HOME/.cargo/bin/rustup")
+[ -x "$rustup" ] || { echo "Rust is missing: https://rustup.rs" >&2; exit 1; }
+"$rustup" target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 
 if command -v xcbeautify >/dev/null; then log=xcbeautify; else log=cat; fi
 

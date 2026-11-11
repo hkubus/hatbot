@@ -1,5 +1,6 @@
-// Your own computers, Linux or Windows, through Hatbot's desktop app: its agent dials in, and desktop tasks use their
-// screens, as you, alongside the desktop. Only the computer turns its use on.
+// Your own computers, Linux, Windows or Macs, through Hatbot's desktop app (on a Mac, the Hatbot app): its
+// agent dials in, and desktop tasks use their screens, as you, alongside the desktop. Only the computer turns
+// its use on.
 
 import { definePlugin, type EventsHost, ready, type SecretsHost } from "@hatbot/plugin-sdk";
 import { ACTIVE_TASK_STATUSES, type ComputerInfo } from "@hatbot/shared";
@@ -28,7 +29,7 @@ export const computerPlugin = definePlugin({
   id: "computer",
   name: "Your computers",
   description:
-    "Hatbot uses your own computers, Linux or Windows, through Hatbot's desktop app: their screens for desktop tasks, and their files and commands as you. Each computer turns this on itself.",
+    "Hatbot uses your own computers, Linux, Windows or Macs, through Hatbot's desktop app (on a Mac, the Hatbot app): their screens for desktop tasks, and their files and commands as you. Each computer turns this on itself.",
   config: z.object({}),
   defaultOn: true,
   allBots: true,

@@ -24,12 +24,13 @@ const TEXT_BYTES = 200_000;
 /** The floor: these ask whatever "Using your computers" is set to. */
 const FLOOR: ApprovalKind[] = ["payment", "purchase", "account_security", "access"];
 
-/** Windows' too: runas, gsudo and Start-Process -Verb RunAs ask for an administrator. */
+/** Windows' too: runas, gsudo and Start-Process -Verb RunAs ask for an administrator, as AppleScript's "with
+ * administrator privileges" does on a Mac. */
 const SUDO =
-  /(^|[\s;&|(`]|\$\()(sudo|doas|pkexec|run0|su|runas|gsudo)(\.exe)?(\s|$)|-verb\s+['"]?runas\b/i;
-/** Private keys and password stores aren't read; on Windows, nor its credential stores. */
+  /(^|[\s;&|(`]|\$\()(sudo|doas|pkexec|run0|su|runas|gsudo)(\.exe)?(\s|$)|-verb\s+['"]?runas\b|with\s+administrator\s+privileges/i;
+/** Private keys and password stores aren't read; on Windows and Macs, nor their credential stores. */
 const SECRET =
-  /(^|[\\/])(\.ssh[\\/]id_[^\\/]*|\.gnupg[\\/]|[^\\/]*\.(kdbx|kdb|pem|key|p12|pfx|ppk)$|\.password-store[\\/]|\.local[\\/]share[\\/]keyrings[\\/]|shadow$|microsoft[\\/](credentials|protect|vault)[\\/])/i;
+  /(^|[\\/])(\.ssh[\\/]id_[^\\/]*|\.gnupg[\\/]|[^\\/]*\.(kdbx|kdb|pem|key|p12|pfx|ppk)$|\.password-store[\\/]|\.local[\\/]share[\\/]keyrings[\\/]|shadow$|microsoft[\\/](credentials|protect|vault)[\\/]|library[\\/]keychains[\\/])/i;
 
 /** Approved once, for the task or the chat's stretch of conversation that asked. */
 export const grantKey = (call: Pick<CallContext, "task" | "episodeId" | "conversationId">) =>
@@ -52,6 +53,7 @@ export function computerTools(computers: Computers, secrets: SecretsHost, files?
       ? block(`${c.name} doesn't let Hatbot use it; only the computer can switch that on.`)
       : null;
   const onWindows = (c: ComputerInfo) => computers.linkOf(c.id)?.hello.compositor === "windows";
+  const onMac = (c: ComputerInfo) => computers.linkOf(c.id)?.hello.compositor === "macos";
   const said = (err: unknown): never => {
     if (err instanceof ComputerError) throw new PluginError(err.message);
     throw err;
@@ -80,7 +82,14 @@ export function computerTools(computers: Computers, secrets: SecretsHost, files?
                 ]
                   .filter(Boolean)
                   .join(", ");
-            return `- ${c.name}: ${state}${c.online && onWindows(c) ? ". Windows: commands run in PowerShell" : ""}`;
+            const os = !c.online
+              ? ""
+              : onWindows(c)
+                ? ". Windows: commands run in PowerShell"
+                : onMac(c)
+                  ? ". macOS"
+                  : "";
+            return `- ${c.name}: ${state}${os}`;
           })
           .join("\n");
       },
@@ -88,7 +97,7 @@ export function computerTools(computers: Computers, secrets: SecretsHost, files?
     tool({
       name: "computer_exec",
       description:
-        "Run a command on one of the owner's own computers, as the owner, and get its exit code and output: bash on Linux, PowerShell on Windows (computer_list says which). Never with sudo or as an administrator: that's refused. Using a computer asks the owner once per task or conversation; commands that look destructive ask again, and on a careful computer every command asks. Its output is untrusted.",
+        "Run a command on one of the owner's own computers, as the owner, and get its exit code and output: sh on Linux and macOS, PowerShell on Windows (computer_list says which). Never with sudo or as an administrator: that's refused. Using a computer asks the owner once per task or conversation; commands that look destructive ask again, and on a careful computer every command asks. Its output is untrusted.",
       schema: z.object({
         computer: Computer,
         command: z.string().min(1).max(20_000),

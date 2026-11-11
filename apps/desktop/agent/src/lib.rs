@@ -1,4 +1,4 @@
-//! Lets Hatbot use the owner's computer, on Linux or Windows. The app starts an [`Agent`], which dials out to the
+//! Lets Hatbot use the owner's computer, on Linux, Windows or a Mac. The app starts an [`Agent`], which dials out to the
 //! brain and does what it asks on the screen, within what the owner allows: the switch, a pause, and
 //! never while they're at the keyboard or the session is locked.
 
@@ -11,11 +11,15 @@ mod e2e;
 #[cfg(test)]
 mod fake;
 mod files;
+#[cfg(target_os = "macos")]
+pub mod host;
 mod human;
 mod keycode;
 mod keys;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod protocol;
 mod scale;
 mod shell;
@@ -68,6 +72,8 @@ impl Agent {
             let started = linux::LinuxComputer::start();
             #[cfg(windows)]
             let started = windows::WindowsComputer::start();
+            #[cfg(target_os = "macos")]
+            let started = macos::MacComputer::start();
             started
         };
         Self::run(rt, config, Arc::new(computer), events)
@@ -190,6 +196,8 @@ fn machine_id() -> String {
         .open(r"SOFTWARE\Microsoft\Cryptography")
         .and_then(|k| k.get_string("MachineGuid"))
         .ok();
+    #[cfg(target_os = "macos")]
+    let raw = mac_uuid();
     let raw = raw.unwrap_or_else(host_name);
     let digest = Sha256::digest(format!("hatbot:{}", raw.trim()));
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
@@ -200,5 +208,29 @@ fn host_name() -> String {
     let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
     #[cfg(windows)]
     let name = std::env::var("COMPUTERNAME").ok();
+    #[cfg(target_os = "macos")]
+    let name = std::process::Command::new("/usr/sbin/scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
     name.map(|h| h.trim().to_owned()).filter(|h| !h.is_empty()).unwrap_or_else(|| "Computer".into())
+}
+
+/// The Mac's hardware UUID.
+#[cfg(target_os = "macos")]
+fn mac_uuid() -> Option<String> {
+    #[repr(C)]
+    struct Timespec {
+        sec: i64,
+        nsec: i64,
+    }
+    unsafe extern "C" {
+        fn gethostuuid(id: *mut u8, wait: *const Timespec) -> i32;
+    }
+    let mut id = [0u8; 16];
+    let wait = Timespec { sec: 1, nsec: 0 };
+    // SAFETY: a 16-byte buffer, as uuid_t is.
+    (unsafe { gethostuuid(id.as_mut_ptr(), &wait) } == 0).then(|| id.iter().map(|b| format!("{b:02x}")).collect())
 }

@@ -145,6 +145,10 @@ pub trait Computer: Send + Sync + 'static {
     fn focus_window(&self, id: u64) -> BoxFuture<'_, Result<()>>;
     /// The element there, from AT-SPI; None when there's no tree.
     fn inspect(&self, at: InspectAt) -> BoxFuture<'_, Result<Option<AgentElement>>>;
+    /// What shortcuts like paste are pressed with: Ctrl, or Command on a Mac.
+    fn shortcut_key(&self) -> KeyCode {
+        KeyCode::KEY_LEFTCTRL
+    }
 }
 
 #[cfg(test)]

@@ -23,12 +23,82 @@ atspi = { version = "0.30", default-features = false, features = ["proxies", "to
 calloop = "0.14"
 calloop-wayland-source = "0.4"
 evdev = "0.13"
-rustix = { version = "1", features = ["fs", "mm", "pipe", "process"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 xkbcommon = { version = "0.9", default-features = false }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "mm", "pipe", "process"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+dispatch2 = { version = "0.3", default-features = false, features = ["std", "block2", "objc2"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "libc",
+    "NSEvent",
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "NSRunningApplication",
+    "NSWorkspace",
+] }
+objc2-application-services = { version = "0.3", default-features = false, features = [
+    "std",
+    "libc",
+    "AXError",
+    "AXUIElement",
+    "AXValue",
+    "HIServices",
+] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "CFArray",
+    "CFBase",
+    "CFCGTypes",
+    "CFData",
+    "CFDate",
+    "CFDictionary",
+    "CFNumber",
+    "CFRunLoop",
+    "CFString",
+] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = [
+    "std",
+    "CGBitmapContext",
+    "CGColorSpace",
+    "CGContext",
+    "CGDirectDisplay",
+    "CGDisplayConfiguration",
+    "CGError",
+    "CGEvent",
+    "CGEventSource",
+    "CGEventTypes",
+    "CGGeometry",
+    "CGImage",
+    "CGRemoteOperation",
+    "CGSession",
+    "CGWindow",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSData",
+    "NSEnumerator",
+    "NSError",
+    "NSString",
+] }
+objc2-screen-capture-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-core-graphics",
+    "SCError",
+    "SCScreenshotManager",
+    "SCShareableContent",
+    "SCStream",
+] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

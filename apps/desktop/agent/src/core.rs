@@ -708,7 +708,7 @@ impl Core {
         let old = self.computer.clipboard().await?;
         let served = self.computer.set_clipboard(Some(Clip::text(text))).await?;
         let v = table.shortcut('v').map_or(KeyCode::KEY_V, |s| s.code);
-        let pasted = self.press(&[KeyCode::KEY_LEFTCTRL, v], Some(Duration::from_millis(30))).await;
+        let pasted = self.press(&[self.computer.shortcut_key(), v], Some(Duration::from_millis(30))).await;
         // An app that doesn't paste on Ctrl+V (a terminal) never asks: the old clipboard comes back anyway.
         let _ = tokio::time::timeout(Duration::from_secs(1), served).await;
         self.computer.set_clipboard(old).await?;

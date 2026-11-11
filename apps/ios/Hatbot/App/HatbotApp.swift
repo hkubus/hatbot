@@ -36,6 +36,13 @@ struct HatbotApp: App {
         }
       }
       .environment(session)
+      #if targetEnvironment(macCatalyst)
+        .safeAreaInset(edge: .top, spacing: 0) { MacAgentBanner() }
+        // The agent runs as whoever is signed in.
+        .onChange(of: session.store?.api.token, initial: true) {
+          MacAgent.shared.run(server: session.store?.api.server, token: session.store?.api.token)
+        }
+      #endif
       .font(.sans())
       // Links in replies, sources and task steps: only the kinds that can't start anything else.
       .environment(\.openURL, OpenURLAction { url in AppLink.tapped(url).map { .systemAction($0) } ?? .discarded })

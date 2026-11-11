@@ -135,6 +135,36 @@ test("a Windows computer runs PowerShell: running as an administrator is refused
   expect(vault.isError).toBe(true);
 });
 
+test("a Mac: asking for an administrator through AppleScript is refused, the list says it's a Mac, and its keychains aren't read", async () => {
+  const t = await testApp();
+  await connected(
+    t,
+    new FakeComputer({
+      ...new FakeComputer().hello,
+      machineId: "m-mac",
+      name: "mac",
+      compositor: "macos",
+      features: ["screen", "input", "windows", "ax", "files", "shell", "live"],
+    }),
+  );
+  const exec = toolOf(t, "computer_exec");
+  const v = (command: string) => verdictFor(exec, { computer: "mac", command }, call);
+  expect(
+    v(`osascript -e 'do shell script "softwareupdate -ia" with administrator privileges'`).action,
+  ).toBe("block");
+  await runPluginTool(exec, { computer: "mac", command: "ls ~" }, call);
+  expect(v("ls ~").action).toBe("allow");
+  expect(await runPluginTool(toolOf(t, "computer_list"), {}, call)).toMatchObject({
+    content: expect.stringContaining("mac: on. macOS"),
+  });
+  const keychain = await runPluginTool(
+    toolOf(t, "computer_get_file"),
+    { computer: "mac", path: "~/Library/Keychains/login.keychain-db" },
+    call,
+  );
+  expect(keychain.isError).toBe(true);
+});
+
 test("files: into Downloads/Hatbot freely, anywhere else asks; reading keys is refused, and what's read is untrusted", async () => {
   const t = await testApp();
   const { computer } = await connected(t);

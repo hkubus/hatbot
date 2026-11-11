@@ -28,6 +28,9 @@ struct SettingsView: View {
               get: { store.paused },
               set: { on in Task { await attempt($error) { try await store.setPaused(on) } } }))
         }
+        #if targetEnvironment(macCatalyst)
+          ThisMacSections()
+        #endif
         Section {
           NavigationLink("Automations", value: Route.schedules)
           NavigationLink("Spend", value: Route.spend)

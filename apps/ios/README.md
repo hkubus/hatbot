@@ -55,6 +55,11 @@ Keychain. Add the Apple ID in Xcode's Settings → Accounts, then either:
 In Live, once you've taken control, the mouse or trackpad drives the desktop: click, right click,
 drag and scroll, and its pointer follows yours. Turn on Keyboard to type there.
 
+Hatbot can use the Mac itself, as the desktop app lets it use a Linux or Windows computer: Settings → This
+Mac → Let Hatbot use this Mac, then allow Hatbot in System Settings' Accessibility and Screen & System
+Audio Recording, and open it again. Its agent (`apps/desktop/agent`) is built into the app by
+`mac-agent.sh`, so building for the Mac needs Rust (https://rustup.rs) too.
+
 ## Test the core (Mac or Linux)
 
 ```sh

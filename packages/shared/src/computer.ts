@@ -24,7 +24,7 @@ export type ComputerHello = {
   /** Its host name, as the owner sees it until they rename it. */
   name: string;
   version: string;
-  /** "niri", "sway", "hyprland" or another wlroots compositor's name; "windows" on Windows, whose commands run in PowerShell. */
+  /** "niri", "sway", "hyprland" or another wlroots compositor's name; "windows" on Windows, whose commands run in PowerShell; "macos" on a Mac. */
   compositor: string;
   /** "Let Hatbot use this computer", switched only at the computer. Off: the brain may not ask anything but status. */
   enabled: boolean;
