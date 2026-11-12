@@ -1,5 +1,5 @@
 // Scripts: steps a bot saves once and the brain runs without the model, from the chat, a task, a
-// schedule or a watcher. One that changes things is approved by you once, as written.
+// schedule, a watcher or a webhook. One that changes things is approved by you once, as written.
 import {
   allow,
   askCareful,
@@ -50,7 +50,7 @@ const STEPS = `Each step is one object:
 - {"task": prompt, "title": title}: starts a background task with the prompt and everything the script found so far, for what needs judgement.
 - {"stop": text, "failed": true}: ends the run with text as its result; failed is optional.
 A condition is {"value": v, "is": "equals"|"not_equals"|"above"|"below"|"contains"|"not_contains"|"matches"|"empty"|"not_empty", "to": v}, or {"all": [conditions]}, {"any": [conditions]}, {"not": condition}.
-"{{name.path.0.field}}" on its own is that value; inside text it's its text. input.<name> is what the script was run with (a watcher's runs get input.value and input.previous) and now is the time. {{list | count}}, {{list | join}}, {{list | lines}} and {{x | json}} change a value.`;
+"{{name.path.0.field}}" on its own is that value; inside text it's its text. input.<name> is what the script was run with (a watcher's runs get input.value and input.previous, a webhook's input.payload, parsed when it's JSON) and now is the time. {{list | count}}, {{list | join}}, {{list | lines}} and {{x | json}} change a value.`;
 
 const SaveInput = z.object({
   name: z
@@ -162,8 +162,11 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
       origin: o.origin as Task["origin"],
       source: o.source,
       scheduleId: o.scheduleId,
+      triggerId: o.triggerId,
       watcherId: o.watcherId,
       runKey: o.runKey,
+      payload: o.payload,
+      trusted: o.trusted,
       botId: script.botId,
       message: o.message,
       parent: o.parent,
@@ -189,7 +192,7 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
     tool({
       name: "script_save",
       label: "Saving a script",
-      description: `Save a script: steps the brain runs without a model, for what's done the same way every time, like a check the owner asks for often or a schedule's or watcher's work. It runs with script_run, or from a schedule or watcher. It can call your plugins' tools, not the core's (memory, tasks, threads). One that changes things asks the owner to approve it once, as written; then its changes run without asking, except money, accounts and doors. Test it with script_run after saving.\n\n${STEPS}`,
+      description: `Save a script: steps the brain runs without a model, for what's done the same way every time, like a check the owner asks for often or a schedule's or watcher's work. It runs with script_run, or from a schedule, watcher or webhook. It can call your plugins' tools, not the core's (memory, tasks, threads). One that changes things asks the owner to approve it once, as written; then its changes run without asking, except money, accounts and doors. Test it with script_run after saving.\n\n${STEPS}`,
       schema: SaveInput,
       access: "write",
       places: ["chat", "task"],
@@ -397,7 +400,7 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
           },
         },
         prompt: {
-          chat: `- Scripts are steps you save once that run without a model: from the chat (script_run), a schedule or a watcher. Their tools load when you need them: find them with tool_search_tool_regex ("script_"). When the owner asks for something one of your scripts does, run it rather than doing it by hand; when they ask for the same thing again and again, offer to save it as one.`,
+          chat: `- Scripts are steps you save once that run without a model: from the chat (script_run), a schedule, a watcher or a webhook. Their tools load when you need them: find them with tool_search_tool_regex ("script_"). When the owner asks for something one of your scripts does, run it rather than doing it by hand; when they ask for the same thing again and again, offer to save it as one.`,
           task: `- A script (script_run) does its fixed steps without a model: use one of yours when it does what this task needs.`,
         },
         stop: unlisten,

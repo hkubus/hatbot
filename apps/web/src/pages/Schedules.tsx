@@ -473,6 +473,7 @@ const triggerForm = (t: Trigger) => ({
   name: t.name,
   kind: t.kind,
   prompt: t.prompt,
+  scriptId: t.scriptId ?? 0,
   trusted: t.trusted,
   confirmChecks: t.confirmChecks,
   botId: t.botId,
@@ -492,6 +493,7 @@ function TriggerEdit({
     name: newKind === "kuma" ? "Uptime Kuma" : "",
     kind: newKind,
     prompt: newKind === "kuma" ? KUMA_PROMPT : "",
+    scriptId: 0,
     trusted: false,
     confirmChecks: 0,
     botId: HATBOT_ID,
@@ -523,6 +525,8 @@ function TriggerEdit({
     );
 
   const changed = !stored || edited;
+  const scriptId = form.kind === "webhook" ? form.scriptId : 0;
+  const does = scriptId ? { scriptId } : { prompt: form.prompt };
 
   const save = () =>
     run(async () => {
@@ -531,7 +535,7 @@ function TriggerEdit({
           method: "PATCH",
           body: {
             name: form.name,
-            prompt: form.prompt,
+            ...does,
             trusted: form.trusted,
             confirmChecks: form.confirmChecks,
             botId: form.botId,
@@ -541,7 +545,16 @@ function TriggerEdit({
         saved(form, triggerForm(t));
         toast("Saved");
       } else {
-        const t = await api<TriggerWithSecret>("/triggers", { body: form });
+        const t = await api<TriggerWithSecret>("/triggers", {
+          body: {
+            name: form.name,
+            kind: form.kind,
+            ...does,
+            trusted: form.trusted,
+            confirmChecks: form.confirmChecks,
+            botId: form.botId,
+          },
+        });
         putTrigger(t);
         fresh = t;
         release();
@@ -633,21 +646,30 @@ function TriggerEdit({
               onChange={(e) => set({ name: e.target.value })}
             />
           </label>
-          <label>
-            <span className="label">
-              {form.kind === "kuma"
-                ? "What to do when a monitor goes down"
-                : "What to do with an event"}
-            </span>
-            <textarea
-              className="field"
-              rows={5}
-              maxLength={4000}
-              value={form.prompt}
-              onChange={(e) => set({ prompt: e.target.value })}
+          {form.kind === "webhook" && (
+            <ScriptPicker
+              botId={form.botId}
+              value={form.scriptId}
+              onChange={(scriptId) => set({ scriptId })}
             />
-          </label>
-          <BotPicker value={form.botId} onChange={(botId) => set({ botId })} />
+          )}
+          {!scriptId && (
+            <label>
+              <span className="label">
+                {form.kind === "kuma"
+                  ? "What to do when a monitor goes down"
+                  : "What to do with an event"}
+              </span>
+              <textarea
+                className="field"
+                rows={5}
+                maxLength={4000}
+                value={form.prompt}
+                onChange={(e) => set({ prompt: e.target.value })}
+              />
+            </label>
+          )}
+          <BotPicker value={form.botId} onChange={(botId) => set({ botId, scriptId: 0 })} />
           {form.kind === "kuma" && (
             <div className="form-row">
               <span className="label">Start a task after</span>
@@ -674,7 +696,7 @@ function TriggerEdit({
           )}
           <SaveBar
             error={error}
-            disabled={busy || !changed || !form.name.trim() || !form.prompt.trim()}
+            disabled={busy || !changed || !form.name.trim() || (!scriptId && !form.prompt.trim())}
             onSave={save}
             label={stored ? "Save" : "Create"}
           />
