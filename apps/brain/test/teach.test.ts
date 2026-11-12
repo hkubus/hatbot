@@ -425,20 +425,17 @@ function teachable() {
   return { computer, at };
 }
 
-test("Teach on a computer: what you do from Live is recorded and reaches the computer, its secrets stay out, keys you held are let go, and the skill says where it runs", async () => {
-  const { t, work, call } = await teachApp();
+/**
+ * Records on a teachable computer, with a live view open on it: `send` waits for input to reach the
+ * computer, and for the checks it sets off to be answered.
+ */
+async function recordOn(t: TestApp, call: Call) {
   const { computer, at } = teachable();
   const c = await withComputer(t, computer);
   stops.push(c.stop);
   const res = await call("POST", "/teach/start", { screen: "m-laptop" });
   expect(res.status).toBe(200);
   const session = (await res.json()) as TeachSession;
-  expect(session.screen).toBe("m-laptop");
-  expect(computer.requests).toContainEqual({ op: "claim", taskId: "-2" });
-  expect(t.computers.find("m-laptop")?.control).toBe("owner");
-  // No task starts on it meanwhile.
-  expect(t.computers.screen("m-laptop")?.lane.holderId).not.toBeNull();
-
   const ws = new WebSocket(`${c.url}/api/v1/computer/live/m-laptop`, {
     headers: { cookie: signIn(t).cookie, origin: ORIGIN },
   } as unknown as string[]);
@@ -448,7 +445,6 @@ test("Teach on a computer: what you do from Live is recorded and reaches the com
   const forwarded = () => computer.requests.filter((r) => r.op === "live_input").length;
   const asked = (k: "field" | "filled") =>
     computer.requests.filter((r) => r.op === "focus" && r[k]).length;
-  // Waits for the input to reach the computer, and for the checks it sets off to be answered.
   const send = async (ms: LiveInput[], checks: { field?: number; filled?: number } = {}) => {
     const before = { input: forwarded(), field: asked("field"), filled: asked("filled") };
     for (const m of ms) ws.send(JSON.stringify(m));
@@ -459,6 +455,18 @@ test("Teach on a computer: what you do from Live is recorded and reaches the com
         asked("filled") === before.filled + (checks.filled ?? 0),
     );
   };
+  return { computer, at, session, ws, send };
+}
+
+test("Teach on a computer: what you do from Live is recorded and reaches the computer, its secrets stay out, keys you held are let go, and the skill says where it runs", async () => {
+  const { t, work, call } = await teachApp();
+  const { computer, at, session, ws, send } = await recordOn(t, call);
+  expect(session.screen).toBe("m-laptop");
+  expect(computer.requests).toContainEqual({ op: "claim", taskId: "-2" });
+  expect(t.computers.find("m-laptop")?.control).toBe("owner");
+  // No task starts on it meanwhile.
+  expect(t.computers.screen("m-laptop")?.lane.holderId).not.toBeNull();
+
   await send(click(400, 300), { filled: 1 });
   // The browser filled in a password: this click's screenshot isn't kept.
   at.filled = [field(["Password"], { role: "password text", password: true })];
@@ -531,4 +539,39 @@ test("Teach on a computer needs its desktop app to know how, and the computer fr
   computer.setStatus({ paused: false });
   await waitFor(() => !t.computers.find("m-laptop")?.paused);
   expect((await call("POST", "/teach/start", { screen: "m-laptop" })).status).toBe(200);
+});
+
+/** Types `text` with `focus` holding the keyboard, then clicks so the next typing is checked anew. */
+async function typeAt(
+  rec: Awaited<ReturnType<typeof recordOn>>,
+  focus: ComputerField | null,
+  text: string,
+) {
+  rec.at.field = focus;
+  await rec.send(typeText(text), { field: 1 });
+  await rec.send(click(10, 10), { filled: 1 });
+}
+
+test("Teach on a computer: typing where nothing that takes text has the keyboard isn't kept", async () => {
+  const { t, work, call } = await teachApp();
+  const rec = await recordOn(t, call);
+  // PuTTY, an RDP or VNC viewer: UI Automation gives the window's pane.
+  await typeAt(rec, field(["PuTTY"], { role: "pane", editable: false }), "r00t-pw-putty");
+  // noVNC, or Proxmox's console, in a browser.
+  await typeAt(rec, field([], { role: "canvas", editable: false }), "r00t-pw-vnc");
+  await typeAt(rec, field(["Search", "q"]), "Dune");
+  const body = await drafted(t, work, call, rec.session.id);
+  expect(body).not.toContain("r00t-pw");
+  expect(body.match(/the field couldn't be checked/g)).toHaveLength(2);
+  expect(body).toContain('typed \\"Dune\\"');
+});
+
+test("Teach on a computer: typing into a terminal in a page isn't kept", async () => {
+  const { t, work, call } = await teachApp();
+  const rec = await recordOn(t, call);
+  // xterm.js, as in Proxmox's and many web consoles.
+  await typeAt(rec, field(["Terminal input"], { role: "entry" }), "r00t-pw-xterm");
+  const body = await drafted(t, work, call, rec.session.id);
+  expect(body).not.toContain("r00t-pw");
+  expect(body).toContain("in a password or code field (not recorded)");
 });

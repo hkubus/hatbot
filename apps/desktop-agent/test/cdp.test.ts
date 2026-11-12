@@ -45,6 +45,7 @@ test("Teach knows password, code and card fields, and not the fields that only l
     { name: "numerKarty" },
     { label: "Verify it's you" },
     { tag: "TEXTAREA", name: "private_key" },
+    { tag: "TEXTAREA", label: "Terminal input" },
     // Short number fields: one box per digit, or a whole code; and a card number by its shape or length.
     { inputMode: "numeric", maxLength: 1 },
     { inputMode: "numeric", maxLength: 6 },

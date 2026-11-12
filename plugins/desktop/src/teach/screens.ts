@@ -110,8 +110,9 @@ export function computerScreen(c: ComputerScreen): TeachScreen {
     },
     field: async () => {
       const { field, url } = await c.focus({ field: true });
-      // An app with no accessibility tree, or nothing in it with the keyboard.
-      if (!field) throw new OffPage("nothing says what has the keyboard");
+      // An app with no accessibility tree, or a pane or canvas that passes keys on unseen: PuTTY, an RDP
+      // or VNC viewer.
+      if (!field?.editable) throw new OffPage("nothing that takes text has the keyboard");
       return { secret: secretField(field), url };
     },
     shot: async () => {
