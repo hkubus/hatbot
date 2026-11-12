@@ -27,6 +27,7 @@ const refusedBy = (err: unknown) =>
   err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
 const WatchId = z.string().min(1).max(160);
+const ListingKey = z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"');
 const Days = z.number().int().min(7).max(180).optional();
 const Checks = z
   .array(
@@ -59,10 +60,50 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   {
     name: "scout_listing_detail",
     description:
-      "One listing in full: its price history, Scout's score and verdict, and the description as Scout last saw it.",
+      "One listing in full: its price history, Scout's score and verdict, the description as Scout last saw it, and for haggling: days listed, price drops, whether the price is negotiable, the seller with their other listings, and relists. live and sellerListings each load the marketplace once more.",
     schema: z.object({
-      key: z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"'),
+      key: ListingKey,
       watchId: WatchId.optional(),
+      live: z
+        .boolean()
+        .optional()
+        .describe("Check on the marketplace now that it's still up, and at what price"),
+      sellerListings: z
+        .boolean()
+        .optional()
+        .describe("The seller's other listings as the marketplace shows them now"),
+    }),
+  },
+  {
+    name: "scout_price_reference",
+    description:
+      "Scout's typical used asking price for a product, from free text matched to its watches and research series. best has the typical price, its quartiles and how many listings it rests on; it's null with fewer than 4. Asking prices, not what things went for. Quick: it loads no marketplace.",
+    schema: z.object({
+      query: z.string().trim().min(1).max(240),
+      sources: z
+        .array(Marketplace)
+        .min(1)
+        .max(3)
+        .optional()
+        .describe("Prefer matches that watch these marketplaces"),
+      terms: z.string().max(240).optional().describe("Comma-separated words it must also have"),
+      excluded: z
+        .string()
+        .max(240)
+        .optional()
+        .describe("Comma-separated words that rule a match out"),
+    }),
+  },
+  {
+    name: "scout_comparables",
+    description:
+      "Other listings of the same thing as one listing, up now: the same watch, model and condition, cheapest first, with their median and how far this one is from it. Asking prices, from what Scout found.",
+    schema: z.object({
+      listingKey: ListingKey,
+      watchId: WatchId.optional().describe(
+        "Compare within this watch instead of the listing's own",
+      ),
+      limit: z.number().int().min(1).max(10).optional(),
     }),
   },
   {
@@ -313,7 +354,7 @@ const WRITES: { name: string; description: string; schema: z.ZodType }[] = [
     description:
       "Mark a listing in Scout's feed, as the owner would: a decision (buy, watch, pass, or null to clear it), a note, or hidden. Only what you pass changes. It's a mark: nothing is bought or sent.",
     schema: z.object({
-      key: z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"'),
+      key: ListingKey,
       decision: z.enum(["buy", "watch", "pass"]).nullable().optional(),
       note: z.string().max(2000).optional(),
       hidden: z.boolean().optional(),
@@ -378,6 +419,15 @@ const FlipListed = z.object({
   status: z.enum(["listed", "failed", "declined"]),
   url: z.string().trim().max(2000).optional(),
   error: z.string().max(2000).optional(),
+});
+
+const Outcome = z.object({
+  negotiationId: z.string().trim().min(1).max(160),
+  listingKey: ListingKey,
+  outcome: z.enum(["agreed", "lost", "abandoned"]),
+  asking: z.number().positive().max(10_000_000),
+  price: z.number().positive().max(10_000_000).nullable().optional(),
+  currency: z.string().trim().max(8).optional(),
 });
 
 const FlipTakenDown = z.object({
@@ -531,6 +581,17 @@ export const scoutPlugin = definePlugin({
         policy: (_, c) =>
           c.task ? block("Hatbot tells Scout itself once a take-down task ends.") : allow(),
         run: (input, c) => call("scout_flip_taken_down", input, c.signal),
+      }),
+      tool({
+        name: "scout_record_outcome",
+        description: "Tell Scout how a negotiation ended, with the asking and final price.",
+        access: "write",
+        brainOnly: true,
+        schema: Outcome,
+        // The brain reports it itself once a negotiation is closed.
+        policy: (_, c) =>
+          c.task ? block("Hatbot tells Scout itself once a negotiation is closed.") : allow(),
+        run: (input, c) => call("scout_record_outcome", input, c.signal),
       }),
     ];
     return ready(tools, {
