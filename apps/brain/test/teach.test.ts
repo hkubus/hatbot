@@ -575,3 +575,33 @@ test("Teach on a computer: typing into a terminal in a page isn't kept", async (
   expect(body).not.toContain("r00t-pw");
   expect(body).toContain("in a password or code field (not recorded)");
 });
+
+const ends: [string, (c: FakeComputer) => void][] = [
+  ["Stop on its banner", (c) => c.setStatus({ screen: null })],
+  ["pausing it", (c) => c.setStatus({ paused: true })],
+  ["turning it off", (c) => c.setStatus({ enabled: false })],
+  ["it going offline", (c) => c.close()],
+];
+for (const [what, end] of ends)
+  test(`Teach on a computer: ${what} throws the recording away and frees the computer`, async () => {
+    const { t, call } = await teachApp();
+    const { computer, session } = await recordOn(t, call);
+    end(computer);
+    await waitFor(() => t.teach.get(session.id)?.status === "discarded");
+    expect(t.teach.current().recording).toBeNull();
+    expect(t.computers.find("m-laptop")?.control).toBe("hatbot");
+    expect(t.computers.screen("m-laptop")?.lane.holderId).toBeNull();
+  });
+
+test("Teach on a computer: input the computer refused isn't recorded", async () => {
+  const { t, work, call } = await teachApp();
+  const rec = await recordOn(t, call);
+  rec.at.field = field(["Search", "q"]);
+  rec.computer.answer.live_input = () => ({ error: "The computer is locked.", code: "locked" });
+  await rec.send(typeText("zzz"));
+  delete rec.computer.answer.live_input;
+  await rec.send(typeText("Dune"), { field: 1 });
+  const body = await drafted(t, work, call, rec.session.id);
+  expect(body).not.toContain("zzz");
+  expect(body).toContain('typed \\"Dune\\"');
+});

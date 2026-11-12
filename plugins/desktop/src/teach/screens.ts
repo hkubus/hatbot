@@ -22,6 +22,8 @@ export type TeachScreen = {
   live: Live;
   /** Why it can't be recorded on now, as a sentence; null when it can. */
   unavailable(): string | null;
+  /** Taken back from you: handed back, or on a computer, Stop on its banner, paused, off or offline. */
+  lost(): boolean;
   /** Gives you control, and back to Hatbot after. */
   takeover(): Promise<void>;
   handback(): Promise<void>;
@@ -43,6 +45,7 @@ export function desktopScreen(desk: Omit<DesktopService, "teach">): TeachScreen 
     live: desk.live,
     unavailable: () =>
       agent.configured && control.get().online ? null : "The desktop isn't answering.",
+    lost: () => control.get().control === "hatbot",
     takeover: () => control.takeover(),
     handback: () => control.handback(),
     field: async () => {
@@ -93,6 +96,10 @@ export function computerScreen(c: ComputerScreen): TeachScreen {
       if (!["teach", "live"].every((f) => c.features().includes(f)))
         return `Update Hatbot's desktop app on ${c.name} to teach on it.`;
       return null;
+    },
+    lost: () => {
+      const s = c.status();
+      return c.control.get().control === "hatbot" || !s?.enabled || s.paused || !s.screen;
     },
     // The monitor stays the one it was when you started, so Live's points mean the same throughout.
     takeover: async () => {

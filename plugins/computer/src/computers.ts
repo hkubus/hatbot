@@ -13,6 +13,7 @@ import {
   type ComputerFocus,
   type ComputerHello,
   type ComputerMessage,
+  type ComputerStatus,
   type ComputerWindow,
   type ComputerScreen as Monitor,
   shotSize,
@@ -92,6 +93,8 @@ export type ComputerScreen = {
   readonly control: ScreenControl;
   readonly live: Live;
   info(): ComputerInfo;
+  /** What the computer last said of itself; null while it's offline. */
+  status(): ComputerStatus | null;
   /** What its agent can do, from its hello; none while it's offline. */
   features(): string[];
   /** "windows", or the compositor's name on Linux; null while it's offline. */
@@ -328,6 +331,7 @@ export class Computers {
       control: m.control,
       live: m.live,
       info: () => self.get(id) as ComputerInfo,
+      status: () => m.link?.status ?? null,
       features: () => m.link?.hello.features ?? [],
       system: () => m.link?.hello.compositor ?? null,
       shot: () => {
@@ -378,9 +382,12 @@ export class Computers {
           check();
         }),
       claim: async (taskId, signal) => {
+        const l = link();
         m.claimed = (
-          await link().request({ op: "claim", taskId: String(taskId) }, 15_000, signal)
+          await l.request({ op: "claim", taskId: String(taskId) }, 15_000, signal)
         ).screen;
+        // Its status saying so may come after the answer.
+        l.status = { ...l.status, screen: m.claimed };
       },
       release: async (taskId) => {
         m.claimed = null;

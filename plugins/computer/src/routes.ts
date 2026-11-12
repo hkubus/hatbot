@@ -95,6 +95,8 @@ export function routes(computers: Computers) {
           // Keys this viewer holds down on the computer, let go when it closes.
           const held = new Set<string>();
           let sent = false;
+          // What the computer took, passed on in the order it was sent.
+          let taken = Promise.resolve();
           return {
             onOpen(_, ws) {
               forget = c.env.onSignOut(() => ws.close(1008, "Signed out"));
@@ -119,11 +121,16 @@ export function routes(computers: Computers) {
                 if (m.down) held.add(m.key);
                 else held.delete(m.key);
               }
-              void computers
-                .linkOf(id)
-                ?.request({ op: "live_input", input: m }, 5000)
-                .catch(() => {});
-              s.live.input(m);
+              const input = m;
+              const asked = computers.linkOf(id)?.request({ op: "live_input", input }, 5000);
+              const ok =
+                asked?.then(
+                  () => true,
+                  () => false,
+                ) ?? Promise.resolve(false);
+              taken = taken.then(async () => {
+                if (await ok) s.live.input(input);
+              });
               sent = true;
             },
             onClose() {
@@ -135,7 +142,7 @@ export function routes(computers: Computers) {
                 void link
                   ?.request({ op: "live_input", input: { t: "key", key, down: false } }, 5000)
                   .catch(() => {});
-              if (sent) computers.screen(id)?.live.viewerGone();
+              if (sent) void taken.then(() => computers.screen(id)?.live.viewerGone());
             },
           };
         }),

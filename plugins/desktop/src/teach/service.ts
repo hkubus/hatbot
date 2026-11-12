@@ -101,13 +101,11 @@ export class Teach {
         "UPDATE teach_sessions SET status = 'failed', error = 'Stopped: the brain restarted.' WHERE status = 'drafting'",
       )
       .run();
-    // Handing back some other way (the iOS app, say) ends the recording without a skill.
+    // Handing back some other way (the iOS app, say), or the computer taking itself back, ends the
+    // recording without a skill.
     this.unlisten = d.events.on((e) => {
       const rec = this.rec;
-      if (
-        (e.type === "desktop.state" || e.type === "computers") &&
-        rec?.screen.control.get().control === "hatbot"
-      )
+      if ((e.type === "desktop.state" || e.type === "computers") && rec?.screen.lost())
         void this.discard(rec.id).catch((err) => console.error("teach discard failed", err));
     });
   }
