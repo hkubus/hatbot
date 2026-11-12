@@ -115,7 +115,7 @@ test("a plugin restarted while its call waited for approval or the review doesn'
   task.t.approvals.decide(approval.id, "approve", "web");
   await ended(task.t, task.task.id);
   expect(task.calls).toEqual([]);
-  expect(task.result()).toContain("restarted while this was checked or waited for approval");
+  expect(task.result()).toContain("restarted while this was checked or waited");
 
   // The chat's, approved after its plugin was switched off.
   const calls: string[] = [];

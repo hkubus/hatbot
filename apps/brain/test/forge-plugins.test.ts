@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { forgejoPlugin } from "@hatbot/plugin-forgejo";
 import { githubPlugin } from "@hatbot/plugin-github";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
-import { FakeModel, toolUse } from "./fake-model";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
 import {
   call,
+  ended,
   fakeApi,
   finish,
   pluginApp,
@@ -178,6 +179,8 @@ const fj = fakeApi((req, url, _body, raw) => {
   if (req.method === "POST" && path === `${r}/contents`)
     return { commit: { sha: "0123456789abcdef", html_url: "https://forge.test/c/0123" } };
   if (req.method === "POST" && path === `${r}/pulls`) return pr;
+  if (req.method === "POST" && path === `${r}/issues/8/comments`)
+    return { html_url: "https://forge.test/issues/8#c1" };
   if (path === `${r}/commits/main/status`) return { state: "success", statuses: [] };
   return missing(404, "The target couldn't be found.");
 });
@@ -445,6 +448,59 @@ test("Forgejo: a task updates a file by its sha and adds one on a new branch, th
     ),
   ).rejects.toThrow("symlink");
   expect(await t.tool("forgejo_file").run({ repo, path: "disk.img" }, call)).toContain("too big");
+});
+
+const FJ = { FORGEJO_URL: `${fj.url}/`, FORGEJO_TOKEN: "tok" };
+const comment = (body: string) => use("forgejo_comment", { repo: "kubus/hatbot", number: 8, body });
+const comments = () =>
+  fj.seen
+    .filter((s) => s.method === "POST" && s.path.endsWith("/comments"))
+    .map((s) => JSON.parse(s.body).body);
+
+test("with a wait set, a task's comment waits for you: stopped, it isn't posted; left, it goes", async () => {
+  const work = new FakeModel([comment("First"), comment("Second"), finish()]);
+  const t = await pluginApp(forgejoPlugin, FJ, { work });
+  t.settings.update({ safety: { sendWaitS: 30 } });
+  const task = scheduled(t);
+  const sending = (but?: number) =>
+    waitFor(() => t.approvals.list(true).find((a) => a.status === "sending" && a.id !== but));
+  const first = await sending();
+  expect(first).toMatchObject({
+    kind: "send",
+    taskId: task.id,
+    summary: "Comment on kubus/hatbot#8",
+  });
+  t.approvals.decide(first.id, "deny", "web");
+  await sending(first.id);
+  t.advance(30_000);
+  t.approvals.expireDue();
+  await ended(t, task.id);
+  expect(comments()).toEqual(["Second"]);
+  expect(JSON.stringify(work.requests[1]?.messages.at(-1))).toContain("the owner stopped it");
+});
+
+test("a comment you approved yourself doesn't wait", async () => {
+  const work = new FakeModel([comment("Hi"), finish()]);
+  const t = await pluginApp(forgejoPlugin, FJ, { work });
+  t.settings.update({ safety: { sendWaitS: 30, tools: { forgejo_comment: "ask" } } });
+  const task = scheduled(t);
+  await approveUntilEnded(t, task.id);
+  expect(comments()).toEqual(["Hi"]);
+  expect(t.approvals.list(false).map((a) => a.status)).toEqual(["approved"]);
+});
+
+test("the chat's comment waits in its own chat, then goes", async () => {
+  const chat = new FakeModel([comment("From the chat"), { content: [text("Commented.")] }]);
+  const t = await pluginApp(forgejoPlugin, FJ, { chat });
+  t.settings.update({ safety: { sendWaitS: 30 } });
+  const reply = t.thread.post("Say hi on #8");
+  const sending = await waitFor(() => t.approvals.list(true).find((a) => a.status === "sending"));
+  expect(sending).toMatchObject({ taskId: null, conversationId: t.thread.conversationId });
+  expect(comments()).toEqual([]);
+  t.advance(30_000);
+  t.approvals.expireDue();
+  await reply.done;
+  expect(comments()).toEqual(["From the chat"]);
 });
 
 test("a repository checked out in the sandbox goes back as a new branch, and the next change goes on top of it", async () => {

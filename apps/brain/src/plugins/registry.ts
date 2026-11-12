@@ -827,6 +827,17 @@ export function describeCall(t: PluginTool, input: unknown): string {
   return `${t.name} ${JSON.stringify(input ?? {})}`;
 }
 
+const kindOf = (t: PluginTool, input: unknown) =>
+  typeof t.kind === "function" ? t.kind(input) : t.kind;
+
+/** A write that reaches people, which waits as long as Safety's send wait says before it goes. */
+export function sends(t: PluginTool, input: unknown): boolean {
+  if (t.access !== "write") return false;
+  const parsed = t.schema.safeParse(input);
+  return parsed.success && kindOf(t, parsed.data) === "send";
+}
+export const STOPPED_SEND = "Not sent: the owner stopped it. Don't send it another way.";
+
 /**
  * Once a task or conversation has read untrusted content, every write needs approval, unless Haiku's
  * review lets it through or the tool's policy says an approval you gave covers it. `safety` is what
@@ -843,7 +854,9 @@ export function verdictFor(
   const parsed = t.schema.safeParse(input);
   // Bad input fails in runPluginTool, before anything runs.
   if (!parsed.success) return allow();
-  const own = t.policy ? t.policy(parsed.data, call) : allow();
+  const kind = kindOf(t, parsed.data);
+  const policy = t.policy ? t.policy(parsed.data, call) : allow();
+  const own = policy.action === "ask" && !policy.kind && kind ? { ...policy, kind } : policy;
   if (own.action === "block") return own;
   // What was read may be steering where they go, so only you can let them.
   const placed = tainted ? secretsIn(JSON.stringify(parsed.data)) : [];
@@ -859,7 +872,7 @@ export function verdictFor(
   if (mine === "ask")
     return own.action === "ask"
       ? { ...own, always: true, careful: true }
-      : askCareful(`You asked to be asked before ${t.name} runs.`, t.kind);
+      : askCareful(`You asked to be asked before ${t.name} runs.`, kind);
   if (own.action === "ask" && own.careful) return own;
   if (mine === "allow") return covered("You let it run without asking in Settings.");
   const untrustedAsks = safety?.untrusted ?? true;
@@ -870,7 +883,7 @@ export function verdictFor(
       action: "ask",
       why: `This ${call.task ? "task" : "conversation"} has read untrusted content, so changes need your approval.`,
       tainted: true,
-      ...(t.kind ? { kind: t.kind } : {}),
+      ...(kind ? { kind } : {}),
     };
   return own;
 }
