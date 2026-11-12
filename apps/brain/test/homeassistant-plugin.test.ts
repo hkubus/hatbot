@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
 import type { Task } from "@hatbot/shared";
-import { runPluginTool, verdictFor } from "../src/plugins/registry";
+import { runPluginTool, sends, verdictFor } from "../src/plugins/registry";
 import { FakeModel, toolUse } from "./fake-model";
 import { waitFor } from "./helpers";
 import {
@@ -198,6 +198,17 @@ test("everyday control and locking run; unlocking, opening, purges and anything 
     expect(verdict.action, name).toBe("ask");
     expect(verdict, name).not.toHaveProperty("always", true);
   }
+});
+
+test("a notification is a message to people, which goes to the review as one and waits; a light isn't", async () => {
+  const t = await pluginApp(homeassistantPlugin, env);
+  const service = t.tool("homeassistant_call_service");
+  const notify = { domain: "notify", service: "mobile_app_phone", data: { message: "Hi" } };
+  expect(sends(service, notify)).toBe(true);
+  expect(verdictFor(service, notify, call)).toMatchObject({ action: "ask", kind: "send" });
+  expect(sends(service, { domain: "light", service: "turn_on", entity_id: "light.kitchen" })).toBe(
+    false,
+  );
 });
 
 test("whatever lets someone in waits for the owner, and what only might goes to the review: marked entities, scenes, groups, areas, any spelling", async () => {

@@ -1109,20 +1109,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const sendWindow = async (summary: string): Promise<string | null> => {
     const wait = d.settings.get().safety.sendWaitS;
     if (!wait) return null;
-    const a = d.approvals.sending(
-      { taskId: id, botId: task.botId, kind: "send", summary },
-      wait * 1000,
-    );
     tasks.addStep(id, {
       kind: "note",
       name: `Sending in ${wait} s`,
       detail: summary,
       url: lastUrl,
     });
-    const outcome = await d.approvals.wait(a.id, signal);
-    return outcome === "approved"
-      ? null
-      : "The owner stopped this message. Don't send it; finish and say so.";
+    const goes = await d.approvals.letGo(
+      { taskId: id, botId: task.botId, kind: "send", summary },
+      wait,
+      signal,
+    );
+    return goes ? null : "The owner stopped this message. Don't send it; finish and say so.";
   };
 
   /** The address is the send's tab's, not whichever is on screen. */

@@ -100,6 +100,7 @@ export function forgeTools(
       name: `${id}_comment`,
       description: "Comment on an issue or pull request, as your bot account. Markdown.",
       access: "write",
+      kind: "send",
       schema: z.object({ repo: Repo, number: Num, body: z.string().min(1).max(20_000) }),
       describe: ({ repo, number }) => `Comment on ${repo}#${number}`,
       run: async ({ repo, number, body }) => {
@@ -113,6 +114,7 @@ export function forgeTools(
       name: `${id}_create_issue`,
       description: "Open an issue, as your bot account.",
       access: "write",
+      kind: "send",
       schema: z.object({
         repo: Repo,
         title: z.string().min(1).max(255),
@@ -128,6 +130,7 @@ export function forgeTools(
       name: `${id}_open_pr`,
       description: "Open a pull request from head into base, as your bot account.",
       access: "write",
+      kind: "send",
       schema: drafts ? Pr.extend({ draft: z.boolean().optional() }) : Pr,
       describe: ({ repo, head, base }) => `Open a pull request in ${repo}: ${head} into ${base}`,
       run: async ({ repo, draft, ...pr }) => {

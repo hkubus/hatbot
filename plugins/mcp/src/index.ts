@@ -56,13 +56,31 @@ export function moneyKind(name: string, description = ""): "payment" | "purchase
   return null;
 }
 
-const Kind = z.enum(["payment", "purchase", "account_security", "none"]);
+/** Words in a tool's name that say it messages people, unless it only looks or tidies up. */
+const SENDS =
+  /\b(send|sends|reply|replies|respond|comment|comments|post|posts|publish|tweet|email|emails|mail|message|messages|dm|sms|notify|invite|broadcast|announce)\b/i;
+const NOT_SENDS =
+  /\b(get|list|search|read|fetch|find|query|show|view|count|describe|delete|remove|archive|mark)\b/i;
+
+/** MCP has no hint for it, so it's a guess from the name, which the owner can correct. */
+export function sendKind(name: string): "send" | null {
+  const words = name.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_.-]+/g, " ");
+  return SENDS.test(words) && !NOT_SENDS.test(words) ? "send" : null;
+}
+
+const Kind = z.enum(["payment", "purchase", "account_security", "send", "none"]);
 type Kind = Exclude<z.infer<typeof Kind>, "none">;
-const KIND_WHY: Record<Kind, string> = {
+/** Money and accounts: these always ask you. */
+type Careful = Exclude<Kind, "send">;
+const careful = (kind: Kind | null): kind is Careful => kind !== null && kind !== "send";
+const KIND_WHY: Record<Careful, string> = {
   payment: "It may pay or move money, so it always asks.",
   purchase: "It may buy or order something, so it always asks.",
   account_security: "It may change accounts, passwords or keys, so it always asks.",
 };
+
+const guessKind = (t: { name: string; description?: string }) =>
+  moneyKind(t.name, t.description) ?? sendKind(t.name);
 
 /**
  * Characters that show as nothing: format controls (zero-width, bidi), Unicode tags, variation
@@ -408,7 +426,7 @@ export const mcpPlugin = definePlugin({
 
     const kindOf = (c: Conn, t: Listed): Kind | null => {
       const set = c.server.kinds[t.name];
-      return set === "none" ? null : (set ?? moneyKind(t.name, t.description));
+      return set === "none" ? null : (set ?? guessKind(t));
     };
     /**
      * A Chat or Allow mode was chosen for the definition the owner saw then (or accepted): once it
@@ -421,10 +439,11 @@ export const mcpPlugin = definePlugin({
     };
     /** Money and accounts never skip asking: Ask first is Always ask, and Chat is Allow. */
     const modeOf = (c: Conn, t: Listed): Mode => {
-      const kind = kindOf(c, t);
-      const mode = (lapsed(c, t) ? undefined : c.server.tools[t.name]) ?? (kind ? "always" : "ask");
-      if (kind && mode === "ask") return "always";
-      if (kind && mode === "chat") return "allow";
+      const always = careful(kindOf(c, t));
+      const mode =
+        (lapsed(c, t) ? undefined : c.server.tools[t.name]) ?? (always ? "always" : "ask");
+      if (always && mode === "ask") return "always";
+      if (always && mode === "chat") return "allow";
       return mode;
     };
     /** Names follow the server's order whatever the modes, so switching a tool off renames no other. */
@@ -468,7 +487,7 @@ export const mcpPlugin = definePlugin({
                   policy: () =>
                     mode === "allow"
                       ? allow()
-                      : kind
+                      : careful(kind)
                         ? askAlways(KIND_WHY[kind], kind)
                         : mode === "always"
                           ? askCareful("The owner asked to always be asked before this tool runs.")
@@ -551,7 +570,7 @@ export const mcpPlugin = definePlugin({
                 mode,
                 problem,
                 hash: t.hash,
-                guess: moneyKind(t.name, t.description),
+                guess: guessKind(t),
               }))
             : [],
         };
