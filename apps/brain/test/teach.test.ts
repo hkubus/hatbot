@@ -618,3 +618,17 @@ test("Teach records on one screen at a time, even when two starts come at once",
   const refused = both.filter((r) => r.status === 409).map((r) => r.json());
   expect(await Promise.all(refused)).toEqual([{ error: "Already recording." }]);
 });
+
+test("Teach on a computer that something else holds says so, and leaves it be", async () => {
+  const { t, call } = await teachApp();
+  const { computer } = teachable();
+  stops.push((await withComputer(t, computer)).stop);
+  computer.answer.claim = () => ({ error: "Another task is using the screen.", code: "busy" });
+  const res = await call("POST", "/teach/start", { screen: "m-laptop" });
+  expect(res.status).toBe(409);
+  expect(await res.json()).toEqual({
+    error: "Something else is using laptop. Try again once it's done.",
+  });
+  expect(t.computers.find("m-laptop")?.control).toBe("hatbot");
+  expect(t.computers.screen("m-laptop")?.lane.holderId).toBeNull();
+});

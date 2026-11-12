@@ -1,6 +1,6 @@
 // Teach-by-showing: record the owner doing a chore, have Opus draft a skill, save it once reviewed.
 
-import type { ComputersService } from "@hatbot/plugin-computer";
+import { ComputerError, type ComputersService } from "@hatbot/plugin-computer";
 import {
   BudgetError,
   type Db,
@@ -203,8 +203,14 @@ export class Teach {
     await lane.acquire(TEACH_LANE, new AbortController().signal);
     try {
       await screen.takeover();
-    } catch {
+    } catch (err) {
       lane.release(TEACH_LANE);
+      // Another brain's task, or one this brain forgot when it restarted.
+      if (err instanceof ComputerError && err.code === "busy")
+        throw new TeachError(
+          `Something else is using ${screen.name}. Try again once it's done.`,
+          409,
+        );
       throw new TeachError(
         screen.id === null ? "The desktop isn't answering." : `${screen.name} isn't answering.`,
         503,
