@@ -547,7 +547,10 @@ struct Trigger: Codable, Identifiable, Equatable, Sendable {
   var kind: Kind
   /// Its payloads count as trusted content. Uptime Kuma alerts always do.
   var trusted: Bool
+  /// Empty when it runs a script instead.
   var prompt: String
+  /// A webhook's script, which gets the event as its input.
+  var scriptId: Int?
   var enabled: Bool
   /// Uptime Kuma: how many more of the monitor's checks a down alert waits for, 0 to 2; one back up in
   /// the meantime starts nothing.

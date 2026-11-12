@@ -1208,4 +1208,6 @@ export const migrations: string[] = [
   `,
   // 82: the computer a Teach recording was made on; null for the desktop.
   `ALTER TABLE teach_sessions ADD COLUMN screen TEXT;`,
+  // 83: a webhook that runs one of its bot's scripts, with the event as its input.
+  "ALTER TABLE triggers ADD COLUMN script_id INTEGER REFERENCES scripts(id);",
 ];

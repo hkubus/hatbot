@@ -153,14 +153,15 @@ export class ScriptStore {
     this.changed(id);
   }
 
-  /** The schedules and watchers that run it, by name. */
+  /** The schedules, watchers and webhooks that run it, by name. */
   usedBy(id: number): string[] {
     return this.db
-      .query<{ what: string }, [number, number]>(
-        `SELECT 'the schedule "' || name || '"' AS what FROM schedules WHERE script_id = ?
-         UNION ALL SELECT 'the watcher "' || name || '"' FROM watchers WHERE script_id = ?`,
+      .query<{ what: string }, [number]>(
+        `SELECT 'the schedule "' || name || '"' AS what FROM schedules WHERE script_id = ?1
+         UNION ALL SELECT 'the watcher "' || name || '"' FROM watchers WHERE script_id = ?1
+         UNION ALL SELECT 'the webhook "' || name || '"' FROM triggers WHERE script_id = ?1`,
       )
-      .all(id, id)
+      .all(id)
       .map((r) => r.what);
   }
 

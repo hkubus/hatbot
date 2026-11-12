@@ -52,6 +52,7 @@ export const automationPlugin = definePlugin({
       d.notifier,
       d.publicUrl,
       d.clock,
+      d.scripts,
     );
     const watchers = new Watchers(d);
     const heartbeat = new Heartbeat(d);
