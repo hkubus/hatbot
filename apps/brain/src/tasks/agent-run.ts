@@ -50,6 +50,8 @@ import {
   describeCall,
   offered,
   runPluginTool,
+  STOPPED_SEND,
+  sends,
   targetOf,
   untrustedDefinitions,
   verdictFor,
@@ -535,6 +537,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety);
     let note: string | null = null;
+    let byOwner = false;
     if (verdict.action === "block") {
       tasks.addStep(id, {
         kind: "note",
@@ -590,7 +593,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               : "The owner denied this. Don't try it another way.",
             true,
           );
+        byOwner = true;
       }
+    }
+    const wait = byOwner || !sends(t, call.input) ? 0 : d.settings.get().safety.sendWaitS;
+    if (wait) {
+      tasks.addStep(id, { kind: "note", name: `Sending in ${wait} s`, detail: what, url: null });
+      const send = { taskId: id, botId: bot.id, kind: "send" as const, summary: what };
+      if (!(await d.approvals.letGo(send, wait, signal))) return result(call, STOPPED_SEND, true);
+    }
+    if (verdict.action === "ask" || wait) {
       // What was reviewed or approved was the plugin as it was: one switched off or restarted
       // meanwhile may act differently.
       const after = current(t.name);
@@ -598,7 +610,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (after !== t && d.plugins.pluginOf(t.name))
         return result(
           call,
-          `Not run: ${t.name}'s plugin restarted while this was checked or waited for approval. Call it again if it's still needed.`,
+          `Not run: ${t.name}'s plugin restarted while this was checked or waited. Call it again if it's still needed.`,
           true,
         );
     }

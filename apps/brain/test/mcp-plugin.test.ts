@@ -7,6 +7,7 @@ import {
   mcpPlugin,
   moneyKind,
   problemOf,
+  sendKind,
   toolName,
   unsent,
 } from "@hatbot/plugin-mcp";
@@ -15,7 +16,7 @@ import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamable
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { levelOf } from "../src/agent/review";
 import { approvableFromNotification } from "../src/approvals";
-import { runPluginTool, untrustedDefinitions, verdictFor } from "../src/plugins/registry";
+import { runPluginTool, sends, untrustedDefinitions, verdictFor } from "../src/plugins/registry";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { FakeModel, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
@@ -187,6 +188,43 @@ test("money tools always ask and never go to the review, whatever their mode; th
     "ask",
     "always",
   ]);
+});
+
+test("tools that sound like messaging people are sends, which still go to the review; the owner's kinds win", async () => {
+  for (const [name, kind] of [
+    ["send_message", "send"],
+    ["slack_post_message", "send"],
+    ["replyToThread", "send"],
+    ["add_issue_comment", "send"],
+    ["list_messages", null],
+    ["getComments", null],
+    ["search_emails", null],
+    ["delete_message", null],
+    ["create_page", null],
+  ] as const)
+    expect(sendKind(name), name).toBe(kind);
+
+  const t = await mcp(
+    listed(
+      [
+        { name: "post_message", description: "Posts to a channel", inputSchema: object },
+        { name: "echo", description: "Echo text back", inputSchema: object },
+        { name: "notify_all", description: "Rings a bell here", inputSchema: object },
+      ],
+      { kinds: { echo: "send", notify_all: "none" } },
+    ),
+  );
+  const tool = (name: string) => t.tool(`mcp_fix_${name}`);
+  const verdict = verdictFor(tool("post_message"), {}, call);
+  expect(verdict).toMatchObject({ action: "ask", kind: "send" });
+  expect(verdict.action === "ask" && levelOf(DEFAULT_SETTINGS, verdict)).toBe("review");
+  expect(["post_message", "echo", "notify_all"].map((n) => sends(tool(n), {}))).toEqual([
+    true,
+    true,
+    false,
+  ]);
+  // Unlike money, sending still asks first, as any other change.
+  expect((await status(t)).map((x) => x.mode)).toEqual(["ask", "ask", "ask"]);
 });
 
 test("an untrusted server's tool descriptions taint every task offered them, unless accepted as they are", async () => {

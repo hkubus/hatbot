@@ -30,7 +30,7 @@ import type { Db } from "../db";
 import { UserError } from "../errors";
 import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
-import { runPluginTool, verdictFor } from "../plugins/registry";
+import { type Plugins, runPluginTool, verdictFor } from "../plugins/registry";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import type { Tasks } from "../tasks/service";
@@ -84,6 +84,7 @@ export type NegotiationsDeps = {
   bots: Bots;
   chats: Chats;
   memory: MemoryStore;
+  plugins: Plugins;
   desktop: () => DesktopService | null;
   model: ModelClient;
   spend: Spend;
@@ -1897,14 +1898,17 @@ export class Negotiations {
 
   /** The brain tells Scout the outcome, not the model. */
   async recordOutcome(
-    available: PluginTool[],
     n: Negotiation,
     outcome: string,
     price: number | null,
   ): Promise<string | null> {
-    const t = scoutTool(available, "scout_record_outcome");
-    if (!t) return null;
+    const bot = this.d.bots.get(n.botId);
+    const t = bot && scoutTool(this.d.plugins.brainTools(bot.plugins), "scout_record_outcome");
+    // Scout keeps outcomes as a share of the asking price, in PLN only.
+    if (!t || n.asking === null || n.mandate.currency !== "PLN") return null;
     const input = {
+      // Scout's key for it: recording it again updates it.
+      negotiationId: `hatbot:${n.id}`,
       listingKey: n.listingKey,
       outcome,
       price,
@@ -1914,8 +1918,8 @@ export class Negotiations {
     const signal = AbortSignal.timeout(60_000);
     if (verdictFor(t, input, { task: null, signal }, false).action !== "allow")
       return "Scout's scout_record_outcome asks before each use, so Scout wasn't told; set it to Allow in Settings → Plugins → MCP.";
-    const r = await runPluginTool(t, input, { task: null, signal });
-    return r.isError ? "Scout couldn't record the outcome." : "Scout recorded the outcome.";
+    const r = await runPluginTool(t, input, { task: null, signal }).catch(() => null);
+    return r && !r.isError ? "Scout recorded the outcome." : "Scout couldn't record the outcome.";
   }
 }
 

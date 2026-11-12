@@ -314,6 +314,7 @@ export const homeassistantPlugin = definePlugin({
         description:
           'Call a Home Assistant service, e.g. domain "light", service "turn_on", entity_id "light.kitchen", data {"brightness_pct": 40}. Locking, arming the alarm and closing covers run, and so do blinds, curtains, shades, shutters and awnings. Anything else on locks, alarms, doors, garage doors, gates, and the entities the owner marked, or on scenes and groups that hold them, waits for the owner. Other covers, whole areas, devices, labels or floors, scenes from an integration, scripts, automations, notifications, Home Assistant itself and other services that aren\'t everyday device control go to the safety review.',
         access: "write",
+        kind: ({ domain }) => (domain === "notify" ? "send" : undefined),
         label: "Controlling Home Assistant",
         schema: z.object({
           domain: Domain,

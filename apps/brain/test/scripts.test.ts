@@ -204,6 +204,42 @@ test("a script that changes things doesn't run until you've approved it as it is
   expect(done).toEqual([]);
 });
 
+test("switching a script off leaves the rest as it was, unapproved and tainted too; editing it keeps its inputs", async () => {
+  const { t, api } = await lab();
+  const s = t.scripts.save(
+    {
+      botId: "hatbot",
+      name: "start-one",
+      description: "Start one",
+      inputs: [{ name: "vm", description: "Which VM" }],
+      steps: [{ call: "lab_start", input: { name: "{{input.vm}}" } }],
+      writes: ["lab_start"],
+      enabled: true,
+    },
+    { via: "chat", approved: false, taintedBy: "A web page" },
+  );
+  const off = await api("PATCH", `/scripts/${s.id}`, { enabled: false });
+  expect(off.status).toBe(200);
+  expect(t.scripts.get(s.id)).toMatchObject({
+    enabled: false,
+    approved: false,
+    tainted: true,
+    createdVia: "chat",
+    inputs: s.inputs,
+  });
+
+  // An edit is yours, so it's approved; what it didn't send stays.
+  const edited = await api("PATCH", `/scripts/${s.id}`, { description: "Start the one you say" });
+  expect(edited.status).toBe(200);
+  expect(t.scripts.get(s.id)).toMatchObject({
+    description: "Start the one you say",
+    approved: true,
+    enabled: false,
+    inputs: s.inputs,
+    botId: "hatbot",
+  });
+});
+
 test("a schedule runs a script, and a watcher runs one with what it saw", async () => {
   const { t, state, api } = await lab();
   const s = await saved(api, [{ post: "Now {{input.value}}, was {{input.previous}}." }], "note");

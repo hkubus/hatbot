@@ -4,9 +4,8 @@ import { installDom, settle } from "./dom";
 import { msg } from "./fixtures";
 
 const dom = installDom();
-const { Chat, Composer, fileDrops, follows, sendError, typesIntoComposer } = await import(
-  "../src/pages/Chat"
-);
+const { Chat, Composer, fileDrops, follows, readOnOpen, sendError, typesIntoComposer } =
+  await import("../src/pages/Chat");
 const store = await import("../src/store");
 const { ApiError } = await import("../src/api");
 const drafts = await import("../src/drafts");
@@ -156,6 +155,16 @@ test("the thread stops following on any scroll up, and starts again only at the 
   expect(follows(true, 200, 600, 700)).toBe(true);
   // The view grew and the browser moved it up to the new bottom: still following.
   expect(follows(true, 1300, 1200, 0)).toBe(true);
+});
+
+test("an open chat is read at once, through its newest message, the messages not loaded too", () => {
+  const loaded = [msg(1), msg(2), msg(3), msg(4)];
+  expect(readOnOpen(loaded, 1, [3, 4], 5)).toEqual({ ids: [3, 4], through: 4 });
+  // Only older ones are unread, and they aren't loaded.
+  expect(readOnOpen(loaded, 1, [], 2)).toEqual({ ids: [], through: 4 });
+  expect(readOnOpen(loaded, 1, [], 0)).toBeUndefined();
+  // Just switched to chat 2: what's loaded is still the chat you left, so none of it is read.
+  expect(readOnOpen(loaded, 2, [3, 4], 3)).toBeUndefined();
 });
 
 test("a send that failed on the way says it may have gone; only the brain's no says it didn't", () => {

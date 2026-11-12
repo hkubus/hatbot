@@ -126,7 +126,7 @@ export function SafetyPage({ toast }: { toast: Toast }) {
             input={{ type: "number", min: 1, max: 50, step: 1 }}
           />
           <SavedRow<number>
-            label="Seconds to wait before sending a message the review allowed, so you can stop it"
+            label="Seconds a message to people waits before it goes, so you can stop it"
             saved={safety.sendWaitS}
             parse={(text) => {
               const n = Number(text.trim());
