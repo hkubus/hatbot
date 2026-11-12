@@ -24,6 +24,8 @@ export const ACTION_MIGRATIONS = [
     box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     script_id INTEGER NOT NULL,
+    -- With the id, which script: SQLite gives a deleted one's id to the next one saved.
+    script_created_at TEXT NOT NULL,
     input TEXT NOT NULL,
     -- The script's writes when the action was added: one that changes more since doesn't run.
     writes TEXT NOT NULL,
@@ -46,6 +48,7 @@ type Row = {
   box_id: number;
   name: string;
   script_id: number;
+  script_created_at: string;
   input: string;
   writes: string;
   task_id: number | null;
@@ -75,6 +78,12 @@ export class BoxActions {
       .get(boxId, name);
   }
 
+  /** The action's own script, not a later one that got its id. */
+  private scriptOf(r: Row): Script | undefined {
+    const s = this.d.scripts()?.get(r.script_id);
+    return s?.createdAt === r.script_created_at ? s : undefined;
+  }
+
   private last(r: Row): BoxActionRun | undefined {
     const t = r.task_id === null ? null : this.d.tasks.get(r.task_id);
     return t ? runOf(t) : undefined;
@@ -88,7 +97,7 @@ export class BoxActions {
         const last = this.last(r);
         return {
           name: r.name,
-          script: this.d.scripts()?.get(r.script_id)?.name ?? "(deleted)",
+          script: this.scriptOf(r)?.name ?? "(deleted)",
           input: JSON.parse(r.input),
           ...(last ? { last } : {}),
         };
@@ -123,11 +132,21 @@ export class BoxActions {
   set(boxId: number, name: string, s: Script, input: Record<string, unknown>) {
     this.d.db
       .query(
-        `INSERT INTO boxes_actions (box_id, name, script_id, input, writes, created_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (box_id, name) DO UPDATE SET script_id = excluded.script_id, input = excluded.input,
+        `INSERT INTO boxes_actions (box_id, name, script_id, script_created_at, input, writes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (box_id, name) DO UPDATE SET script_id = excluded.script_id,
+           script_created_at = excluded.script_created_at, input = excluded.input,
            writes = excluded.writes, task_id = NULL, created_at = excluded.created_at`,
       )
-      .run(boxId, name, s.id, JSON.stringify(input), JSON.stringify(s.writes), this.now());
+      .run(
+        boxId,
+        name,
+        s.id,
+        s.createdAt,
+        JSON.stringify(input),
+        JSON.stringify(s.writes),
+        this.now(),
+      );
   }
 
   /** The bot's, or yours from the box's page. A run going on stays in Tasks. */
@@ -155,7 +174,7 @@ export class BoxActions {
     const box = this.boxes.get(boxId);
     const r = this.row(boxId, name);
     if (!box || !r) throw new BoxError(`This box has no action "${name}".`, 404);
-    const s = this.d.scripts()?.get(r.script_id);
+    const s = this.scriptOf(r);
     if (!s) throw new BoxError(`"${name}" can't run: its script was deleted.`, 409);
     if (!s.enabled) throw new BoxError(`"${name}" can't run: ${s.name} is switched off.`, 409);
     const approved = JSON.parse(r.writes) as string[];

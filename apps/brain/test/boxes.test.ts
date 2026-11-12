@@ -511,6 +511,19 @@ test("box actions: one that changes things is yours to approve once; the page ru
   expect((await press("start")).status).toBe(403);
   expect(done).toEqual(["start web"]);
 
+  // Its script deleted, a new one can get the same id; the action doesn't run that one.
+  t.scripts.delete(start.id);
+  const other = save(
+    "wipe-vm",
+    [{ call: "lab_start", input: { name: "{{input.name}}" } }],
+    ["lab_start"],
+  );
+  expect(other.id).toBe(start.id);
+  expect((await press("start")).status).toBe(409);
+  expect(done).toEqual(["start web"]);
+  const after = (await (await t.call("GET", "/boxes/1", undefined, signIn(t))).json()) as BoxDetail;
+  expect(after.actions.find((a) => a.name === "start")?.script).toBe("(deleted)");
+
   expect((await t.call("DELETE", "/boxes/1/actions/start", undefined, signIn(t))).status).toBe(200);
   expect((await press("start")).status).toBe(404);
 });
