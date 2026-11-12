@@ -169,7 +169,11 @@ struct WatcherDetailView: View {
         if w.once { LabeledContent("Then", value: "Switches off") }
         LabeledContent("Bot", value: store.botName(w.botId))
       }
-      if !w.prompt.isEmpty {
+      if let script = w.scriptId {
+        Section("When it counts") {
+          NavigationLink(store.scripts[script].map { "The script \($0.name)" } ?? "Its script", value: Route.script(script))
+        }
+      } else if !w.prompt.isEmpty {
         Section("When it counts") { Text(w.prompt) }
       }
       Section("Last look") {
@@ -221,6 +225,7 @@ struct WatcherDetailView: View {
       _ = try await w
       values = try await v
     }
+    if let script = watcher?.scriptId, store.scripts[script] == nil { try? await store.loadScript(script) }
   }
 }
 

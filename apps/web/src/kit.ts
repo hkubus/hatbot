@@ -24,7 +24,7 @@ export type PluginSettingsProps<C = unknown> = {
 
 /** A plugin's `/web` entry exports one as `web`. */
 export type PluginWeb = {
-  /** Its own part of its Settings page; without one there's only its switch, environment and Test. */
+  /** Its own part of its Settings page; without one, a form is made from its settings' schema. */
   // biome-ignore lint/suspicious/noExplicitAny: each plugin's form takes its own config
   settings?: ComponentType<PluginSettingsProps<any>>;
   /** A row in Settings' Routines group, while it's on. */

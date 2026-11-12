@@ -1,12 +1,12 @@
 // Boxes: small web apps a bot makes, shown sandboxed, keeping what their pages save.
 import { expect, test } from "bun:test";
-import { FRAME_CSP, previewed } from "@hatbot/plugin-boxes";
+import { FRAME_CSP, pitfalls, previewed } from "@hatbot/plugin-boxes";
 import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
-import type { BoxDetail, BoxFeedValue } from "@hatbot/shared";
+import type { BoxActionRun, BoxDetail, BoxFeedValue, Script } from "@hatbot/shared";
 import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { FakeModel, text, toolUse } from "./fake-model";
-import { bot, lastUserText, signIn, type TestApp, testApp, toolNames } from "./helpers";
+import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 
 const PAGE = "<!doctype html><title>Habits</title><button>Walk</button>";
 const open = async (t: TestApp, id: number) => {
@@ -151,12 +151,27 @@ test("a box's picture for the list: drawn once with what it saved, again after i
   expect((await picture()).status).toBe(404);
 });
 
-test("boxes_look: the bot sees its box drawn on the desktop with its errors, and with what the page saved as untrusted", async () => {
+test("boxes_look: the bot sees its box drawn on the desktop with its errors, tries it with steps, and sees what the page saved as untrusted; a saved change is checked and opened", async () => {
+  const steps = [
+    { type: "#name", text: "Walk" },
+    { click: "#add" },
+    { click: "#gone" },
+    { press: "Enter" },
+  ];
   const model = new FakeModel([
-    { content: [toolUse("boxes_look", { box: 1 })] },
+    { content: [toolUse("boxes_look", { box: 1, steps })] },
     { content: [text("No walks yet.")] },
     { content: [toolUse("boxes_look", { box: 1, with_data: true, width: "desktop", dark: true })] },
     { content: [text("Your walks show.")] },
+    {
+      content: [
+        toolUse("boxes_edit", {
+          box: 1,
+          html: "<!doctype html><script>localStorage.walks = 1; draw()</script>",
+        }),
+      ],
+    },
+    { content: [text("Saved.")] },
     { content: [toolUse("boxes_look", { box: 1 })] },
     { content: [text("Can't look.")] },
   ]);
@@ -172,11 +187,16 @@ test("boxes_look: the bot sees its box drawn on the desktop with its errors, and
     png,
     width: 390,
     height: 844,
-    errors: [{ message: "Uncaught ReferenceError: draw is not defined", line }],
+    errors: [
+      { message: "Uncaught ReferenceError: draw is not defined", line },
+      { message: "Uncaught Error: no name", line, step: 2 },
+    ],
+    steps: [{ ok: true }, { ok: true }, { ok: false, error: "Nothing matches #gone." }],
+    store: '{"walks":4}',
   };
 
-  await t.thread.post("does the tracker look right?").done;
-  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false });
+  await t.thread.post("does the tracker work?").done;
+  expect(t.agent.looks[0]).toMatchObject({ csp: FRAME_CSP, width: 390, dark: false, steps });
   // An empty store: only the bot's own code is at work, so it's trusted.
   expect(t.agent.looks[0]?.html).not.toContain('"walks"');
   const seen = lastUserText(model.requests[1]);
@@ -184,6 +204,11 @@ test("boxes_look: the bot sees its box drawn on the desktop with its errors, and
     `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"${png}"}}`,
   );
   expect(seen).toContain("draw is not defined (line 2)");
+  // Each step's outcome, the one after a failure not run, an error at its step, and what was saved.
+  expect(seen).toContain("Nothing matches #gone.");
+  expect(seen).toContain("4. press Enter: not run");
+  expect(seen).toContain("no name (line 2, step 2)");
+  expect(seen).toContain('{\\"walks\\":4}');
   expect(seen).not.toContain('trusted=\\"false\\"');
 
   await t.thread.post("and with my walks, on a computer, in dark?").done;
@@ -192,10 +217,49 @@ test("boxes_look: the bot sees its box drawn on the desktop with its errors, and
   expect(lastUserText(model.requests[3])).toContain('trusted=\\"false\\"');
   expect(lastUserText(model.requests[3])).toContain('"type":"image"');
 
+  // A change is read for what the sandbox blocks, and opened once for its errors, with no picture.
+  await t.thread.post("keep the walks").done;
+  expect(t.agent.looks).toHaveLength(3);
+  const saved = lastUserText(model.requests[5]);
+  expect(saved).toContain("uses localStorage");
+  expect(saved).toContain("draw is not defined");
+  expect(saved).not.toContain('"type":"image"');
+
   t.agent.configured = false;
   await t.thread.post("look again").done;
-  expect(t.agent.looks).toHaveLength(2);
-  expect(lastUserText(model.requests[5])).not.toContain('"type":"image"');
+  expect(t.agent.looks).toHaveLength(3);
+  expect(lastUserText(model.requests[7])).not.toContain('"type":"image"');
+});
+
+test("a page is read for pitfalls in one pass: a megabyte of unclosed tags and comments doesn't hold up the brain", () => {
+  const fill = (s: string) => s.repeat(Math.floor(1_000_000 / s.length));
+  const started = performance.now();
+  for (const html of [
+    fill("<img a"),
+    fill("<script "),
+    fill("<script>"),
+    `<script>${fill("/*")}</script>`,
+    `<script>${fill("alert(")}</script>`,
+    `<script>${fill("function ")}</script>`,
+  ])
+    pitfalls([{ path: "index.html", content: html }], false);
+  expect(performance.now() - started).toBeLessThan(5000);
+
+  // What it finds is the same: comments and an unclosed <script> after the last one are skipped.
+  const found = pitfalls(
+    [
+      {
+        path: "index.html",
+        content:
+          '<script type="module">/* localStorage */ const n: number = 1;</script><img alt="" src="https://x.test/a.png">' +
+          "<script>/* not closed sessionStorage <script>",
+      },
+    ],
+    false,
+  ).join("\n");
+  expect(found).toContain("has TypeScript in it");
+  expect(found).toContain("loads something from the web");
+  expect(found).not.toContain("Storage");
 });
 
 test("hatbox.ask: Haiku answers the page with no tools, as Boxes in Spend, within the boxes' own daily limit, and not while paused", async () => {
@@ -280,20 +344,31 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   await t.plugins.update("lab", { enabled: true });
   t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Load", html: PAGE }, {});
   await t.thread.post("show the load in the box").done;
-  const feed = async () =>
-    ((await (await page(t, { op: "feed", name: "load" })).json()) as { value: BoxFeedValue }).value;
+  const feed = async (fresh?: true) =>
+    (
+      (await (await page(t, { op: "feed", name: "load", fresh })).json()) as {
+        value: BoxFeedValue;
+      }
+    ).value;
   expect((await feed()).value).toEqual({ node: "pve", load: 1, feed: true });
 
+  // A fresh read runs the tool again once what it has is over a minute old, not sooner.
   answer.load = 2;
-  t.advance(5 * 60_000);
-  await t.boxes.feeds?.tick();
-  expect(await feed()).toMatchObject({ value: { load: 2 }, at: new Date(t.clock()).toISOString() });
+  t.advance(60_000);
+  expect((await feed(true)).value).toMatchObject({ load: 1 });
+  t.advance(1_000);
+  expect((await feed(true)).value).toMatchObject({ load: 2 });
 
-  t.settings.update({ paused: true });
   answer.load = 3;
   t.advance(5 * 60_000);
   await t.boxes.feeds?.tick();
-  expect((await feed()).value).toMatchObject({ load: 2 });
+  expect(await feed()).toMatchObject({ value: { load: 3 }, at: new Date(t.clock()).toISOString() });
+
+  t.settings.update({ paused: true });
+  answer.load = 4;
+  t.advance(5 * 60_000);
+  await t.boxes.feeds?.tick();
+  expect((await feed(true)).value).toMatchObject({ load: 3 });
 
   t.settings.update({ paused: false });
   await t.plugins.update("lab", { enabled: false });
@@ -302,8 +377,8 @@ test("hatbox.feed: a plugin's read tool, run for the page on a timer without the
   t.advance(5 * 60_000);
   await t.boxes.feeds?.tick();
   // It keeps what it last read, saying why that's old.
-  const stopped = await feed();
-  expect(stopped.value).toMatchObject({ load: 2 });
+  const stopped = await feed(true);
+  expect(stopped.value).toMatchObject({ load: 3 });
   expect(stopped.error).toStartWith("Stopped");
   expect(model.requests).toHaveLength(2);
 });
@@ -346,4 +421,140 @@ test("after reading untrusted content, a feed for a box goes to the review, whic
   const [blocked] = t.approvals.list(false);
   expect(blocked).toMatchObject({ status: "blocked" });
   expect(blocked?.summary).toContain("box #2");
+});
+
+/** A VM to start, and a payment. */
+function starter(done: string[]) {
+  return definePlugin({
+    id: "lab",
+    name: "Lab",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready([
+        tool({
+          name: "lab_vms",
+          description: "",
+          access: "read",
+          schema: z.object({}),
+          run: async () => "web, db",
+        }),
+        tool({
+          name: "lab_start",
+          description: "",
+          access: "write",
+          schema: z.object({ name: z.string() }),
+          run: async ({ name }) => {
+            done.push(`start ${name}`);
+            return "Started.";
+          },
+        }),
+        tool({
+          name: "lab_pay",
+          description: "",
+          access: "write",
+          schema: z.object({ usd: z.number() }),
+          run: async () => "Paid.",
+        }),
+      ]),
+  });
+}
+
+test("box actions: one that changes things is yours to approve once; the page runs it as the script's task, 20 times a day, not while paused, and not once the script changes more", async () => {
+  const done: string[] = [];
+  const action = (name: string, script: string, input?: object) => ({
+    content: [toolUse("boxes_action", { box: 1, name, script, ...(input ? { input } : {}) })],
+  });
+  const model = new FakeModel([
+    action("list", "list-vms"),
+    { content: [text("Added.")] },
+    action("start", "start-vm", { name: "web" }),
+    { content: [text("Added.")] },
+  ]);
+  const t = await testApp(model, new FakeModel(), {}, [starter(done)]);
+  await t.plugins.update("lab", { enabled: true });
+  const save = (name: string, steps: Script["steps"], writes: string[], id?: number) =>
+    t.scripts.save(
+      {
+        botId: "hatbot",
+        name,
+        description: name,
+        inputs: [{ name: "name", description: "The VM" }],
+        steps,
+        writes,
+        enabled: true,
+      },
+      { ...(id ? { id } : {}), via: "owner", approved: true, taintedBy: null },
+    );
+  save("list-vms", [{ call: "lab_vms", as: "vms" }], []);
+  const start = save(
+    "start-vm",
+    [{ call: "lab_start", input: { name: "{{input.name}}" } }],
+    ["lab_start"],
+  );
+  t.boxes.create({ botId: "hatbot", conversationId: 1, title: "Lab", html: PAGE }, {});
+  const press = (name: string, check?: true) => page(t, { op: "action", name, check });
+  expect((await press("start")).status).toBe(404);
+
+  // One that only reads is added without asking.
+  await t.thread.post("add a button that lists the VMs").done;
+  expect(t.approvals.list(true)).toHaveLength(0);
+  const reply = t.thread.post("add a button that starts web").done;
+  const asked = await waitFor(() => t.approvals.list(true)[0]);
+  expect(asked.summary).toContain("start-vm");
+  expect(asked.summary).toContain("lab_start");
+  t.approvals.decide(asked.id, "approve", "web");
+  await reply;
+
+  const res = await press("start");
+  expect(res.status).toBe(200);
+  const ran = ((await res.json()) as { value: BoxActionRun }).value;
+  expect(ran.status).toBe("done");
+  expect(done).toEqual(["start web"]);
+  expect(t.tasks.get(ran.task)).toMatchObject({ origin: "box", source: "Lab", runner: "script" });
+  expect(await (await press("start", true)).json()).toEqual({ value: ran });
+  const detail = (await (
+    await t.call("GET", "/boxes/1", undefined, signIn(t))
+  ).json()) as BoxDetail;
+  expect(detail.actions.map((a) => [a.name, a.script, a.input, a.last?.task])).toEqual([
+    ["list", "list-vms", {}, undefined],
+    ["start", "start-vm", { name: "web" }, ran.task],
+  ]);
+
+  t.settings.update({ paused: true });
+  expect((await press("start")).status).toBe(409);
+  t.settings.update({ paused: false });
+
+  for (let i = 1; i < 20; i++) expect((await press("list")).status).toBe(200);
+  expect((await press("start")).status).toBe(429);
+  t.advance(86_400_000);
+
+  // A script that now changes more needs the action added again.
+  save(
+    "start-vm",
+    [
+      { call: "lab_start", input: { name: "{{input.name}}" } },
+      { call: "lab_pay", input: { usd: 5 } },
+    ],
+    ["lab_start", "lab_pay"],
+    start.id,
+  );
+  expect((await press("start")).status).toBe(403);
+  expect(done).toEqual(["start web"]);
+
+  // Its script deleted, a new one can get the same id; the action doesn't run that one.
+  t.scripts.delete(start.id);
+  const other = save(
+    "wipe-vm",
+    [{ call: "lab_start", input: { name: "{{input.name}}" } }],
+    ["lab_start"],
+  );
+  expect(other.id).toBe(start.id);
+  expect((await press("start")).status).toBe(409);
+  expect(done).toEqual(["start web"]);
+  const after = (await (await t.call("GET", "/boxes/1", undefined, signIn(t))).json()) as BoxDetail;
+  expect(after.actions.find((a) => a.name === "start")?.script).toBe("(deleted)");
+
+  expect((await t.call("DELETE", "/boxes/1/actions/start", undefined, signIn(t))).status).toBe(200);
+  expect((await press("start")).status).toBe(404);
 });

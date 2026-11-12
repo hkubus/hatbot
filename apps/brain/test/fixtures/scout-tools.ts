@@ -1,5 +1,5 @@
-// A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: the tools Scout has
-// today; with `full`, also the price reference and comparables it doesn't have yet; with `flips`,
+// A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: some of Scout's tools;
+// with `full`, also its price reference, comparables and negotiation outcomes; with `flips`,
 // the flips to list and the flip ledger, kept in that JSON file, which the tests change; and with `sessions`, the
 // marketplace logins shared with Hatbot, kept the same way; and with `inbox`, the marketplace inboxes,
 // `{conversations, messages: {[conversationId]: [...]}}`, kept the same way. Calls are appended to
@@ -49,11 +49,16 @@ export function scoutServer(o: ScoutOptions): McpServer {
     "scout_listing_detail",
     {
       description: "Full detail for one listing",
-      inputSchema: { key: z.string(), watchId: z.string().optional() },
+      inputSchema: {
+        key: z.string(),
+        watchId: z.string().optional(),
+        live: z.boolean().optional(),
+        sellerListings: z.boolean().optional(),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ key }) => {
-      log("scout_listing_detail", { key });
+    async ({ key, live, sellerListings }) => {
+      log("scout_listing_detail", { key, live, sellerListings });
       const listing = LISTINGS[key];
       if (!listing)
         return {
@@ -67,6 +72,22 @@ export function scoutServer(o: ScoutOptions): McpServer {
           { price: 1500, observedAt: "2026-10-05T10:00:00Z" },
         ],
         firstSeenAt: "2026-10-01T10:00:00Z",
+        negotiation: {
+          daysListed: 10,
+          priceDrops: { count: 1, total: 150 },
+          priceNegotiable: true,
+          seller: {
+            id: "s-1",
+            otherListings: {
+              source: sellerListings ? "marketplace" : "scout",
+              items: [{ key: "OLX:1009", title: "Zasilacz 650W", price: 200 }],
+            },
+          },
+          relists: [],
+        },
+        liveCheck: live
+          ? { availability: { status: "live" }, price: 1450, priceChanged: true }
+          : null,
       });
     },
   );
@@ -142,7 +163,12 @@ export function scoutServer(o: ScoutOptions): McpServer {
       "scout_price_reference",
       {
         description: "Scout's typical used asking price for a product",
-        inputSchema: { query: z.string(), sources: z.array(z.string()).optional() },
+        inputSchema: {
+          query: z.string(),
+          sources: z.array(z.string()).optional(),
+          terms: z.string().optional(),
+          excluded: z.string().optional(),
+        },
         annotations: { readOnlyHint: true },
       },
       async (input) => {
@@ -167,7 +193,11 @@ export function scoutServer(o: ScoutOptions): McpServer {
       "scout_comparables",
       {
         description: "Live alternatives for the same item",
-        inputSchema: { listingKey: z.string() },
+        inputSchema: {
+          listingKey: z.string(),
+          watchId: z.string().optional(),
+          limit: z.number().optional(),
+        },
         annotations: { readOnlyHint: true },
       },
       async (input) => {
@@ -182,6 +212,30 @@ export function scoutServer(o: ScoutOptions): McpServer {
             { title: "RTX 3070 FE", price: 1380, url: "https://www.olx.pl/d/oferta/y-ID2003.html" },
           ],
         });
+      },
+    );
+    server.registerTool(
+      "scout_record_outcome",
+      {
+        description: "Record how one of your negotiations ended",
+        inputSchema: {
+          negotiationId: z.string().min(1),
+          listingKey: z.string(),
+          outcome: z.enum(["agreed", "lost", "abandoned", "expired"]),
+          asking: z.number().positive(),
+          price: z.number().positive().nullable().optional(),
+          currency: z.string().optional(),
+        },
+        annotations: { readOnlyHint: false },
+      },
+      async (input) => {
+        log("scout_record_outcome", input);
+        if (input.currency !== undefined && input.currency !== "PLN")
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: "Scout records prices in PLN only" }],
+          };
+        return json({ ...input, created: true });
       },
     );
   }

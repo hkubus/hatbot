@@ -229,7 +229,7 @@ export type Task = {
   title: string;
   goal: string;
   successCriteria: string;
-  origin: "chat" | "schedule" | "webhook" | "alert" | "watch" | "heartbeat";
+  origin: "chat" | "schedule" | "webhook" | "alert" | "watch" | "heartbeat" | "box";
   lane: "screen" | "background";
   /** The schedule or trigger that started it, by name. */
   source: string | null;

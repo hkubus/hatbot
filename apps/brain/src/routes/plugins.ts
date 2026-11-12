@@ -5,7 +5,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv } from "../context";
 import { pluginIndex } from "../plugins/installer";
-import { json } from "./util";
+import { badRequest, json } from "./util";
 
 export const pluginRoutes = new Hono<AppEnv>()
   .use("/plugins", requireAuth)
@@ -53,7 +53,14 @@ export const pluginRoutes = new Hono<AppEnv>()
     const { plugins } = c.var;
     const id = c.req.param("id");
     if (!plugins.get(id)) return c.json({ error: "That's gone." }, 404);
-    return c.json(await plugins.update(id, c.req.valid("json")));
+    const patch = c.req.valid("json");
+    // Said at the setting it's about, for the app to show it there.
+    const wrong = patch.config === undefined ? null : plugins.configProblem(id, patch.config);
+    if (wrong)
+      return badRequest(c, {
+        issues: wrong.issues.map((i) => ({ ...i, path: ["config", ...i.path] })),
+      });
+    return c.json(await plugins.update(id, patch));
   })
   // A secret is only ever sent: what comes back says it's set, not what to.
   .put("/plugins/:id/secrets", json(SetPluginSecrets), async (c) => {
