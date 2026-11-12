@@ -139,6 +139,15 @@ export function badFiles(files: BoxFile[]): string | null {
 /** GET /health on the agent. */
 export type HatboxStatus = { ok: boolean; version?: string; features?: string[] };
 
+/**
+ * POST /check: a test box built and asked once, through the same units as the boxes', then removed.
+ * `ownUser` and `ownNetwork`: its backend ran as a user other than the agent's, in a network
+ * namespace other than the agent's.
+ */
+export type HatboxCheck =
+  | { ok: true; ownUser: boolean; ownNetwork: boolean }
+  | { ok: false; error: string };
+
 /** GET /boxes: each backend the guest has built, at the version it runs. */
 export type GuestBox = { id: number; version: number };
 

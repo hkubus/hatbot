@@ -429,6 +429,94 @@ struct Schedule: Codable, Identifiable, Equatable, Sendable {
   var botId: String?
 }
 
+/// Steps a bot saved, which the brain runs without the model (packages/shared/src/script.ts).
+struct Script: Codable, Identifiable, Equatable, Sendable {
+  struct Input: Codable, Equatable, Sendable {
+    var name: String
+    var description: String
+  }
+
+  let id: Int
+  var botId: String
+  var name: String
+  var description: String
+  var inputs: [Input]
+  /// Kept as JSON, so steps a newer brain knows still show.
+  var steps: [JSONValue]
+  /// The tools it changes things with, when it was saved.
+  var writes: [String]
+  /// You approved it as it is, so its changes run without the review.
+  var approved: Bool
+  var enabled: Bool
+  var createdVia: String
+  /// The chat wrote it after reading untrusted content, so its runs start tainted.
+  var tainted: Bool
+  var taintedBy: String?
+  var createdAt: String
+  var updatedAt: String
+  var lastRunAt: String?
+  var lastTaskId: Int?
+
+  /// It changes things and you haven't approved it as it is, so it doesn't run.
+  var unapproved: Bool { !writes.isEmpty && !approved }
+}
+
+/// Any JSON value.
+enum JSONValue: Codable, Equatable, Sendable {
+  case null
+  case bool(Bool)
+  case number(Double)
+  case string(String)
+  case array([JSONValue])
+  case object([String: JSONValue])
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.singleValueContainer()
+    if c.decodeNil() {
+      self = .null
+    } else if let b = try? c.decode(Bool.self) {
+      self = .bool(b)
+    } else if let n = try? c.decode(Double.self) {
+      self = .number(n)
+    } else if let s = try? c.decode(String.self) {
+      self = .string(s)
+    } else if let a = try? c.decode([JSONValue].self) {
+      self = .array(a)
+    } else {
+      self = .object(try c.decode([String: JSONValue].self))
+    }
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var c = encoder.singleValueContainer()
+    switch self {
+    case .null: try c.encodeNil()
+    case let .bool(b): try c.encode(b)
+    // Whole numbers as JavaScript writes them, 3 rather than 3.0.
+    case let .number(n):
+      if n == n.rounded(), abs(n) < 1e15 { try c.encode(Int64(n)) } else { try c.encode(n) }
+    case let .string(s): try c.encode(s)
+    case let .array(a): try c.encode(a)
+    case let .object(o): try c.encode(o)
+    }
+  }
+
+  /// As JSON on one line, keys in order.
+  var json: String {
+    let e = JSONEncoder()
+    e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    return (try? e.encode(self)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
+  }
+
+  subscript(key: String) -> JSONValue? {
+    if case let .object(o) = self { o[key] } else { nil }
+  }
+
+  var string: String? {
+    if case let .string(s) = self { s } else { nil }
+  }
+}
+
 struct Trigger: Codable, Identifiable, Equatable, Sendable {
   enum Kind: String, LenientEnum {
     case webhook, kuma
@@ -964,6 +1052,8 @@ enum HatbotEvent: Decodable, Sendable {
   case boxUpdated(Box)
   case boxDeleted(id: Int)
   case negotiationUpdated(Negotiation)
+  case scriptUpdated(Script)
+  case scriptDeleted(id: Int)
   case unknown(String)
 
   private enum Key: String, CodingKey {
@@ -971,6 +1061,7 @@ enum HatbotEvent: Decodable, Sendable {
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
     case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link, computers
     case negotiationId, negotiation
+    case script
   }
 
   init(from decoder: Decoder) throws {
@@ -1025,6 +1116,8 @@ enum HatbotEvent: Decodable, Sendable {
     case "box.updated": self = try .boxUpdated(v(.box))
     case "box.deleted": self = try .boxDeleted(id: v(.id))
     case "negotiation.updated": self = try .negotiationUpdated(v(.negotiation))
+    case "script.updated": self = try .scriptUpdated(v(.script))
+    case "script.deleted": self = try .scriptDeleted(id: v(.id))
     default: self = .unknown(type)
     }
   }

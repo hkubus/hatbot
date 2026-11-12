@@ -781,6 +781,99 @@ final class FormTests: XCTestCase {
   }
 }
 
+final class ScriptTests: XCTestCase {
+  /// A script from the stream shows its steps as the web does, from describeSteps in packages/shared,
+  /// and a step a newer brain knows as its JSON; deleted, it's gone.
+  func testAScriptReadsAsOnTheWeb() async throws {
+    let event = try decode(
+      HatbotEvent.self,
+      #"""
+      {"type":"script.updated","script":{"id":4,"botId":"hatbot","name":"check-backups","description":"Backups",
+       "inputs":[{"name":"host","description":"Which host"}],"steps":[
+        {"call":"ssh_run","input":{"command":"ls /backups","host":"{{input.host}}"},"as":"out"},
+        {"if":{"all":[{"value":"{{out}}","is":"empty"},{"not":{"value":"{{now}}","is":"contains","to":"Sunday"}}]},
+         "do":[{"notify":"No backups on {{input.host}}"},{"stop":"Missing","failed":true}],
+         "else":[{"set":"seen","to":3},{"call":"ssh_status","optional":true}]},
+        {"each":"out.lines","as":"line","do":[{"add":"found","value":"{{line}}"},{"post":"Saw {{line}}"}]},
+        {"task":"Look into it","title":"Backups"},
+        {"stop":"Done"},
+        {"wait":"1h"}],
+       "writes":["ssh_run"],"approved":false,"enabled":true,"createdVia":"chat","tainted":false,"taintedBy":null,
+       "createdAt":"2026-11-09T08:00:00.000Z","updatedAt":"2026-11-09T08:00:00.000Z","lastRunAt":null,"lastTaskId":null}}
+      """#)
+    guard case let .scriptUpdated(script) = event else { return XCTFail("not a script") }
+    XCTAssertTrue(script.unapproved)
+    XCTAssertEqual(
+      ScriptSteps.lines(script.steps),
+      [
+        #"1. Call ssh_run with {"command":"ls /backups","host":"{{input.host}}"}, as out"#,
+        #"2. If ({{out}} is empty) and (not ({{now}} contains "Sunday")):"#,
+        "3.   Tell you: No backups on {{input.host}}",
+        "4.   Fail: Missing",
+        "   Otherwise:",
+        "5.   Set seen to 3",
+        "6.   Call ssh_status, going on if it fails",
+        "7. For each line in out.lines:",
+        "8.   Add {{line}} to found",
+        "9.   Note in the chat: Saw {{line}}",
+        #"10. Start a task "Backups": Look into it"#,
+        "11. Stop: Done",
+        #"12. {"wait":"1h"}"#,
+      ])
+
+    await MainActor.run {
+      let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: nil))
+      store.apply(event)
+      XCTAssertEqual(store.scripts[4]?.name, "check-backups")
+      store.apply(.scriptDeleted(id: 4))
+      XCTAssertNil(store.scripts[4])
+      XCTAssertTrue(store.deletedScripts.contains(4))
+    }
+  }
+
+  /// A schedule runs either a task from its prompt or a script, and saving sends only the one it runs:
+  /// a script's schedule has no prompt, and the brain refuses an empty one.
+  func testAScheduleSendsItsPromptOrItsScript() throws {
+    let stored = try decode(
+      Schedule.self,
+      #"""
+      {"id":2,"name":"Backups","cron":"0 8 * * *","runAt":null,"prompt":"","scriptId":4,"enabled":true,
+       "createdVia":"owner","createdAt":"2026-11-09T08:00:00.000Z","botId":"hatbot"}
+      """#)
+    var form = ScheduleForm(stored)
+    XCTAssertTrue(form.valid)
+    let sent = { (f: ScheduleForm) in String(decoding: try JSONEncoder().encode(f.change), as: UTF8.self) }
+    XCTAssertTrue(try sent(form).contains(#""scriptId":4"#))
+    XCTAssertFalse(try sent(form).contains(#""prompt""#))
+
+    form.scriptId = nil
+    XCTAssertFalse(form.valid)
+    form.prompt = "Check the backups"
+    XCTAssertTrue(form.valid)
+    XCTAssertTrue(try sent(form).contains(#""prompt":"Check the backups""#))
+    XCTAssertFalse(try sent(form).contains(#""scriptId""#))
+  }
+
+  /// A script is its bot's own: the schedule's bot changed, it runs a task again.
+  func testAnotherBotDoesntKeepTheScript() {
+    var form = ScheduleForm()
+    form.scriptId = 4
+    form.botId = Bot.hatbot
+    XCTAssertEqual(form.scriptId, 4)
+    form.botId = "sysadmin"
+    XCTAssertNil(form.scriptId)
+  }
+
+  /// What you type for an input goes as JSON where it reads as JSON, and as text otherwise.
+  func testAnInputIsJSONWhereItReadsAsJSON() {
+    XCTAssertEqual(ScriptSteps.typed("5"), .number(5))
+    XCTAssertEqual(ScriptSteps.typed(#"["a"]"#), .array([.string("a")]))
+    XCTAssertEqual(ScriptSteps.typed("true"), .bool(true))
+    XCTAssertEqual(ScriptSteps.typed("nas.local"), .string("nas.local"))
+    XCTAssertEqual(ScriptSteps.typed(""), .string(""))
+  }
+}
+
 final class SignOutAndCacheTests: XCTestCase {
   func testAStoreShowsWhatWasLastSeenUntilTheBrainAnswers() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1495,6 +1588,58 @@ final class NetworkTests: XCTestCase {
     let open = await MainActor.run { store.openNegotiations }
     XCTAssertEqual(open.map(\.id), [])
     XCTAssertTrue(SlowBrain.requested.contains("POST /negotiations/5/close"))
+  }
+
+  private static func computer(paused: Bool = false, enabled: Bool = true, name: String = "laptop") -> String {
+    #"{"id":"m1","name":"\#(name)","online":true,"enabled":\#(enabled),"paused":\#(paused),"locked":false,"ownerActive":false,"careful":false,"control":"hatbot","activeTaskId":null,"lastSeenAt":null}"#
+  }
+
+  /// Settings → Your computers: listed, renamed, made careful and forgotten; with the plugin off, there's none.
+  func testYourComputersAreListedChangedAndForgotten() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/computers"] = "[\(Self.computer())]"
+    let on = try await store.loadComputers()
+    XCTAssertTrue(on)
+    var names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, ["laptop"])
+
+    SlowBrain.routes["/computers/m1"] = Self.computer(name: "work")
+    try await store.renameComputer("m1", to: "work")
+    var sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/computers/m1"))) as? NSDictionary)
+    XCTAssertEqual(sent, ["name": "work"])
+    names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, ["work"])
+    try await store.setCareful("m1", true)
+    sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/computers/m1"))) as? NSDictionary)
+    XCTAssertEqual(sent, ["careful": true])
+
+    SlowBrain.routes["/computers/m1"] = #"{"ok":true}"#
+    try await store.forgetComputer("m1")
+    names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, [])
+    XCTAssertEqual(
+      SlowBrain.requested, ["GET /computers", "PATCH /computers/m1", "PATCH /computers/m1", "DELETE /computers/m1"])
+
+    SlowBrain.routes["/computers"] = nil
+    let off = try await store.loadComputers()
+    XCTAssertFalse(off)
+  }
+
+  /// The computer sends its status apart from its answer, so the brain's answer to a pause or turning off
+  /// can be from before it: what the computer did shows anyway.
+  func testAPauseShowsThoughTheBrainsAnswerIsFromBeforeIt() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/computers"] = "[\(Self.computer())]"
+    _ = try await store.loadComputers()
+    SlowBrain.routes["/computers/m1/pause"] = Self.computer()
+    try await store.pauseComputer("m1", true)
+    let paused = await MainActor.run { store.computers.first?.paused }
+    XCTAssertEqual(paused, true)
+
+    SlowBrain.routes["/computers/m1/turn-off"] = Self.computer(paused: true)
+    try await store.turnOffComputer("m1")
+    let enabled = await MainActor.run { store.computers.first?.enabled }
+    XCTAssertEqual(enabled, false)
   }
 }
 

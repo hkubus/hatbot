@@ -75,6 +75,9 @@ final class AppStore {
   var watchersLoaded = false
   /// Deleted while the app was open, so an open watcher says it's gone.
   var deletedWatchers = Set<Int>()
+  var scripts: [Int: Script] = [:]
+  var scriptsLoaded = false
+  var deletedScripts = Set<Int>()
   /// Boxes: all of them once Boxes has been opened (`boxesLoaded`), and any a chat has shown.
   var boxes: [Int: Box] = [:]
   var boxesLoaded = false
@@ -403,6 +406,12 @@ final class AppStore {
     case let .negotiationUpdated(n):
       negotiations[n.id] = n
       if negotiationMessages[n.id] != nil { Task { try? await loadNegotiation(n.id) } }
+    case let .scriptUpdated(s):
+      scripts[s.id] = s
+      deletedScripts.remove(s.id)
+    case let .scriptDeleted(id):
+      scripts[id] = nil
+      deletedScripts.insert(id)
     case .unknown:
       break
     }
@@ -1261,6 +1270,53 @@ final class AppStore {
     if let i = computers.firstIndex(where: { $0.id == c.id }) { computers[i] = c }
   }
 
+  // MARK: Your computers
+
+  /// False while the Your computers plugin is off.
+  func loadComputers() async throws -> Bool {
+    do {
+      computers = try await api.get("/computers")
+      return true
+    } catch let e as APIError where e.status == 404 {
+      computers = []
+      return false
+    }
+  }
+
+  private func computerPath(_ id: String) -> String {
+    "/computers/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+  }
+
+  func renameComputer(_ id: String, to name: String) async throws {
+    struct Body: Encodable { let name: String }
+    putComputer(try await api.patch(computerPath(id), body: Body(name: name)))
+  }
+
+  func setCareful(_ id: String, _ careful: Bool) async throws {
+    struct Body: Encodable { let careful: Bool }
+    putComputer(try await api.patch(computerPath(id), body: Body(careful: careful)))
+  }
+
+  /// The computer sends its status apart from its answer, so the brain's answer may be from before it.
+  func pauseComputer(_ id: String, _ paused: Bool) async throws {
+    struct Body: Encodable { let paused: Bool }
+    var c: ComputerInfo = try await api.post("\(computerPath(id))/pause", body: Body(paused: paused))
+    c.paused = paused
+    putComputer(c)
+  }
+
+  /// Only the computer can turn it on again.
+  func turnOffComputer(_ id: String) async throws {
+    var c: ComputerInfo = try await api.post("\(computerPath(id))/turn-off", body: Empty())
+    c.enabled = false
+    putComputer(c)
+  }
+
+  func forgetComputer(_ id: String) async throws {
+    let _: Empty = try await api.delete(computerPath(id))
+    computers.removeAll { $0.id == id }
+  }
+
   /// The live view's socket: JPEG frames out, your input in while you have control.
   func liveSocket(_ screen: String? = nil) -> Socket {
     let api = self.api
@@ -1292,6 +1348,7 @@ final class AppStore {
   struct ScheduleChange: Encodable, Sendable {
     var name: String?
     var prompt: String?
+    var scriptId: Int?
     var enabled: Bool?
     var cron: String?
     /// ISO 8601 date and time, for a one-off run.
@@ -1351,6 +1408,38 @@ final class AppStore {
     let _: Empty = try await api.delete("/triggers/\(id)")
     triggers[id] = nil
     deletedTriggers.insert(id)
+  }
+
+  // MARK: Scripts
+
+  func loadScripts() async throws {
+    let list: [Script] = try await api.get("/scripts")
+    scripts = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+    scriptsLoaded = true
+  }
+
+  func loadScript(_ id: Int) async throws {
+    scripts[id] = try await api.get("/scripts/\(id)")
+  }
+
+  /// Sends only `enabled`: with any other field, the brain saves it as yours, which approves it.
+  func setScriptEnabled(_ id: Int, _ on: Bool) async throws {
+    struct Body: Encodable { let enabled: Bool }
+    let s: Script = try await api.patch("/scripts/\(id)", body: Body(enabled: on))
+    scripts[s.id] = s
+  }
+
+  func runScript(_ id: Int, input: [String: JSONValue]) async throws -> AgentTask {
+    struct Body: Encodable { let input: [String: JSONValue] }
+    let task: AgentTask = try await api.post("/scripts/\(id)/run", body: Body(input: input))
+    tasks[task.id] = task
+    return task
+  }
+
+  func deleteScript(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/scripts/\(id)")
+    scripts[id] = nil
+    deletedScripts.insert(id)
   }
 
   // MARK: Memory
