@@ -31,7 +31,7 @@ struct SettingsView: View {
         Section {
           if store.pluginOn("automation") { NavigationLink("Automations", value: Route.schedules) }
           NavigationLink("Spend", value: Route.spend)
-          NavigationLink("Your computers", value: Route.computers)
+          if store.pluginOn("computer") { NavigationLink("Your computers", value: Route.computers) }
         }
         if let settings {
           Section("Models") {
