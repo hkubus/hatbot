@@ -75,6 +75,9 @@ final class AppStore {
   var watchersLoaded = false
   /// Deleted while the app was open, so an open watcher says it's gone.
   var deletedWatchers = Set<Int>()
+  var scripts: [Int: Script] = [:]
+  var scriptsLoaded = false
+  var deletedScripts = Set<Int>()
   /// Boxes: all of them once Boxes has been opened (`boxesLoaded`), and any a chat has shown.
   var boxes: [Int: Box] = [:]
   var boxesLoaded = false
@@ -388,6 +391,12 @@ final class AppStore {
     case let .boxDeleted(id):
       boxes[id] = nil
       deletedBoxes.insert(id)
+    case let .scriptUpdated(s):
+      scripts[s.id] = s
+      deletedScripts.remove(s.id)
+    case let .scriptDeleted(id):
+      scripts[id] = nil
+      deletedScripts.insert(id)
     case .unknown:
       break
     }
@@ -1267,6 +1276,7 @@ final class AppStore {
   struct ScheduleChange: Encodable, Sendable {
     var name: String?
     var prompt: String?
+    var scriptId: Int?
     var enabled: Bool?
     var cron: String?
     /// ISO 8601 date and time, for a one-off run.
@@ -1326,6 +1336,38 @@ final class AppStore {
     let _: Empty = try await api.delete("/triggers/\(id)")
     triggers[id] = nil
     deletedTriggers.insert(id)
+  }
+
+  // MARK: Scripts
+
+  func loadScripts() async throws {
+    let list: [Script] = try await api.get("/scripts")
+    scripts = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+    scriptsLoaded = true
+  }
+
+  func loadScript(_ id: Int) async throws {
+    scripts[id] = try await api.get("/scripts/\(id)")
+  }
+
+  /// Sends only `enabled`: with any other field, the brain saves it as yours, which approves it.
+  func setScriptEnabled(_ id: Int, _ on: Bool) async throws {
+    struct Body: Encodable { let enabled: Bool }
+    let s: Script = try await api.patch("/scripts/\(id)", body: Body(enabled: on))
+    scripts[s.id] = s
+  }
+
+  func runScript(_ id: Int, input: [String: JSONValue]) async throws -> AgentTask {
+    struct Body: Encodable { let input: [String: JSONValue] }
+    let task: AgentTask = try await api.post("/scripts/\(id)/run", body: Body(input: input))
+    tasks[task.id] = task
+    return task
+  }
+
+  func deleteScript(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/scripts/\(id)")
+    scripts[id] = nil
+    deletedScripts.insert(id)
   }
 
   // MARK: Memory
