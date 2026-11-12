@@ -588,13 +588,16 @@ export class Triggers {
   origins(): Record<"webhook" | "alert", TaskOrigin> {
     const standing = (task: Task) => {
       const kind = task.origin === "alert" ? "Uptime Kuma alert" : "webhook";
+      // A script's run, or a task its steps start, is the script's words filled in with what it
+      // found, not yours. Told by how the task started, not by what its webhook runs now: the
+      // webhook may have been switched between a prompt and a script since.
+      const runKey = this.db
+        .query<{ run_key: string | null }, [number]>("SELECT run_key FROM tasks WHERE id = ?")
+        .get(task.id)?.run_key;
+      if (task.runner === "script" || runKey?.startsWith("script:")) return null;
       const trigger = this.db
-        .query<{ trusted: number; script_id: number | null }, [number]>(
-          "SELECT trusted, script_id FROM triggers WHERE id = ?",
-        )
+        .query<{ trusted: number }, [number]>("SELECT trusted FROM triggers WHERE id = ?")
         .get(task.triggerId ?? -1);
-      // A script's task is the script's words, filled in with what it found, not yours.
-      if (task.origin === "webhook" && (!trigger || trigger.script_id !== null)) return null;
       const head = `Standing instructions for the ${kind} "${task.source ?? ""}":\n${task.goal}`;
       const trustedEvent = task.origin === "alert" || trigger?.trusted === 1;
       // An alert's message can be written by whoever reaches the service: not shown either.

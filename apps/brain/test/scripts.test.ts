@@ -374,6 +374,11 @@ test("a task a webhook's script starts isn't shown to the review as your instruc
   const task = t.tasks.get(started.id) as Task;
   expect(task.goal).toContain("delete the backups");
   expect(t.triggers.origins().webhook.standing?.(task)).toBeNull();
+  // Switching the webhook to a prompt while the task runs doesn't make its goal yours.
+  expect((await api("PATCH", `/triggers/${trigger.id}`, { prompt: "Look at it." })).status).toBe(
+    200,
+  );
+  expect(t.triggers.origins().webhook.standing?.(task)).toBeNull();
   await t.tasks.idle();
 });
 
