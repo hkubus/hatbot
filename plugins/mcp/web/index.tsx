@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 
 type Mode = "chat" | "allow" | "ask" | "always" | "off";
 /** What a tool's calls are: money and accounts always ask, and never in the chat. */
-type Kind = "payment" | "purchase" | "account_security" | "none";
+type Kind = "payment" | "purchase" | "account_security" | "send" | "none";
 type Server = {
   name: string;
   transport: "http" | "stdio";
@@ -46,8 +46,8 @@ type Status = {
     mode: Mode;
     problem: string | null;
     hash: string;
-    /** What its name and description suggest it does, if it moves money. */
-    guess: "payment" | "purchase" | null;
+    /** What its name and description suggest it does, if it moves money or messages people. */
+    guess: "payment" | "purchase" | "send" | null;
   }[];
 };
 type Tool = Status["tools"][number];
@@ -64,7 +64,10 @@ const KINDS: [Kind, string][] = [
   ["payment", "Pays or moves money"],
   ["purchase", "Buys or orders"],
   ["account_security", "Changes accounts or keys"],
+  ["send", "Sends to people"],
 ];
+/** Money and accounts: never Ask first or Chat. */
+const careful = (kind: Kind) => kind !== "none" && kind !== "send";
 
 /** What a tool's calls are, as the form has it: the owner's say, or the brain's guess. */
 export const kindIn = (s: Server, t: Tool): Kind => s.kinds[t.name] ?? t.guess ?? "none";
@@ -75,10 +78,10 @@ export const lapsedIn = (s: Server, t: Tool) => {
 };
 /** The mode the brain would use with the form's settings, as the brain works it out. */
 export function modeIn(s: Server, t: Tool): Mode {
-  const money = kindIn(s, t) !== "none";
-  const mode = (lapsedIn(s, t) ? undefined : s.tools[t.name]) ?? (money ? "always" : "ask");
-  if (money && mode === "ask") return "always";
-  if (money && mode === "chat") return "allow";
+  const always = careful(kindIn(s, t));
+  const mode = (lapsedIn(s, t) ? undefined : s.tools[t.name]) ?? (always ? "always" : "ask");
+  if (always && mode === "ask") return "always";
+  if (always && mode === "chat") return "allow";
   return mode;
 }
 /** Choosing a mode: Chat and Allow are kept for the definition as it is now. */
@@ -319,7 +322,7 @@ export function McpSettings({ config, save, action, running }: PluginSettingsPro
                       label={`When ${t.name} asks`}
                       value={modeIn(s, t)}
                       options={MODES.filter(
-                        ([m]) => kindIn(s, t) === "none" || (m !== "ask" && m !== "chat"),
+                        ([m]) => !careful(kindIn(s, t)) || (m !== "ask" && m !== "chat"),
                       )}
                       onChange={(mode) => set(i, withMode(s, t, mode))}
                     />

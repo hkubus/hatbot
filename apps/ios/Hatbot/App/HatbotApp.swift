@@ -187,8 +187,8 @@ struct MainView: View {
     }
   }
 
-  /// Opens the approval's task; `approving`, a notification's Approve, asks to approve it, then
-  /// approves it once Face ID (or the passcode) says it's you.
+  /// Opens the approval's task, or the negotiation it's about; `approving`, a notification's Approve, asks to
+  /// approve it, then approves it once Face ID (or the passcode) says it's you.
   private func openApproval(_ id: Int, approving: Bool) {
     tab = .tasks
     tasksPath = []
@@ -196,7 +196,11 @@ struct MainView: View {
       let approval: Approval? = try? await store.api.get("/approvals/\(id)")
       guard let a = approval else { return }
       store.apply(.approvalCreated(a))
-      if let taskId = a.taskId { tasksPath = [.task(taskId)] }
+      if let taskId = a.taskId {
+        tasksPath = [.task(taskId)]
+      } else if let n = await store.findNegotiation(for: a) {
+        tasksPath = [.negotiation(n.id)]
+      }
       // Asked first, with what it is: any app or page can open this link, and Face ID doesn't say what it's for.
       // A secret is typed in where it shows, not approved from here.
       if approving && a.status == .pending && a.secret == nil { confirming = a }

@@ -439,7 +439,7 @@ export function negotiateTools(
               : "";
           return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " The other buyers are told it's sold, and the owner sends it once the buyer has paid on the site." : ""}`;
         }
-        const scout = await neg.recordOutcome(available, n, i.outcome, i.price ?? null);
+        const scout = await neg.recordOutcome(n, i.outcome, i.price ?? null);
         return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " Paying is a separate desktop task, which stops at the checkout and asks the owner." : ""}`;
       },
     }),

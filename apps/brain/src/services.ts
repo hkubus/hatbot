@@ -293,7 +293,7 @@ export async function createServices(o: Outside) {
     approvals,
     questions,
   };
-  const tasks = new Tasks({ ...core });
+  const tasks = new Tasks({ ...core, repeats });
   events.on((e) => {
     if (e.type === "task.updated" && !ACTIVE_TASK_STATUSES.includes(e.task.status))
       plugins.service<T3Code>("t3")?.forget(`task-${e.task.id}`);
