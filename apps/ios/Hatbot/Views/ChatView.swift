@@ -11,6 +11,8 @@ struct ChatView: View {
   @State private var error: String?
   @State private var position = ScrollPosition(edge: .bottom)
   @State private var unfolded = Set<Int>()
+  /// Unread when you came: they stay in view in their fold until you leave.
+  @State private var kept = Set<Int>()
   @State private var deleting: Int?
   @State private var rowCache = RowCache()
   /// So the rows' times are made again when the day changes: "Today" becomes "Yesterday".
@@ -56,6 +58,7 @@ struct ChatView: View {
       var episodes: [Int: Episode]
       var unfolded: Set<Int>
       var unread: [Int]
+      var kept: Set<Int>
       var day: Date
     }
 
@@ -66,7 +69,8 @@ struct ChatView: View {
 
   private var rows: [Row] {
     let key = RowCache.Key(
-      messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread, day: today)
+      messages: store.messages, episodes: store.episodes, unfolded: unfolded, unread: store.unread, kept: kept,
+      day: today)
     if rowCache.key == key { return rowCache.rows }
     var rows: [Row] = []
     var previous: ThreadMessage?
@@ -83,8 +87,9 @@ struct ChatView: View {
         continue
       }
       add(g.messages[0], as: .fold(g))
-      // A message you haven't seen stays in view.
-      let shown = unfolded.contains(id) ? g.messages : g.messages.filter { unread.contains($0.id) }
+      // A message you haven't seen, or hadn't when you came, stays in view.
+      let shown =
+        unfolded.contains(id) ? g.messages : g.messages.filter { unread.contains($0.id) || key.kept.contains($0.id) }
       for m in shown { add(m) }
     }
     rowCache.key = key
@@ -106,13 +111,15 @@ struct ChatView: View {
     }
   }
 
-  /// The newest message, while the chat's bottom is on screen and something in it is unread: reading
-  /// to there reads all of it, the messages not loaded too.
-  private var bottomRead: [Int]? {
-    guard nearBottom, scenePhase == .active, sectionShown, !store.incognito, let last = store.messages.last?.id,
-      let unread = store.currentChat?.unread, unread > 0
+  /// The newest message, while the chat shows and something in it is unread: open, it's all read, the
+  /// messages not loaded too.
+  private var opened: [Int]? {
+    guard scenePhase == .active, sectionShown, !store.incognito,
+      let last = store.messages.last(where: { $0.conversationId == store.conversationId })?.id
     else { return nil }
-    return [last, unread]
+    let mine = store.messages.filter { store.unread.contains($0.id) }.count
+    let unread = store.currentChat?.unread ?? 0
+    return mine > 0 || unread > 0 ? [last, unread, mine] : nil
   }
 
   private var members: [Bot]? {
@@ -211,10 +218,10 @@ struct ChatView: View {
             Task { try? await store.loadEarlier() }
           }
         }
-        .task(id: bottomRead) {
-          guard let through = bottomRead?.first else { return }
-          try? await Task.sleep(for: .seconds(1.5))
-          if !Task.isCancelled { store.markSeen([], through: through) }
+        .task(id: opened) {
+          guard let through = opened?.first else { return }
+          kept.formUnion(store.messages.lazy.map(\.id).filter { store.unread.contains($0) })
+          store.markSeen([], through: through)
         }
         .simultaneousGesture(TapGesture().onEnded { writing = false })
         .overlay(alignment: .bottom) {
@@ -345,6 +352,7 @@ struct ChatView: View {
         .onChange(of: store.conversationId) {
           path = []
           unfolded = []
+          kept = []
           // Another chat opens at its latest, not where you'd scrolled to in the one you left.
           position.scrollTo(edge: .bottom)
         }
@@ -831,6 +839,7 @@ private struct MessageRow: View, Equatable {
     default: ReplyMessage(m: m)
     }
     if m.kind != .box, let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
+    if let id = m.negotiationId { NegotiationResult(id: id) }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
     // Another set of questions, as a rewritten reply's, starts its answers again: one each.
     if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list).id(list) }
@@ -848,7 +857,9 @@ private struct MessageRow: View, Equatable {
   /// A plain reply is read as one, without Markdown and not word by word as it streams; others keep their parts.
   private var spokenText: String? {
     if m.kind == .box { return m.text }
-    guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil else { return nil }
+    guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil, m.negotiationId == nil else {
+      return nil
+    }
     return m.status == .streaming ? "Writing" : Markdown.plain(m.text)
   }
 
@@ -897,6 +908,9 @@ private struct MessageRow: View, Equatable {
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
       if let boxId = m.boxId { Button("Open box", systemImage: "chevron.right") { open(.box(boxId)) } }
+      if let id = m.negotiationId {
+        Button("Open negotiation", systemImage: "chevron.right") { open(.negotiation(id)) }
+      }
       if let taskId = m.taskId { openButton(taskId) }
       if let link = m.link { linkButton(link) }
       if m.status == .error && m.role == .assistant {
@@ -951,15 +965,10 @@ private struct MessageRow: View, Equatable {
   }
 }
 
-/// Its own view, so the unread list changing, another section showing or the app coming to the front
-/// redraws only this, not every message's Markdown.
+/// Its own view, so the unread list changing redraws only this, not every message's Markdown.
 private struct UnreadMark: View {
   let id: Int
   @Environment(AppStore.self) private var store
-  @Environment(\.scenePhase) private var scenePhase
-  /// The chat is kept, hidden, while another section shows: nothing in it is seen then.
-  @Environment(\.sectionShown) private var sectionShown
-  @State private var onScreen = false
 
   var body: some View {
     let unread = store.unread.contains(id)
@@ -967,20 +976,6 @@ private struct UnreadMark: View {
       .opacity(unread ? 1 : 0)
       .animation(.easeOut(duration: 1), value: unread)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      // Half of it on screen; or, for one too long for that, filling most of the screen or its end in view.
-      .onGeometryChange(for: Bool.self) { geo in
-        guard let screen = geo.bounds(of: .scrollView) else { return false }
-        let me = CGRect(origin: .zero, size: geo.size)
-        let shown = me.intersection(screen)
-        guard !shown.isNull, shown.height > 0 else { return false }
-        return shown.height >= me.height * 0.5 || shown.height >= screen.height * 0.6
-          || (me.maxY > screen.minY && me.maxY <= screen.maxY)
-      } action: { onScreen = $0 }
-      .task(id: unread && onScreen && scenePhase == .active && sectionShown) {
-        guard unread && onScreen && scenePhase == .active && sectionShown else { return }
-        try? await Task.sleep(for: .seconds(1.5))
-        if !Task.isCancelled { store.markSeen([id]) }
-      }
   }
 }
 
@@ -1267,6 +1262,8 @@ struct ApprovalBody: View {
     let shot = a.taskId != nil && a.screenshotStepId != nil
     let folds = compact && ((!a.reason.isEmpty && !warns) || shot || a.takesNote)
     let opens = linksTask && router != nil ? a.taskId : nil
+    // A mandate or a hold has no task: its negotiation instead.
+    let deal = linksTask && router != nil && a.taskId == nil ? store.negotiation(forApproval: a.id)?.id : nil
     // All of it as written, never Markdown: the summary can be a whole shell command.
     if a.secret != nil {
       Text(a.summary).bold().textSelection(.enabled)
@@ -1287,13 +1284,18 @@ struct ApprovalBody: View {
         .onSubmit { if !secret.isEmpty { decide(.approve) } }
     }
     if shown && a.takesNote {
-      TextField("Tell it what to do instead, or how to go ahead", text: $note, axis: .vertical)
+      // A mandate's note can change its numbers.
+      TextField(
+        a.kind == "mandate"
+          ? "Change the numbers, or tell it how to go about it" : "Tell it what to do instead, or how to go ahead",
+        text: $note, axis: .vertical)
         .lineLimit(1...6)
         .materialField()
     }
-    if opens != nil || folds {
+    if opens != nil || deal != nil || folds {
       HStack(spacing: 16) {
         if let taskId = opens { Button("Open task") { router?.open(.task(taskId)) } }
+        if let id = deal { Button("Open negotiation") { router?.open(.negotiation(id)) } }
         if folds { Button(more ? "Less" : "More") { withAnimation(.snappy) { more.toggle() } } }
       }
       .font(.sans(.subheadline))

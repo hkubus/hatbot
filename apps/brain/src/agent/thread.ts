@@ -51,6 +51,8 @@ import {
   offered,
   type Plugins,
   runPluginTool,
+  STOPPED_SEND,
+  sends,
   targetOf,
   untrustedDefinitions,
   verdictFor,
@@ -577,7 +579,9 @@ export class Thread {
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
     progress: (line: string) => void,
-  ): Promise<{ note: string | null } | { content: string; isError: true; blocked?: true }> {
+  ): Promise<
+    { note: string | null; byOwner?: true } | { content: string; isError: true; blocked?: true }
+  > {
     const { approvals, settings } = this.d;
     const taintedBy = this.tainted(episodeId);
     const level = levelOf(settings.get(), verdict);
@@ -650,7 +654,7 @@ export class Thread {
       if (signal.aborted) approvals.cancel(approval.id);
     }
     const note = approvals.get(approval.id)?.note ?? null;
-    if (outcome === "approved") return { note };
+    if (outcome === "approved") return { note, byOwner: true };
     const content =
       outcome === "denied"
         ? note
@@ -669,7 +673,7 @@ export class Thread {
     progress: (line: string) => void,
     messageId: number,
   ): Promise<{ content: string; isError: boolean; images?: ToolImage[]; blocked?: true }> {
-    const { attachments } = this.d;
+    const { attachments, approvals, settings } = this.d;
     const cc: CallContext = {
       task: null,
       signal,
@@ -685,22 +689,39 @@ export class Thread {
       input,
       cc,
       this.tainted(episodeId) !== null,
-      this.d.settings.get().safety,
+      settings.get().safety,
     );
     if (verdict.action === "block") return { content: `Refused: ${verdict.why}`, isError: true };
     let note: string | null = null;
+    let byOwner = false;
     if (verdict.action === "ask") {
       const call = { tool: t.name, input, what, target: targetOf(t, input) };
       const asked = await this.approve(episodeId, bot, call, verdict, signal, progress);
       if ("content" in asked) return asked;
       note = asked.note;
+      byOwner = Boolean(asked.byOwner);
+    }
+    const wait = byOwner || !approvals || !sends(t, input) ? 0 : settings.get().safety.sendWaitS;
+    if (wait) {
+      progress(`Sending in ${wait} s`);
+      const send = {
+        taskId: null,
+        botId: bot.id,
+        conversationId: this.conversationId,
+        kind: "send" as const,
+        summary: what,
+      };
+      if (!(await approvals?.letGo(send, wait, signal)))
+        return { content: STOPPED_SEND, isError: true };
+    }
+    if (verdict.action === "ask" || wait) {
       // What was reviewed or approved was the plugin as it was: one switched off or restarted
       // meanwhile mustn't run.
       const now = this.d.bots.get(bot.id) ?? bot;
       const live = this.d.plugins.tools(now.plugins, this.d.bots.leftToOthers(now));
       if (this.d.plugins.pluginOf(t.name) && !live.includes(t))
         return {
-          content: `Not run: ${t.name}'s plugin was switched off or restarted while this was checked or waited for approval.`,
+          content: `Not run: ${t.name}'s plugin was switched off or restarted while this was checked or waited.`,
           isError: true,
         };
     }
@@ -1923,6 +1944,7 @@ export class Thread {
         const lines = ended.map((t) => {
           const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
           const handed = files.filter((a) => a.taskId === t.id && a.forChat);
+          const offer = t.scheduleId !== null ? this.d.repeats?.ranOffer(t) : null;
           const head = `Task #${t.id} "${tagText(t.title)}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}`;
           return [
             // What a task that read untrusted content reports is data, like what it read.
@@ -1931,6 +1953,7 @@ export class Thread {
               : `${head}: ${tagText(t.summary ?? "")}`,
             ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
             ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
+            ...(offer ? [offer] : []),
           ].join("\n");
         });
         userBlocks.push({
@@ -2070,7 +2093,7 @@ export class Thread {
     const called: string[] = [];
     const repeats = user && !this.currentHandoff && !incognito ? this.d.repeats : undefined;
     const finish = (status: "done" | "error", note?: string): Said => {
-      if (status === "done") repeats?.record(bot.id, called);
+      if (status === "done") repeats?.record({ botId: bot.id }, called);
       // A chart being fixed is out of view; the reply ends with what's shown.
       chartFix = null;
       // A task's reply that came to nothing still says how the task went.

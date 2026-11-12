@@ -7,6 +7,7 @@ import {
   type BoxBuild,
   type BoxFile,
   type BoxResponse,
+  type BoxRun,
   MAX_BOX_BODY,
   passedHeaders,
 } from "@hatbot/shared/hatbox";
@@ -161,6 +162,27 @@ export class Backends {
       };
     }
     return { value };
+  }
+
+  /**
+   * scheduled() once now, for the bot to try: what it returns comes back here, isn't sent to you,
+   * and its timer's next run stays when it was.
+   */
+  async runNow(id: number): Promise<BoxRun> {
+    if (this.running.has(id)) throw new BoxError("Its scheduled() is running now; try again soon.");
+    this.running.add(id);
+    try {
+      const r = await this.current(id, (version, secrets) =>
+        this.agent.scheduled(id, version, secrets),
+      );
+      return {
+        ok: r.ok,
+        ...(r.error ? { error: this.boxes.redact(id, r.error) } : {}),
+        ...(r.notify ? { notify: this.boxes.redact(id, r.notify) } : {}),
+      };
+    } finally {
+      this.running.delete(id);
+    }
   }
 
   async logs(id: number): Promise<string> {

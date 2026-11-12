@@ -19,9 +19,9 @@ export type ListingFacts = {
   history: { price: number; at: string }[];
 };
 
-/** By name suffix: mcp_<server>_scout_listing_detail. */
+/** The Scout plugin's own, or by name suffix: mcp_<server>_scout_listing_detail. */
 export const scoutTool = (tools: PluginTool[], name: string) =>
-  tools.find((t) => t.name === name || t.name.endsWith(`_${name}`));
+  tools.find((t) => t.name === name) ?? tools.find((t) => t.name.endsWith(`_${name}`));
 
 export function parseKey(key: string): { marketplace: string; id: string } | null {
   const i = key.indexOf(":");

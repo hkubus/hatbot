@@ -324,13 +324,17 @@ export class Approvals {
   /** A message to a person that goes once `waitMs` passes, unless you deny (stop) it first. */
   sending(input: NewApproval, waitMs: number): Approval {
     const row = this.db
-      .query<{ id: number }, [string, number | null, string, string, string, string]>(
-        `INSERT INTO approvals (bot_id, task_id, kind, summary, reason, sources, status, created_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, '', '[]', 'sending', ?5, ?6) RETURNING id`,
+      .query<
+        { id: number },
+        [string, number | null, number | null, string, string, string, string]
+      >(
+        `INSERT INTO approvals (bot_id, task_id, conversation_id, kind, summary, reason, sources, status, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, '', '[]', 'sending', ?6, ?7) RETURNING id`,
       )
       .get(
         input.botId ?? HATBOT_ID,
         input.taskId,
+        input.conversationId ?? null,
         input.kind,
         input.summary,
         this.now(),
@@ -340,6 +344,18 @@ export class Approvals {
     if (!approval) throw new Error("approval insert failed");
     this.events.emit({ type: "approval.created", approval });
     return approval;
+  }
+
+  /** Whether a message to a person may go: after `waitS`, unless you stop it first. */
+  async letGo(input: NewApproval, waitS: number, signal: AbortSignal): Promise<boolean> {
+    if (!waitS) return true;
+    const a = this.sending(input, waitS * 1000);
+    try {
+      return (await this.wait(a.id, signal)) === "approved";
+    } finally {
+      // A stopped reply leaves nothing to go.
+      if (signal.aborted) this.cancel(a.id);
+    }
   }
 
   /** What the safety review blocked: nothing waits on it, and you may run it anyway for a day. */

@@ -39,6 +39,8 @@ struct TasksView: View {
               .padding(.vertical, 4)
             if let taskId = a.taskId {
               NavigationLink("Task", value: Route.task(taskId))
+            } else if let n = store.negotiation(forApproval: a.id) {
+              NavigationLink("Negotiation", value: Route.negotiation(n.id))
             }
           }
         }
@@ -47,6 +49,13 @@ struct TasksView: View {
             VStack(alignment: .leading, spacing: 10) { QuestionBody(question: q, linksTask: false) }
               .padding(.vertical, 4)
             NavigationLink("Task", value: Route.task(q.taskId))
+          }
+        }
+        if !store.openNegotiations.isEmpty {
+          Section("Negotiations") {
+            ForEach(store.openNegotiations) { n in
+              NavigationLink(value: Route.negotiation(n.id)) { NegotiationRow(negotiation: n) }
+            }
           }
         }
         Section {
@@ -100,6 +109,7 @@ struct TasksView: View {
   }
 
   private func load() async {
+    async let negotiations: Void? = try? store.loadNegotiations()
     await attempt($error) {
       let ids = try await store.loadTasks(filter)
       if filter == .done {
@@ -109,6 +119,7 @@ struct TasksView: View {
         activeLoaded = true
       }
     }
+    _ = await negotiations
   }
 
   private func loadEarlier() async {

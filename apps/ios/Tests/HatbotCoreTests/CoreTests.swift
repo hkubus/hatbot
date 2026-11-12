@@ -17,6 +17,18 @@ func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
   try JSONDecoder().decode(type, from: Data(json.utf8))
 }
 
+/// A negotiation for an RTX 3070 on OLX, buying, as the brain sends it.
+func negotiationJSON(
+  _ id: Int, status: String = "open", approvalId: Int? = nil, updatedAt: String = "2026-11-11T08:00:00.000Z",
+  closedAt: String? = nil
+) -> String {
+  let approval = approvalId.map(String.init) ?? "null"
+  let closed = closedAt.map { "\"\($0)\"" } ?? "null"
+  return #"""
+    {"id":\#(id),"botId":"haggler","wantId":1,"want":"RTX 3070, working","role":"buy","listingKey":"OLX:x","listingUrl":"https://www.olx.pl/d/oferta/x","title":"RTX 3070","asking":1200,"mandate":{"currency":"PLN","opening":1000,"target":1050,"limit":1100,"delivery":"OLX shipping","expiresAt":"2026-11-14T08:00:00.000Z","allow":[]},"appraisal":null,"conversationUrl":null,"claims":{"max":null,"otherOffers":null,"timing":null,"other":[]},"status":"\#(status)","agreedPrice":null,"approvalId":\#(approval),"conversationId":null,"nextFollowUpAt":null,"lastMessage":null,"createdAt":"2026-11-11T08:00:00.000Z","updatedAt":"\#(updatedAt)","closedAt":\#(closed)}
+    """#
+}
+
 final class DecodingTests: XCTestCase {
   /// Where a delta starts and the pages a reply cites are new: an older brain sends neither.
   func testDecodesTheStreamsMessageEvents() throws {
@@ -53,6 +65,16 @@ final class DecodingTests: XCTestCase {
     let bot = try decode(Bot.self, #"{"id":"chef","name":"Chef","icon":"rocket","instructions":"","createdAt":""}"#)
     XCTAssertEqual(bot.icon, .hat)
     XCTAssertEqual(bot.color, .amber)
+    // A negotiation in a state this app doesn't know still has a page, and Stop.
+    XCTAssertEqual(try decode(Negotiation.self, negotiationJSON(1, status: "held")).status, .open)
+  }
+
+  /// An expired negotiation that ended once its mandate did ran out; one that ended before was never approved.
+  func testAnExpiredNegotiationSaysWhetherItsMandateRanOut() throws {
+    let ranOut = try decode(Negotiation.self, negotiationJSON(1, status: "expired", closedAt: "2026-11-14T08:00:30.000Z"))
+    XCTAssertEqual(ranOut.line(), "The mandate ran out.")
+    let unapproved = try decode(Negotiation.self, negotiationJSON(1, status: "expired", closedAt: "2026-11-12T08:00:00.000Z"))
+    XCTAssertEqual(unapproved.line(), "The mandate wasn't approved in time.")
   }
 
   func testOlderBrainsWithoutNewFieldsStillDecode() throws {
@@ -759,6 +781,99 @@ final class FormTests: XCTestCase {
   }
 }
 
+final class ScriptTests: XCTestCase {
+  /// A script from the stream shows its steps as the web does, from describeSteps in packages/shared,
+  /// and a step a newer brain knows as its JSON; deleted, it's gone.
+  func testAScriptReadsAsOnTheWeb() async throws {
+    let event = try decode(
+      HatbotEvent.self,
+      #"""
+      {"type":"script.updated","script":{"id":4,"botId":"hatbot","name":"check-backups","description":"Backups",
+       "inputs":[{"name":"host","description":"Which host"}],"steps":[
+        {"call":"ssh_run","input":{"command":"ls /backups","host":"{{input.host}}"},"as":"out"},
+        {"if":{"all":[{"value":"{{out}}","is":"empty"},{"not":{"value":"{{now}}","is":"contains","to":"Sunday"}}]},
+         "do":[{"notify":"No backups on {{input.host}}"},{"stop":"Missing","failed":true}],
+         "else":[{"set":"seen","to":3},{"call":"ssh_status","optional":true}]},
+        {"each":"out.lines","as":"line","do":[{"add":"found","value":"{{line}}"},{"post":"Saw {{line}}"}]},
+        {"task":"Look into it","title":"Backups"},
+        {"stop":"Done"},
+        {"wait":"1h"}],
+       "writes":["ssh_run"],"approved":false,"enabled":true,"createdVia":"chat","tainted":false,"taintedBy":null,
+       "createdAt":"2026-11-09T08:00:00.000Z","updatedAt":"2026-11-09T08:00:00.000Z","lastRunAt":null,"lastTaskId":null}}
+      """#)
+    guard case let .scriptUpdated(script) = event else { return XCTFail("not a script") }
+    XCTAssertTrue(script.unapproved)
+    XCTAssertEqual(
+      ScriptSteps.lines(script.steps),
+      [
+        #"1. Call ssh_run with {"command":"ls /backups","host":"{{input.host}}"}, as out"#,
+        #"2. If ({{out}} is empty) and (not ({{now}} contains "Sunday")):"#,
+        "3.   Tell you: No backups on {{input.host}}",
+        "4.   Fail: Missing",
+        "   Otherwise:",
+        "5.   Set seen to 3",
+        "6.   Call ssh_status, going on if it fails",
+        "7. For each line in out.lines:",
+        "8.   Add {{line}} to found",
+        "9.   Note in the chat: Saw {{line}}",
+        #"10. Start a task "Backups": Look into it"#,
+        "11. Stop: Done",
+        #"12. {"wait":"1h"}"#,
+      ])
+
+    await MainActor.run {
+      let store = AppStore(api: API(server: URL(string: "https://h.example")!, token: nil))
+      store.apply(event)
+      XCTAssertEqual(store.scripts[4]?.name, "check-backups")
+      store.apply(.scriptDeleted(id: 4))
+      XCTAssertNil(store.scripts[4])
+      XCTAssertTrue(store.deletedScripts.contains(4))
+    }
+  }
+
+  /// A schedule runs either a task from its prompt or a script, and saving sends only the one it runs:
+  /// a script's schedule has no prompt, and the brain refuses an empty one.
+  func testAScheduleSendsItsPromptOrItsScript() throws {
+    let stored = try decode(
+      Schedule.self,
+      #"""
+      {"id":2,"name":"Backups","cron":"0 8 * * *","runAt":null,"prompt":"","scriptId":4,"enabled":true,
+       "createdVia":"owner","createdAt":"2026-11-09T08:00:00.000Z","botId":"hatbot"}
+      """#)
+    var form = ScheduleForm(stored)
+    XCTAssertTrue(form.valid)
+    let sent = { (f: ScheduleForm) in String(decoding: try JSONEncoder().encode(f.change), as: UTF8.self) }
+    XCTAssertTrue(try sent(form).contains(#""scriptId":4"#))
+    XCTAssertFalse(try sent(form).contains(#""prompt""#))
+
+    form.scriptId = nil
+    XCTAssertFalse(form.valid)
+    form.prompt = "Check the backups"
+    XCTAssertTrue(form.valid)
+    XCTAssertTrue(try sent(form).contains(#""prompt":"Check the backups""#))
+    XCTAssertFalse(try sent(form).contains(#""scriptId""#))
+  }
+
+  /// A script is its bot's own: the schedule's bot changed, it runs a task again.
+  func testAnotherBotDoesntKeepTheScript() {
+    var form = ScheduleForm()
+    form.scriptId = 4
+    form.botId = Bot.hatbot
+    XCTAssertEqual(form.scriptId, 4)
+    form.botId = "sysadmin"
+    XCTAssertNil(form.scriptId)
+  }
+
+  /// What you type for an input goes as JSON where it reads as JSON, and as text otherwise.
+  func testAnInputIsJSONWhereItReadsAsJSON() {
+    XCTAssertEqual(ScriptSteps.typed("5"), .number(5))
+    XCTAssertEqual(ScriptSteps.typed(#"["a"]"#), .array([.string("a")]))
+    XCTAssertEqual(ScriptSteps.typed("true"), .bool(true))
+    XCTAssertEqual(ScriptSteps.typed("nas.local"), .string("nas.local"))
+    XCTAssertEqual(ScriptSteps.typed(""), .string(""))
+  }
+}
+
 final class SignOutAndCacheTests: XCTestCase {
   func testAStoreShowsWhatWasLastSeenUntilTheBrainAnswers() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1081,7 +1196,9 @@ final class NetworkTests: XCTestCase {
       XCTAssertEqual(store.computers.map(\.name), ["laptop"])
       XCTAssertEqual(store.needsYou, 2)
     }
-    XCTAssertEqual(SlowBrain.requested.filter { !$0.contains("/messages") }, ["GET /tasks?ids=7&view=card"])
+    XCTAssertEqual(
+      SlowBrain.requested.filter { !$0.contains("/messages") && !$0.contains("/negotiations") },
+      ["GET /tasks?ids=7&view=card"])
 
     SlowBrain.routes["/approvals?pending=1"] = "[]"
     await MainActor.run {
@@ -1327,6 +1444,28 @@ final class NetworkTests: XCTestCase {
     }
   }
 
+  /// A box's page lists the secrets its box.json declares; one is set by name and another removed with null,
+  /// and what comes back says only which are set.
+  func testABoxsSecretsAreSetAndRemovedByName() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/boxes/3"] =
+      #"{"id":3,"botId":"hatbot","conversationId":1,"title":"Shop","version":1,"createdAt":"2026-11-11T08:00:00Z","updatedAt":"2026-11-11T08:00:00Z","versions":[{"n":1,"title":"Shop","createdAt":"2026-11-11T08:00:00Z","messageId":5}],"secrets":[{"name":"SHOP_KEY","set":false},{"name":"MAIL_KEY","set":true}]}"#
+    let detail = try await store.loadBox(3)
+    XCTAssertEqual(detail.secrets, [BoxSecret(name: "SHOP_KEY", set: false), BoxSecret(name: "MAIL_KEY", set: true)])
+
+    let sent = { String(decoding: SlowBrain.sent("/boxes/3/secrets") ?? Data(), as: UTF8.self) }
+    SlowBrain.routes["/boxes/3/secrets"] = #"[{"name":"SHOP_KEY","set":true},{"name":"MAIL_KEY","set":true}]"#
+    let set = try await store.setBoxSecrets(3, ["SHOP_KEY": "sk-1"])
+    XCTAssertEqual(set.map(\.set), [true, true])
+    XCTAssertEqual(SlowBrain.requested.last, "PUT /boxes/3/secrets")
+    XCTAssertEqual(sent(), #"{"values":{"SHOP_KEY":"sk-1"}}"#)
+
+    SlowBrain.routes["/boxes/3/secrets"] = #"[{"name":"SHOP_KEY","set":true},{"name":"MAIL_KEY","set":false}]"#
+    let removed = try await store.setBoxSecrets(3, ["MAIL_KEY": nil])
+    XCTAssertEqual(removed.map(\.set), [true, false])
+    XCTAssertEqual(sent(), #"{"values":{"MAIL_KEY":null}}"#)
+  }
+
   func testAChatDeletedElsewhereCloses() async throws {
     let group = Conversation(id: 2, kind: .group, title: "Home", botIds: ["hatbot", "chef"], unread: 0)
     let chefs = Conversation(id: 3, kind: .direct, botIds: ["chef"], unread: 0)
@@ -1421,6 +1560,108 @@ final class NetworkTests: XCTestCase {
     XCTAssertNil(cache.page(2))
     let shown = await MainActor.run { store.conversationId }
     XCTAssertEqual(shown, 1)
+  }
+
+  private static func negotiationDetail(_ negotiation: String, messages: [String]) -> String {
+    #"{"negotiation":\#(negotiation),"messages":[\#(messages.joined(separator: ","))]}"#
+  }
+
+  /// The open negotiations come as the stream opens, and one that ended while the app was away is read
+  /// again. An open page's messages follow the news, a list read before the news doesn't undo it, a reply
+  /// shows the negotiation it started, and Stop ends it.
+  func testNegotiationsFollowTheStream() async throws {
+    let store = await MainActor.run { Self.store() }
+    try await MainActor.run { store.apply(.negotiationUpdated(try decode(Negotiation.self, negotiationJSON(4)))) }
+    SlowBrain.routes["/negotiations?status=open"] = "[\(negotiationJSON(5, approvalId: 3))]"
+    SlowBrain.routes["/negotiations/4"] = Self.negotiationDetail(negotiationJSON(4, status: "agreed"), messages: [])
+    await MainActor.run { store.streamOpened(reconnected: false) }
+    await waitUntil { store.negotiations[4]?.status == .agreed && store.negotiations[5] != nil }
+    await MainActor.run {
+      XCTAssertEqual(store.openNegotiations.map(\.id), [5])
+      XCTAssertEqual(store.negotiation(forApproval: 3)?.id, 5)
+    }
+
+    let offer = #"{"id":1,"negotiationId":5,"direction":"out","text":"Would you take 1000 zł?","offer":1000,"agree":false,"stated":null,"status":"sent","taskId":8,"createdAt":"2026-11-11T09:00:00.000Z","sentAt":"2026-11-11T09:01:00.000Z"}"#
+    let answer = #"{"id":2,"negotiationId":5,"direction":"in","text":"1100 and it's yours.","offer":1100,"agree":false,"stated":null,"status":"received","taskId":null,"createdAt":"2026-11-11T10:00:00.000Z","sentAt":null}"#
+    SlowBrain.routes["/negotiations/5"] = Self.negotiationDetail(negotiationJSON(5, approvalId: 3), messages: [offer])
+    try await store.loadNegotiation(5)
+    let answered = negotiationJSON(5, approvalId: 3, updatedAt: "2026-11-11T10:00:00.000Z")
+    SlowBrain.routes["/negotiations/5"] = Self.negotiationDetail(answered, messages: [offer, answer])
+    try await MainActor.run {
+      store.apply(try decode(HatbotEvent.self, #"{"type":"negotiation.updated","negotiation":\#(answered)}"#))
+    }
+    await waitUntil { store.negotiationMessages[5]?.map(\.id) == [1, 2] }
+    let theirs = await MainActor.run { store.negotiationMessages[5]?.last?.direction }
+    XCTAssertEqual(theirs, .incoming)
+    try await store.loadNegotiations()
+    let kept = await MainActor.run { store.negotiations[5]?.updatedAt }
+    XCTAssertEqual(kept, "2026-11-11T10:00:00.000Z")
+
+    try await MainActor.run {
+      store.apply(.messageCreated(try decode(ThreadMessage.self, Self.message(9, in: 1))))
+      store.apply(try decode(HatbotEvent.self, #"{"type":"message.negotiation","id":9,"negotiationId":5}"#))
+      XCTAssertEqual(store.messages.first { $0.id == 9 }?.negotiationId, 5)
+    }
+
+    SlowBrain.routes["/negotiations/5/close"] = Self.negotiationDetail(
+      negotiationJSON(5, status: "abandoned", approvalId: 3, updatedAt: "2026-11-11T11:00:00.000Z"),
+      messages: [offer, answer])
+    try await store.stopNegotiation(5)
+    let open = await MainActor.run { store.openNegotiations }
+    XCTAssertEqual(open.map(\.id), [])
+    XCTAssertTrue(SlowBrain.requested.contains("POST /negotiations/5/close"))
+  }
+
+  private static func computer(paused: Bool = false, enabled: Bool = true, name: String = "laptop") -> String {
+    #"{"id":"m1","name":"\#(name)","online":true,"enabled":\#(enabled),"paused":\#(paused),"locked":false,"ownerActive":false,"careful":false,"control":"hatbot","activeTaskId":null,"lastSeenAt":null}"#
+  }
+
+  /// Settings → Your computers: listed, renamed, made careful and forgotten; with the plugin off, there's none.
+  func testYourComputersAreListedChangedAndForgotten() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/computers"] = "[\(Self.computer())]"
+    let on = try await store.loadComputers()
+    XCTAssertTrue(on)
+    var names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, ["laptop"])
+
+    SlowBrain.routes["/computers/m1"] = Self.computer(name: "work")
+    try await store.renameComputer("m1", to: "work")
+    var sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/computers/m1"))) as? NSDictionary)
+    XCTAssertEqual(sent, ["name": "work"])
+    names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, ["work"])
+    try await store.setCareful("m1", true)
+    sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(SlowBrain.sent("/computers/m1"))) as? NSDictionary)
+    XCTAssertEqual(sent, ["careful": true])
+
+    SlowBrain.routes["/computers/m1"] = #"{"ok":true}"#
+    try await store.forgetComputer("m1")
+    names = await MainActor.run { store.computers.map(\.name) }
+    XCTAssertEqual(names, [])
+    XCTAssertEqual(
+      SlowBrain.requested, ["GET /computers", "PATCH /computers/m1", "PATCH /computers/m1", "DELETE /computers/m1"])
+
+    SlowBrain.routes["/computers"] = nil
+    let off = try await store.loadComputers()
+    XCTAssertFalse(off)
+  }
+
+  /// The computer sends its status apart from its answer, so the brain's answer to a pause or turning off
+  /// can be from before it: what the computer did shows anyway.
+  func testAPauseShowsThoughTheBrainsAnswerIsFromBeforeIt() async throws {
+    let store = await MainActor.run { Self.store() }
+    SlowBrain.routes["/computers"] = "[\(Self.computer())]"
+    _ = try await store.loadComputers()
+    SlowBrain.routes["/computers/m1/pause"] = Self.computer()
+    try await store.pauseComputer("m1", true)
+    let paused = await MainActor.run { store.computers.first?.paused }
+    XCTAssertEqual(paused, true)
+
+    SlowBrain.routes["/computers/m1/turn-off"] = Self.computer(paused: true)
+    try await store.turnOffComputer("m1")
+    let enabled = await MainActor.run { store.computers.first?.enabled }
+    XCTAssertEqual(enabled, false)
   }
 }
 

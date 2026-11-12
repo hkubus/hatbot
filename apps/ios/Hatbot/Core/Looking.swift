@@ -46,6 +46,8 @@ struct Watcher: Codable, Identifiable, Equatable, Sendable {
   var source: Source
   var condition: Condition
   var prompt: String
+  /// Runs this script when it counts instead, with the value and the one before as input.
+  var scriptId: Int?
   var everyMinutes: Int
   var once: Bool
   var enabled: Bool
