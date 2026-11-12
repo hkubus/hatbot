@@ -743,6 +743,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** What the next request may cost: work the runner starts meanwhile leaves room for it. */
   let reserveUsd = 0;
+  // A schedule's run notices when its runs keep making the same calls, as the chat does: not a task a
+  // script's step started, as that schedule runs a script already.
+  const repeats =
+    task.scheduleId !== null &&
+    !task.runner &&
+    !task.parentId &&
+    !tasks.runKeyOf(id)?.startsWith("script:")
+      ? d.repeats
+      : undefined;
+  const called: string[] = [];
+  let offeredScript = false;
   const state = runner?.start({ task, signal, taint, messages, reserveUsd: () => reserveUsd });
 
   try {
@@ -999,6 +1010,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             : run(call)),
       );
       wrote = "";
+      if (repeats)
+        for (const call of calls)
+          if (d.plugins.pluginOf(call.name) && !d.plugins.pluginOf(call.name)?.internal)
+            called.push(call.name);
       // Set inside the calls above, which TypeScript can't see.
       const ended = finished as (z.infer<typeof FinishTask> & { summary: string }) | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
@@ -1035,6 +1050,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           limitUsd: tasks.budget(id),
         });
       if (told) results.push({ type: "text", text: told });
+      const scriptOffer = !serverToolWaiting(res.content) && repeats?.offerRun(task, called);
+      if (scriptOffer) {
+        offeredScript = true;
+        results.push({ type: "text", text: scriptOffer });
+      }
       record("user", results);
     }
   } catch (err) {
@@ -1042,7 +1062,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // A runner's task that stops short may keep what it had, unless you stopped it.
     if (state?.unfinished && ended.status !== "done" && !signal.aborted)
       ended.summary = await state.unfinished(ended.summary);
-    tasks.finish(id, ended.status, ended.summary, ended.notify);
+    if (ended.status === "done")
+      repeats?.record({ botId: task.botId, scheduleId: task.scheduleId ?? undefined }, called);
+    // One that didn't finish never showed you its offer.
+    else if (offeredScript) repeats?.withdraw(id);
+    // Its offer is answered in the chat, so a routine run's report goes there too, quietly.
+    if (offeredScript && ended.status === "done" && ended.notify === false)
+      tasks.finish(id, "done", ended.summary, true, { ntfy: false });
+    else tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
     requests.release();
     if (slot) tasks.pool.release();

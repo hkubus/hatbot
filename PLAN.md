@@ -49,7 +49,7 @@ Built, but not yet deployed or tried live:
 - Your computers: no settings page for them in the iOS app, and Teach works only on the desktop.
 - Box secrets can only be set in the web app: the iOS app ignores `BoxDetail.secrets`.
 - The iOS app decodes negotiation events but doesn't show negotiations.
-- Scripts: webhook triggers can't run one; repeats are noticed only in the chat, not across a schedule's task runs.
+- Scripts: webhook triggers can't run one.
 
 ---
 

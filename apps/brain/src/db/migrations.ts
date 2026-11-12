@@ -1200,4 +1200,10 @@ export const migrations: string[] = [
   );
   CREATE INDEX flip_takedowns_task ON flip_takedowns (task_id);
   `,
+  // 81: the calls a schedule's runs made, to offer a script for them too; an offer's row names the
+  // run that made it.
+  `
+  ALTER TABLE reply_calls ADD COLUMN schedule_id INTEGER;
+  ALTER TABLE reply_calls ADD COLUMN task_id INTEGER;
+  `,
 ];

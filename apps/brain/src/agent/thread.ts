@@ -1944,6 +1944,7 @@ export class Thread {
         const lines = ended.map((t) => {
           const sent = files.filter((a) => a.taskId === t.id && !a.forChat);
           const handed = files.filter((a) => a.taskId === t.id && a.forChat);
+          const offer = t.scheduleId !== null ? this.d.repeats?.ranOffer(t) : null;
           const head = `Task #${t.id} "${tagText(t.title)}"${t.botId === bot.id ? "" : ` (by ${this.d.bots.nameOf(t.botId)}, which you asked)`} ${t.status}`;
           return [
             // What a task that read untrusted content reports is data, like what it read.
@@ -1952,6 +1953,7 @@ export class Thread {
               : `${head}: ${tagText(t.summary ?? "")}`,
             ...(sent.length ? [`Files it sent the owner, shown with it: ${named(sent)}.`] : []),
             ...(handed.length ? [`Files it handed you, below: ${named(handed)}.`] : []),
+            ...(offer ? [offer] : []),
           ].join("\n");
         });
         userBlocks.push({
@@ -2091,7 +2093,7 @@ export class Thread {
     const called: string[] = [];
     const repeats = user && !this.currentHandoff && !incognito ? this.d.repeats : undefined;
     const finish = (status: "done" | "error", note?: string): Said => {
-      if (status === "done") repeats?.record(bot.id, called);
+      if (status === "done") repeats?.record({ botId: bot.id }, called);
       // A chart being fixed is out of view; the reply ends with what's shown.
       chartFix = null;
       // A task's reply that came to nothing still says how the task went.
