@@ -605,3 +605,16 @@ test("Teach on a computer: input the computer refused isn't recorded", async () 
   expect(body).not.toContain("zzz");
   expect(body).toContain('typed \\"Dune\\"');
 });
+
+test("Teach records on one screen at a time, even when two starts come at once", async () => {
+  const { t, call } = await teachApp();
+  const { computer } = teachable();
+  stops.push((await withComputer(t, computer)).stop);
+  const both = await Promise.all([
+    call("POST", "/teach/start", {}),
+    call("POST", "/teach/start", { screen: "m-laptop" }),
+  ]);
+  expect(both.map((r) => r.status).sort()).toEqual([200, 409]);
+  const refused = both.filter((r) => r.status === 409).map((r) => r.json());
+  expect(await Promise.all(refused)).toEqual([{ error: "Already recording." }]);
+});

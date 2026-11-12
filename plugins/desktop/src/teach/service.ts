@@ -84,6 +84,8 @@ export class Teach {
     /** Stops hearing the live view. */
     off: () => void;
   } | null = null;
+  /** A start between its check and the recording it makes: a second one would record too. */
+  private starting = false;
   private clock: () => number;
   private unlisten: () => void;
 
@@ -179,8 +181,17 @@ export class Teach {
    * unless `screenId` says. `screenId`: a computer's id; null for the desktop.
    */
   async start(replaces?: string, screenId?: string | null): Promise<TeachSession> {
+    if (this.rec || this.starting) throw new TeachError("Already recording.", 409);
+    this.starting = true;
+    try {
+      return await this.begin(replaces, screenId);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async begin(replaces?: string, screenId?: string | null): Promise<TeachSession> {
     const { screens } = this.d;
-    if (this.rec) throw new TeachError("Already recording.", 409);
     const screen = this.screen(
       screenId === undefined && replaces ? this.shownOn(replaces) : (screenId ?? null),
     );
