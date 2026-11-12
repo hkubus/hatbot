@@ -839,6 +839,7 @@ private struct MessageRow: View, Equatable {
     default: ReplyMessage(m: m)
     }
     if m.kind != .box, let id = m.boxId, !store.deletedBoxes.contains(id) { BoxResult(boxId: id) }
+    if let id = m.negotiationId { NegotiationResult(id: id) }
     if m.status != .streaming, let list = m.sources, !list.isEmpty { MessageSources(list: list) }
     // Another set of questions, as a rewritten reply's, starts its answers again: one each.
     if answerable, m.status != .streaming, let list = m.choices, !list.isEmpty { Choices(lists: list).id(list) }
@@ -856,7 +857,9 @@ private struct MessageRow: View, Equatable {
   /// A plain reply is read as one, without Markdown and not word by word as it streams; others keep their parts.
   private var spokenText: String? {
     if m.kind == .box { return m.text }
-    guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil else { return nil }
+    guard m.kind == .text || m.kind == .command, m.taskId == nil, m.boxId == nil, m.negotiationId == nil else {
+      return nil
+    }
     return m.status == .streaming ? "Writing" : Markdown.plain(m.text)
   }
 
@@ -905,6 +908,9 @@ private struct MessageRow: View, Equatable {
         copyButton(task.map { ReplyMessage.showsResult(m, $0) } == true ? result ?? "" : m.text)
       }
       if let boxId = m.boxId { Button("Open box", systemImage: "chevron.right") { open(.box(boxId)) } }
+      if let id = m.negotiationId {
+        Button("Open negotiation", systemImage: "chevron.right") { open(.negotiation(id)) }
+      }
       if let taskId = m.taskId { openButton(taskId) }
       if let link = m.link { linkButton(link) }
       if m.status == .error && m.role == .assistant {
@@ -1256,6 +1262,8 @@ struct ApprovalBody: View {
     let shot = a.taskId != nil && a.screenshotStepId != nil
     let folds = compact && ((!a.reason.isEmpty && !warns) || shot || a.takesNote)
     let opens = linksTask && router != nil ? a.taskId : nil
+    // A mandate or a hold has no task: its negotiation instead.
+    let deal = linksTask && router != nil && a.taskId == nil ? store.negotiation(forApproval: a.id)?.id : nil
     // All of it as written, never Markdown: the summary can be a whole shell command.
     if a.secret != nil {
       Text(a.summary).bold().textSelection(.enabled)
@@ -1276,13 +1284,18 @@ struct ApprovalBody: View {
         .onSubmit { if !secret.isEmpty { decide(.approve) } }
     }
     if shown && a.takesNote {
-      TextField("Tell it what to do instead, or how to go ahead", text: $note, axis: .vertical)
+      // A mandate's note can change its numbers.
+      TextField(
+        a.kind == "mandate"
+          ? "Change the numbers, or tell it how to go about it" : "Tell it what to do instead, or how to go ahead",
+        text: $note, axis: .vertical)
         .lineLimit(1...6)
         .materialField()
     }
-    if opens != nil || folds {
+    if opens != nil || deal != nil || folds {
       HStack(spacing: 16) {
         if let taskId = opens { Button("Open task") { router?.open(.task(taskId)) } }
+        if let id = deal { Button("Open negotiation") { router?.open(.negotiation(id)) } }
         if folds { Button(more ? "Less" : "More") { withAnimation(.snappy) { more.toggle() } } }
       }
       .font(.sans(.subheadline))

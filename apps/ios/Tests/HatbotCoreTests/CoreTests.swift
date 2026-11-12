@@ -17,6 +17,18 @@ func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
   try JSONDecoder().decode(type, from: Data(json.utf8))
 }
 
+/// A negotiation for an RTX 3070 on OLX, buying, as the brain sends it.
+func negotiationJSON(
+  _ id: Int, status: String = "open", approvalId: Int? = nil, updatedAt: String = "2026-11-11T08:00:00.000Z",
+  closedAt: String? = nil
+) -> String {
+  let approval = approvalId.map(String.init) ?? "null"
+  let closed = closedAt.map { "\"\($0)\"" } ?? "null"
+  return #"""
+    {"id":\#(id),"botId":"haggler","wantId":1,"want":"RTX 3070, working","role":"buy","listingKey":"OLX:x","listingUrl":"https://www.olx.pl/d/oferta/x","title":"RTX 3070","asking":1200,"mandate":{"currency":"PLN","opening":1000,"target":1050,"limit":1100,"delivery":"OLX shipping","expiresAt":"2026-11-14T08:00:00.000Z","allow":[]},"appraisal":null,"conversationUrl":null,"claims":{"max":null,"otherOffers":null,"timing":null,"other":[]},"status":"\#(status)","agreedPrice":null,"approvalId":\#(approval),"conversationId":null,"nextFollowUpAt":null,"lastMessage":null,"createdAt":"2026-11-11T08:00:00.000Z","updatedAt":"\#(updatedAt)","closedAt":\#(closed)}
+    """#
+}
+
 final class DecodingTests: XCTestCase {
   /// Where a delta starts and the pages a reply cites are new: an older brain sends neither.
   func testDecodesTheStreamsMessageEvents() throws {
@@ -53,6 +65,16 @@ final class DecodingTests: XCTestCase {
     let bot = try decode(Bot.self, #"{"id":"chef","name":"Chef","icon":"rocket","instructions":"","createdAt":""}"#)
     XCTAssertEqual(bot.icon, .hat)
     XCTAssertEqual(bot.color, .amber)
+    // A negotiation in a state this app doesn't know still has a page, and Stop.
+    XCTAssertEqual(try decode(Negotiation.self, negotiationJSON(1, status: "held")).status, .open)
+  }
+
+  /// An expired negotiation that ended once its mandate did ran out; one that ended before was never approved.
+  func testAnExpiredNegotiationSaysWhetherItsMandateRanOut() throws {
+    let ranOut = try decode(Negotiation.self, negotiationJSON(1, status: "expired", closedAt: "2026-11-14T08:00:30.000Z"))
+    XCTAssertEqual(ranOut.line(), "The mandate ran out.")
+    let unapproved = try decode(Negotiation.self, negotiationJSON(1, status: "expired", closedAt: "2026-11-12T08:00:00.000Z"))
+    XCTAssertEqual(unapproved.line(), "The mandate wasn't approved in time.")
   }
 
   func testOlderBrainsWithoutNewFieldsStillDecode() throws {
@@ -1174,7 +1196,9 @@ final class NetworkTests: XCTestCase {
       XCTAssertEqual(store.computers.map(\.name), ["laptop"])
       XCTAssertEqual(store.needsYou, 2)
     }
-    XCTAssertEqual(SlowBrain.requested.filter { !$0.contains("/messages") }, ["GET /tasks?ids=7&view=card"])
+    XCTAssertEqual(
+      SlowBrain.requested.filter { !$0.contains("/messages") && !$0.contains("/negotiations") },
+      ["GET /tasks?ids=7&view=card"])
 
     SlowBrain.routes["/approvals?pending=1"] = "[]"
     await MainActor.run {
@@ -1514,6 +1538,56 @@ final class NetworkTests: XCTestCase {
     XCTAssertNil(cache.page(2))
     let shown = await MainActor.run { store.conversationId }
     XCTAssertEqual(shown, 1)
+  }
+
+  private static func negotiationDetail(_ negotiation: String, messages: [String]) -> String {
+    #"{"negotiation":\#(negotiation),"messages":[\#(messages.joined(separator: ","))]}"#
+  }
+
+  /// The open negotiations come as the stream opens, and one that ended while the app was away is read
+  /// again. An open page's messages follow the news, a list read before the news doesn't undo it, a reply
+  /// shows the negotiation it started, and Stop ends it.
+  func testNegotiationsFollowTheStream() async throws {
+    let store = await MainActor.run { Self.store() }
+    try await MainActor.run { store.apply(.negotiationUpdated(try decode(Negotiation.self, negotiationJSON(4)))) }
+    SlowBrain.routes["/negotiations?status=open"] = "[\(negotiationJSON(5, approvalId: 3))]"
+    SlowBrain.routes["/negotiations/4"] = Self.negotiationDetail(negotiationJSON(4, status: "agreed"), messages: [])
+    await MainActor.run { store.streamOpened(reconnected: false) }
+    await waitUntil { store.negotiations[4]?.status == .agreed && store.negotiations[5] != nil }
+    await MainActor.run {
+      XCTAssertEqual(store.openNegotiations.map(\.id), [5])
+      XCTAssertEqual(store.negotiation(forApproval: 3)?.id, 5)
+    }
+
+    let offer = #"{"id":1,"negotiationId":5,"direction":"out","text":"Would you take 1000 zł?","offer":1000,"agree":false,"stated":null,"status":"sent","taskId":8,"createdAt":"2026-11-11T09:00:00.000Z","sentAt":"2026-11-11T09:01:00.000Z"}"#
+    let answer = #"{"id":2,"negotiationId":5,"direction":"in","text":"1100 and it's yours.","offer":1100,"agree":false,"stated":null,"status":"received","taskId":null,"createdAt":"2026-11-11T10:00:00.000Z","sentAt":null}"#
+    SlowBrain.routes["/negotiations/5"] = Self.negotiationDetail(negotiationJSON(5, approvalId: 3), messages: [offer])
+    try await store.loadNegotiation(5)
+    let answered = negotiationJSON(5, approvalId: 3, updatedAt: "2026-11-11T10:00:00.000Z")
+    SlowBrain.routes["/negotiations/5"] = Self.negotiationDetail(answered, messages: [offer, answer])
+    try await MainActor.run {
+      store.apply(try decode(HatbotEvent.self, #"{"type":"negotiation.updated","negotiation":\#(answered)}"#))
+    }
+    await waitUntil { store.negotiationMessages[5]?.map(\.id) == [1, 2] }
+    let theirs = await MainActor.run { store.negotiationMessages[5]?.last?.direction }
+    XCTAssertEqual(theirs, .incoming)
+    try await store.loadNegotiations()
+    let kept = await MainActor.run { store.negotiations[5]?.updatedAt }
+    XCTAssertEqual(kept, "2026-11-11T10:00:00.000Z")
+
+    try await MainActor.run {
+      store.apply(.messageCreated(try decode(ThreadMessage.self, Self.message(9, in: 1))))
+      store.apply(try decode(HatbotEvent.self, #"{"type":"message.negotiation","id":9,"negotiationId":5}"#))
+      XCTAssertEqual(store.messages.first { $0.id == 9 }?.negotiationId, 5)
+    }
+
+    SlowBrain.routes["/negotiations/5/close"] = Self.negotiationDetail(
+      negotiationJSON(5, status: "abandoned", approvalId: 3, updatedAt: "2026-11-11T11:00:00.000Z"),
+      messages: [offer, answer])
+    try await store.stopNegotiation(5)
+    let open = await MainActor.run { store.openNegotiations }
+    XCTAssertEqual(open.map(\.id), [])
+    XCTAssertTrue(SlowBrain.requested.contains("POST /negotiations/5/close"))
   }
 
   private static func computer(paused: Bool = false, enabled: Bool = true, name: String = "laptop") -> String {

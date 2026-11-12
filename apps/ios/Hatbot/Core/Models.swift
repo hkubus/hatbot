@@ -76,6 +76,8 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
   var botId: String?
   /// The box this reply made or changed last, or the box that sent this note.
   var boxId: Int?
+  /// The negotiation this reply started, shown under it.
+  var negotiationId: Int?
   /// A hand-off's other end: on the request, the message that asked; on that message, the request.
   var link: MessageLink?
   /// A reply being written: what it's done so far, its thinking and tools.
@@ -88,14 +90,15 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, role, kind, text, status, createdAt, taskId, scheduleId, episodeId, editedAt, seenAt, attachments
-    case incognito, conversationId, botId, sources, choices, boxId, link, progress
+    case incognito, conversationId, botId, sources, choices, boxId, negotiationId, link, progress
   }
 
   init(
     id: Int, role: Role, kind: Kind, text: String, status: Status, createdAt: String, taskId: Int? = nil,
     scheduleId: Int? = nil, episodeId: Int? = nil, editedAt: String? = nil, seenAt: String? = nil,
     attachments: [Attachment]? = nil, incognito: Bool? = nil, conversationId: Int? = nil, botId: String? = nil,
-    sources: [Source]? = nil, choices: [[String]]? = nil, boxId: Int? = nil, link: MessageLink? = nil
+    sources: [Source]? = nil, choices: [[String]]? = nil, boxId: Int? = nil, negotiationId: Int? = nil,
+    link: MessageLink? = nil
   ) {
     self.id = id
     self.role = role
@@ -116,6 +119,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
     self.sources = sources
     self.choices = choices
     self.boxId = boxId
+    self.negotiationId = negotiationId
     self.link = link
   }
 
@@ -140,6 +144,7 @@ struct ThreadMessage: Codable, Identifiable, Equatable, Sendable {
       sources: c.decodeIfPresent([Source].self, forKey: .sources),
       choices: c.decodeIfPresent([[String]].self, forKey: .choices),
       boxId: c.decodeIfPresent(Int.self, forKey: .boxId),
+      negotiationId: c.decodeIfPresent(Int.self, forKey: .negotiationId),
       link: c.decodeIfPresent(MessageLink.self, forKey: .link))
     progress = try c.decodeIfPresent(String.self, forKey: .progress)
   }
@@ -872,6 +877,116 @@ extension Array where Element: Equatable {
   }
 }
 
+// Negotiations (packages/shared/src/negotiate.ts): haggling with a seller, or a buyer, inside a mandate.
+
+/// What the bot may do on its own in one negotiation. Amounts are in `currency`.
+struct Mandate: Codable, Equatable, Sendable {
+  var currency: String
+  var opening: Double
+  var target: Double
+  /// Buying: the most it pays. Selling: the least it takes.
+  var limit: Double
+  var delivery: String
+  /// After this, nothing more is sent without asking.
+  var expiresAt: String
+  /// The contact details a message may carry: phone, email, address, apps.
+  var allow: [String]
+}
+
+/// What the bot has told the other side about ours, so it doesn't contradict itself.
+struct Claims: Codable, Equatable, Sendable {
+  /// The most it said it would pay, or the least it would take.
+  var max: Double?
+  var otherOffers: String?
+  var timing: String?
+  var other: [String]
+}
+
+/// Scout's appraisal, which the mandate was set from.
+struct Appraisal: Codable, Equatable, Sendable {
+  var currency: String
+  var asking: Double?
+  var opening: Double
+  var target: Double
+  /// Buying: the most worth paying. Selling: the least worth taking.
+  var walkAway: Double
+  var basis: String
+}
+
+enum NegotiationStatus: String, LenientEnum {
+  case awaitingMandate = "awaiting_mandate"
+  case open, agreed, lost, abandoned, expired, paid, received
+  static let fallback = NegotiationStatus.open
+
+  /// Still going: it may yet send something, and Stop ends it.
+  var isOpen: Bool { self == .awaitingMandate || self == .open }
+}
+
+struct NegotiationMessage: Codable, Identifiable, Equatable, Sendable {
+  /// in: theirs. out: the bot's. owner: what you wrote to them yourself on the marketplace.
+  enum Direction: String, LenientEnum {
+    case incoming = "in"
+    case out, owner
+    static let fallback = Direction.incoming
+  }
+
+  /// out: sending (its desktop task is running), sent, unconfirmed (clicked, but the message box didn't
+  /// clear) or failed (never sent). in and owner: received.
+  enum Status: String, LenientEnum {
+    case sending, sent, unconfirmed, failed, received
+    static let fallback = Status.sent
+  }
+
+  let id: Int
+  var negotiationId: Int
+  var direction: Direction
+  var text: String
+  var offer: Double?
+  var agree: Bool
+  var status: Status
+  /// The desktop task that sends it.
+  var taskId: Int?
+  var createdAt: String
+  var sentAt: String?
+}
+
+struct Negotiation: Codable, Identifiable, Equatable, Sendable {
+  enum Role: String, LenientEnum {
+    case buy, sell
+    static let fallback = Role.buy
+  }
+
+  let id: Int
+  var botId: String
+  /// What you're after, e.g. "RTX 3070, working".
+  var want: String
+  var role: Role
+  var listingUrl: String
+  var title: String
+  var asking: Double?
+  var mandate: Mandate
+  var appraisal: Appraisal?
+  var conversationUrl: String?
+  var claims: Claims
+  var status: NegotiationStatus
+  var agreedPrice: Double?
+  /// Its mandate's approval, or a hold's (a scam warning, a stall, a seller asking whether it's a bot):
+  /// pending while it waits, then what you decided.
+  var approvalId: Int?
+  /// Its thread.
+  var conversationId: Int?
+  var nextFollowUpAt: String?
+  var lastMessage: NegotiationMessage?
+  var createdAt: String
+  var updatedAt: String
+  var closedAt: String?
+}
+
+struct NegotiationDetail: Decodable, Sendable {
+  let negotiation: Negotiation
+  let messages: [NegotiationMessage]
+}
+
 /// What's live, the stream's first event; an older brain sends none.
 struct Snapshot: Decodable, Sendable {
   var paused: Bool
@@ -887,8 +1002,7 @@ struct Snapshot: Decodable, Sendable {
   var unread: [Int]
 }
 
-/// Live events on /api/v1/stream. Events this app doesn't know, or doesn't show yet (negotiations),
-/// decode to `.unknown`.
+/// Live events on /api/v1/stream. Events this app doesn't know, or doesn't show, decode to `.unknown`.
 enum HatbotEvent: Decodable, Sendable {
   case snapshot(Snapshot)
   case messageCreated(ThreadMessage)
@@ -907,6 +1021,7 @@ enum HatbotEvent: Decodable, Sendable {
   case messageUsage(id: Int, ReplyUsage)
   case messageAttachment(id: Int, Attachment)
   case messageBox(id: Int, boxId: Int)
+  case messageNegotiation(id: Int, negotiationId: Int)
   case spendUpdated(todayUsd: Double, monthUsd: Double)
   case memoryCommitted(sha: String, message: String, author: String)
   case paused(Bool)
@@ -936,6 +1051,7 @@ enum HatbotEvent: Decodable, Sendable {
   case watcherDeleted(id: Int)
   case boxUpdated(Box)
   case boxDeleted(id: Int)
+  case negotiationUpdated(Negotiation)
   case scriptUpdated(Script)
   case scriptDeleted(id: Int)
   case unknown(String)
@@ -944,6 +1060,7 @@ enum HatbotEvent: Decodable, Sendable {
     case type, message, id, text, status, taskId, todayUsd, monthUsd, sha, author, paused, tokens, costUsd
     case task, step, approval, state, schedule, trigger, episode, editedAt, ids, seenAt, attachment
     case bot, conversation, proposal, watcher, sources, at, question, choices, boxId, box, link, computers
+    case negotiationId, negotiation
     case script
   }
 
@@ -969,6 +1086,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "message.usage": self = try .messageUsage(id: v(.id), ReplyUsage(tokens: v(.tokens), costUsd: v(.costUsd)))
     case "message.attachment": self = try .messageAttachment(id: v(.id), v(.attachment))
     case "message.box": self = try .messageBox(id: v(.id), boxId: v(.boxId))
+    case "message.negotiation": self = try .messageNegotiation(id: v(.id), negotiationId: v(.negotiationId))
     case "spend.updated": self = try .spendUpdated(todayUsd: v(.todayUsd), monthUsd: v(.monthUsd))
     case "memory.committed": self = try .memoryCommitted(sha: v(.sha), message: v(.message), author: v(.author))
     case "paused": self = try .paused(v(.paused))
@@ -997,6 +1115,7 @@ enum HatbotEvent: Decodable, Sendable {
     case "watcher.deleted": self = try .watcherDeleted(id: v(.id))
     case "box.updated": self = try .boxUpdated(v(.box))
     case "box.deleted": self = try .boxDeleted(id: v(.id))
+    case "negotiation.updated": self = try .negotiationUpdated(v(.negotiation))
     case "script.updated": self = try .scriptUpdated(v(.script))
     case "script.deleted": self = try .scriptDeleted(id: v(.id))
     default: self = .unknown(type)

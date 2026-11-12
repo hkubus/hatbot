@@ -29,6 +29,7 @@ enum Route: Hashable {
   case spend
   case limits
   case devices
+  case negotiation(Int)
   case computers
 }
 
@@ -69,6 +70,7 @@ private func destination(_ route: Route) -> some View {
   case .spend: SpendView()
   case .limits: LimitsView()
   case .devices: DevicesView()
+  case let .negotiation(id): NegotiationView(id: id)
   case .computers: ComputersView()
   }
 }

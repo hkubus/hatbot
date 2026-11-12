@@ -83,6 +83,10 @@ final class AppStore {
   var boxesLoaded = false
   /// Deleted, here or elsewhere: an open box says so, and the chat stops showing it.
   var deletedBoxes = Set<Int>()
+  /// The open negotiations, and any a chat or page has shown.
+  var negotiations: [Int: Negotiation] = [:]
+  /// The messages of each negotiation whose page has been opened, kept current while the app runs.
+  var negotiationMessages: [Int: [NegotiationMessage]] = [:]
   var toast: String? {
     didSet { if toast != nil { toastId += 1 } }
   }
@@ -266,6 +270,13 @@ final class AppStore {
       try? await loadThread()
       if reconnected && boxesLoaded { _ = try? await loadBoxes() }
     }
+    Task {
+      try? await loadNegotiations()
+      // An open page shows its messages; their news may have come while the stream was down.
+      if reconnected {
+        for id in negotiationMessages.keys { try? await loadNegotiation(id) }
+      }
+    }
   }
 
   /// An event from the stream; nil, one this app couldn't read.
@@ -284,7 +295,7 @@ final class AppStore {
     // and usage aren't on the page.
     case .messageDelta(_, _, nil), .messageProgress, .messageUsage: break
     case .messageCreated, .messageDelta, .messageDone, .messageRewrite, .messageEdited, .messageSeen,
-      .messageDeleted, .messageTask, .messageLink, .messageBox, .messageAttachment:
+      .messageDeleted, .messageTask, .messageLink, .messageBox, .messageNegotiation, .messageAttachment:
       for load in missed.keys { missed[load]?.append(event) }
     default: break
     }
@@ -309,7 +320,8 @@ final class AppStore {
       follow(event)
       addUnread(id)
       refreshConversations()
-    case .messageRewrite, .messageDelta, .messageTask, .messageLink, .messageBox, .messageAttachment:
+    case .messageRewrite, .messageDelta, .messageTask, .messageLink, .messageBox, .messageNegotiation,
+      .messageAttachment:
       follow(event)
     case let .messageSeen(ids, _):
       follow(event)
@@ -391,6 +403,9 @@ final class AppStore {
     case let .boxDeleted(id):
       boxes[id] = nil
       deletedBoxes.insert(id)
+    case let .negotiationUpdated(n):
+      negotiations[n.id] = n
+      if negotiationMessages[n.id] != nil { Task { try? await loadNegotiation(n.id) } }
     case let .scriptUpdated(s):
       scripts[s.id] = s
       deletedScripts.remove(s.id)
@@ -456,6 +471,8 @@ final class AppStore {
       change(id) { $0.link = link }
     case let .messageBox(id, boxId):
       change(id) { $0.boxId = boxId }
+    case let .messageNegotiation(id, negotiationId):
+      change(id) { $0.negotiationId = negotiationId }
     case let .messageAttachment(id, a):
       change(id) { m in
         if !(m.attachments ?? []).contains(where: { $0.id == a.id }) { m.attachments = (m.attachments ?? []) + [a] }
@@ -1119,6 +1136,14 @@ final class AppStore {
         _ = try await loadBox(id)
       } catch let error as APIError where error.status == 404 {
       } catch { requested.remove("x\(id)") }
+    }
+  }
+
+  func ensureNegotiation(_ id: Int) {
+    if negotiations[id] != nil { return }
+    guard requested.insert("n\(id)").inserted else { return }
+    Task {
+      do { try await loadNegotiation(id) } catch { requested.remove("n\(id)") }
     }
   }
 
