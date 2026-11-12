@@ -39,6 +39,7 @@ import type { EventBus } from "../events";
 import { addModels } from "../models-known";
 import type { Secrets } from "../secrets";
 import { deleteSetting, getSetting, setSetting } from "../settings";
+import { settingsForm } from "./settings-form";
 
 const MAX_OUTPUT_CHARS = 30_000;
 const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -268,6 +269,12 @@ export class Plugins {
     if (s.enabled) await this.restart(s);
     else await this.stop(s);
     return this.info(s);
+  }
+
+  /** What its schema finds wrong with these settings, or null. */
+  configProblem(id: string, config: unknown): z.ZodError | null {
+    const parsed = this.slots.get(id)?.plugin.config.safeParse(config);
+    return parsed && !parsed.success ? parsed.error : null;
   }
 
   /** Deletes what a plugin that's off kept: its settings, values, secrets, files and own tables. */
@@ -706,6 +713,7 @@ export class Plugins {
       env: (s.plugin.env ?? []).map((v) => this.envInfo(v)),
       named: s.plugin.named ? Object.keys(this.d.secrets.named(s.plugin.id)).sort() : null,
       config: s.config,
+      form: settingsForm(s.plugin.config),
       tools: (s.instance?.tools ?? []).map((t) => ({
         name: t.name,
         access: t.access,
