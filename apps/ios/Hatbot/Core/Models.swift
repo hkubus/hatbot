@@ -692,16 +692,25 @@ struct BoxVersion: Codable, Equatable, Sendable {
   var messageId: Int?
 }
 
+/// A secret the box's box.json declares, and whether you've set it: never its value.
+struct BoxSecret: Codable, Equatable, Sendable {
+  let name: String
+  let set: Bool
+}
+
 /// Versions oldest first.
 struct BoxDetail: Decodable, Equatable, Sendable {
   let box: Box
   let versions: [BoxVersion]
+  var secrets: [BoxSecret]
 
-  private enum Key: String, CodingKey { case versions }
+  private enum Key: String, CodingKey { case versions, secrets }
 
   init(from decoder: Decoder) throws {
     box = try Box(from: decoder)
-    versions = try decoder.container(keyedBy: Key.self).decode([BoxVersion].self, forKey: .versions)
+    let c = try decoder.container(keyedBy: Key.self)
+    versions = try c.decode([BoxVersion].self, forKey: .versions)
+    secrets = try c.decodeIfPresent([BoxSecret].self, forKey: .secrets) ?? []
   }
 }
 

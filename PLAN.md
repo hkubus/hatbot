@@ -47,7 +47,6 @@ Built, but not yet deployed or tried live:
 
 ## 2. Small gaps
 - Your computers: Teach works only on the desktop.
-- Box secrets can only be set in the web app: the iOS app ignores `BoxDetail.secrets`.
 - Scripts: webhook triggers can't run one.
 
 ---
