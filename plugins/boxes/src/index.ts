@@ -6,6 +6,7 @@ import type { T3Code } from "@hatbot/plugin-t3/client";
 import { z } from "zod";
 import { Backends } from "./backends";
 import { Boxes } from "./boxes";
+import { boxesChecks } from "./checks";
 import { type HatboxAgent, HttpHatboxAgent } from "./client";
 import { type Deps, NEEDS } from "./deps";
 import { BoxFeeds } from "./feeds";
@@ -79,6 +80,9 @@ export const boxesPlugin = (agent?: HatboxAgent) =>
           { name: "feeds", everyMs: 10_000, run: () => feeds.tick() },
         ],
         prompt: { chat: CHAT },
+        get checks() {
+          return boxesChecks(guest, ctx.release());
+        },
         stop: unlisten,
       });
     },

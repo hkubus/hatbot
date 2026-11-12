@@ -5,6 +5,7 @@ import type {
   BoxRun,
   BoxSecrets,
   GuestBox,
+  HatboxCheck,
   HatboxStatus,
 } from "@hatbot/shared/hatbox";
 
@@ -26,8 +27,17 @@ export class FakeHatbox implements HatboxAgent {
   stopped: number[] = [];
   log = "";
 
+  /** An error is thrown: the agent's refusal, or no answer. */
+  health: HatboxStatus | Error = { ok: true, features: ["secrets", "notify", "check"] };
+  checked: HatboxCheck | Error = { ok: true, ownUser: true, ownNetwork: true };
+
   async status(): Promise<HatboxStatus> {
-    return { ok: true };
+    if (this.health instanceof Error) throw this.health;
+    return this.health;
+  }
+  async check(): Promise<HatboxCheck> {
+    if (this.checked instanceof Error) throw this.checked;
+    return this.checked;
   }
   async boxes(): Promise<GuestBox[]> {
     return [...this.built].map(([id, version]) => ({ id, version }));
