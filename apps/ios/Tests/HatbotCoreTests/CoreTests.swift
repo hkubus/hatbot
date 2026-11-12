@@ -223,6 +223,33 @@ final class SafetyTests: XCTestCase {
     }
   }
 
+  /// An installed plugin's page stays on Hatbot's site, where it's signed in. A link elsewhere opens
+  /// outside the app, as does any new window; nothing else loads.
+  func testAPluginsPageStaysOnHatbotsSite() throws {
+    let site = try XCTUnwrap(URL(string: "https://hatbot.example/api/v1/auth/link/abc?to=/settings/plugins/weather"))
+    let docs = try XCTUnwrap(URL(string: "https://example.com/docs"))
+    let own = try XCTUnwrap(URL(string: "https://hatbot.example/settings"))
+    let cases: [(String, mainFrame: Bool?, link: Bool, SitePage)] = [
+      ("https://HATBOT.example/settings/plugins/weather?embedded", true, false, .allow),
+      (own.absoluteString, true, true, .allow),
+      ("https://hatbot.example/frame", false, false, .allow),
+      (docs.absoluteString, true, true, .open(docs)),
+      (docs.absoluteString, true, false, .refuse),
+      (docs.absoluteString, false, false, .refuse),
+      ("http://hatbot.example/settings", true, false, .refuse),
+      ("javascript:alert(1)", true, true, .refuse),
+      ("data:text/html,hi", true, true, .refuse),
+      (docs.absoluteString, nil, true, .open(docs)),
+      (own.absoluteString, nil, true, .open(own)),
+      ("blob:https://hatbot.example/x", nil, true, .refuse),
+    ]
+    for (url, mainFrame, link, expected) in cases {
+      let to = try XCTUnwrap(URL(string: url))
+      let got = SitePage.decide(to, mainFrame: mainFrame, link: link, site: site)
+      XCTAssertEqual(got, expected, "\(url), main frame \(String(describing: mainFrame)), link \(link)")
+    }
+  }
+
   /// Siri's answer when the brain stopped waiting: a reply still being written isn't read out cut off.
   func testSiriDoesntReadAHalfWrittenReply() throws {
     let reply = { (id: Int, text: String, status: String) in
@@ -989,17 +1016,58 @@ final class SignOutAndCacheTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
   }
 
-  func testTheAppWaitsUntilTheGuidedSetupIsFinished() async throws {
-    SlowBrain.reset(["/auth/me": #"{"setupDone":true,"authenticated":true,"onboarded":false}"#])
+  /// First run asks for a model provider and its key here, as the web app does; a key that doesn't work
+  /// says why. Then the app waits for the web app's interview, which Finish later puts off while the app
+  /// runs, though not a provider that stopped working.
+  func testFirstRunAsksForAModelProviderThenWaitsForTheInterview() async throws {
+    let onboarding = { (needsModels: Bool) in
+      #"{"finished":false,"needsModels":\#(needsModels),"topics":{},"items":[],"busy":false}"#
+    }
+    SlowBrain.reset([
+      "/auth/me": #"{"setupDone":true,"authenticated":true,"onboarded":false}"#,
+      "/onboarding": onboarding(true),
+      "/onboarding/models": #"{"error":"The key didn't work.","field":"key"}"#,
+    ])
+    SlowBrain.statuses["/onboarding/models"] = 400
     let session = try await MainActor.run { try Session.saved(vault: MemoryVault("t")) }
+    let setup = { await MainActor.run { session.setup } }
     await session.checkSetup()
-    var waiting = await MainActor.run { session.setupPending }
-    XCTAssertTrue(waiting)
+    var now = await setup()
+    XCTAssertEqual(now, .models)
+    do {
+      try await session.setModels(.anthropic, key: " sk-ant-x ", baseUrl: "https://openrouter.ai/api/v1")
+      XCTFail("no error")
+    } catch let e as APIError {
+      XCTAssertEqual(e.message, "The key didn't work.")
+    }
+    var sent = try JSONSerialization.jsonObject(with: SlowBrain.sent("/onboarding/models") ?? Data()) as? NSDictionary
+    XCTAssertEqual(sent, ["provider": "anthropic", "key": "sk-ant-x"] as NSDictionary)
+    now = await setup()
+    XCTAssertEqual(now, .models)
+
+    SlowBrain.statuses = [:]
+    SlowBrain.routes["/onboarding/models"] = onboarding(false)
+    try await session.setModels(.openai, key: "k", baseUrl: " https://openrouter.ai/api/v1 ")
+    sent = try JSONSerialization.jsonObject(with: SlowBrain.sent("/onboarding/models") ?? Data()) as? NSDictionary
+    XCTAssertEqual(sent, ["provider": "openai", "key": "k", "baseUrl": "https://openrouter.ai/api/v1"] as NSDictionary)
+    now = await setup()
+    XCTAssertEqual(now, .interview)
+
+    await MainActor.run { session.finishLater() }
+    SlowBrain.routes["/onboarding"] = onboarding(false)
+    await session.checkSetup()
+    now = await setup()
+    XCTAssertNil(now)
+    SlowBrain.routes["/onboarding"] = onboarding(true)
+    await session.checkSetup()
+    now = await setup()
+    XCTAssertEqual(now, .models)
+
     // A brain from before the guided setup leaves it out.
     SlowBrain.reset(["/auth/me": #"{"setupDone":true,"authenticated":true}"#])
     await session.checkSetup()
-    waiting = await MainActor.run { session.setupPending }
-    XCTAssertFalse(waiting)
+    now = await setup()
+    XCTAssertNil(now)
   }
 
   func testALate401FromTheOldTokenDoesntSignYouOut() async throws {
@@ -1197,7 +1265,7 @@ final class NetworkTests: XCTestCase {
       XCTAssertEqual(store.needsYou, 2)
     }
     XCTAssertEqual(
-      SlowBrain.requested.filter { !$0.contains("/messages") && !$0.contains("/negotiations") },
+      SlowBrain.requested.filter { !$0.contains("/messages") && !$0.contains("/negotiations") && $0 != "GET /plugins" },
       ["GET /tasks?ids=7&view=card"])
 
     SlowBrain.routes["/approvals?pending=1"] = "[]"
@@ -1441,6 +1509,49 @@ final class NetworkTests: XCTestCase {
       XCTFail("no error")
     } catch let e as APIError {
       XCTAssertEqual(e.message, "A box keeps at most 1 MB under one key.")
+    }
+  }
+
+  private static func plugin(_ id: String, enabled: Bool, from source: String? = nil) -> String {
+    let from = source.map { #"{"url":"\#($0)","commit":"0123abc"}"# } ?? "null"
+    return #"{"id":"\#(id)","name":"\#(id.capitalized)","description":"","enabled":\#(enabled),"state":"\#(enabled ? "ready" : "off")","message":null,"env":[],"named":null,"config":{},"tools":[],"testable":false,"source":\#(from)}"#
+  }
+
+  /// The views of plugins that are off hide, as on the web: not before the list says so, and not those
+  /// it doesn't have, as on a brain from before they were plugins. The list loads each time the stream
+  /// opens, as it may have changed meanwhile, and follows the stream after.
+  func testTheViewsOfPluginsThatAreOffHide() async throws {
+    let store = await MainActor.run { Self.store() }
+    let weather = Self.plugin("weather", enabled: true, from: "https://git.example/weather")
+    SlowBrain.routes["/plugins"] = "[\(Self.plugin("boxes", enabled: false)),\(Self.plugin("desktop", enabled: true)),\(weather)]"
+    await MainActor.run {
+      XCTAssertTrue(store.pluginOn("boxes"))
+      store.streamOpened(reconnected: false)
+    }
+    await waitUntil { !store.pluginOn("boxes") }
+    let on = #"{"type":"plugin.updated","plugin":\#(Self.plugin("boxes", enabled: true))}"#
+    try await MainActor.run {
+      XCTAssertTrue(store.pluginOn("desktop"))
+      XCTAssertTrue(store.pluginOn("automation"))
+      XCTAssertEqual(store.installedPlugins.map(\.id), ["weather"])
+      store.apply(try decode(HatbotEvent.self, on))
+      XCTAssertTrue(store.pluginOn("boxes"))
+    }
+  }
+
+  /// An installed plugin's page opens signed in, by a link the brain makes for this app, at the page
+  /// asked for; never over plain http, where the link could be read on its way.
+  func testAPluginsPageOpensSignedInOnlyOverHTTPS() async throws {
+    let api = await MainActor.run { Self.store().api }
+    SlowBrain.routes["/auth/link"] = #"{"url":"https://hatbot.example/api/v1/auth/link/abc"}"#
+    let url = try await api.webLink(to: "/settings/plugins/weather?embedded")
+    XCTAssertEqual(url.absoluteString, "https://hatbot.example/api/v1/auth/link/abc?to=/settings/plugins/weather%3Fembedded")
+    SlowBrain.routes["/auth/link"] = #"{"url":"http://hatbot.example/api/v1/auth/link/abc"}"#
+    do {
+      _ = try await api.webLink(to: "/welcome")
+      XCTFail("no error")
+    } catch let e as APIError {
+      XCTAssertEqual(e.status, 0)
     }
   }
 

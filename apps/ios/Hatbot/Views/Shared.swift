@@ -31,6 +31,8 @@ enum Route: Hashable {
   case devices
   case negotiation(Int)
   case computers
+  /// An installed plugin's page, the web app's.
+  case plugin(String)
 }
 
 extension View {
@@ -72,6 +74,7 @@ private func destination(_ route: Route) -> some View {
   case .devices: DevicesView()
   case let .negotiation(id): NegotiationView(id: id)
   case .computers: ComputersView()
+  case let .plugin(id): PluginPageView(id: id)
   }
 }
 

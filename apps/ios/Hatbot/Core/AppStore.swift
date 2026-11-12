@@ -87,6 +87,8 @@ final class AppStore {
   var negotiations: [Int: Negotiation] = [:]
   /// The messages of each negotiation whose page has been opened, kept current while the app runs.
   var negotiationMessages: [Int: [NegotiationMessage]] = [:]
+  /// Every plugin, by id, as loaded when the stream opens; none on a brain from before plugins.
+  var plugins: [String: PluginInfo] = [:]
   var toast: String? {
     didSet { if toast != nil { toastId += 1 } }
   }
@@ -277,6 +279,8 @@ final class AppStore {
         for id in negotiationMessages.keys { try? await loadNegotiation(id) }
       }
     }
+    // Which views show: those of plugins that are off don't. Switched while the stream was down, too.
+    Task { _ = try? await loadPlugins() }
   }
 
   /// An event from the stream; nil, one this app couldn't read.
@@ -412,6 +416,8 @@ final class AppStore {
     case let .scriptDeleted(id):
       scripts[id] = nil
       deletedScripts.insert(id)
+    case let .pluginUpdated(p):
+      plugins[p.id] = p
     case .unknown:
       break
     }
@@ -928,10 +934,6 @@ final class AppStore {
       return
     }
     if let i = conversations.firstIndex(where: { $0.id == c.id }) { conversations[i] = c } else { conversations.append(c) }
-  }
-
-  func loadPluginNames() async throws -> [PluginName] {
-    try await api.get("/plugins")
   }
 
   /// None on a brain from before templates.

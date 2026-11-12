@@ -14,7 +14,7 @@ Not as decided:
 - **An installed plugin restarts the brain** (exit 75; systemd starts it again), since routes can't be added to a running server. Under `bun run dev` the brain just stops: start it again.
 
 Left:
-- iOS: the web view for installed plugins' pages, and choosing a model provider on first run. The iOS app still assumes the desktop and boxes are there.
+- iOS (2026-11-12), not tried on a device (the views compile only in CI): off plugins' views hiding, installed plugins' pages in a web view (signed in by `/auth/link`; `?embedded` hides the web app's bars), and first run's model provider form, then Finish later for the web app's interview.
 - Trying an install from a real forge, and a plugin with its own npm packages, on the brain guest (`bun install` under `ProtectSystem=strict`).
 
 ## 0.1 Fewer approvals (decided and built 2026-10-29)
