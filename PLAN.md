@@ -46,7 +46,7 @@ Built, but not yet deployed or tried live:
 - **Clearing a chat** (2026-11-06): Clear chat on a bot's or group's page deletes its messages, files, summary and threads for good (incognito and tasks stay); for a bot other than Hatbot, its `bots/<id>/` notes too if you tick it, as a commit in Memory. Not tried: the iOS buttons outside CI.
 
 ## 2. Small gaps
-- Your computers: Teach works only on the desktop.
+- Your computers: Teach on a computer records only what you do from Live, not you at the computer itself (on Wayland that needs the pointer and keys from evdev, an input rule the owner installs), and only the window with the keyboard is checked for secrets showing before a screenshot is kept. It hasn't been tried on a real computer: the AT-SPI and UI Automation answers for password fields, frames and page addresses are unchecked in real apps.
 - Scripts: webhook triggers can't run one.
 
 ---

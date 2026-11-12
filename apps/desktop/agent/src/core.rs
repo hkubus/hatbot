@@ -17,8 +17,8 @@ use crate::computer::{Button, Clip, Computer, Frame, InspectAt, Output, SessionE
 use crate::human::{between, key_gap, path};
 use crate::keys::{self, Combo, Key, Modifier};
 use crate::protocol::{
-    ActionName, ActionResult, ComputerResult, ComputerScreen, ComputerStatus, ComputerWindow, ErrorCode, LiveInput,
-    Request,
+    ActionName, ActionResult, ComputerFocus, ComputerResult, ComputerScreen, ComputerStatus, ComputerWindow, ErrorCode,
+    FocusWindow, LiveInput, Request,
 };
 use crate::scale::Scaling;
 use crate::typing::{self, KeyTable, Stroke, TypePlan};
@@ -280,6 +280,7 @@ impl Core {
                 Ok(ComputerResult::FocusWindow)
             }
             Request::Inspect { x, y } => self.inspect(x, y).await,
+            Request::Focus { field, filled } => self.focus(field, filled).await,
             Request::Exec { command, timeout_ms } => {
                 let result = shell::run(&command, timeout_ms).await?;
                 Ok(ComputerResult::Exec { result })
@@ -419,6 +420,28 @@ impl Core {
         };
         let element = self.computer.inspect(at).await?;
         Ok(ComputerResult::Inspect { element })
+    }
+
+    async fn focus(&self, field: bool, filled: bool) -> Res<ComputerResult> {
+        let (out, _) = self.screen().await?;
+        let focused = self.computer.windows(out.name).await?.and_then(|ws| ws.into_iter().find(|w| w.focused));
+        let read = self
+            .computer
+            .fields(focused.as_ref().and_then(|w| w.pid), focused.as_ref().map(|w| w.title.clone()), field, filled)
+            .await;
+        // Without the field, Teach only wants the page, which it does without.
+        let fields = match read {
+            Err(e) if field => return Err(e.into()),
+            r => r.ok().flatten().unwrap_or_default(),
+        };
+        Ok(ComputerResult::Focus {
+            focus: ComputerFocus {
+                window: focused.map(|w| FocusWindow { title: w.title, app_id: w.app_id }),
+                url: fields.url,
+                field: field.then_some(fields.focused),
+                filled: fields.filled.filter(|_| filled),
+            },
+        })
     }
 
     async fn action(&self, name: ActionName, input: &Map<String, Value>) -> Res<ActionResult> {
@@ -884,8 +907,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::computer::Rect;
+    use crate::computer::{Fields, Rect};
     use crate::fake::{Call, Fake};
+    use crate::protocol::ComputerField;
 
     fn core(enabled: bool) -> (Arc<Fake>, Core) {
         let fake = Arc::new(Fake::new());
@@ -1057,6 +1081,45 @@ mod tests {
         assert_eq!(ups.len(), 3);
         assert_eq!(ups.last(), Some(&Call::Key(KeyCode::KEY_LEFTCTRL, false)));
         assert_eq!(code(&core, action(ActionName::Key, json!({"text": "0xff0d"}))).await, Some(ErrorCode::Failed));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tells_teach_about_the_focused_windows_fields() {
+        let (fake, core) = core(true);
+        *fake.windows.lock().unwrap() = Some(vec![Window {
+            id: 1,
+            title: "Account".into(),
+            app_id: "firefox".into(),
+            focused: true,
+            pid: Some(7),
+            rect: None,
+            excluded: false,
+        }]);
+        let password = ComputerField { role: "password text".into(), password: true, ..Default::default() };
+        *fake.fields.lock().unwrap() = Some(Fields {
+            url: Some("https://library.example/".into()),
+            focused: Some(password.clone()),
+            filled: Some(vec![password.clone()]),
+        });
+        let Ok(ComputerResult::Focus { focus }) = core.handle(Request::Focus { field: true, filled: false }).await
+        else {
+            panic!()
+        };
+        assert_eq!(fake.asked_fields.lock().unwrap().last(), Some(&(Some(7), Some("Account".into()), true, false)));
+        assert_eq!(focus.window.map(|w| w.app_id).as_deref(), Some("firefox"));
+        assert_eq!(focus.field, Some(Some(password)));
+        assert_eq!(focus.filled, None);
+
+        // An app with no tree: nothing says what has the keyboard, or what the fields hold.
+        *fake.fields.lock().unwrap() = None;
+        let Ok(ComputerResult::Focus { focus }) = core.handle(Request::Focus { field: true, filled: true }).await
+        else {
+            panic!()
+        };
+        assert_eq!((focus.field, focus.filled), (Some(None), None));
+        // Locked, it's refused like the rest.
+        core.session_event(SessionEvent::Locked(true));
+        assert_eq!(code(&core, Request::Focus { field: true, filled: true }).await, Some(ErrorCode::Locked));
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,35 +1,9 @@
-import { frameRelay, pluginRoutes, validLiveInput } from "@hatbot/plugin-sdk";
-import type { LiveInput } from "@hatbot/shared/desktop";
+import { frameRelay, type Live, pluginRoutes, validLiveInput } from "@hatbot/plugin-sdk";
 import { upgradeWebSocket } from "hono/bun";
 import type { DesktopAgent } from "./client";
 import { type Desktop, DesktopBusy } from "./control";
 
 export { frameRelay } from "@hatbot/plugin-sdk";
-
-/** What the owner does in the live view while they have control, as it's sent: Teach records it. */
-export class Live {
-  private inputs = new Set<(m: LiveInput) => void>();
-  private gone = new Set<() => void>();
-
-  onInput(fn: (m: LiveInput) => void): () => void {
-    this.inputs.add(fn);
-    return () => this.inputs.delete(fn);
-  }
-
-  /** A live view that sent input closed: desktop-agent let go of the keys it held. */
-  onViewerGone(fn: () => void): () => void {
-    this.gone.add(fn);
-    return () => this.gone.delete(fn);
-  }
-
-  input(m: LiveInput) {
-    for (const fn of this.inputs) fn(m);
-  }
-
-  viewerGone() {
-    for (const fn of this.gone) fn();
-  }
-}
 
 export function routes(agent: DesktopAgent, desktop: Desktop, live: Live) {
   return (

@@ -16,7 +16,8 @@ export type RecStep =
   | { t: number; kind: "key"; key: string; screen?: string; hidden?: "secret" | "unknown" }
   /** `hidden`: not recorded, because the field takes a secret or couldn't be checked. */
   | { t: number; kind: "text"; text: string; hidden?: "secret" | "unknown"; chars: number }
-  | { t: number; kind: "page"; url: string | null; title: string | null };
+  /** `app`: on a computer, the app whose window has the keyboard. */
+  | { t: number; kind: "page"; url: string | null; title: string | null; app?: string };
 
 export type FieldCheck = { secret: boolean; url?: string | null };
 
@@ -315,10 +316,11 @@ export class Recorder {
     }
   }
 
-  page(url: string | null, title: string | null) {
+  page(url: string | null, title: string | null, app?: string) {
     const last = this.steps.findLast((s) => s.kind === "page");
-    if (last?.kind === "page" && last.url === url && last.title === title) return;
-    if (!url && !last) return;
+    if (last?.kind === "page" && last.url === url && last.title === title && last.app === app)
+      return;
+    if (!url && !app && !last) return;
     this.endTyping();
     // A new address, not a new title or a moment none could be read: typing from before is off the
     // screen, unless it was typed on this page (a new query keeps the page). Typing whose own page isn't
@@ -336,7 +338,7 @@ export class Recorder {
         r.open = false;
       }
     }
-    this.push({ t: this.now(), kind: "page", url, title });
+    this.push({ t: this.now(), kind: "page", url, title, ...(app === undefined ? {} : { app }) });
   }
 
   async finish(): Promise<RecStep[]> {
@@ -420,11 +422,15 @@ export function describeSteps(steps: RecStep[]): { lines: string[]; screens: str
             : `${at} typed ${JSON.stringify(s.text)}`,
         );
         break;
-      case "page":
+      case "page": {
+        const title = s.title ? JSON.stringify(s.title) : "";
         lines.push(
-          `${at} page: ${s.title ? `${JSON.stringify(s.title)} ` : ""}${s.url ?? "(none)"}`,
+          s.app === undefined
+            ? `${at} page: ${title ? `${title} ` : ""}${s.url ?? "(none)"}`
+            : `${at} window: ${[s.app, title, s.url].filter(Boolean).join(" ")}`,
         );
         break;
+      }
     }
   }
   return { lines, screens };

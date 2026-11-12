@@ -319,12 +319,14 @@ export function LiveView({ taskId }: { taskId?: number }) {
   const given = useStore((s) => (taskId ? s.tasks[taskId] : undefined));
   const teach = useStore(recording);
   const [picked, setPicked] = useState<string | null>(null);
-  // A task's view shows its own screen; otherwise you pick one.
+  // A task's view shows its own screen, and a recording its own; otherwise you pick one.
   const screen = taskId
     ? (given?.screen ?? null)
-    : !teach && computers.some((c) => c.id === picked)
-      ? picked
-      : null;
+    : teach
+      ? teach.screen
+      : computers.some((c) => c.id === picked)
+        ? picked
+        : null;
   const machine = screen ? computers.find((c) => c.id === screen) : undefined;
   const on = screen ? machine : desktop;
   const name = machine?.name ?? "The desktop";
@@ -420,18 +422,24 @@ export function LiveView({ taskId }: { taskId?: number }) {
       ) : (
         <Screen key={screen ?? ""} control={control} feed={feed} name={name} />
       )}
-      {!control && !on?.request && on?.online && canTakeOver && (
+      {!control && !on?.request && on?.online && (canTakeOver || !task) && (
         <div className="live-controls">
-          <button
-            type="button"
-            className="btn tint-attn"
-            onClick={() => run(() => takeover(screen))}
-          >
-            <Icon name="hand" />
-            Take over
-          </button>
-          {!task && !machine && (
-            <button type="button" className="btn" onClick={() => run(() => startTeach())}>
+          {canTakeOver && (
+            <button
+              type="button"
+              className="btn tint-attn"
+              onClick={() => run(() => takeover(screen))}
+            >
+              <Icon name="hand" />
+              Take over
+            </button>
+          )}
+          {!task && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => run(() => startTeach(undefined, screen))}
+            >
               <Icon name="teach" />
               Teach a skill
             </button>

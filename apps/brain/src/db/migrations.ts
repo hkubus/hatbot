@@ -1206,4 +1206,6 @@ export const migrations: string[] = [
   ALTER TABLE reply_calls ADD COLUMN schedule_id INTEGER;
   ALTER TABLE reply_calls ADD COLUMN task_id INTEGER;
   `,
+  // 82: the computer a Teach recording was made on; null for the desktop.
+  `ALTER TABLE teach_sessions ADD COLUMN screen TEXT;`,
 ];
