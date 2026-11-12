@@ -7,13 +7,18 @@ use std::time::Duration;
 
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::component::ComponentProxy;
-use atspi::{CoordType, ObjectRefOwned, Role, State};
+use atspi::proxy::document::DocumentProxy;
+use atspi::proxy::text::TextProxy;
+use atspi::{CoordType, ObjectRefOwned, Role, State, StateSet};
 
-use crate::computer::{InspectAt, Result};
-use crate::protocol::AgentElement;
+use crate::computer::{Fields, InspectAt, Result};
+use crate::protocol::{AgentElement, ComputerField};
 
 /// Most nodes read looking for the focus or a form's buttons.
 const MAX_NODES: usize = 1500;
+/// Most nodes read for the text fields holding something, and for the page's address alone.
+const MAX_FIELD_NODES: usize = 4000;
+const MAX_PAGE_NODES: usize = 500;
 const TIMEOUT: Duration = Duration::from_secs(4);
 
 pub struct Atspi {
@@ -33,6 +38,19 @@ impl Atspi {
 
     pub async fn inspect(&self, at: InspectAt) -> Result<Option<AgentElement>> {
         tokio::time::timeout(TIMEOUT, self.find(at))
+            .await
+            .map_err(|_| "The app's accessibility tree took too long to read.".to_string())?
+            .map_err(|e| format!("Couldn't read the accessibility tree: {e}."))
+    }
+
+    pub async fn fields(
+        &self,
+        pid: Option<i32>,
+        title: Option<String>,
+        field: bool,
+        filled: bool,
+    ) -> Result<Option<Fields>> {
+        tokio::time::timeout(TIMEOUT, self.read_fields(pid, title.as_deref(), field, filled))
             .await
             .map_err(|_| "The app's accessibility tree took too long to read.".to_string())?
             .map_err(|e| format!("Couldn't read the accessibility tree: {e}."))
@@ -217,6 +235,126 @@ impl Atspi {
             el.buttons_after = (!all.is_empty()).then_some(all);
         }
         Ok(el)
+    }
+
+    /// Breadth first through what's showing in a window, counting the pages each node is in: a field in
+    /// two is in a page's frame. (Firefox puts every page in an internal frame, so that role doesn't say.)
+    async fn read_fields(
+        &self,
+        pid: Option<i32>,
+        title: Option<&str>,
+        field: bool,
+        filled: bool,
+    ) -> zbus::Result<Option<Fields>> {
+        let apps = self.apps(pid).await?;
+        let Some(frame) = self.frame(&apps, title).await? else { return Ok(None) };
+        let mut out = Fields { filled: filled.then(Vec::new), ..Default::default() };
+        let most = if field || filled { MAX_FIELD_NODES } else { MAX_PAGE_NODES };
+        let mut queue = VecDeque::from([(frame, 0u32)]);
+        let mut seen = 0;
+        while let Some((p, docs)) = queue.pop_front() {
+            seen += 1;
+            if seen > most {
+                // Some fields weren't read: any of them may hold a secret.
+                out.filled = None;
+                break;
+            }
+            let state = p.get_state().await.unwrap_or_default();
+            let role = p.get_role().await.unwrap_or(Role::Invalid);
+            let page = matches!(role, Role::DocumentWeb | Role::DocumentFrame);
+            let docs = docs + u32::from(page);
+            if page && out.url.is_none() {
+                out.url = self.url(&p).await;
+            }
+            let focused = field && out.focused.is_none() && state.contains(State::Focused);
+            let text = state.contains(State::Editable)
+                && matches!(
+                    role,
+                    Role::Entry | Role::PasswordText | Role::Text | Role::Terminal | Role::ComboBox | Role::SpinButton
+                );
+            // A field that can't say how much it holds may hold something.
+            let holds = filled
+                && text
+                && match self.text(&p).await {
+                    Some(t) => !matches!(t.character_count().await, Ok(0)),
+                    None => true,
+                };
+            if focused || holds {
+                let f = self.field(&p, role, &state, docs > 1).await;
+                if let Some(all) = out.filled.as_mut().filter(|_| holds) {
+                    all.push(f.clone());
+                }
+                if focused {
+                    out.focused = Some(f);
+                }
+            }
+            if !filled && (!field || out.focused.is_some()) && out.url.is_some() {
+                break;
+            }
+            if seen > 1 && !state.contains(State::Showing) {
+                continue;
+            }
+            for r in p.get_children().await.unwrap_or_default() {
+                if let Ok(c) = self.proxy(&r).await {
+                    queue.push_back((c, docs));
+                }
+            }
+        }
+        Ok(Some(out))
+    }
+
+    async fn field(&self, p: &Proxy, role: Role, state: &StateSet, in_frame: bool) -> ComputerField {
+        let mut names = vec![p.name().await.unwrap_or_default(), p.description().await.unwrap_or_default()];
+        if let Ok(attrs) = p.get_attributes().await {
+            names.extend(
+                ["id", "placeholder-text", "text-input-type", "html-input-name"]
+                    .iter()
+                    .filter_map(|k| attrs.get(*k).cloned()),
+            );
+        }
+        names.retain(|n| !n.trim().is_empty());
+        for n in &mut names {
+            *n = n.chars().take(200).collect();
+        }
+        ComputerField {
+            role: p.get_role_name().await.unwrap_or_default(),
+            names,
+            password: role == Role::PasswordText,
+            in_frame,
+            editable: state.contains(State::Editable),
+        }
+    }
+
+    async fn text(&self, p: &Proxy) -> Option<TextProxy<'static>> {
+        TextProxy::builder(&self.conn)
+            .destination(p.inner().destination().to_owned())
+            .ok()?
+            .path(p.inner().path().to_owned())
+            .ok()?
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build()
+            .await
+            .ok()
+    }
+
+    /// A page's address: Firefox calls it DocURL, Chromium URI.
+    async fn url(&self, p: &Proxy) -> Option<String> {
+        let doc = DocumentProxy::builder(&self.conn)
+            .destination(p.inner().destination().to_owned())
+            .ok()?
+            .path(p.inner().path().to_owned())
+            .ok()?
+            .build()
+            .await
+            .ok()?;
+        for name in ["DocURL", "URI"] {
+            if let Ok(url) = doc.get_attribute_value(name).await
+                && !url.is_empty()
+            {
+                return Some(url);
+            }
+        }
+        None
     }
 
     /// The buttons in a part of the tree, in order: those after `from` first, then those before.

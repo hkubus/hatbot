@@ -13,7 +13,7 @@ import { type Guest, GuestError } from "./guest";
 export const MAX_UPDATE_BYTES = 10 * 1024 * 1024;
 /** A box's files, as JSON: 2 MB of source, escaped. */
 const MAX_PUT_BYTES = 6 * 1024 * 1024;
-const FEATURES: string[] = ["secrets", "notify"];
+const FEATURES: string[] = ["secrets", "notify", "check"];
 
 // The agent's own refusals are marked, to tell them from a backend's answer with the same status; a
 // backend can't send the header (passedHeaders drops x-hatbox-…).
@@ -50,6 +50,7 @@ export function routes(
     if (route === "GET /health")
       return json({ ok: true, version: o.version, features: FEATURES } satisfies HatboxStatus);
     if (route === "GET /boxes") return json(guest.list());
+    if (route === "POST /check") return json(await guest.check());
     if (route === "POST /update") {
       // A new copy of this app from the brain's updater; hatbox-agent-update.path installs it as root.
       if (!o.updates) return json({ error: "updates aren't enabled" }, 501);

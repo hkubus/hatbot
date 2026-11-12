@@ -75,11 +75,18 @@ final class AppStore {
   var watchersLoaded = false
   /// Deleted while the app was open, so an open watcher says it's gone.
   var deletedWatchers = Set<Int>()
+  var scripts: [Int: Script] = [:]
+  var scriptsLoaded = false
+  var deletedScripts = Set<Int>()
   /// Boxes: all of them once Boxes has been opened (`boxesLoaded`), and any a chat has shown.
   var boxes: [Int: Box] = [:]
   var boxesLoaded = false
   /// Deleted, here or elsewhere: an open box says so, and the chat stops showing it.
   var deletedBoxes = Set<Int>()
+  /// The open negotiations, and any a chat or page has shown.
+  var negotiations: [Int: Negotiation] = [:]
+  /// The messages of each negotiation whose page has been opened, kept current while the app runs.
+  var negotiationMessages: [Int: [NegotiationMessage]] = [:]
   /// Every plugin, by id, as loaded when the stream opens; none on a brain from before plugins.
   var plugins: [String: PluginInfo] = [:]
   var toast: String? {
@@ -265,6 +272,13 @@ final class AppStore {
       try? await loadThread()
       if reconnected && boxesLoaded { _ = try? await loadBoxes() }
     }
+    Task {
+      try? await loadNegotiations()
+      // An open page shows its messages; their news may have come while the stream was down.
+      if reconnected {
+        for id in negotiationMessages.keys { try? await loadNegotiation(id) }
+      }
+    }
     // Which views show: those of plugins that are off don't. Switched while the stream was down, too.
     Task { _ = try? await loadPlugins() }
   }
@@ -285,7 +299,7 @@ final class AppStore {
     // and usage aren't on the page.
     case .messageDelta(_, _, nil), .messageProgress, .messageUsage: break
     case .messageCreated, .messageDelta, .messageDone, .messageRewrite, .messageEdited, .messageSeen,
-      .messageDeleted, .messageTask, .messageLink, .messageBox, .messageAttachment:
+      .messageDeleted, .messageTask, .messageLink, .messageBox, .messageNegotiation, .messageAttachment:
       for load in missed.keys { missed[load]?.append(event) }
     default: break
     }
@@ -310,7 +324,8 @@ final class AppStore {
       follow(event)
       addUnread(id)
       refreshConversations()
-    case .messageRewrite, .messageDelta, .messageTask, .messageLink, .messageBox, .messageAttachment:
+    case .messageRewrite, .messageDelta, .messageTask, .messageLink, .messageBox, .messageNegotiation,
+      .messageAttachment:
       follow(event)
     case let .messageSeen(ids, _):
       follow(event)
@@ -392,6 +407,15 @@ final class AppStore {
     case let .boxDeleted(id):
       boxes[id] = nil
       deletedBoxes.insert(id)
+    case let .negotiationUpdated(n):
+      negotiations[n.id] = n
+      if negotiationMessages[n.id] != nil { Task { try? await loadNegotiation(n.id) } }
+    case let .scriptUpdated(s):
+      scripts[s.id] = s
+      deletedScripts.remove(s.id)
+    case let .scriptDeleted(id):
+      scripts[id] = nil
+      deletedScripts.insert(id)
     case let .pluginUpdated(p):
       plugins[p.id] = p
     case .unknown:
@@ -453,6 +477,8 @@ final class AppStore {
       change(id) { $0.link = link }
     case let .messageBox(id, boxId):
       change(id) { $0.boxId = boxId }
+    case let .messageNegotiation(id, negotiationId):
+      change(id) { $0.negotiationId = negotiationId }
     case let .messageAttachment(id, a):
       change(id) { m in
         if !(m.attachments ?? []).contains(where: { $0.id == a.id }) { m.attachments = (m.attachments ?? []) + [a] }
@@ -1115,6 +1141,14 @@ final class AppStore {
     }
   }
 
+  func ensureNegotiation(_ id: Int) {
+    if negotiations[id] != nil { return }
+    guard requested.insert("n\(id)").inserted else { return }
+    Task {
+      do { try await loadNegotiation(id) } catch { requested.remove("n\(id)") }
+    }
+  }
+
   enum TaskFilter: String {
     case active, done
   }
@@ -1238,6 +1272,53 @@ final class AppStore {
     if let i = computers.firstIndex(where: { $0.id == c.id }) { computers[i] = c }
   }
 
+  // MARK: Your computers
+
+  /// False while the Your computers plugin is off.
+  func loadComputers() async throws -> Bool {
+    do {
+      computers = try await api.get("/computers")
+      return true
+    } catch let e as APIError where e.status == 404 {
+      computers = []
+      return false
+    }
+  }
+
+  private func computerPath(_ id: String) -> String {
+    "/computers/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+  }
+
+  func renameComputer(_ id: String, to name: String) async throws {
+    struct Body: Encodable { let name: String }
+    putComputer(try await api.patch(computerPath(id), body: Body(name: name)))
+  }
+
+  func setCareful(_ id: String, _ careful: Bool) async throws {
+    struct Body: Encodable { let careful: Bool }
+    putComputer(try await api.patch(computerPath(id), body: Body(careful: careful)))
+  }
+
+  /// The computer sends its status apart from its answer, so the brain's answer may be from before it.
+  func pauseComputer(_ id: String, _ paused: Bool) async throws {
+    struct Body: Encodable { let paused: Bool }
+    var c: ComputerInfo = try await api.post("\(computerPath(id))/pause", body: Body(paused: paused))
+    c.paused = paused
+    putComputer(c)
+  }
+
+  /// Only the computer can turn it on again.
+  func turnOffComputer(_ id: String) async throws {
+    var c: ComputerInfo = try await api.post("\(computerPath(id))/turn-off", body: Empty())
+    c.enabled = false
+    putComputer(c)
+  }
+
+  func forgetComputer(_ id: String) async throws {
+    let _: Empty = try await api.delete(computerPath(id))
+    computers.removeAll { $0.id == id }
+  }
+
   /// The live view's socket: JPEG frames out, your input in while you have control.
   func liveSocket(_ screen: String? = nil) -> Socket {
     let api = self.api
@@ -1269,6 +1350,7 @@ final class AppStore {
   struct ScheduleChange: Encodable, Sendable {
     var name: String?
     var prompt: String?
+    var scriptId: Int?
     var enabled: Bool?
     var cron: String?
     /// ISO 8601 date and time, for a one-off run.
@@ -1328,6 +1410,38 @@ final class AppStore {
     let _: Empty = try await api.delete("/triggers/\(id)")
     triggers[id] = nil
     deletedTriggers.insert(id)
+  }
+
+  // MARK: Scripts
+
+  func loadScripts() async throws {
+    let list: [Script] = try await api.get("/scripts")
+    scripts = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+    scriptsLoaded = true
+  }
+
+  func loadScript(_ id: Int) async throws {
+    scripts[id] = try await api.get("/scripts/\(id)")
+  }
+
+  /// Sends only `enabled`: with any other field, the brain saves it as yours, which approves it.
+  func setScriptEnabled(_ id: Int, _ on: Bool) async throws {
+    struct Body: Encodable { let enabled: Bool }
+    let s: Script = try await api.patch("/scripts/\(id)", body: Body(enabled: on))
+    scripts[s.id] = s
+  }
+
+  func runScript(_ id: Int, input: [String: JSONValue]) async throws -> AgentTask {
+    struct Body: Encodable { let input: [String: JSONValue] }
+    let task: AgentTask = try await api.post("/scripts/\(id)/run", body: Body(input: input))
+    tasks[task.id] = task
+    return task
+  }
+
+  func deleteScript(_ id: Int) async throws {
+    let _: Empty = try await api.delete("/scripts/\(id)")
+    scripts[id] = nil
+    deletedScripts.insert(id)
   }
 
   // MARK: Memory

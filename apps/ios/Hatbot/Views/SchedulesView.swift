@@ -39,6 +39,17 @@ struct SchedulesView: View {
           }
         }
       }
+      Section("Scripts") {
+        let scripts = store.scripts.values.sorted { $0.name < $1.name }
+        if store.scriptsLoaded && scripts.isEmpty {
+          Text("No scripts. Ask Hatbot in the chat to save one.").foregroundStyle(.secondary)
+        }
+        ForEach(scripts) { s in
+          NavigationLink(value: Route.script(s.id)) {
+            Row(name: s.name, enabled: s.enabled, detail: s.description)
+          }
+        }
+      }
       Section("Triggers") {
         let triggers = store.triggers.values.sorted { $0.id < $1.id }
         if loaded && triggers.isEmpty {
@@ -72,7 +83,8 @@ struct SchedulesView: View {
     await attempt($error) {
       async let s: Void = store.loadSchedules()
       async let w = store.loadWatchers()
-      _ = try await (s, w)
+      async let x: Void = store.loadScripts()
+      _ = try await (s, w, x)
     }
     loaded = true
   }
@@ -226,9 +238,11 @@ struct ScheduleDetailView: View {
     }
     .navigationTitle(id == nil ? "New schedule" : stored?.name ?? "Schedule")
     .navigationBarTitleDisplayMode(.inline)
+    .task { try? await store.loadScripts() }
     .task(id: id) {
       guard let id else {
-        form = Form()
+        // Back from the script it links to, the new one stays as it was.
+        if form == nil { form = Form() }
         return
       }
       await attempt($error, missing: $missing) {
@@ -283,8 +297,20 @@ struct ScheduleDetailView: View {
         if f.repeats { Text("Minute, hour, day of month, month, day of week, in the brain's time zone.") }
       }
       Section("What it does") {
-        TextField("Everything the run needs to know: it can't see the chat.", text: form.prompt, axis: .vertical)
-          .lineLimit(4...16)
+        let mine = scripts(of: f)
+        if !mine.isEmpty || f.scriptId != nil {
+          Picker("Runs", selection: form.scriptId) {
+            Text("A task").tag(Int?.none)
+            ForEach(mine) { Text("The script \($0.name)").tag(Int?.some($0.id)) }
+            if let script = f.scriptId, store.scripts[script] == nil { Text("Its script").tag(Int?.some(script)) }
+          }
+        }
+        if let script = f.scriptId {
+          NavigationLink(store.scripts[script]?.description ?? "Its script", value: Route.script(script))
+        } else {
+          TextField("Everything the run needs to know: it can't see the chat.", text: form.prompt, axis: .vertical)
+            .lineLimit(4...16)
+        }
       }
       if let s = stored {
         Section {
@@ -313,6 +339,11 @@ struct ScheduleDetailView: View {
     .confirmingDelete("Delete “\(f.name)”?", isPresented: $confirmDelete, error: $error) {
       if let id { try await store.deleteSchedule(id) }
     }
+  }
+
+  /// The scripts it can run: its bot's own.
+  private func scripts(of f: Form) -> [Script] {
+    store.scripts.values.filter { $0.botId == f.botId }.sorted { $0.name < $1.name }
   }
 
   private func save(_ f: Form) async {

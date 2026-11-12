@@ -1,9 +1,11 @@
 // The desktop container: Chromium on a screen the bots drive and you can take over, and a shell user,
 // the sandbox, for scratch work. desktop-agent on it does what the brain asks.
 
+import type { ComputersService } from "@hatbot/plugin-computer";
 import {
   definePlugin,
   type EventsHost,
+  Live,
   type ModelHost,
   PluginError,
   ready,
@@ -16,24 +18,25 @@ import { z } from "zod";
 import { desktopChecks } from "./checks";
 import { type DesktopAgent, HttpDesktopAgent } from "./client";
 import { Desktop } from "./control";
-import { Live, routes } from "./routes";
+import { routes } from "./routes";
 import { teachRoutes } from "./teach/routes";
 import { Teach } from "./teach/service";
 
-export { ScreenLane } from "@hatbot/plugin-sdk";
+export { Live, ScreenLane } from "@hatbot/plugin-sdk";
 export { type DesktopAgent, DesktopError, HttpDesktopAgent } from "./client";
 export { Desktop, DesktopBusy } from "./control";
-export { frameRelay, Live } from "./routes";
+export { frameRelay } from "./routes";
 export { TEACH_PROMPT } from "./teach/prompt";
 export { type FieldCheck, OffPage, Recorder } from "./teach/recorder";
+export { secretField } from "./teach/screens";
 export { Teach } from "./teach/service";
 
 const CHAT = `- run_desktop_task loads when you need it: find it with tool_search_tool_regex, then call it. Use it only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript). When web_fetch can't read a page you need, like a parcel tracker or a shop, that's what it's for: start it in the same reply, rather than offer it or send the owner to the page. It asks them itself before buying, paying or account changes. It runs on its own; its progress and result show under your reply.
 - A desktop task answers cookie and consent dialogs itself, rejecting where it can: that's routine, not the owner's call. Never tell it to leave one alone, and don't ask the owner about one.
-- Skills (skills/ in memory, listed in INDEX.md) are chores the owner showed you how to do. When a desktop task matches one, pass its name as skill, and put the values for its {{placeholders}} in the goal.`;
+- Skills (skills/ in memory, listed in INDEX.md) are chores the owner showed you how to do. When a desktop task matches one, pass its name as skill, and put the values for its {{placeholders}} in the goal. One whose description starts "On <computer>:" runs on that computer: pass it as screen.`;
 
 const TASK = `- Only for what needs a real browser (logging in, clicking, forms, pages that need JavaScript), use run_desktop_task. A separate model drives the desktop and asks the owner only before buying, paying or account changes. Give it everything it needs; it can't see this task. It answers cookie and consent dialogs itself; never tell it to leave one alone.
-- <skills> lists chores the owner showed you how to do. When the desktop work matches one, pass its name as skill to run_desktop_task, and put the values for its {{placeholders}} in the goal.`;
+- <skills> lists chores the owner showed you how to do. When the desktop work matches one, pass its name as skill to run_desktop_task, and put the values for its {{placeholders}} in the goal. One whose description starts "On <computer>:" runs on that computer: pass it as screen.`;
 
 /** What the desktop plugin gives others as "desktop"; the sandbox alone is "sandbox". */
 export type DesktopService = {
@@ -60,6 +63,8 @@ export const desktopPlugin = (agent?: DesktopAgent) =>
       { name: "DESKTOP_AGENT_TOKEN", secret: true, optional: true },
     ],
     needs: ["events", "settings", "model", "skills"],
+    // Teach records on your computers too.
+    uses: ["computers"],
     provides: ["desktop", "sandbox"],
     routes: ["/desktop/status", "/desktop/takeover", "/desktop/handback", "/teach"],
     sockets: ["/desktop/live"],
@@ -77,6 +82,7 @@ export const desktopPlugin = (agent?: DesktopAgent) =>
         db: ctx.db,
         events,
         desktop: screen,
+        computers: () => ctx.optional<ComputersService>("computers"),
         screens: ctx.files.screens,
         model: ctx.service<ModelHost>("model"),
         settings,

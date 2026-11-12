@@ -19,6 +19,7 @@ enum Route: Hashable {
   /// A bot's threads, by its chat.
   case threads(Int)
   case watcher(Int)
+  case script(Int)
   case checks
   case heartbeat
   case proposal(Proposal)
@@ -28,6 +29,8 @@ enum Route: Hashable {
   case spend
   case limits
   case devices
+  case negotiation(Int)
+  case computers
   /// An installed plugin's page, the web app's.
   case plugin(String)
 }
@@ -60,6 +63,7 @@ private func destination(_ route: Route) -> some View {
   case let .group(id): GroupView(id: id)
   case let .threads(parentId): ThreadsView(parentId: parentId)
   case let .watcher(id): WatcherDetailView(id: id)
+  case let .script(id): ScriptDetailView(id: id)
   case .checks: ChecksView()
   case .heartbeat: HeartbeatView()
   case let .proposal(p): ProposalView(proposal: p)
@@ -68,6 +72,8 @@ private func destination(_ route: Route) -> some View {
   case .spend: SpendView()
   case .limits: LimitsView()
   case .devices: DevicesView()
+  case let .negotiation(id): NegotiationView(id: id)
+  case .computers: ComputersView()
   case let .plugin(id): PluginPageView(id: id)
   }
 }

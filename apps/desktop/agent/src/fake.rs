@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use crate::keycode::KeyCode;
 use tokio::sync::oneshot;
 
-use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, Window};
+use crate::computer::{BoxFuture, Button, Clip, Computer, Fields, Frame, InspectAt, Output, Result, Window};
 use crate::protocol::AgentElement;
 use crate::typing::KeyTable;
 
@@ -24,7 +24,12 @@ pub struct Fake {
     pub windows: Mutex<Option<Vec<Window>>>,
     pub frame: Mutex<Frame>,
     pub clipboard: Mutex<Option<Clip>>,
+    pub fields: Mutex<Option<Fields>>,
+    pub asked_fields: Mutex<Vec<FieldsAsked>>,
 }
+
+/// A fields() call's window (pid and title) and what it asked for (the field, the filled ones).
+pub type FieldsAsked = (Option<i32>, Option<String>, bool, bool);
 
 pub const OUTPUT: (u32, u32) = (1600, 1000);
 
@@ -39,6 +44,8 @@ impl Fake {
                 rgb: vec![200; (OUTPUT.0 * OUTPUT.1 * 3) as usize],
             }),
             clipboard: Mutex::new(None),
+            fields: Mutex::new(None),
+            asked_fields: Mutex::new(vec![]),
         }
     }
 
@@ -114,5 +121,16 @@ impl Computer for Fake {
 
     fn inspect(&self, _: InspectAt) -> BoxFuture<'_, Result<Option<AgentElement>>> {
         Box::pin(async { Ok(None) })
+    }
+
+    fn fields(
+        &self,
+        pid: Option<i32>,
+        title: Option<String>,
+        field: bool,
+        filled: bool,
+    ) -> BoxFuture<'_, Result<Option<Fields>>> {
+        self.asked_fields.lock().unwrap().push((pid, title, field, filled));
+        Box::pin(async { Ok(self.fields.lock().unwrap().clone()) })
     }
 }

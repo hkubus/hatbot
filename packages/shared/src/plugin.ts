@@ -16,11 +16,31 @@ export type PluginInfo = {
   named: string[] | null;
   /** Its settings, in the plugin's own shape. */
   config: unknown;
+  /** Its settings as a form, for a plugin the app has no form of its own for. */
+  form: PluginField[];
   tools: { name: string; access: "read" | "write" | "own"; description: string }[];
   testable: boolean;
   /** Where it was installed from; null for one Hatbot comes with. */
   source: { url: string; commit: string } | null;
 };
+
+/**
+ * One of a plugin's settings, described from its schema. Ones a form can't show, such as lists of
+ * objects, are left out and keep their values.
+ */
+export type PluginField = { path: string[]; label: string } & (
+  | { kind: "switch" }
+  | { kind: "text"; max: number | null; nullable: boolean }
+  | { kind: "number"; integer: boolean; min: number | null; max: number | null; nullable: boolean }
+  | { kind: "choice"; choices: PluginChoice[] }
+  /** Any of the choices, as a list. */
+  | { kind: "picks"; choices: PluginChoice[] }
+  /** One a line. */
+  | { kind: "list"; numbers: boolean }
+  | { kind: "group"; fields: PluginField[] }
+);
+
+export type PluginChoice = { value: string | number; label: string };
 
 export type PluginEnvInfo = {
   name: string;

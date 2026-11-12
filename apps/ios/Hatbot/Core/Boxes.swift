@@ -35,6 +35,13 @@ extension AppStore {
     return keep(try await api.post("/boxes/\(id)/revert", body: Body(version: version)))
   }
 
+  /// A value sets one and nil removes it, by name. Only the box's backend gets them: the answer says
+  /// which are set, never a value.
+  func setBoxSecrets(_ id: Int, _ values: [String: String?]) async throws -> [BoxSecret] {
+    struct Body: Encodable { let values: [String: String?] }
+    return try await api.put("/boxes/\(id)/secrets", body: Body(values: values))
+  }
+
   func deleteBox(_ id: Int) async throws {
     let _: Empty = try await api.delete("/boxes/\(id)")
     boxes[id] = nil

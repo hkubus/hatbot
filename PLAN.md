@@ -14,22 +14,20 @@ Not as decided:
 - **An installed plugin restarts the brain** (exit 75; systemd starts it again), since routes can't be added to a running server. Under `bun run dev` the brain just stops: start it again.
 
 Left:
-- An installed plugin's own settings form: the web app is built with the first-party ones, so an installed plugin's page has its switch, its environment and secrets, and its tools.
 - iOS (2026-11-12), not tried on a device (the views compile only in CI): off plugins' views hiding, installed plugins' pages in a web view (signed in by `/auth/link`; `?embedded` hides the web app's bars), and first run's model provider form, then Finish later for the web app's interview.
 - Trying an install from a real forge, and a plugin with its own npm packages, on the brain guest (`bun install` under `ProtectSystem=strict`).
 
 ## 0.1 Fewer approvals (decided and built 2026-10-29)
-Only money (purchases, payments, offers outside a negotiation's mandate), account security, home access (locks, the alarm, garage doors and gates), your careful marks and "Always ask" tools, and Haggler's holds ask you. Everything else goes to the safety review, which blocks what it finds unsafe instead of asking. A blocked step offers Run anyway or Always, and a task stops after 3 blocks in a row or 20 in all. A suspected prompt injection changes nothing, and the screener is gone. A task has no spending limit of its own; the daily and monthly ones stay. "Ready to list" in Scout is the listing's approval. A negotiation starts without asking unless its mandate allows contact details, or Settings → Safety says to ask (2026-10-31). Memory files, schedules and watchers change without proposals; after untrusted content the review checks them. A desktop task's message to a person waits 30 s for you to stop it, unless you approved it yourself. Locks and doors a schedule's run asks about can be allowed for that schedule. A notification's Approve, for what it can't approve itself, opens the iOS app, which approves behind Face ID. On the desktop (2026-11-06), only a step that buys, pays or changes the account stops for confirm_intent; the review looks at other held steps where they are, and icon buttons, a form's submit, words like Confirm or Save, and frames that don't look like payment aren't held.
+Only money (purchases, payments, offers outside a negotiation's mandate), account security, home access (locks, the alarm, garage doors and gates), your careful marks and "Always ask" tools, and Haggler's holds ask you. Everything else goes to the safety review, which blocks what it finds unsafe instead of asking. A blocked step offers Run anyway or Always, and a task stops after 3 blocks in a row or 20 in all. A suspected prompt injection changes nothing, and the screener is gone. A task has no spending limit of its own; the daily and monthly ones stay. "Ready to list" in Scout is the listing's approval. A negotiation starts without asking unless its mandate allows contact details, or Settings → Safety says to ask (2026-10-31). Memory files, schedules and watchers change without proposals; after untrusted content the review checks them. A message to people you didn't approve yourself waits for you to stop it as long as Settings → Safety says, by default not at all: a desktop task's, and since 2026-11-11 a plugin's write of kind `send` (forge comments, issues and pull requests, Home Assistant's notify, and MCP tools whose name sounds like sending or that you mark Sends to people on MCP's page, since MCP doesn't say). A script's don't wait: you approved it as written. Locks and doors a schedule's run asks about can be allowed for that schedule. A notification's Approve, for what it can't approve itself, opens the iOS app, which approves behind Face ID. On the desktop (2026-11-06), only a step that buys, pays or changes the account stops for confirm_intent; the review looks at other held steps where they are, and icon buttons, a form's submit, words like Confirm or Save, and frames that don't look like payment aren't held.
 
 The plugin SDK changed with it: `suspected` and `mark` are gone, and `taint(by)` takes one argument. Installed plugins built on the old SDK need updating.
 
 Left:
-- Only a desktop task's sends wait 30 s. A plugin's writes that reach people (forge comments, MCP tools) go at once, after the review.
 - Face ID approval only works with Settings → Notifications → "Tapping one opens" set to the iOS app; with the web app, Approve just shows the approval. Not tried on a device: the iOS views compile only in CI.
 
 ## 1. Deploy and try live
 Built, but not yet deployed or tried live:
-- **Boxes** (2026-10-18 and 2026-10-19). Not tried yet: a real `hatbot-boxes` guest under systemd (the units, polkit, DynamicUser, the firewall, and the runner reading its secrets inside `hatbox@`'s sandbox); `boxes_look` drawn by `hatbot-render` under systemd; boxes in the iOS app on a device; `hatbox.ask` and `hatbox.feed` against a brain; and the model making a box, a server box, or one that uses ask, send, feed, notifications or secrets.
+- **Boxes** (2026-10-18 and 2026-10-19; trying a box with steps, warnings when one's saved, fresh feeds, `scheduled()` on demand, `ssh_check` in a container and actions brought into the plugin 2026-11-12). Not tried yet: a real `hatbot-boxes` guest under systemd (the units, polkit, DynamicUser, the firewall, and the runner reading its secrets inside `hatbox@`'s sandbox); `boxes_look` drawn by `hatbot-render` under systemd, with steps or reaching a backend; boxes in the iOS app on a device; `hatbox.ask`, `hatbox.feed` and `hatbox.action` against a brain; `ssh_check` and `ssh_read_file` in a container on a real Proxmox host; and the model making a box, a server box, or one that uses ask, send, feed, actions, notifications or secrets, or trying one with steps. An action runs one of the bot's scripts as a task (the owner's choice): one you remove leaves a run that's going in Tasks, and runs leave no note in the box's chat.
 - **Hand-offs in the other bot's chat, and the code bot** (2026-10-19).
 - **Hatbot handing the other bots their work** (2026-10-20).
 - **Logins from Scout** (2026-10-26): a marketplace login you share in Scout (Settings → Marketplace accounts → Share with connected apps, which needs Scout's sign-in on) goes in Haggler's browser as its task gets the screen. Not tried against a real marketplace: whether a login captured on another computer, with another address and browser, still works there or asks to verify.
@@ -48,11 +46,8 @@ Built, but not yet deployed or tried live:
 - **Clearing a chat** (2026-11-06): Clear chat on a bot's or group's page deletes its messages, files, summary and threads for good (incognito and tasks stay); for a bot other than Hatbot, its `bots/<id>/` notes too if you tick it, as a commit in Memory. Not tried: the iOS buttons outside CI.
 
 ## 2. Small gaps
-- Your computers: no settings page for them in the iOS app, and Teach works only on the desktop.
-- Check everything has no line for the boxes guest; only `verify.sh` checks it, from the host.
-- Box secrets can only be set in the web app: the iOS app ignores `BoxDetail.secrets`.
-- The iOS app decodes negotiation events but doesn't show negotiations.
-- Scripts: the iOS app doesn't list them or pick one for a schedule; webhook triggers can't run one; repeats are noticed only in the chat, not across a schedule's task runs.
+- Your computers: Teach on a computer records only what you do from Live, not you at the computer itself (on Wayland that needs the pointer and keys from evdev, an input rule the owner installs), and only the window with the keyboard is checked for secrets showing before a screenshot is kept. It hasn't been tried on a real computer: the AT-SPI and UI Automation answers for password fields, frames and page addresses are unchecked in real apps.
+- Scripts: webhook triggers can't run one.
 
 ---
 
@@ -75,16 +70,16 @@ Built 2026-11-02, not tried live: N5, selling (`negotiate/selling.ts`). Where a 
 - **Maybe later**: `scout_send_message`, if sending from the desktop turns out too slow.
 
 ### 3.2 Scout's part
-This goes in Scout's own repo, as a handoff there, in the shapes the brain reads. Read tools, all `readOnlyHint`:
-- **`scout_price_reference {query, sources}`** → `best.{typicalPrice, p25, samples, name, basis, ready}`. P0-4 in Scout's `HAT_DEALS_HANDOFF.md`, never built; that handoff is otherwise stale. Until it exists the appraisal uses `scout_watch_analytics`.
-- **`scout_comparables {listingKey}`** → `comparables|listings|items[].{title, price, url}`: live alternatives for the same item, the fallback and honest leverage.
-- **`scout_listing_detail`** gains days listed, price drops, relists, the seller's other listings and the negotiable flag, and `live: true` (P1-3), to check the listing before an offer and before paying. The brain already reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`.
+Built in Scout (price reference, comparables, outcomes and the listing detail's negotiation block on 2026-10-16), in the shapes the brain reads; Hatbot's Scout plugin offers them since 2026-11-11. Read tools, all `readOnlyHint`:
+- **`scout_price_reference {query, sources}`** → `best.{typicalPrice, p25, samples, name, basis, ready}`: the appraisal's typical price; when it has none, the appraisal uses `scout_watch_analytics`.
+- **`scout_comparables {listingKey}`** → `comparables[].{title, price, url}`: live alternatives for the same item, the fallback and honest leverage.
+- **`scout_listing_detail`** has a `negotiation` block (days listed, price drops, the negotiable flag, the seller and their other listings, relists), `live: true` to check the listing on the marketplace now and `sellerListings: true`. The brain reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`. Still to do: check the listing with `live: true` before an offer and before paying (P1-3).
 - **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions (N3, built in Scout): Scout's plugin offers them to the brain alone; over the MCP plugin they need Chat.
 
 For logins (built in Scout, 2026-10-26): **`scout_shared_sessions`** → `sessions[].{marketplace, label, revision}` and **`scout_shared_session {marketplace}`** → `{revision, storageState}`, Playwright storage state. Only connected apps get them, only for the sessions you shared, and the brain alone calls them (`desktop/logins.ts`); desktop-agent takes cookies only for the marketplaces' sites.
 
 One write tool:
-- **`scout_record_outcome {listingKey, outcome, price, asking, currency}`**: the final price, kept apart from Scout's asking-price statistics, as flips are, and shown as a figure of its own ("you pay about 84% of asking for GPUs on OLX").
+- **`scout_record_outcome {negotiationId, listingKey, outcome, price, asking, currency}`**: the final price, kept apart from Scout's asking-price statistics, as flips are, and shown as a figure of its own ("you pay about 84% of asking for GPUs on OLX"). The brain sends it when the bot closes a buying negotiation with `negotiate_close`, keyed `hatbot:<id>`, in PLN only. Scout's plugin offers it to the brain alone; over the MCP plugin it needs Allow.
 
 For N6, Scout's handoff is `../scout/docs/hatbot-listing-plan.md`. In short:
 - `scout_flips_to_list` (read): flips marked ready, each with `id, updatedAt, channels[]` and each channel's `{status, url?, error?}`.

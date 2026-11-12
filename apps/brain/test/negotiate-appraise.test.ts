@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { type PluginTool, z } from "@hatbot/plugin-sdk";
-import { appraise } from "../src/negotiate/appraise";
+import { appraise, scoutTool } from "../src/negotiate/appraise";
 
 const detail = (asking: number, typical: number): PluginTool => ({
   name: "mcp_scout_scout_listing_detail",
@@ -27,4 +27,13 @@ test("the opening offer is 90% of the asking price, or the target when that's lo
   expect(await opening(1000, 1200)).toMatchObject({ opening: 900, target: 1000, walkAway: 1000 });
   // Priced far above the market: it opens at the target, not past it.
   expect(await opening(1500, 1000)).toMatchObject({ opening: 900, target: 900, walkAway: 1000 });
+});
+
+test("the Scout plugin's own tool comes before an MCP server's one of the same name", () => {
+  const tool = (name: string): PluginTool => ({ ...detail(1, 1), name });
+  const mcp = tool("mcp_scout_scout_record_outcome");
+  const own = tool("scout_record_outcome");
+  expect(scoutTool([mcp, own], "scout_record_outcome")).toBe(own);
+  expect(scoutTool([mcp], "scout_record_outcome")).toBe(mcp);
+  expect(scoutTool([mcp], "record_outcome")).toBe(mcp);
 });

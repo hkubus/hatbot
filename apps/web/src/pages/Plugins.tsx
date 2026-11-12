@@ -7,6 +7,7 @@ import { ask, useLeaveGuard } from "../confirm";
 import { Icon } from "../icons";
 import { Link } from "../link";
 import { LoadError, PageLoad, useLoad } from "../load";
+import { PluginForm } from "../plugin-form";
 import { PLUGIN_WEB } from "../plugins";
 import { navigate } from "../router";
 import {
@@ -130,7 +131,7 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
         {p.env.length > 0 && <EnvForm key={JSON.stringify(p.env)} p={p} toast={toast} />}
         {p.named && <NamedSecrets p={p} names={p.named} toast={toast} />}
 
-        {Settings && (
+        {Settings ? (
           <Settings
             key={JSON.stringify(p.config)}
             config={p.config}
@@ -138,6 +139,15 @@ export function PluginPage({ id, toast }: { id: string; toast: (t: string) => vo
             action={action}
             running={pluginRunning(p)}
           />
+        ) : (
+          p.form.length > 0 && (
+            <PluginForm
+              key={JSON.stringify(p.config)}
+              fields={p.form}
+              config={p.config}
+              save={save}
+            />
+          )
         )}
 
         {p.tools.length > 0 && <ToolList tools={p.tools} />}

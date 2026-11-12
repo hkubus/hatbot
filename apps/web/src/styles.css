@@ -4627,7 +4627,8 @@ a.row-main:hover {
   display: block;
   background: var(--bg);
 }
-.box-secrets {
+.box-secrets,
+.box-actions {
   align-self: start;
   max-width: 640px;
 }
