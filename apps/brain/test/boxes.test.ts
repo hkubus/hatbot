@@ -1,6 +1,6 @@
 // Boxes: small web apps a bot makes, shown sandboxed, keeping what their pages save.
 import { expect, test } from "bun:test";
-import { FRAME_CSP, previewed } from "@hatbot/plugin-boxes";
+import { FRAME_CSP, pitfalls, previewed } from "@hatbot/plugin-boxes";
 import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { BoxActionRun, BoxDetail, BoxFeedValue, Script } from "@hatbot/shared";
 import { z } from "zod";
@@ -229,6 +229,37 @@ test("boxes_look: the bot sees its box drawn on the desktop with its errors, tri
   await t.thread.post("look again").done;
   expect(t.agent.looks).toHaveLength(3);
   expect(lastUserText(model.requests[7])).not.toContain('"type":"image"');
+});
+
+test("a page is read for pitfalls in one pass: a megabyte of unclosed tags and comments doesn't hold up the brain", () => {
+  const fill = (s: string) => s.repeat(Math.floor(1_000_000 / s.length));
+  const started = performance.now();
+  for (const html of [
+    fill("<img a"),
+    fill("<script "),
+    fill("<script>"),
+    `<script>${fill("/*")}</script>`,
+    `<script>${fill("alert(")}</script>`,
+    `<script>${fill("function ")}</script>`,
+  ])
+    pitfalls([{ path: "index.html", content: html }], false);
+  expect(performance.now() - started).toBeLessThan(5000);
+
+  // What it finds is the same: comments and an unclosed <script> after the last one are skipped.
+  const found = pitfalls(
+    [
+      {
+        path: "index.html",
+        content:
+          '<script type="module">/* localStorage */ const n: number = 1;</script><img alt="" src="https://x.test/a.png">' +
+          "<script>/* not closed sessionStorage <script>",
+      },
+    ],
+    false,
+  ).join("\n");
+  expect(found).toContain("has TypeScript in it");
+  expect(found).toContain("loads something from the web");
+  expect(found).not.toContain("Storage");
 });
 
 test("hatbox.ask: Haiku answers the page with no tools, as Boxes in Spend, within the boxes' own daily limit, and not while paused", async () => {

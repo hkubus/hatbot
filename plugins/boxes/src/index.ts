@@ -17,6 +17,7 @@ import { boxTools } from "./tools";
 export { NO_GUEST } from "./backends";
 export { Boxes, FRAME_CSP, previewed } from "./boxes";
 export { type BoxRequest, type HatboxAgent, HatboxError, HttpHatboxAgent } from "./client";
+export { pitfalls } from "./pitfalls";
 
 const CHAT = `- The tools for boxes load when you need them: find them with tool_search_tool_regex (a pattern like "boxes_"), then call them.
 - When the owner wants a tool to keep and come back to (a tracker, a calculator, a planner, a page of numbers they update), make a box with boxes_create: a small web app they open from the chat, which keeps its own data. Change it with boxes_edit when they ask for changes; boxes_list shows the ones you made. A one-off answer stays in your reply.
