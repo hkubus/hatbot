@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware";
 import type { AppEnv, Deps } from "../context";
+import { diagnostics } from "../diagnostics";
 import { modelProblem } from "../models-known";
 import { guessableTopic } from "../notify";
 import { SettingsPatch } from "../settings";
@@ -28,6 +29,7 @@ export const adminRoutes = new Hono<AppEnv>()
   .use("/pause-all", requireAuth)
   .use("/resume", requireAuth)
   .use("/update", requireAuth)
+  .use("/diagnostics/*", requireAuth)
   .get("/spend/summary", (c) => c.json(c.var.spend.summary()))
   .get(
     "/spend/hourly",
@@ -39,6 +41,17 @@ export const adminRoutes = new Hono<AppEnv>()
   .get("/spend/by-purpose", spendDays, (c) =>
     c.json(c.var.spend.byPurpose(c.req.valid("query").days)),
   )
+  .get("/diagnostics/export", (c) => {
+    const at = new Date(c.var.tasks.clock()).toISOString();
+    return new Response(diagnostics(c.var, at), {
+      headers: {
+        "content-type": "application/gzip",
+        "content-disposition": `attachment; filename="hatbot-diagnostics-${at.slice(0, 10)}.jsonl.gz"`,
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  })
   .get("/settings", (c) => c.json(c.var.settings.get()))
   .put("/settings", json(SettingsPatch.omit({ paused: true })), (c) => {
     const problem = modelProblem(

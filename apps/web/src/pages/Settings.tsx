@@ -312,6 +312,11 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
               Export
             </a>
           </Row>
+          <Row label="Data for improving Hatbot">
+            <a className="btn sm" href={`${API_PREFIX}/diagnostics/export`}>
+              Export
+            </a>
+          </Row>
           <Row label="Sign out">
             <button type="button" className="btn sm" onClick={signOut}>
               Sign out

@@ -184,18 +184,41 @@ export class Secrets {
     });
   }
 
-  /**
-   * `text` with every kept secret in it shown as its placeholder, longest first, so one inside
-   * another still shows. Short ones are left: they'd hide ordinary words.
-   */
+  /** `text` with every kept secret in it shown as its placeholder. */
   hideSecrets(text: string): string {
-    const kept = Object.entries(this.stored.vault ?? {})
-      .filter(([, x]) => x.value.length >= MIN_HIDDEN)
-      .sort(([, a], [, b]) => b.value.length - a.value.length);
-    let out = text;
-    for (const [name, { value }] of kept)
-      if (out.includes(value)) out = out.split(value).join(secretPlaceholder(name));
-    return out;
+    return hide(text, this.hiding([]));
+  }
+
+  /**
+   * Like hideSecrets, for text leaving the brain whole: also plugins' kept and named values, ntfy's
+   * token and topic, and `more`, each as [hidden].
+   */
+  hiderForExport(more: string[]): (text: string) => string {
+    const s = this.stored;
+    const pairs = this.hiding([
+      ...Object.values(s.named ?? {}).flatMap(Object.values),
+      ...Object.values(s.kept ?? {}).flatMap((k) => Object.values(k).flatMap(Object.values)),
+      this.ntfy().token,
+      this.ntfy().topic,
+      ...more,
+    ]);
+    return (text) => hide(text, pairs);
+  }
+
+  /**
+   * The vault's values with their placeholders and `others` as [hidden], longest first, so one
+   * inside another still shows. Short ones are left: they'd hide ordinary words.
+   */
+  private hiding(others: string[]): [value: string, shown: string][] {
+    return [
+      ...Object.entries(this.stored.vault ?? {}).map(([name, x]): [string, string] => [
+        x.value,
+        secretPlaceholder(name),
+      ]),
+      ...others.map((v): [string, string] => [v, "[hidden]"]),
+    ]
+      .filter(([v]) => v.length >= MIN_HIDDEN)
+      .sort(([a], [b]) => b.length - a.length);
   }
 
   onChange(fn: () => void) {
@@ -212,6 +235,12 @@ export class Secrets {
     this.stored = next;
     for (const fn of this.listeners) fn();
   }
+}
+
+function hide(text: string, pairs: [value: string, shown: string][]): string {
+  let out = text;
+  for (const [value, shown] of pairs) if (out.includes(value)) out = out.split(value).join(shown);
+  return out;
 }
 
 /** `text` with each {{secret:NAME}} replaced by what's kept under NAME. */

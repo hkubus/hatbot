@@ -319,6 +319,17 @@ export class Plugins {
     return { ...this.hostEnv, ...this.d.secrets.pluginEnv() };
   }
 
+  /** The values of every variable a plugin calls secret, set here or on the host. */
+  secretValues(): string[] {
+    const env = this.env();
+    return [...this.slots.values()].flatMap((s) =>
+      (s.plugin.env ?? []).flatMap((v) => {
+        const value = env[v.name];
+        return v.secret && value ? [value] : [];
+      }),
+    );
+  }
+
   /** null goes back to the host's value. Every plugin that reads one restarts with it. */
   async setSecrets(id: string, values: Record<string, string | null>): Promise<PluginInfo> {
     const s = this.slots.get(id);
