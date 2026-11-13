@@ -65,6 +65,10 @@ struct LoginView: View {
         }
       }
       .navigationTitle("Hatbot")
+      #if targetEnvironment(macCatalyst)
+        // In the window's toolbar, as the other pages' are (SidebarButton).
+        .navigationBarTitleDisplayMode(.inline)
+      #endif
       .onAppear { field = session.server.isEmpty ? .server : .password }
     }
   }

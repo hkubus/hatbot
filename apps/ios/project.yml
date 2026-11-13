@@ -23,10 +23,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_PREFIX).hatbot
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        TARGETED_DEVICE_FAMILY: "1,2"
-        # The iPad app on the Mac too (build-mac.sh), as the same app. The share extension and the widget
-        # stay on iOS, so the Mac build has no App Group to be signed for. Its Keychain needs the app's
-        # identifier, which only a provisioning profile gives; Keychain Sharing makes Xcode make one.
+        TARGETED_DEVICE_FAMILY: "1,2,6"
+        # The app on the Mac too (build-mac.sh), as the same app. 6 draws it as a Mac app, at its real size:
+        # as an iPad app it's scaled to 77% and blurred. The share extension and the widget stay on iOS, so
+        # the Mac build has no App Group to be signed for. Its Keychain needs the app's identifier, which
+        # only a provisioning profile gives; Keychain Sharing makes Xcode make one.
         SUPPORTS_MACCATALYST: YES
         DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Hatbot/Mac.entitlements

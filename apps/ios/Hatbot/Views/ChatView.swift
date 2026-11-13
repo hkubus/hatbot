@@ -1,3 +1,4 @@
+import CoreGraphics
 import GameController
 import PhotosUI
 import SwiftUI
@@ -526,10 +527,21 @@ private struct Composer: View {
           Button("Photos", systemImage: "photo.on.rectangle") { pickingPhotos = true }
           Button("Files", systemImage: "folder") { pickingFiles = true }
         } label: {
-          RoundGlyph(name: "paperclip")
+          #if targetEnvironment(macCatalyst)
+            // A Mac draws a menu as a pop-up button, so its circle is drawn here, as big as Send's.
+            RoundGlyph(name: "paperclip").frame(width: 34, height: 34).glassSurface(in: .circle, interactive: true)
+          #else
+            RoundGlyph(name: "paperclip")
+          #endif
         }
-        .glassButton()
-        .buttonBorderShape(.circle)
+        #if targetEnvironment(macCatalyst)
+          .menuStyle(.button)
+          .buttonStyle(.plain)
+          .menuIndicator(.hidden)
+        #else
+          .glassButton()
+          .buttonBorderShape(.circle)
+        #endif
         .accessibilityLabel("Attach")
         TextField(store.incognito ? "Message \(name) incognito…" : "Message \(name)…", text: $draft, axis: .vertical)
           .lineLimit(1...6)
@@ -537,6 +549,9 @@ private struct Composer: View {
           .padding(.vertical, 11)
           .glassSurface(in: .rect(cornerRadius: 22), interactive: true)
           .focused(writing)
+          #if targetEnvironment(macCatalyst)
+            .onChange(of: draft, returnSends)
+          #endif
         Button { send() } label: {
           RoundGlyph(name: "arrow.up").foregroundStyle(canSend ? Color.onBrand : .secondary)
         }
@@ -544,7 +559,7 @@ private struct Composer: View {
         .buttonBorderShape(.circle)
         .tint(.brand)
         .disabled(!canSend)
-        // With a keyboard, Return makes a new line and Command-Return sends. Not from another section:
+        // With a keyboard, Command-Return sends (on a Mac Return too: returnSends). Not from another section:
         // the chat stays there, hidden, and its shortcut with it.
         .keyboardShortcut(sectionShown ? KeyboardShortcut(.return, modifiers: .command) : nil)
         .accessibilityLabel("Send")
@@ -604,6 +619,21 @@ private struct Composer: View {
     }
   }
 
+  #if targetEnvironment(macCatalyst)
+    /// On a Mac, Return sends, or picks the first suggestion, as on the web; Shift- or Option-Return makes a
+    /// new line. The field takes Return before a shortcut could, so the new line it made is taken back out.
+    private func returnSends(_ old: String, _ new: String) {
+      guard new.count == old.count + 1,
+        CGEventSource.flagsState(.combinedSessionState).isDisjoint(with: [.maskShift, .maskAlternate])
+      else { return }
+      let at = zip(old, new).prefix { $0 == $1 }.count
+      let i = new.index(new.startIndex, offsetBy: at)
+      guard new[i] == "\n", new[new.index(after: i)...] == old.dropFirst(at) else { return }
+      draft = old
+      if let bot = mentionable.first { complete(bot) } else if let c = commands.first { run(c) } else { send() }
+    }
+  #endif
+
   /// Scaled off the main thread; as data if the library won't give a file.
   private static func load(_ item: PhotosPickerItem, index: Int) async -> PickedFile.Photo? {
     if let file = try? await item.loadTransferable(type: PickedPhoto.self) {
@@ -627,8 +657,13 @@ private struct Composer: View {
   private var mentionList: some View {
     suggestions(
       mentionable, name: { Text("@\($0.name)").fontWeight(.medium) },
-      about: { $0.instructions.split(separator: "\n").first.map(String.init) ?? "" }
-    ) { b in draft = Mention.complete(draft, with: b.name) }
+      about: { $0.instructions.split(separator: "\n").first.map(String.init) ?? "" }, pick: complete)
+  }
+
+  private func complete(_ bot: Bot) { draft = Mention.complete(draft, with: bot.name) }
+
+  private func run(_ c: ChatCommand) {
+    if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") }
   }
 
   private var commandList: some View {
@@ -638,8 +673,7 @@ private struct Composer: View {
         let args = Text(c.args.isEmpty ? "" : " \(c.args)").foregroundStyle(.secondary)
         return Text("\(Text("/\(c.name)").fontWeight(.medium))\(args)")
       },
-      about: { $0.description }
-    ) { c in if c.needsMore { draft = "/\(c.name) " } else { send("/\(c.name)") } }
+      about: { $0.description }, pick: run)
   }
 
   private func suggestions<Item: Identifiable>(

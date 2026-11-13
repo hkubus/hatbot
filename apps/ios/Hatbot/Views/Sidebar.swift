@@ -51,6 +51,10 @@ private struct SidebarButton: ViewModifier {
 
   func body(content: Content) -> some View {
     content
+      #if targetEnvironment(macCatalyst)
+        // In the window's toolbar, as a Mac app's is: a large title there sits against the sidebar.
+        .navigationBarTitleDisplayMode(.inline)
+      #endif
       .onAppear { sidebarRoot?(true) }
       .onDisappear { sidebarRoot?(false) }
       .toolbar {
@@ -185,6 +189,8 @@ struct Sidebar<Content: View>: View {
       .padding(.horizontal, 10)
       .padding(.top, 8)
     }
+    // As on the web. A Mac with a mouse would show `.hidden` ones anyway.
+    .scrollIndicators(.never)
     .frame(maxHeight: .infinity)
     // Over the page, Material's modal drawer, with its outer corners rounded.
     .background(
@@ -222,10 +228,28 @@ struct Sidebar<Content: View>: View {
     _ title: String, icon: String, tint: Color? = nil, selected: Bool, count: Int,
     action: @escaping () -> Void
   ) -> some View {
-    Button {
+    DrawerItem(title: title, icon: icon, tint: tint, selected: selected, count: count) {
       action()
       setOpen(false)
-    } label: {
+    }
+  }
+
+  private func setOpen(_ value: Bool) {
+    withAnimation(.snappy) { open = value }
+  }
+}
+
+private struct DrawerItem: View {
+  let title: String
+  let icon: String
+  let tint: Color?
+  let selected: Bool
+  let count: Int
+  let action: () -> Void
+  @State private var hovered = false
+
+  var body: some View {
+    Button(action: action) {
       HStack(spacing: 12) {
         Image(systemName: icon).frame(width: 26).foregroundStyle(tint ?? (selected ? Color.text : Color.text2))
         Text(title).lineLimit(1)
@@ -236,19 +260,20 @@ struct Sidebar<Content: View>: View {
       .foregroundStyle(selected ? Color.text : Color.text2)
       .padding(.horizontal, 16)
       .frame(minHeight: 56)
-      // Material's indicator, grown out from its middle.
+      // Material's indicator, grown out from its middle, and its state layer under the pointer.
       .background {
-        if selected { Capsule().fill(Color.brandSoft).transition(.scale(scale: 0.2).combined(with: .opacity)) }
+        if selected {
+          Capsule().fill(Color.brandSoft).transition(.scale(scale: 0.2).combined(with: .opacity))
+        } else if hovered {
+          Capsule().fill(Color.text2.opacity(0.08))
+        }
       }
       .animation(.expressive, value: selected)
       .contentShape(.capsule)
     }
     .buttonStyle(.plain)
+    .onHover { hovered = $0 }
     .accessibilityAddTraits(selected ? .isSelected : [])
-  }
-
-  private func setOpen(_ value: Bool) {
-    withAnimation(.snappy) { open = value }
   }
 }
 

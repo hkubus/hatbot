@@ -37,6 +37,8 @@ struct HatbotApp: App {
       }
       .environment(session)
       #if targetEnvironment(macCatalyst)
+        // Material's switches, as on the web, where a Mac's would be checkboxes.
+        .toggleStyle(.switch)
         .safeAreaInset(edge: .top, spacing: 0) { MacAgentBanner() }
         // The agent runs as whoever is signed in.
         .onChange(of: session.store?.api.token, initial: true) {
@@ -63,6 +65,9 @@ struct HatbotApp: App {
         }
       }
     }
+    #if targetEnvironment(macCatalyst)
+      .commands { MacMenus() }
+    #endif
   }
 }
 
@@ -87,6 +92,7 @@ struct MainView: View {
   @State private var lingering = Lingering()
   /// A notification's Approve, waiting for you to say yes to what it is.
   @State private var confirming: Approval?
+  @State private var searchAsked = 0
 
   var body: some View {
     Sidebar(tab: $tab, open: $sidebar, atRoot: roots[tab, default: 0] > 0) { sections }
@@ -137,6 +143,11 @@ struct MainView: View {
       Text(a.summary)
     }
     .environment(drafts)
+    #if targetEnvironment(macCatalyst)
+      .focusedSceneValue(
+        \.menuActions,
+        MenuActions(show: show, newMessage: { open(AppLink.newMessage.url) }, moveChat: moveChat))
+    #endif
     .sensoryFeedback(.warning, trigger: store.needsYou) { old, new in new > old }
   }
 
@@ -158,7 +169,7 @@ struct MainView: View {
     switch which {
     case .chat: ChatView(path: $chatPath, focus: $focus)
     case .search:
-      SearchView { conversationId, messageId in
+      SearchView(asked: searchAsked) { conversationId, messageId in
         tab = .chat
         Task {
           if store.incognito { await store.setIncognito(false) }
@@ -192,6 +203,21 @@ struct MainView: View {
     case .memory: MemoryView(path: $memoryPath)
     case .settings: SettingsView(path: $settingsPath)
     }
+  }
+
+  private func show(_ section: AppTab) {
+    tab = section
+    if section == .search { searchAsked += 1 }
+  }
+
+  /// To the chat above or below in the sidebar, as Option-Up and Option-Down do on the web.
+  private func moveChat(_ by: Int) {
+    let chats = store.conversations
+    guard let i = chats.firstIndex(where: { $0.id == store.listedChatId }), chats.indices.contains(i + by) else {
+      return
+    }
+    tab = .chat
+    Task { await store.openConversation(chats[i + by].id) }
   }
 
   /// Opens the approval's task; `approving`, a notification's Approve, asks to approve it, then

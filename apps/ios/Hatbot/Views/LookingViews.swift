@@ -1,9 +1,12 @@
 import SwiftUI
 
 struct SearchView: View {
+  /// Goes up each time the menu bar's Search is chosen, which puts you in the field.
+  var asked = 0
   let openMessage: (_ conversationId: Int, _ messageId: Int) -> Void
   @Environment(AppStore.self) private var store
   @State private var query = ""
+  @FocusState private var searching: Bool
   @State private var results: SearchResults?
   @State private var error: String?
 
@@ -61,7 +64,13 @@ struct SearchView: View {
       }
       .navigationTitle("Search")
       .sidebarButton()
-      .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+      #if targetEnvironment(macCatalyst)
+        .searchable(text: $query, placement: .toolbar)
+      #else
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+      #endif
+      .searchFocused($searching)
+      .onChange(of: asked, initial: true) { if asked > 0 { searching = true } }
       .autocorrectionDisabled()
       .task(id: query) {
         let q = query.trimmingCharacters(in: .whitespaces)

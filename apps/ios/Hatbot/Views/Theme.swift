@@ -79,19 +79,26 @@ extension UIColor {
 /// Google Sans Flex for text and Google Sans Code for code (Resources/Fonts, made by make-fonts.py), at
 /// iOS's sizes for each text style so they grow with Dynamic Type as the system's do.
 enum Typeface {
+  @MainActor
   static func size(_ style: Font.TextStyle) -> CGFloat {
-    switch style {
-    case .largeTitle: 34
-    case .title: 28
-    case .title2: 22
-    case .title3: 20
-    case .callout: 16
-    case .subheadline: 15
-    case .footnote: 13
-    case .caption: 12
-    case .caption2: 11
-    default: 17
-    }
+    let size: CGFloat =
+      switch style {
+      case .largeTitle: 34
+      case .title: 28
+      case .title2: 22
+      case .title3: 20
+      case .callout: 16
+      case .subheadline: 15
+      case .footnote: 13
+      case .caption: 12
+      case .caption2: 11
+      default: 17
+      }
+    #if targetEnvironment(macCatalyst)
+      return size * TextSize.shared.scale
+    #else
+      return size
+    #endif
   }
 
   static func sans(_ weight: Font.Weight) -> String {
@@ -131,15 +138,46 @@ enum Typeface {
   }
 }
 
+#if targetEnvironment(macCatalyst)
+  /// A Mac has no Dynamic Type, so View → Make Text Bigger and Smaller size the text instead. The views
+  /// that read it while they draw draw again when it changes.
+  @MainActor @Observable
+  final class TextSize {
+    static let shared = TextSize()
+    private static let steps: [CGFloat] = [0.8, 0.9, 1, 1.1, 1.2, 1.35, 1.5]
+    private static let key = "textSize"
+
+    private(set) var scale: CGFloat = {
+      let saved = CGFloat(UserDefaults.standard.double(forKey: key))
+      return steps.contains(saved) ? saved : 1
+    }()
+
+    func step(_ by: Int) {
+      let i = (Self.steps.firstIndex(of: scale) ?? 2) + by
+      guard Self.steps.indices.contains(i) else { return }
+      set(Self.steps[i])
+    }
+
+    func reset() { set(1) }
+
+    private func set(_ value: CGFloat) {
+      scale = value
+      UserDefaults.standard.set(Double(value), forKey: Self.key)
+    }
+  }
+#endif
+
 extension Font {
   /// Google Sans Flex in place of `.body`, `.footnote` and the rest. A headline is medium, as
   /// Material's titles are.
+  @MainActor
   static func sans(_ style: TextStyle = .body, _ weight: Weight? = nil) -> Font {
     let face = Typeface.sans(weight ?? (style == .headline ? .medium : .regular))
     return .custom(face, size: Typeface.size(style), relativeTo: style)
   }
 
   /// Google Sans Code, for code and what's typed as it.
+  @MainActor
   static func code(_ style: TextStyle = .body, _ weight: Weight = .regular) -> Font {
     .custom(Typeface.code(weight), size: Typeface.size(style), relativeTo: style)
   }
@@ -177,6 +215,7 @@ private struct MaterialButtonBody: View {
   @Environment(\.isEnabled) private var enabled
   @Environment(\.controlSize) private var size
   @ScaledMetric(relativeTo: .subheadline) private var scale: CGFloat = 1
+  @State private var hovered = false
 
   private var small: Bool { size == .small || size == .mini }
   private var height: CGFloat { (small ? 32 : size == .large || size == .extraLarge ? 48 : 40) * scale }
@@ -194,9 +233,10 @@ private struct MaterialButtonBody: View {
       .overlay {
         if kind == .outlined { shape.strokeBorder(Color.line) }
       }
-      // Material's state layer: the label's colour over the fill while it's pressed.
-      .overlay { shape.fill(foreground.opacity(pressed ? 0.12 : 0)) }
+      // Material's state layer: the label's colour over the fill under the pointer, and more while it's pressed.
+      .overlay { shape.fill(foreground.opacity(pressed ? 0.12 : hovered && enabled ? 0.08 : 0)) }
       .contentShape(shape)
+      .onHover { hovered = $0 }
       .animation(.expressiveFast, value: pressed)
       .animation(.expressive, value: kind)
   }

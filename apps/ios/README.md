@@ -37,9 +37,10 @@ To work on it in Xcode: `cd apps/ios && xcodegen generate && open Hatbot.xcodepr
 
 ## Run it on a Mac
 
-The same app runs on a Mac through Mac Catalyst: the iPad layout in a window, without the share
-extension and the widget. It needs signing with your Apple ID, or it can't keep your token in the
-Keychain. Add the Apple ID in Xcode's Settings → Accounts, then either:
+The same app runs on a Mac through Mac Catalyst, as a Mac app rather than a scaled iPad one: at its real
+size, with a menu bar, and without the share extension and the widget. It needs signing with your Apple
+ID, or it can't keep your token in the Keychain. Add the Apple ID in Xcode's Settings → Accounts, then
+either:
 
 - in Xcode, pick the destination **My Mac (Mac Catalyst)**, choose your team under the Hatbot
   target's Signing & Capabilities, and run it; or
@@ -51,6 +52,10 @@ Keychain. Add the Apple ID in Xcode's Settings → Accounts, then either:
   ```
 
   It registers the Mac it's built on with your team, and the app runs only on Macs registered there.
+
+On the Mac, Return sends a message, as on the web, and Shift-Return makes a new line. The menu bar has the
+web's shortcuts (Command-K for Search, Option-Up and Option-Down for the chat above or below), Command-1
+to Command-6 for the sections, and View → Make Text Bigger and Smaller, since a Mac has no Dynamic Type.
 
 In Live, once you've taken control, the mouse or trackpad drives the desktop: click, right click,
 drag and scroll, and its pointer follows yours. Turn on Keyboard to type there.
