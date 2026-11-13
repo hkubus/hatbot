@@ -34,9 +34,73 @@ const Checks = z
     z.object({ text: z.string().trim().min(1).max(120), mode: z.enum(["require", "exclude"]) }),
   )
   .max(8);
+const StoredFlag = z.enum(["for_parts", "wanted_ad", "swap", "replica", "damaged", "locked"]);
+const FLAGS =
+  "for_parts: broken, for parts or repair; wanted_ad: someone buying; swap: offered only in exchange; replica: a fake; damaged: its condition says damaged; locked: an iCloud, Google or MDM lock";
+/** Left out unless the model says otherwise: a want is almost never after them. */
+const HIDDEN_FLAGS = ["for_parts", "wanted_ad", "swap", "replica", "locked"] as const;
+const ExcludeFlags = z
+  .array(StoredFlag)
+  .optional()
+  .describe(
+    `Leave out listings Scout flagged with any of these (${FLAGS}). Without it, ${HIDDEN_FLAGS.join(", ")} are left out; [] leaves none out.`,
+  );
+const SearchExcludeFlags = z
+  .array(z.enum([...StoredFlag.options, "accessory"]))
+  .optional()
+  .describe(
+    `Leave out results Scout flagged with any of these (${FLAGS}; accessory: an accessory the query didn't ask for). Without it, ${HIDDEN_FLAGS.join(", ")} and accessory are left out; [] leaves none out.`,
+  );
+// A task waits longer for a search than the chat, but not past CALL_TIMEOUT_MS.
+const TASK_SEARCH_DEADLINE_MS = 100_000;
+
+type Input = Record<string, unknown>;
+type Read = {
+  name: string;
+  description: string;
+  schema: z.ZodType;
+  brainOnly?: boolean;
+  /** What Hatbot adds to the input; `inTask` when a task calls it. */
+  with?: (input: Input, inTask: boolean) => Input;
+  /** What the model gets of Scout's answer. */
+  answer?: (text: string) => string;
+};
+
+const Source = z.object({
+  source: z.string(),
+  status: z.string(),
+  errorKind: z.string().nullish(),
+  backoffUntil: z.string().nullish(),
+});
+
+/**
+ * Compact scout_search's answer without its empty keys, after a line for each marketplace Scout paused
+ * or that didn't finish in time.
+ */
+function searchAnswer(text: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!parsed || typeof parsed !== "object") return text;
+  const sources = z.object({ sources: z.array(Source) }).safeParse(parsed);
+  const notes = (sources.success ? sources.data.sources : []).flatMap((s) => {
+    if (s.status !== "error") return [];
+    if (s.errorKind === "backoff")
+      return [
+        `${s.source} wasn't searched: Scout paused it after failed scans${s.backoffUntil ? `, until ${s.backoffUntil}` : ""}.`,
+      ];
+    if (s.errorKind === "deadline") return [`${s.source} didn't finish in time.`];
+    return [];
+  });
+  const rows = JSON.stringify(parsed, (_, v) => (v === null ? undefined : v));
+  return notes.length ? `${notes.join("\n")}\n\n${rows}` : rows;
+}
 
 /** Scout's tools as Hatbot offers them. */
-const READS: { name: string; description: string; schema: z.ZodType; brainOnly?: boolean }[] = [
+const READS: Read[] = [
   {
     name: "scout_watches",
     description:
@@ -46,16 +110,35 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   {
     name: "scout_listings",
     description:
-      "Listings Scout found, newest first by default, 20 at a time. Filter by marketplace, watch, words in the title, or Scout's verdict.",
+      "Listings Scout found, newest first by default, 20 at a time. Filter by marketplace, watch, words in the title, price, or Scout's verdict; discount sorts the furthest below typical first.",
     schema: z.object({
       marketplace: Marketplace.optional(),
       q: z.string().max(240).optional().describe("Words in the title, condition or location"),
       watchId: WatchId.optional(),
       page: z.number().int().min(1).optional(),
       pageSize: z.number().int().min(1).max(50).optional(),
-      sort: z.enum(["newest", "strongest", "price"]).optional(),
+      sort: z.enum(["newest", "strongest", "price", "discount"]).optional(),
       decision: z.enum(["buy", "watch", "pass"]).optional(),
+      minPrice: z.number().nonnegative().optional(),
+      maxPrice: z.number().nonnegative().optional(),
+      excludeFlags: ExcludeFlags,
     }),
+    with: (input) => ({ excludeFlags: HIDDEN_FLAGS, ...input, format: "compact" }),
+  },
+  {
+    name: "scout_deals",
+    description:
+      "Scout's best deals right now: listings its watches saw in the last 12 hours at least Strong (minTier raises it), best first, without ones the owner hid or passed or Scout's description check rejected. Each has its typical price, how far below it, and what reselling it at typical would leave.",
+    schema: z.object({
+      minTier: z.enum(["strong", "very-strong", "exceptional"]).optional(),
+      marketplace: Marketplace.optional(),
+      watchId: WatchId.optional(),
+      maxPrice: z.number().positive().optional(),
+      includeRejected: z.boolean().optional(),
+      excludeFlags: ExcludeFlags,
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    with: (input) => ({ excludeFlags: HIDDEN_FLAGS, ...input }),
   },
   {
     name: "scout_listing_detail",
@@ -72,6 +155,17 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
         .boolean()
         .optional()
         .describe("The seller's other listings as the marketplace shows them now"),
+    }),
+  },
+  {
+    name: "scout_verify_listing",
+    description:
+      "Have Scout's AI read one listing's description now for damage, parts only, repairs, missing parts or an account lock, and the watch's checks: status pass, reject or unknown. Cheap, and free when Scout checked it in the last 6 hours (reused). Scout keeps the verdict.",
+    schema: z.object({
+      key: ListingKey,
+      watchId: WatchId.optional().describe(
+        "Check it against this watch's query and checks; by default the watch that saw it last",
+      ),
     }),
   },
   {
@@ -141,7 +235,7 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   {
     name: "scout_search",
     description:
-      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key.",
+      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter, cheapest first. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key, and flags are what Scout guessed from its words. The same search again within 3 minutes costs nothing.",
     schema: z.object({
       query: z.string().trim().min(1).max(240),
       sources: z.array(Marketplace).min(1).max(3),
@@ -162,7 +256,25 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
         .optional()
         .describe("OLX only: one category, from scout_olx_categories"),
       page: z.number().int().min(1).max(10).optional(),
+      excludeFlags: SearchExcludeFlags,
+      typoVariants: z
+        .boolean()
+        .optional()
+        .describe(
+          "Page 1 only: also search up to 2 misspellings of the query, for listings that misspell it. Up to 2 more page loads per marketplace; matchedVia says which spelling found each",
+        ),
+      ignoreBackoff: z
+        .boolean()
+        .optional()
+        .describe("Search marketplaces Scout paused after failed scans too"),
     }),
+    with: (input, inTask) => ({
+      excludeFlags: [...HIDDEN_FLAGS, "accessory"],
+      ...input,
+      format: "compact",
+      ...(inTask ? { deadlineMs: TASK_SEARCH_DEADLINE_MS } : {}),
+    }),
+    answer: searchAnswer,
   },
   {
     name: "scout_olx_categories",
@@ -404,7 +516,10 @@ const GUIDANCE = `Scout is the owner's deal monitor on OLX, Allegro Lokalnie and
 Finding something to buy:
 - First list what the owner asked for: the must-haves (the model, size or variant, condition, what has to come with it, the budget, delivery or pickup) and the deal-breakers. Fill what they left out from your notes and sensible defaults: "the best deals" needs no budget, and when either kind would do, search both. Ask first, in one short message, only when what's missing would change which listings fit and nothing settles it.
 - A search through more than a few listings goes to a task (run_task with effort medium), with every must-have in its goal, so it has room to keep looking.
-- Search widely: scout_listings for what Scout found already, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
+- Search widely: scout_deals for Scout's best deals of the last 12 hours, scout_listings for everything it found, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Set typoVariants on the first scout_search for a product, not on later pages or rewordings. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
+- Listings flagged for parts, wanted ads, swaps, replicas and locked ones (and accessories, in scout_search) are left out unless you pass excludeFlags: pass a shorter list, or [], when the owner wants them, such as one for parts. Flags are Scout's guess from a listing's words, so check what matters yourself.
+- When scout_search says a marketplace wasn't searched because Scout paused it, tell the owner which and until when; search it anyway with ignoreBackoff only when they ask. One that didn't finish in time comes back if you run the same search again a minute later.
+- With many candidates, sift them first with scout_verify_listing (several at once): drop a reject, and treat unknown as not checked.
 - Before you show or recommend a listing, look at it with negotiate_inspect (several at once) and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
 - Show the owner three or more listings to choose from as a chart block of type "listings", in the chat or a task's summary, not a list: each one's url, price and Scout's image as its photo, and a few words on why as its note. Say your pick and why in a line before it, and stop after it.
 - Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short.
@@ -548,7 +663,14 @@ export const scoutPlugin = definePlugin({
           access: "read",
           untrusted: true,
           ...(r.brainOnly ? { brainOnly: true } : {}),
-          run: (input, c) => call(r.name, input, c.signal),
+          run: async (input, c) => {
+            const text = await call(
+              r.name,
+              r.with ? r.with(input as Input, Boolean(c.task)) : input,
+              c.signal,
+            );
+            return r.answer ? r.answer(text) : text;
+          },
         }),
       ),
       ...WRITES.map((w) =>

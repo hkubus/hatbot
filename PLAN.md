@@ -75,6 +75,8 @@ Built in Scout (price reference, comparables, outcomes and the listing detail's 
 - **`scout_listing_detail`** has a `negotiation` block (days listed, price drops, the negotiable flag, the seller and their other listings, relists), `live: true` to check the listing on the marketplace now and `sellerListings: true`. The brain reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`. Still to do: check the listing with `live: true` before an offer and before paying (P1-3).
 - **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions (N3, built in Scout): Scout's plugin offers them to the brain alone; over the MCP plugin they need Chat.
 
+Built 2026-11-13 from Scout's #51–#57, not tried against the real Scout: `scout_deals`, `scout_verify_listing` as a read, compact rows from `scout_search` and `scout_listings`, junk flags left out unless the model passes its own `excludeFlags`, and a search saying which marketplaces Scout paused or didn't finish. Left out on purpose: `refresh` (a repeat within 3 minutes is the same search), `scoreAgainst` and `sort` on searches, and compact `scout_listing_detail`, since the appraisal and `negotiate_inspect` read the full one, image and history included.
+
 For logins (built in Scout, 2026-10-26): **`scout_shared_sessions`** → `sessions[].{marketplace, label, revision}` and **`scout_shared_session {marketplace}`** → `{revision, storageState}`, Playwright storage state. Only connected apps get them, only for the sessions you shared, and the brain alone calls them (`desktop/logins.ts`); desktop-agent takes cookies only for the marketplaces' sites.
 
 One write tool:
