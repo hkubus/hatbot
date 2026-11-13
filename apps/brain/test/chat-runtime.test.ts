@@ -636,9 +636,14 @@ test("a reply its task's result takes the place of, or that's written again, kee
     { content: [text("On it.")] },
     { wait: slow.promise, content: [text("The router is fine.")] },
   ]);
+  // Writing the first one again fails: its task's result takes its place.
+  chat.route = () => {
+    if (chat.requests.length === 3) throw new Error("Overloaded.");
+    return undefined;
+  };
   const work = new FakeModel([
     { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
-    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: true })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Fine.", notify: false })] },
   ]);
   const t = await testApp(chat, work);
   const asked = (id: number) =>
@@ -648,17 +653,18 @@ test("a reply its task's result takes the place of, or that's written again, kee
   const shown = (id: number) => t.thread.list().find((m) => m.id === id);
 
   await t.thread.post("look at the nas").done;
-  const routine = t.thread.list().at(-1) as ThreadMessage;
-  asked(routine.id);
+  const failed = t.thread.list().at(-1) as ThreadMessage;
+  asked(failed.id);
   await t.tasks.idle();
-  expect(shown(routine.id)?.text).toBe("Fine.");
-  expect(shown(routine.id)).not.toContainKeys(["sources", "choices"]);
+  await t.thread.idle();
+  expect(shown(failed.id)?.text).toStartWith("Fine.");
+  expect(shown(failed.id)).not.toContainKeys(["sources", "choices"]);
 
   await t.thread.post("look at the router").done;
   const told = t.thread.list().at(-1) as ThreadMessage;
   asked(told.id);
   await t.tasks.idle();
-  await waitFor(() => chat.requests.length === 5);
+  await waitFor(() => chat.requests.length === 6);
   // While it's written, and if the bot never writes it, when its task's result takes its place.
   expect(shown(told.id)).not.toContainKeys(["sources", "choices"]);
   slow.resolve();

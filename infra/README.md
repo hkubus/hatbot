@@ -12,7 +12,7 @@ Scripts that set up Hatbot on a Proxmox host, or on one to three Debian 13 machi
 | `plugins/desktop/infra/desktop-provision.sh` | inside `hatbot-desktop` | `desk` user, Xvnc + XFCE, Chromium, Bun, firewall (in, and out for its programs) |
 | `plugins/boxes/infra/boxes-provision.sh` | inside `hatbot-boxes` | `hatbox` user, Bun, polkit, firewall (in, and out for the agent only) |
 | `verify.sh` | where the setup ran | checks isolation, including that box units have no network, and on Proxmox token permissions, snapshots and backups; changes nothing |
-| `smoke.sh` | anywhere, with an API token | Settings → Check everything from a shell: the API, desktop, plugins, notifications; changes nothing |
+| `smoke.sh` | anywhere, with an API token | Settings → Check everything from a shell: the API, desktop, boxes guest (a test box runs and is removed), plugins, notifications; changes nothing |
 | `pct-exec-setup.sh` | on the Proxmox host, as root | optional: lets Hatbot run commands in your containers (`ssh_pct_exec`) |
 | `reset-login.sh` | where the setup ran | forgets the password and authenticator, prints a new setup code |
 | `test-firewall.sh` | anywhere, as root | tests the guests' firewalls in throwaway network namespaces |

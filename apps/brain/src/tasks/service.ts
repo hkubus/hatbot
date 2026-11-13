@@ -30,6 +30,7 @@ import type { Logins } from "../negotiate/logins";
 import type { Negotiations } from "../negotiate/service";
 import type { Plugins } from "../plugins/registry";
 import type { Questions } from "../questions";
+import type { Repeats } from "../scripts/repeats";
 import type { SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { runAgentTask } from "./agent-run";
@@ -59,6 +60,7 @@ export type TasksDeps = {
   memory: MemoryStore;
   plugins: Plugins;
   skills: Skills;
+  repeats?: Repeats;
   /** Set once it exists; it needs the tasks too. */
   clock?: () => number;
 };
@@ -696,6 +698,14 @@ export class Tasks {
     return task.origin !== "chat" && Boolean(this.d.plugins.origin(task.origin)?.reserve);
   }
 
+  runKeyOf(id: number): string | null {
+    return (
+      this.d.db
+        .query<{ run_key: string | null }, [number]>("SELECT run_key FROM tasks WHERE id = ?")
+        .get(id)?.run_key ?? null
+    );
+  }
+
   requestOf(id: number): string | null {
     return (
       this.d.db
@@ -1051,6 +1061,22 @@ export class Tasks {
     this.d.db.query("UPDATE tasks SET conversation_id = ? WHERE id = ?").run(threadId, task.id);
   }
 
+  /** The chat model's reply or the /task command that started it, where its result shows too. */
+  shownUnder(id: number): "text" | "command" | null {
+    return (
+      this.d.db
+        .query<{ kind: "text" | "command" }, [number]>(
+          "SELECT kind FROM messages WHERE kind IN ('text', 'command') AND task_id = ?",
+        )
+        .get(id)?.kind ?? null
+    );
+  }
+
+  /** A bot in the chat answers you from its result: it started the task, or asked its bot for it. */
+  retold(task: Task): boolean {
+    return (!task.parentId && task.requestedBy !== null) || this.shownUnder(task.id) === "text";
+  }
+
   takeInbox(id: number): InboxItem[] {
     const events = this.inbox.get(id) ?? [];
     this.inbox.delete(id);
@@ -1098,20 +1124,17 @@ export class Tasks {
     const card = this.d.db
       .query("UPDATE messages SET text = ? WHERE kind = 'task' AND task_id = ?")
       .run(text, id);
-    // Shown under the reply that started it: its result shows there too.
-    const underReply = this.d.db
-      .query("SELECT 1 FROM messages WHERE kind IN ('text', 'command') AND task_id = ?")
-      .get(id);
+    const under = this.shownUnder(id);
     // The bot that asked for it tells you, in the chat it was started from.
     const reporter = task.requestedBy ?? task.botId;
     const conversationId = this.conversationOf(id) ?? this.home(reporter);
-    // Started from the chat: the chat model hears now and writes the reply again, with the conversation
-    // in mind. A bot that asked another always passes on what came of it, also from a hand-off with its
-    // own card, the second one a reply asked for.
-    const asked = !task.parentId && task.requestedBy !== null;
-    const told = status !== "cancelled" && (asked || (!!underReply && tell));
-    if (underReply && status !== "cancelled") this.d.chats.endReply(task, told);
-    if (card.changes || (underReply && !told)) this.d.chats.markEdited(id);
+    // Started by the chat model: it hears now and writes its reply again, with the conversation in
+    // mind, whether or not the task notifies, since the answer may hang on what was said before. A
+    // command's result stands unless it notifies. A bot that asked another always passes on what came
+    // of it, also from a hand-off with its own card, the second one a reply asked for.
+    const told = status !== "cancelled" && (this.retold(task) || (!!under && tell));
+    if (under && status !== "cancelled") this.d.chats.endReply(task, told);
+    if (card.changes || (under && !told)) this.d.chats.markEdited(id);
     if (told) void this.d.chats.taskEnded(conversationId, reporter);
     else if (tell && task.lane === "background" && !card.changes)
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });

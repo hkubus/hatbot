@@ -132,6 +132,13 @@ export async function inspect(
   const location = str(listing.location) ?? str(snapshot.location);
   if (condition) lines.push(`Condition: ${condition}`);
   if (location) lines.push(`Location: ${location}`);
+  const flags = (Array.isArray(listing.flags) ? listing.flags : []).flatMap((f) => {
+    const o = obj(f);
+    const name = str(f) ?? str(o.flag);
+    const match = str(o.match);
+    return name ? [match ? `${name} ("${match}" in the ${str(o.in) ?? "listing"})` : name] : [];
+  });
+  if (flags.length) lines.push(`Scout flags it: ${flags.join(", ")}`);
   const scoutPhotos = [
     ...urls(d.photos),
     ...urls(d.images),

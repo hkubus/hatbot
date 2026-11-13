@@ -1,7 +1,12 @@
 // The tab on screen, for the computer toolset: its URL, title and text, and what's under a click. Through
 // browser.ts's one DevTools connection, in Hatbot's isolated world, so the page's own scripts can't see or
 // fake the answers.
-import type { AgentContext, AgentElement } from "@hatbot/shared/desktop";
+import {
+  type AgentContext,
+  type AgentElement,
+  hintWords,
+  SECRET_HINT,
+} from "@hatbot/shared/desktop";
 import { type Browser, ChromiumDown } from "./browser";
 import { ELEMENT, WALK } from "./page";
 
@@ -16,7 +21,8 @@ const MAX_TEXT = 20_000;
  * Not a promo code, an email to verify, or the number of a house or of things to buy.
  */
 export const SECRET = `
-  const SECRET_HINT = /pass(?:word|wd|wort|phrase|code)|\\bpass\\b|has[lł]|\\bpwd?\\b|\\bcc(?: ?(?:num(?:ber)?|no)|\\b)|\\bcard ?(?:num(?:ber)?|no)\\b|(?:credit|debit) ?card|\\b(?:numer|nr) ?kart|\\bcvc|\\bcvv|\\bcsc\\b|\\b(?:otp|pin)(?:code)?\\b|totp|\\b2 ?fa\\b|\\bmfa\\b|\\bkod(?! ?(?:poczt|rabat|promo))|(?<!\\b(?:zip|post(?:al)?|promo(?:tional)?|coupon|discount|rabat) )\\bcode\\b|security ?code|one time|\\btoken|\\bblik|\\bsms|verif(?![a-z]* (?:your |the )?e ?mail)|secret|private ?key|api ?key|recovery(?! ?(?:e ?mail|phone))|mnemonic/;
+  const SECRET_HINT = ${SECRET_HINT};
+  const hintWords = ${hintWords};
   const ORDINARY = /\\bzip\\b|post(?:al)? ?code|poczt|house|street|building|apartment|\\bapt\\b|domu|mieszkani|lokal|\\bqty\\b|quantity|ilo[sś][cć]/;
   const CARD_SHAPE = /(?:[0-9x•*] ?){4}(?:[ -]?(?:[0-9x•*]){4}){2,}/i;
   // Inputs nobody types into: a checkbox's value is "on", a button's is its label.
@@ -24,11 +30,8 @@ export const SECRET = `
   const isSecret = (el) => {
     if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || UNTYPED.includes(el.type)) return false;
     if (el.type === 'password') return true;
-    const hints = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id,
-      el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' ')
-      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/([a-z])([A-Z])/g, '$1 $2')
-      .replace(/([A-Za-z])([0-9])/g, '$1 $2').replace(/([0-9])([A-Za-z])/g, '$1 $2')
-      .toLowerCase().replace(/[^a-z0-9ąćęłńóśźż]+/g, ' ');
+    const hints = hintWords([el.getAttribute('autocomplete'), el.getAttribute('name'), el.id,
+      el.getAttribute('placeholder'), el.getAttribute('aria-label')]);
     if (SECRET_HINT.test(hints)) return true;
     try {
       const look = (el.ownerDocument.defaultView || window).getComputedStyle(el);

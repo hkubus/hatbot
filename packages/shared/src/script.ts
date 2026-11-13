@@ -152,7 +152,16 @@ export const SaveScript = z.object({
   enabled: z.boolean().default(true),
   botId: z.string().regex(BOT_ID).default("hatbot"),
 });
-export const UpdateScript = SaveScript.partial();
+/** Only what's sent: not `SaveScript.partial()`, as zod fills in a default even for an optional field,
+ * so switching a script off would also have cleared its inputs and moved it to Hatbot. */
+export const UpdateScript = z.object({
+  name: SaveScript.shape.name.optional(),
+  description: SaveScript.shape.description.optional(),
+  inputs: z.array(ScriptInputSchema).max(10).optional(),
+  steps: ScriptSteps.optional(),
+  enabled: z.boolean().optional(),
+  botId: z.string().regex(BOT_ID).optional(),
+});
 
 export const RunScript = z.object({ input: z.record(z.string(), z.unknown()).default({}) });
 

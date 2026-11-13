@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { HatboxError } from "@hatbot/plugin-boxes";
 import type { Approval, CheckReport, ChecksInfo } from "@hatbot/shared";
 import { Checks } from "../src/checks";
 import { NtfyNotifier } from "../src/notify";
@@ -57,6 +58,35 @@ test("Check everything tries each part and keeps the report, and a test approval
     await t.call("GET", "/checks", undefined, { cookie })
   ).json()) as ChecksInfo;
   expect(after.approval?.status).toBe("approved");
+});
+
+test("Check everything runs a test box on the boxes guest, and skips a guest that isn't set up", async () => {
+  const t = await testApp();
+  const boxes = async () => {
+    const c = byId(await t.checks.run());
+    return [c.boxes?.state, c["boxes.backends"]?.state];
+  };
+  expect(await boxes()).toEqual(["ok", "ok"]);
+  t.hatbox.configured = false;
+  expect(await boxes()).toEqual(["skip", undefined]);
+});
+
+test("Check everything fails a boxes guest that's down, turns down the token, or runs a box unfenced, and warns of an old agent", async () => {
+  const t = await testApp();
+  const boxes = async () => {
+    const c = byId(await t.checks.run());
+    return [c.boxes?.state, c["boxes.backends"]?.state];
+  };
+  t.hatbox.checked = { ok: true, ownUser: true, ownNetwork: false };
+  expect(await boxes()).toEqual(["ok", "fail"]);
+  t.hatbox.checked = { ok: false, error: "The backend didn't start." };
+  expect(await boxes()).toEqual(["ok", "fail"]);
+  t.hatbox.health = { ok: true, features: ["secrets", "notify"] };
+  expect(await boxes()).toEqual(["warn", "skip"]);
+  t.hatbox.health = new HatboxError("unauthorized", 401);
+  expect(await boxes()).toEqual(["fail", "skip"]);
+  t.hatbox.health = new HatboxError("The boxes guest isn't answering.", 0);
+  expect(await boxes()).toEqual(["fail", "skip"]);
 });
 
 /**

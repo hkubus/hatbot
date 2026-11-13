@@ -26,16 +26,86 @@ const CALL_TIMEOUT_MS = 120_000;
 const refusedBy = (err: unknown) =>
   err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
-const WatchId = z.string().min(1).max(160);
+const WatchId = z.string().trim().min(1).max(160);
+const ListingKey = z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"');
 const Days = z.number().int().min(7).max(180).optional();
 const Checks = z
   .array(
     z.object({ text: z.string().trim().min(1).max(120), mode: z.enum(["require", "exclude"]) }),
   )
   .max(8);
+const StoredFlag = z.enum(["for_parts", "wanted_ad", "swap", "replica", "damaged", "locked"]);
+const FLAGS =
+  "for_parts: broken, for parts or repair; wanted_ad: someone buying; swap: offered only in exchange; replica: a fake; damaged: its condition says damaged; locked: an iCloud, Google or MDM lock";
+/** Left out unless the model says otherwise: a want is almost never after them. */
+const HIDDEN_FLAGS = ["for_parts", "wanted_ad", "swap", "replica", "locked"] as const;
+// Scout rejects a longer list than it has flags, so the whole call would fail.
+const ExcludeFlags = z
+  .array(StoredFlag)
+  .max(StoredFlag.options.length)
+  .optional()
+  .describe(
+    `Leave out listings Scout flagged with any of these (${FLAGS}). Without it, ${HIDDEN_FLAGS.join(", ")} are left out; [] leaves none out.`,
+  );
+const SearchExcludeFlags = z
+  .array(z.enum([...StoredFlag.options, "accessory"]))
+  .max(StoredFlag.options.length + 1)
+  .optional()
+  .describe(
+    `Leave out results Scout flagged with any of these (${FLAGS}; accessory: an accessory the query didn't ask for). Without it, ${HIDDEN_FLAGS.join(", ")} and accessory are left out; [] leaves none out.`,
+  );
+// A task waits longer for a search than the chat, but not past CALL_TIMEOUT_MS.
+const TASK_SEARCH_DEADLINE_MS = 100_000;
+
+type Input = Record<string, unknown>;
+type Read = {
+  name: string;
+  description: string;
+  schema: z.ZodType;
+  brainOnly?: boolean;
+  /** What Hatbot adds to the input; `inTask` when a task calls it. */
+  with?: (input: Input, inTask: boolean) => Input;
+  /** What the model gets of Scout's answer. */
+  answer?: (text: string) => string;
+};
+
+const Source = z.object({
+  source: z.string(),
+  status: z.string(),
+  errorKind: z.string().nullish(),
+  message: z.string().nullish(),
+  backoffUntil: z.string().nullish(),
+});
+
+/**
+ * Compact scout_search's answer without its empty keys, after a line for each marketplace that wasn't
+ * searched: paused by Scout, out of time, or failed (blocked, signed out), so an empty result isn't
+ * read as "nothing on the market".
+ */
+function searchAnswer(text: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!parsed || typeof parsed !== "object") return text;
+  const sources = z.object({ sources: z.array(Source) }).safeParse(parsed);
+  const notes = (sources.success ? sources.data.sources : []).flatMap((s) => {
+    if (s.status !== "error") return [];
+    if (s.errorKind === "backoff")
+      return [
+        `${s.source} wasn't searched: Scout paused it after failed scans${s.backoffUntil ? `, until ${s.backoffUntil}` : ""}.`,
+      ];
+    if (s.errorKind === "deadline") return [`${s.source} didn't finish in time.`];
+    return [`${s.source} wasn't searched: ${s.message || "the search failed"}.`];
+  });
+  const rows = JSON.stringify(parsed, (_, v) => (v === null ? undefined : v));
+  return notes.length ? `${notes.join("\n")}\n\n${rows}` : rows;
+}
 
 /** Scout's tools as Hatbot offers them. */
-const READS: { name: string; description: string; schema: z.ZodType; brainOnly?: boolean }[] = [
+const READS: Read[] = [
   {
     name: "scout_watches",
     description:
@@ -45,24 +115,94 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   {
     name: "scout_listings",
     description:
-      "Listings Scout found, newest first by default, 20 at a time. Filter by marketplace, watch, words in the title, or Scout's verdict.",
+      "Listings Scout found, newest first by default, 20 at a time. Filter by marketplace, watch, words in the title, price, or Scout's verdict; discount sorts the furthest below typical first.",
     schema: z.object({
       marketplace: Marketplace.optional(),
       q: z.string().max(240).optional().describe("Words in the title, condition or location"),
       watchId: WatchId.optional(),
       page: z.number().int().min(1).optional(),
       pageSize: z.number().int().min(1).max(50).optional(),
-      sort: z.enum(["newest", "strongest", "price"]).optional(),
+      sort: z.enum(["newest", "strongest", "price", "discount"]).optional(),
       decision: z.enum(["buy", "watch", "pass"]).optional(),
+      minPrice: z.number().nonnegative().optional(),
+      maxPrice: z.number().nonnegative().optional(),
+      excludeFlags: ExcludeFlags,
     }),
+    with: (input) => ({ excludeFlags: HIDDEN_FLAGS, ...input, format: "compact" }),
+  },
+  {
+    name: "scout_deals",
+    description:
+      "Scout's best deals right now: listings its watches saw in the last 12 hours at least Strong (minTier raises it), best first, without ones the owner hid or passed or Scout's description check rejected. Each has its typical price, how far below it, and what reselling it at typical would leave.",
+    schema: z.object({
+      minTier: z.enum(["strong", "very-strong", "exceptional"]).optional(),
+      marketplace: Marketplace.optional(),
+      watchId: WatchId.optional(),
+      maxPrice: z.number().positive().optional(),
+      includeRejected: z.boolean().optional(),
+      excludeFlags: ExcludeFlags,
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    with: (input) => ({ excludeFlags: HIDDEN_FLAGS, ...input }),
   },
   {
     name: "scout_listing_detail",
     description:
-      "One listing in full: its price history, Scout's score and verdict, and the description as Scout last saw it.",
+      "One listing in full: its price history, Scout's score and verdict, the description as Scout last saw it, and for haggling: days listed, price drops, whether the price is negotiable, the seller with their other listings, and relists. live and sellerListings each load the marketplace once more.",
     schema: z.object({
-      key: z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"'),
+      key: ListingKey,
       watchId: WatchId.optional(),
+      live: z
+        .boolean()
+        .optional()
+        .describe("Check on the marketplace now that it's still up, and at what price"),
+      sellerListings: z
+        .boolean()
+        .optional()
+        .describe("The seller's other listings as the marketplace shows them now"),
+    }),
+  },
+  {
+    name: "scout_verify_listing",
+    description:
+      "Have Scout's AI read one listing's description now for damage, parts only, repairs, missing parts or an account lock, and the watch's checks: status pass, reject, unknown or fallback (Scout's AI was down); anything but pass means it wasn't checked. Cheap, and free when Scout checked it in the last 6 hours (reused). Scout keeps the verdict.",
+    schema: z.object({
+      key: ListingKey,
+      watchId: WatchId.optional().describe(
+        "Check it against this watch's query and checks; by default the watch that saw it last",
+      ),
+    }),
+  },
+  {
+    name: "scout_price_reference",
+    description:
+      "Scout's typical used asking price for a product, from free text matched to its watches and research series. best has the typical price, its quartiles and how many listings it rests on; it's null with fewer than 4. Asking prices, not what things went for. Quick: it loads no marketplace.",
+    schema: z.object({
+      query: z.string().trim().min(1).max(240),
+      sources: z
+        .array(Marketplace)
+        .min(1)
+        .max(3)
+        .optional()
+        .describe("Prefer matches that watch these marketplaces"),
+      terms: z.string().max(240).optional().describe("Comma-separated words it must also have"),
+      excluded: z
+        .string()
+        .max(240)
+        .optional()
+        .describe("Comma-separated words that rule a match out"),
+    }),
+  },
+  {
+    name: "scout_comparables",
+    description:
+      "Other listings of the same thing as one listing, up now: the same watch, model and condition, cheapest first, with their median and how far this one is from it. Asking prices, from what Scout found.",
+    schema: z.object({
+      listingKey: ListingKey,
+      watchId: WatchId.optional().describe(
+        "Compare within this watch instead of the listing's own",
+      ),
+      limit: z.number().int().min(1).max(10).optional(),
     }),
   },
   {
@@ -100,7 +240,7 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
   {
     name: "scout_search",
     description:
-      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key.",
+      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter, cheapest first. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key, and flags are what Scout guessed from its words. The same search again within 3 minutes comes from Scout's cache when every marketplace answered the first time. Scout allows about 30 searches and description checks a minute between them.",
     schema: z.object({
       query: z.string().trim().min(1).max(240),
       sources: z.array(Marketplace).min(1).max(3),
@@ -121,7 +261,25 @@ const READS: { name: string; description: string; schema: z.ZodType; brainOnly?:
         .optional()
         .describe("OLX only: one category, from scout_olx_categories"),
       page: z.number().int().min(1).max(10).optional(),
+      excludeFlags: SearchExcludeFlags,
+      typoVariants: z
+        .boolean()
+        .optional()
+        .describe(
+          "Page 1 only: also search up to 2 misspellings of the query, for listings that misspell it. Up to 2 more page loads per marketplace; matchedVia says which spelling found each",
+        ),
+      ignoreBackoff: z
+        .boolean()
+        .optional()
+        .describe("Search marketplaces Scout paused after failed scans too"),
     }),
+    with: (input, inTask) => ({
+      excludeFlags: [...HIDDEN_FLAGS, "accessory"],
+      ...input,
+      format: "compact",
+      ...(inTask ? { deadlineMs: TASK_SEARCH_DEADLINE_MS } : {}),
+    }),
+    answer: searchAnswer,
   },
   {
     name: "scout_olx_categories",
@@ -313,7 +471,7 @@ const WRITES: { name: string; description: string; schema: z.ZodType }[] = [
     description:
       "Mark a listing in Scout's feed, as the owner would: a decision (buy, watch, pass, or null to clear it), a note, or hidden. Only what you pass changes. It's a mark: nothing is bought or sent.",
     schema: z.object({
-      key: z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"'),
+      key: ListingKey,
       decision: z.enum(["buy", "watch", "pass"]).nullable().optional(),
       note: z.string().max(2000).optional(),
       hidden: z.boolean().optional(),
@@ -363,7 +521,10 @@ const GUIDANCE = `Scout is the owner's deal monitor on OLX, Allegro Lokalnie and
 Finding something to buy:
 - First list what the owner asked for: the must-haves (the model, size or variant, condition, what has to come with it, the budget, delivery or pickup) and the deal-breakers. Fill what they left out from your notes and sensible defaults: "the best deals" needs no budget, and when either kind would do, search both. Ask first, in one short message, only when what's missing would change which listings fit and nothing settles it.
 - A search through more than a few listings goes to a task (run_task with effort medium), with every must-have in its goal, so it has room to keep looking.
-- Search widely: scout_listings for what Scout found already, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
+- Search widely: scout_deals for Scout's best deals of the last 12 hours, scout_listings for everything it found, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Set typoVariants on the first scout_search for a product, not on later pages or rewordings. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
+- Listings flagged for parts, wanted ads, swaps, replicas and locked ones (and accessories, in scout_search) are left out unless you pass excludeFlags: pass a shorter list, or [], when the owner wants them, such as one for parts. Flags are Scout's guess from a listing's words, so check what matters yourself.
+- When scout_search says a marketplace wasn't searched because Scout paused it, tell the owner which and until when; search it anyway with ignoreBackoff only when they ask. For one that didn't finish in time, or failed, run the same search once more; if it still doesn't answer, tell the owner it wasn't searched.
+- With many candidates, sift them first with scout_verify_listing (several at once): drop a reject, and treat anything but pass as not checked.
 - Before you show or recommend a listing, look at it with negotiate_inspect (several at once) and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
 - Show the owner three or more listings to choose from as a chart block of type "listings", in the chat or a task's summary, not a list: each one's url, price and Scout's image as its photo, and a few words on why as its note. Say your pick and why in a line before it, and stop after it.
 - Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short.
@@ -378,6 +539,15 @@ const FlipListed = z.object({
   status: z.enum(["listed", "failed", "declined"]),
   url: z.string().trim().max(2000).optional(),
   error: z.string().max(2000).optional(),
+});
+
+const Outcome = z.object({
+  negotiationId: z.string().trim().min(1).max(160),
+  listingKey: ListingKey,
+  outcome: z.enum(["agreed", "lost", "abandoned"]),
+  asking: z.number().positive().max(10_000_000),
+  price: z.number().positive().max(10_000_000).nullable().optional(),
+  currency: z.string().trim().max(8).optional(),
 });
 
 const FlipTakenDown = z.object({
@@ -498,7 +668,14 @@ export const scoutPlugin = definePlugin({
           access: "read",
           untrusted: true,
           ...(r.brainOnly ? { brainOnly: true } : {}),
-          run: (input, c) => call(r.name, input, c.signal),
+          run: async (input, c) => {
+            const text = await call(
+              r.name,
+              r.with ? r.with(input as Input, Boolean(c.task)) : input,
+              c.signal,
+            );
+            return r.answer ? r.answer(text) : text;
+          },
         }),
       ),
       ...WRITES.map((w) =>
@@ -531,6 +708,17 @@ export const scoutPlugin = definePlugin({
         policy: (_, c) =>
           c.task ? block("Hatbot tells Scout itself once a take-down task ends.") : allow(),
         run: (input, c) => call("scout_flip_taken_down", input, c.signal),
+      }),
+      tool({
+        name: "scout_record_outcome",
+        description: "Tell Scout how a negotiation ended, with the asking and final price.",
+        access: "write",
+        brainOnly: true,
+        schema: Outcome,
+        // The brain reports it itself once a negotiation is closed.
+        policy: (_, c) =>
+          c.task ? block("Hatbot tells Scout itself once a negotiation is closed.") : allow(),
+        run: (input, c) => call("scout_record_outcome", input, c.signal),
       }),
     ];
     return ready(tools, {

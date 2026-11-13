@@ -66,6 +66,8 @@ export type Trigger = {
   /** Payloads count as trusted content. Uptime Kuma alerts always do. */
   trusted: boolean;
   prompt: string;
+  /** A webhook that runs this script instead, without the model, gets the event as `input.payload`. */
+  scriptId: number | null;
   enabled: boolean;
   /**
    * Uptime Kuma: how many more of the monitor's checks a down alert waits for before it starts a task,
@@ -81,24 +83,30 @@ export type Trigger = {
 /** Only returned when the trigger is created or its secret is replaced. */
 export type TriggerWithSecret = Trigger & { secret: string };
 
-export const CreateTrigger = z.object({
-  name,
-  kind: z.enum(["webhook", "kuma"]),
-  prompt,
-  trusted: z.boolean().default(false),
-  confirmChecks: z.number().int().min(0).max(2).default(0),
-  botId: botId.default("hatbot"),
-});
+export const CreateTrigger = z
+  .object({
+    name,
+    kind: z.enum(["webhook", "kuma"]),
+    prompt: prompt.optional(),
+    scriptId: scriptId.default(null),
+    trusted: z.boolean().default(false),
+    confirmChecks: z.number().int().min(0).max(2).default(0),
+    botId: botId.default("hatbot"),
+  })
+  .refine((t) => Boolean(t.prompt) !== Boolean(t.scriptId), "set either a prompt or a script")
+  .refine((t) => t.kind === "webhook" || !t.scriptId, "only a webhook can run a script");
 export const UpdateTrigger = z
   .object({
     name,
     prompt,
+    scriptId,
     trusted: z.boolean(),
     enabled: z.boolean(),
     confirmChecks: z.number().int().min(0).max(2),
     botId,
   })
-  .partial();
+  .partial()
+  .refine((t) => !(t.prompt && t.scriptId), "set either a prompt or a script");
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const NICKNAMES: Record<string, string> = {

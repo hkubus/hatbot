@@ -2,11 +2,11 @@
 // it got, against a stand-in Scout in the same process.
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PluginTool } from "@hatbot/plugin-sdk";
-import { BOT_TEMPLATES } from "@hatbot/shared";
+import { BOT_TEMPLATES, type Mandate } from "@hatbot/shared";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { scoutServer } from "./fixtures/scout-tools";
@@ -15,10 +15,14 @@ import { ORIGIN, type TestApp, tempDirs, testApp } from "./helpers";
 const SCOUT = "http://scout.lan:3001";
 const call = () => ({ task: null, signal: new AbortController().signal });
 
-/** Scout's sign-in and its MCP server; `metadata` is what its well-known address says. */
-function fakeScout(metadata: Record<string, string> | null = {}) {
+/**
+ * Scout's sign-in and its MCP server, with its search, feed and deals; `metadata` is what its
+ * well-known address says, and `full` adds Scout's price reference, comparables and negotiation outcomes.
+ */
+function fakeScout(metadata: Record<string, string> | null = {}, full = false) {
   const dir = mkdtempSync(join(tmpdir(), "hatbot-scout-"));
   tempDirs.push(dir);
+  const log = join(dir, "calls.jsonl");
   const flips = join(dir, "flips.json");
   const sessions = join(dir, "sessions.json");
   writeFileSync(sessions, "[]");
@@ -81,7 +85,7 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
         });
-        await scoutServer({ flips, sessions }).connect(transport);
+        await scoutServer({ log, full, search: true, flips, sessions }).connect(transport);
         return transport.handleRequest(new Request(url, init));
       }
     }
@@ -91,6 +95,16 @@ function fakeScout(metadata: Record<string, string> | null = {}) {
     s,
     handle,
     share: (shared: unknown[]) => writeFileSync(sessions, JSON.stringify(shared)),
+    /** What each call to `tool` was given. */
+    calls: (tool: string) =>
+      existsSync(log)
+        ? readFileSync(log, "utf8")
+            .trim()
+            .split("\n")
+            .map((l) => JSON.parse(l) as { tool: string; input: unknown })
+            .filter((c) => c.tool === tool)
+            .map((c) => c.input)
+        : [],
   };
 }
 
@@ -153,6 +167,7 @@ test("connecting lets Hatbot in to Scout with PKCE; Haggler gets Scout, and the 
   const offered = t.plugins.tools().map((x) => x.name);
   expect(offered).not.toContain("scout_flip_photo");
   expect(offered).not.toContain("scout_flip_listed");
+  expect(offered).not.toContain("scout_record_outcome");
   await t.listings.tick();
   expect(t.db.query("SELECT bot_id FROM flip_listings").all()).toEqual([{ bot_id: haggler.id }]);
 
@@ -170,16 +185,197 @@ test("a Scout that can't connect apps, or sends the sign-in elsewhere, isn't use
   ).rejects.toThrow("somewhere else");
 });
 
-test("only the brain tells Scout how a listing went, never a task", async () => {
+test("only the brain tells Scout how a listing or a negotiation went, never a task", async () => {
   const t = await testApp();
   const scout = fakeScout();
   await connected(t, scout);
-  const listed = named(t.plugins.brainTools(), "scout_flip_listed");
-  const input = { flipId: 7, channel: "OLX", status: "declined" };
-  expect(verdictFor(listed, input, call(), false).action).toBe("allow");
-  expect(verdictFor(listed, input, { ...call(), task: { id: 1, tainted: false } }).action).toBe(
-    "block",
+  const told = [
+    ["scout_flip_listed", { flipId: 7, channel: "OLX", status: "declined" }],
+    [
+      "scout_record_outcome",
+      { negotiationId: "hatbot:1", listingKey: "OLX:1001", outcome: "lost", asking: 1500 },
+    ],
+  ] as const;
+  for (const [name, input] of told) {
+    const t1 = named(t.plugins.brainTools(), name);
+    expect(verdictFor(t1, input, call(), false).action).toBe("allow");
+    expect(verdictFor(t1, input, { ...call(), task: { id: 1, tainted: false } }).action).toBe(
+      "block",
+    );
+  }
+});
+
+const MANDATE: Mandate = {
+  currency: "PLN",
+  opening: 1060,
+  target: 1250,
+  limit: 1400,
+  delivery: "OLX delivery with buyer protection",
+  expiresAt: "2026-10-16T12:00:00.000Z",
+  allow: [],
+};
+
+test("through Scout's plugin, a haggle rests on Scout's price reference and comparables, and Scout is told how it ended", async () => {
+  const t = await testApp();
+  const scout = fakeScout({}, true);
+  await connected(t, scout);
+  const bot = t.bots.hatbot();
+  const tools = t.negotiations.tools(bot, t.plugins.tools(), { conversationId: null });
+
+  // The listing as it is on the marketplace now, and the seller's other listings there.
+  const detail = await runPluginTool(
+    named(t.plugins.tools(), "scout_listing_detail"),
+    { key: "OLX:1001", live: true, sellerListings: true },
+    call(),
   );
+  expect(JSON.parse(detail.text).liveCheck).toMatchObject({ price: 1450 });
+  expect(scout.calls("scout_listing_detail")).toEqual([
+    { key: "OLX:1001", live: true, sellerListings: true },
+  ]);
+
+  const appraisal = await runPluginTool(
+    named(tools, "negotiate_appraise"),
+    { listing: "OLX:1001" },
+    call(),
+  );
+  expect(appraisal.text).toContain(`Scout's price reference for "RTX 3070" from 40 listings`);
+  // The cheaper comparable is the walk-away, and the lower quartile the aim.
+  expect(appraisal.text).toContain("RTX 3070 Gaming OC: 1,290 zł");
+  expect(appraisal.text).toContain("aim for 1,200 zł");
+  expect(scout.calls("scout_watch_analytics")).toEqual([]);
+
+  const open = (key: string, title: string, currency: string) => {
+    const n = t.negotiations.create({
+      bot,
+      wantId: t.negotiations.wantFor(bot, title, title),
+      listing: {
+        key,
+        marketplace: key.split(":")[0] ?? "",
+        title,
+        url: `https://example.com/${key}`,
+        asking: 1500,
+        currency,
+        typical: null,
+        watchId: null,
+        negotiable: true,
+        listedAt: null,
+        history: [],
+      },
+      mandate: { ...MANDATE, currency },
+      appraisal: null,
+      status: "open",
+      conversationId: null,
+    });
+    return n.id;
+  };
+  const close = named(tools, "negotiate_close");
+  const agreed = open("OLX:1001", "Karta graficzna RTX 3070 8GB", "PLN");
+  const r = await runPluginTool(
+    close,
+    { negotiation: agreed, outcome: "agreed", price: 1250 },
+    call(),
+  );
+  expect(r.text).toContain("Scout recorded the outcome.");
+  // Scout keeps outcomes in PLN only.
+  const euro = open("Vinted:2002", "Kurtka Patagonia M", "EUR");
+  await runPluginTool(close, { negotiation: euro, outcome: "lost" }, call());
+  expect(scout.calls("scout_record_outcome")).toEqual([
+    {
+      negotiationId: `hatbot:${agreed}`,
+      listingKey: "OLX:1001",
+      outcome: "agreed",
+      price: 1250,
+      asking: 1500,
+      currency: "PLN",
+    },
+  ]);
+});
+
+test("Scout's searches, feed and deals leave out junk unless the model asks for it", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const junk = ["for_parts", "wanted_ad", "swap", "replica", "locked"];
+  const run = (name: string, input: Record<string, unknown>) =>
+    runPluginTool(named(t.plugins.tools(), name), input, call());
+  await run("scout_search", { query: "rtx 3070", sources: ["OLX"] });
+  await run("scout_search", { query: "rtx 3070", sources: ["OLX"], excludeFlags: [] });
+  for (const name of ["scout_listings", "scout_deals"]) {
+    await run(name, {});
+    await run(name, { excludeFlags: ["locked"] });
+  }
+  expect(
+    scout.calls("scout_search").map((c) => (c as { excludeFlags: string[] }).excludeFlags),
+  ).toEqual([[...junk, "accessory"], []]);
+  expect(scout.calls("scout_listings")).toEqual([
+    { excludeFlags: junk, format: "compact" },
+    { excludeFlags: ["locked"], format: "compact" },
+  ]);
+  expect(scout.calls("scout_deals")).toEqual([
+    { excludeFlags: junk },
+    { excludeFlags: ["locked"] },
+  ]);
+});
+
+test("a search gets Scout's compact rows, says which marketplaces were paused or too slow, and waits longer in a task", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const search = named(t.plugins.tools(), "scout_search");
+  const all = ["OLX", "Vinted", "Allegro Lokalnie"];
+
+  const r = await runPluginTool(search, { query: "rtx 3070", sources: all }, call());
+  expect(r.untrusted).toBe(true);
+  const [said, rows] = r.text.split("\n\n");
+  expect(said).toContain("Vinted wasn't searched");
+  expect(said).toContain("2026-10-09T14:30:00.000Z");
+  expect(said).toContain("Allegro Lokalnie didn't finish");
+  expect(said).not.toContain("OLX");
+  expect(JSON.parse(rows ?? "").listings.map((l: { id: string }) => l.id)).toEqual(["OLX:1001"]);
+
+  // The owner asked for Vinted anyway, from a task.
+  const again = await runPluginTool(
+    search,
+    { query: "rtx 3070", sources: ["Vinted"], ignoreBackoff: true },
+    { ...call(), task: { id: 1, tainted: true } },
+  );
+  expect(again.text).not.toContain("wasn't searched");
+  expect(scout.calls("scout_search")).toMatchObject([
+    { sources: all, format: "compact" },
+    { sources: ["Vinted"], ignoreBackoff: true, format: "compact", deadlineMs: 100_000 },
+  ]);
+  expect(scout.calls("scout_search")[0]).not.toHaveProperty("deadlineMs");
+
+  // Any other failure is named too, so an empty result isn't read as "nothing for sale".
+  const blocked = await runPluginTool(search, { query: "blocked 3070", sources: ["OLX"] }, call());
+  expect(blocked.text.split("\n\n")[0]).toBe("OLX wasn't searched: OLX answered 403 (blocked).");
+});
+
+test("flag lists and watch ids that Scout would refuse are stopped before the call", async () => {
+  const t = await testApp();
+  await connected(t, fakeScout());
+  const ok = (name: string, input: unknown) =>
+    named(t.plugins.tools(), name).schema.safeParse(input).success;
+  const seven = Array(7).fill("locked");
+  expect(ok("scout_listings", { excludeFlags: seven })).toBe(false);
+  expect(ok("scout_listings", { excludeFlags: seven.slice(1) })).toBe(true);
+  expect(
+    ok("scout_search", { query: "x", sources: ["OLX"], excludeFlags: [...seven, "accessory"] }),
+  ).toBe(false);
+  expect(ok("scout_verify_listing", { key: "OLX:1", watchId: "  " })).toBe(false);
+});
+
+test("Scout's description check runs without asking, even after reading listings", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const verify = named(t.plugins.tools(), "scout_verify_listing");
+  const tainted = { ...call(), task: { id: 1, tainted: true } };
+  expect(verdictFor(verify, { key: "OLX:1001" }, tainted).action).toBe("allow");
+  const r = await runPluginTool(verify, { key: "OLX:1001" }, tainted);
+  expect(JSON.parse(r.text)).toMatchObject({ status: "pass" });
+  expect(r.untrusted).toBe(true);
+  expect(scout.calls("scout_verify_listing")).toEqual([{ key: "OLX:1001" }]);
 });
 
 test("Scout's calls share one connection, so a flip's photos aren't held back by Scout's rate limit", async () => {

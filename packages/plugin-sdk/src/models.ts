@@ -13,6 +13,11 @@ export type StreamHandlers = {
   onText?: (delta: string) => void;
   onThinking?: (delta: string) => void;
   onServerTool?: (name: string, input: Record<string, unknown>) => void;
+  /**
+   * Each block once it's complete, in order, so a tool call can start while the rest streams. A
+   * provider may leave it out: its calls then start once the message has ended.
+   */
+  onBlock?: (block: ModelMessage["content"][number]) => void;
   onRetry?: () => void;
   /** A failed attempt may still be billed. Required, so no caller leaves it out of the ledger. */
   onFailedUsage: (model: string, usage: ModelUsage) => void;

@@ -19,8 +19,17 @@ final class Session {
   /// The signed-in app state; nil shows the sign-in screen.
   private(set) var store: AppStore?
   var server: String
-  /// The web app's guided setup isn't finished: the app waits for it.
-  private(set) var setupPending = false
+  /// What the guided setup still needs before the app opens; nil once it's finished, or put off.
+  private(set) var setup: Setup?
+  /// Finish later: the app opens until it's started again, as the web app's does for a browser session.
+  @ObservationIgnored private var later = false
+
+  enum Setup: Equatable {
+    /// A model provider and its key, asked for here as on the web.
+    case models
+    /// The bot's interview, in the web app.
+    case interview
+  }
 
   @ObservationIgnored private let vault: TokenVault
   /// Sign-outs the brain didn't hear: their tokens still work there, so they're sent again.
@@ -82,7 +91,40 @@ final class Session {
   func checkSetup() async {
     guard let api = store?.api, let me: Me = try? await api.get("/auth/me") else { return }
     guard store?.api.token == api.token else { return }
-    setupPending = me.onboarded == false
+    guard me.onboarded == false else {
+      setup = nil
+      return
+    }
+    let state: Onboarding? = try? await api.get("/onboarding")
+    guard store?.api.token == api.token else { return }
+    show(needsModels: state?.needsModels ?? (setup == .models))
+  }
+
+  /// Checked by the brain, which fills in the models for each role from what the provider offers. A key
+  /// that doesn't work throws, and leaves what was there.
+  func setModels(_ provider: SetupProvider, key: String, baseUrl: String) async throws {
+    guard let api = store?.api else { return }
+    struct Body: Encodable {
+      let provider: SetupProvider
+      let key: String
+      let baseUrl: String?
+    }
+    let url = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+    let body = Body(
+      provider: provider, key: key.trimmingCharacters(in: .whitespacesAndNewlines),
+      baseUrl: provider == .openai && !url.isEmpty ? url : nil)
+    let state: Onboarding = try await api.post("/onboarding/models", body: body, timeout: 60)
+    guard store?.api.token == api.token else { return }
+    if state.finished { setup = nil } else { show(needsModels: state.needsModels) }
+  }
+
+  func finishLater() {
+    later = true
+    if setup == .interview { setup = nil }
+  }
+
+  private func show(needsModels: Bool) {
+    setup = needsModels ? .models : later ? nil : .interview
   }
 
   func signOut() async {
@@ -128,7 +170,8 @@ final class Session {
   private func forget() {
     store?.close()
     store = nil
-    setupPending = false
+    setup = nil
+    later = false
     vault.clear()
     cache?.clear()
     // Files opened from the chat, and what URLSession kept of attachments and screenshots.

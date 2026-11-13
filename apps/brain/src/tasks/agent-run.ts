@@ -33,6 +33,7 @@ import {
   missingSkill,
   NeedsYou,
   serverToolWaiting,
+  startEarly,
   ThreadOpenInput,
   type ToolImage,
   toolParam,
@@ -49,6 +50,9 @@ import {
   describeCall,
   offered,
   runPluginTool,
+  STOPPED_SEND,
+  sends,
+  targetOf,
   untrustedDefinitions,
   verdictFor,
 } from "../plugins/registry";
@@ -61,6 +65,7 @@ import {
   requestsFor,
   Stop,
   steerNote,
+  textOf,
   thinkingFor,
 } from "./loop";
 import { SEND_TO_CHAT_DESCRIPTION, SendToChat, sendToChat } from "./send-to-chat";
@@ -95,8 +100,9 @@ const FinishTask = z.object({
       (s) => wordsOf(s).length <= SUMMARY_WORDS,
       `Too long: at most ${SUMMARY_WORDS} characters, not counting chart blocks.`,
     )
+    .optional()
     .describe(
-      `What you found or did, for the owner. Lead with the answer. At most ${SUMMARY_WORDS} characters besides chart blocks`,
+      `What you found or did, for the owner. Lead with the answer. At most ${SUMMARY_WORDS} characters besides chart blocks. Leave it out only when the text you just wrote says it: that text is the summary`,
     ),
   notify: z
     .boolean()
@@ -467,7 +473,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         botId: bot.id,
         tool: t.name,
         input: call.input,
-        target: t.target?.(call.input as never) ?? null,
+        target: targetOf(t, call.input),
         taskId: id,
         scheduleOnly: !scopable(verdict),
       });
@@ -531,6 +537,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const what = describeCall(t, call.input);
     const verdict = verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety);
     let note: string | null = null;
+    let byOwner = false;
     if (verdict.action === "block") {
       tasks.addStep(id, {
         kind: "note",
@@ -542,7 +549,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     }
     if (verdict.action === "ask") {
       const check = await reviewed(t, call, what, verdict);
-      const target = t.target?.(call.input as never) ?? null;
+      const target = targetOf(t, call.input);
       // Never for money, accounts or what you said to always ask about; doors only in one schedule.
       const scopes = scopable(verdict)
         ? (["always"] as const)
@@ -586,7 +593,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               : "The owner denied this. Don't try it another way.",
             true,
           );
+        byOwner = true;
       }
+    }
+    const wait = byOwner || !sends(t, call.input) ? 0 : d.settings.get().safety.sendWaitS;
+    if (wait) {
+      tasks.addStep(id, { kind: "note", name: `Sending in ${wait} s`, detail: what, url: null });
+      const send = { taskId: id, botId: bot.id, kind: "send" as const, summary: what };
+      if (!(await d.approvals.letGo(send, wait, signal))) return result(call, STOPPED_SEND, true);
+    }
+    if (verdict.action === "ask" || wait) {
       // What was reviewed or approved was the plugin as it was: one switched off or restarted
       // meanwhile may act differently.
       const after = current(t.name);
@@ -594,7 +610,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (after !== t && d.plugins.pluginOf(t.name))
         return result(
           call,
-          `Not run: ${t.name}'s plugin restarted while this was checked or waited for approval. Call it again if it's still needed.`,
+          `Not run: ${t.name}'s plugin restarted while this was checked or waited. Call it again if it's still needed.`,
           true,
         );
     }
@@ -727,6 +743,17 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
 
   /** What the next request may cost: work the runner starts meanwhile leaves room for it. */
   let reserveUsd = 0;
+  // A schedule's run notices when its runs keep making the same calls, as the chat does: not a task a
+  // script's step started, as that schedule runs a script already.
+  const repeats =
+    task.scheduleId !== null &&
+    !task.runner &&
+    !task.parentId &&
+    !tasks.runKeyOf(id)?.startsWith("script:")
+      ? d.repeats
+      : undefined;
+  const called: string[] = [];
+  let offeredScript = false;
   const state = runner?.start({ task, signal, taint, messages, reserveUsd: () => reserveUsd });
 
   try {
@@ -749,9 +776,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
         : "";
     const startedBy = `Started by ${
-      task.origin === "chat"
-        ? "the owner, from the chat"
-        : (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
+      task.origin !== "chat"
+        ? (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
+        : tasks.retold(task)
+          ? "the bot in the chat, which answers the owner from your summary"
+          : "the owner, from the chat"
     }`;
     record("user", [
       {
@@ -770,17 +799,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     /** Where the web tools' code runs: the same one each step, so paused code can carry on. */
     let container: string | undefined;
     let nudged = false;
+    /** A reply that called no tool, which finish_task may keep as the summary rather than write again. */
+    let wrote = "";
     /** Only finish_task (or the runner's own) ends a task: asked once, then it has failed. */
-    const nudge = () => {
+    const nudge = (said: string) => {
       if (nudged && runner) throw new Stop("failed", runner.nudge.stopped);
       if (nudged) return false;
       nudged = true;
+      wrote = said;
       record("user", [
         {
           type: "text",
           text: runner
             ? runner.nudge.text
-            : "(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome. Otherwise carry on.)",
+            : `(No message from the owner: your reply called no tool, and only finish_task ends the task. If it's done, or can't be done, call finish_task with the outcome${said ? ", leaving summary out if what you just wrote is it" : ""}. Otherwise carry on.)`,
         },
       ]);
       return true;
@@ -838,22 +870,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         origin?.overLimit &&
         ((limit: "daily" | "monthly") => origin.overLimit?.(limit, task) ?? "");
       requests.hold(reserveUsd, overLimit);
-      const res = await requests.stream(params);
-      record("assistant", res.content);
-      container = containerOf(res, container);
-      for (const read of webReads(res.content)) {
-        tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
-        taint(read);
-      }
-      addNotes(tasks, id, res);
-      const calls = callsOf(res, nudge);
-      if (!calls) continue;
 
-      let finished: z.infer<typeof FinishTask> | null = null;
+      let finished: (z.infer<typeof FinishTask> & { summary: string }) | null = null;
+      /** What this reply wrote alongside its calls. */
+      let said = "";
       // Lookups in a row run at once, and so do changes allowed without asking, each on a different
       // thing (checking updates on every host); anything that asks runs on its own.
-      const lookup = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string => {
-        if (cutOff(res)) return false;
+      const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string[] => {
         const t = pluginTools.has(call.name) ? current(call.name) : null;
         if (!t || typeof t === "string") return false;
         if (t.access === "read") return true;
@@ -863,26 +886,37 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const cc = { task: { id, tainted: task.tainted }, signal };
         if (verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety).action !== "allow")
           return false;
-        return !untrustedOf(t, parsed.data) && `${t.name.split("_")[0]}:${t.target(parsed.data)}`;
+        const plugin = t.name.split("_")[0];
+        return (
+          !untrustedOf(t, parsed.data) &&
+          [t.target(parsed.data)].flat().map((x) => `${plugin}:${x}`)
+        );
       };
-      const results: BlockParam[] = await inBatches(calls, lookup, async (call) => {
+      const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
-        if (cutOff(res))
-          return result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (!sent.has(call.name)) return result(call, `Unknown tool "${call.name}".`, true);
         if (call.name === "finish_task") {
           const p = FinishTask.safeParse(call.input);
+          if (!p.success) return result(call, invalidInput(p.error), true);
+          const summary = p.data.summary || said || wrote;
+          if (!summary) return result(call, "Not finished: give the summary.", true);
+          if (summary.length > 20_000 || wordsOf(summary).length > SUMMARY_WORDS)
+            return result(
+              call,
+              "Not finished: what you wrote is too long to keep. Give a summary.",
+              true,
+            );
           // A chart that doesn't draw shows the owner a wall of numbers: send it back once.
-          const broken = p.success ? await checkCharts(p.data.summary) : "";
+          const broken = await checkCharts(summary);
           if (broken)
             return result(
               call,
               `Not finished: ${broken} Call finish_task again with it fixed. ${CHART_GUESS}`,
               true,
             );
-          if (p.success) finished = p.data;
-          return result(call, p.success ? "Finished." : invalidInput(p.error), !p.success);
+          finished = { ...p.data, summary };
+          return result(call, "Finished.");
         }
         if (state && runnerTools.has(call.name)) {
           const r = await state.call(call.name, call.input, { checkCharts, step });
@@ -928,9 +962,60 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           return pluginCall(plugin, call);
         }
         return result(call, `Unknown tool "${call.name}".`, true);
+      };
+
+      let seen: Anthropic.Beta.BetaContentBlock[] = [];
+      let noted = 0;
+      const early = startEarly(
+        (call) => parallel(call) === true,
+        run,
+        // Its notes go in the timeline first, as they came.
+        () => {
+          addNotes(tasks, id, { content: seen.slice(noted) });
+          noted = seen.length;
+        },
+      );
+      const res = await requests.stream(params, {
+        onBlock: (b) => {
+          seen.push(b);
+          early.onBlock(b);
+        },
+        onRetry: () => {
+          seen = [];
+          noted = 0;
+          early.onRetry();
+        },
       });
+      record("assistant", res.content);
+      container = containerOf(res, container);
+      for (const read of webReads(res.content)) {
+        tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
+        taint(read);
+      }
+      addNotes(tasks, id, { content: res.content.slice(noted) });
+      if (res.stop_reason !== "tool_use") await early.settled();
+      const calls = callsOf(res, () => nudge(textOf(res)));
+      if (!calls) continue;
+      said = textOf(res);
+
+      const results: BlockParam[] = await inBatches(
+        calls,
+        (call) => !cutOff(res) && parallel(call),
+        (call) =>
+          early.started(call) ??
+          (cutOff(res)
+            ? Promise.resolve(
+                result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
+              )
+            : run(call)),
+      );
+      wrote = "";
+      if (repeats)
+        for (const call of calls)
+          if (d.plugins.pluginOf(call.name) && !d.plugins.pluginOf(call.name)?.internal)
+            called.push(call.name);
       // Set inside the calls above, which TypeScript can't see.
-      const ended = finished as z.infer<typeof FinishTask> | null;
+      const ended = finished as (z.infer<typeof FinishTask> & { summary: string }) | null;
       if (ended) throw new Stop(ended.outcome, ended.summary, ended.notify);
       const stopped = gaveUp as string | null;
       if (stopped)
@@ -965,6 +1050,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           limitUsd: tasks.budget(id),
         });
       if (told) results.push({ type: "text", text: told });
+      const scriptOffer = !serverToolWaiting(res.content) && repeats?.offerRun(task, called);
+      if (scriptOffer) {
+        offeredScript = true;
+        results.push({ type: "text", text: scriptOffer });
+      }
       record("user", results);
     }
   } catch (err) {
@@ -972,7 +1062,14 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // A runner's task that stops short may keep what it had, unless you stopped it.
     if (state?.unfinished && ended.status !== "done" && !signal.aborted)
       ended.summary = await state.unfinished(ended.summary);
-    tasks.finish(id, ended.status, ended.summary, ended.notify);
+    if (ended.status === "done")
+      repeats?.record({ botId: task.botId, scheduleId: task.scheduleId ?? undefined }, called);
+    // One that didn't finish never showed you its offer.
+    else if (offeredScript) repeats?.withdraw(id);
+    // Its offer is answered in the chat, so a routine run's report goes there too, quietly.
+    if (offeredScript && ended.status === "done" && ended.notify === false)
+      tasks.finish(id, "done", ended.summary, true, { ntfy: false });
+    else tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {
     requests.release();
     if (slot) tasks.pool.release();

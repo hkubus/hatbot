@@ -208,6 +208,31 @@ export class ScreenControl {
   }
 }
 
+/** What the owner does in the live view while they have control, as it's sent: Teach records it. */
+export class Live {
+  private inputs = new Set<(m: LiveInput) => void>();
+  private gone = new Set<() => void>();
+
+  onInput(fn: (m: LiveInput) => void): () => void {
+    this.inputs.add(fn);
+    return () => this.inputs.delete(fn);
+  }
+
+  /** A live view that sent input closed: the screen let go of the keys it held. */
+  onViewerGone(fn: () => void): () => void {
+    this.gone.add(fn);
+    return () => this.gone.delete(fn);
+  }
+
+  input(m: LiveInput) {
+    for (const fn of this.inputs) fn(m);
+  }
+
+  viewerGone() {
+    for (const fn of this.gone) fn();
+  }
+}
+
 const LIVE_BUFFER_BYTES = 512 * 1024;
 
 /**

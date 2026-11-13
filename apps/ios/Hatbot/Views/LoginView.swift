@@ -11,7 +11,13 @@ struct LoginView: View {
 
   /// What the token is called in Devices and tokens: "iPhone (Hatbot iOS) 15 Oct 2026".
   static var deviceName: String {
-    "\(UIDevice.current.model) (Hatbot iOS) \(Date().formatted(.dateTime.day().month(.abbreviated).year()))"
+    // On a Mac, UIDevice says "iPad".
+    #if targetEnvironment(macCatalyst)
+      let model = "Mac"
+    #else
+      let model = UIDevice.current.model
+    #endif
+    return "\(model) (Hatbot iOS) \(Date().formatted(.dateTime.day().month(.abbreviated).year()))"
   }
 
   private enum Field { case server, password, code }

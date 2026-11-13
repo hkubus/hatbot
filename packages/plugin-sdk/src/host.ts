@@ -122,7 +122,17 @@ export interface ScriptsService {
   /** A run, as a background task with `input`; null while its last run from `runKey` still goes. */
   start(
     script: Script,
-    o: Pick<BackgroundTask, "origin" | "source" | "scheduleId" | "watcherId" | "runKey"> & {
+    o: Pick<
+      BackgroundTask,
+      | "origin"
+      | "source"
+      | "scheduleId"
+      | "triggerId"
+      | "watcherId"
+      | "runKey"
+      | "payload"
+      | "trusted"
+    > & {
       input: Record<string, unknown>;
       /** What started it had read untrusted content, this. */
       taintedBy?: string | null;
