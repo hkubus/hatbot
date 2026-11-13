@@ -382,7 +382,7 @@ export const CASES: Case[] = [
     owner: "find me best deals on 500gb ssds",
     tools: {
       scout_search: (i) => SSDS(String(i.query)),
-      scout_listings: (i) => SSDS(String(i.query ?? "ssd")),
+      scout_listings: (i) => SSDS(String(i.q ?? "ssd")),
       scout_listing_detail: (i) => ssdDetail(String(i.key)),
     },
     pages: SSD_PAGES,

@@ -345,6 +345,24 @@ test("a search gets Scout's compact rows, says which marketplaces were paused or
     { sources: ["Vinted"], ignoreBackoff: true, format: "compact", deadlineMs: 100_000 },
   ]);
   expect(scout.calls("scout_search")[0]).not.toHaveProperty("deadlineMs");
+
+  // Any other failure is named too, so an empty result isn't read as "nothing for sale".
+  const blocked = await runPluginTool(search, { query: "blocked 3070", sources: ["OLX"] }, call());
+  expect(blocked.text.split("\n\n")[0]).toBe("OLX wasn't searched: OLX answered 403 (blocked).");
+});
+
+test("flag lists and watch ids that Scout would refuse are stopped before the call", async () => {
+  const t = await testApp();
+  await connected(t, fakeScout());
+  const ok = (name: string, input: unknown) =>
+    named(t.plugins.tools(), name).schema.safeParse(input).success;
+  const seven = Array(7).fill("locked");
+  expect(ok("scout_listings", { excludeFlags: seven })).toBe(false);
+  expect(ok("scout_listings", { excludeFlags: seven.slice(1) })).toBe(true);
+  expect(
+    ok("scout_search", { query: "x", sources: ["OLX"], excludeFlags: [...seven, "accessory"] }),
+  ).toBe(false);
+  expect(ok("scout_verify_listing", { key: "OLX:1", watchId: "  " })).toBe(false);
 });
 
 test("Scout's description check runs without asking, even after reading listings", async () => {

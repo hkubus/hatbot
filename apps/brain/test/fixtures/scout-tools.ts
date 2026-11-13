@@ -253,7 +253,13 @@ export function scoutServer(o: ScoutOptions): McpServer {
       image: null,
       flags: [],
     };
-    const flags = z.array(z.string()).optional();
+    // Scout's own enums and caps (server/mcp.ts), so a mismatch fails here as it would there.
+    const stored = ["for_parts", "wanted_ad", "swap", "replica", "damaged", "locked"] as const;
+    const flags = z.array(z.enum(stored)).max(stored.length).optional();
+    const searchFlags = z
+      .array(z.enum([...stored, "accessory"]))
+      .max(stored.length + 1)
+      .optional();
     server.registerTool(
       "scout_search",
       {
@@ -262,7 +268,7 @@ export function scoutServer(o: ScoutOptions): McpServer {
           query: z.string(),
           sources: z.array(z.string()),
           page: z.number().optional(),
-          excludeFlags: flags,
+          excludeFlags: searchFlags,
           typoVariants: z.boolean().optional(),
           ignoreBackoff: z.boolean().optional(),
           deadlineMs: z.number().optional(),
@@ -273,29 +279,37 @@ export function scoutServer(o: ScoutOptions): McpServer {
       async (input) => {
         log("scout_search", input);
         const source = (name: string) =>
-          name === "Vinted" && !input.ignoreBackoff
+          name === "OLX" && input.query.includes("blocked")
             ? {
                 source: name,
                 status: "error",
-                errorKind: "backoff",
-                message: "Skipped: connector backoff",
-                backoffUntil: "2026-10-09T14:30:00.000Z",
+                errorKind: "blocked",
+                message: "OLX answered 403 (blocked)",
+                backoffUntil: null,
               }
-            : name === "Allegro Lokalnie"
+            : name === "Vinted" && !input.ignoreBackoff
               ? {
                   source: name,
                   status: "error",
-                  errorKind: "deadline",
-                  message: "Not finished within the 45 s deadline",
-                  backoffUntil: null,
+                  errorKind: "backoff",
+                  message: "Skipped: connector backoff",
+                  backoffUntil: "2026-10-09T14:30:00.000Z",
                 }
-              : {
-                  source: name,
-                  status: "ok",
-                  errorKind: null,
-                  message: "1 match",
-                  backoffUntil: null,
-                };
+              : name === "Allegro Lokalnie"
+                ? {
+                    source: name,
+                    status: "error",
+                    errorKind: "deadline",
+                    message: "Not finished within the 45 s deadline",
+                    backoffUntil: null,
+                  }
+                : {
+                    source: name,
+                    status: "ok",
+                    errorKind: null,
+                    message: "1 match",
+                    backoffUntil: null,
+                  };
         const listings = input.sources.includes("OLX") ? [row] : [];
         if (input.format !== "compact") return json({ listings, sources: input.sources });
         return json({

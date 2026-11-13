@@ -26,7 +26,7 @@ const CALL_TIMEOUT_MS = 120_000;
 const refusedBy = (err: unknown) =>
   err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
-const WatchId = z.string().min(1).max(160);
+const WatchId = z.string().trim().min(1).max(160);
 const ListingKey = z.string().min(3).max(500).describe('The listing key, e.g. "OLX:123456"');
 const Days = z.number().int().min(7).max(180).optional();
 const Checks = z
@@ -39,14 +39,17 @@ const FLAGS =
   "for_parts: broken, for parts or repair; wanted_ad: someone buying; swap: offered only in exchange; replica: a fake; damaged: its condition says damaged; locked: an iCloud, Google or MDM lock";
 /** Left out unless the model says otherwise: a want is almost never after them. */
 const HIDDEN_FLAGS = ["for_parts", "wanted_ad", "swap", "replica", "locked"] as const;
+// Scout rejects a longer list than it has flags, so the whole call would fail.
 const ExcludeFlags = z
   .array(StoredFlag)
+  .max(StoredFlag.options.length)
   .optional()
   .describe(
     `Leave out listings Scout flagged with any of these (${FLAGS}). Without it, ${HIDDEN_FLAGS.join(", ")} are left out; [] leaves none out.`,
   );
 const SearchExcludeFlags = z
   .array(z.enum([...StoredFlag.options, "accessory"]))
+  .max(StoredFlag.options.length + 1)
   .optional()
   .describe(
     `Leave out results Scout flagged with any of these (${FLAGS}; accessory: an accessory the query didn't ask for). Without it, ${HIDDEN_FLAGS.join(", ")} and accessory are left out; [] leaves none out.`,
@@ -70,12 +73,14 @@ const Source = z.object({
   source: z.string(),
   status: z.string(),
   errorKind: z.string().nullish(),
+  message: z.string().nullish(),
   backoffUntil: z.string().nullish(),
 });
 
 /**
- * Compact scout_search's answer without its empty keys, after a line for each marketplace Scout paused
- * or that didn't finish in time.
+ * Compact scout_search's answer without its empty keys, after a line for each marketplace that wasn't
+ * searched: paused by Scout, out of time, or failed (blocked, signed out), so an empty result isn't
+ * read as "nothing on the market".
  */
 function searchAnswer(text: string): string {
   let parsed: unknown;
@@ -93,7 +98,7 @@ function searchAnswer(text: string): string {
         `${s.source} wasn't searched: Scout paused it after failed scans${s.backoffUntil ? `, until ${s.backoffUntil}` : ""}.`,
       ];
     if (s.errorKind === "deadline") return [`${s.source} didn't finish in time.`];
-    return [];
+    return [`${s.source} wasn't searched: ${s.message || "the search failed"}.`];
   });
   const rows = JSON.stringify(parsed, (_, v) => (v === null ? undefined : v));
   return notes.length ? `${notes.join("\n")}\n\n${rows}` : rows;
@@ -160,7 +165,7 @@ const READS: Read[] = [
   {
     name: "scout_verify_listing",
     description:
-      "Have Scout's AI read one listing's description now for damage, parts only, repairs, missing parts or an account lock, and the watch's checks: status pass, reject or unknown. Cheap, and free when Scout checked it in the last 6 hours (reused). Scout keeps the verdict.",
+      "Have Scout's AI read one listing's description now for damage, parts only, repairs, missing parts or an account lock, and the watch's checks: status pass, reject, unknown or fallback (Scout's AI was down); anything but pass means it wasn't checked. Cheap, and free when Scout checked it in the last 6 hours (reused). Scout keeps the verdict.",
     schema: z.object({
       key: ListingKey,
       watchId: WatchId.optional().describe(
@@ -235,7 +240,7 @@ const READS: Read[] = [
   {
     name: "scout_search",
     description:
-      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter, cheapest first. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key, and flags are what Scout guessed from its words. The same search again within 3 minutes costs nothing.",
+      "Search OLX, Allegro Lokalnie and Vinted live now, with Scout's relevance filter, cheapest first. Slow: it loads the marketplaces' pages, so prefer scout_listings for what Scout already found. Each result's id is its listing key, and flags are what Scout guessed from its words. The same search again within 3 minutes comes from Scout's cache when every marketplace answered the first time. Scout allows about 30 searches and description checks a minute between them.",
     schema: z.object({
       query: z.string().trim().min(1).max(240),
       sources: z.array(Marketplace).min(1).max(3),
@@ -518,8 +523,8 @@ Finding something to buy:
 - A search through more than a few listings goes to a task (run_task with effort medium), with every must-have in its goal, so it has room to keep looking.
 - Search widely: scout_deals for Scout's best deals of the last 12 hours, scout_listings for everything it found, then scout_search on every marketplace that fits, with the must-haves as require checks and the deal-breakers as exclude checks. Set typoVariants on the first scout_search for a product, not on later pages or rewordings. Try other wordings (the model number alone, the Polish name), the next pages, and a price range around the budget.
 - Listings flagged for parts, wanted ads, swaps, replicas and locked ones (and accessories, in scout_search) are left out unless you pass excludeFlags: pass a shorter list, or [], when the owner wants them, such as one for parts. Flags are Scout's guess from a listing's words, so check what matters yourself.
-- When scout_search says a marketplace wasn't searched because Scout paused it, tell the owner which and until when; search it anyway with ignoreBackoff only when they ask. One that didn't finish in time comes back if you run the same search again a minute later.
-- With many candidates, sift them first with scout_verify_listing (several at once): drop a reject, and treat unknown as not checked.
+- When scout_search says a marketplace wasn't searched because Scout paused it, tell the owner which and until when; search it anyway with ignoreBackoff only when they ask. For one that didn't finish in time, or failed, run the same search once more; if it still doesn't answer, tell the owner it wasn't searched.
+- With many candidates, sift them first with scout_verify_listing (several at once): drop a reject, and treat anything but pass as not checked.
 - Before you show or recommend a listing, look at it with negotiate_inspect (several at once) and check it against each must-have, photos included: the right model, no damage the owner wouldn't accept, nothing missing, photos of the item itself. Drop one that fails a must-have or can't show it, and keep a line on why.
 - Show the owner three or more listings to choose from as a chart block of type "listings", in the chat or a task's summary, not a list: each one's url, price and Scout's image as its photo, and a few words on why as its note. Say your pick and why in a line before it, and stop after it.
 - Keep going until a listing meets every must-have. Don't settle for a near miss or pick the best of a bad page. If nothing on the market fits, tell the owner what you searched and why the closest ones fell short.
