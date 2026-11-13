@@ -216,10 +216,25 @@ const SSD_LIST = [
   },
 ];
 
+const SOURCES: Record<string, string> = {
+  olx: "OLX",
+  vinted: "Vinted",
+  allegrolokalnie: "Allegro Lokalnie",
+};
+
+/** Scout's compact rows, as its plugin passes them on. */
 const SSDS = (q: string) =>
   JSON.stringify({
     query: q,
-    results: SSD_LIST.map(({ description: _, file: __, ...l }) => ({ ...l, shipping: true })),
+    listings: SSD_LIST.map(({ description: _, file: __, marketplace, ...l }) => ({
+      ...l,
+      source: SOURCES[marketplace],
+      shippingAvailable: true,
+      relevance: "relevant",
+      matchedVia: "query",
+      flags: [],
+      duplicateCount: 0,
+    })),
   });
 
 /** Scout's record of a listing, by its key ("Vinted:123", "olx:CID…"). */
@@ -367,7 +382,7 @@ export const CASES: Case[] = [
     owner: "find me best deals on 500gb ssds",
     tools: {
       scout_search: (i) => SSDS(String(i.query)),
-      scout_listings: (i) => SSDS(String(i.query ?? "ssd")),
+      scout_listings: (i) => SSDS(String(i.q ?? "ssd")),
       scout_listing_detail: (i) => ssdDetail(String(i.key)),
     },
     pages: SSD_PAGES,
@@ -394,7 +409,7 @@ export const CASES: Case[] = [
     ],
     at: "2026-10-31T20:14:00Z",
     owner: "ok 98 inch something around 100 inches it just needs to be 8k",
-    tools: { scout_search: () => JSON.stringify({ results: [] }) },
+    tools: { scout_search: () => JSON.stringify({ listings: [] }) },
     check: (o) => [
       ...(asked(o) ? ["asked instead of answering"] : []),
       ...(called(o, /watch_create/).length ? ["made a watch"] : []),

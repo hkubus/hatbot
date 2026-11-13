@@ -51,7 +51,7 @@ Built, but not yet deployed or tried live:
 ---
 
 ## 3. Negotiation
-Hatbot haggles on OLX, Allegro Lokalnie and Vinted as the Haggler bot, inside a mandate, with market data from Scout (`../scout`) over the MCP plugin. N1 and N2 are built (2026-10-16) and tested against a stand-in desktop-agent and Scout, but not tried live: there's no marketplace account yet.
+Hatbot haggles on OLX, Allegro Lokalnie and Vinted as the Haggler bot, inside a mandate, with market data from Scout (`../scout`) through Scout's plugin. N1 and N2 are built (2026-10-16) and tested against a stand-in desktop-agent and Scout, but not tried live: there's no marketplace account yet.
 
 Built 2026-10-26, not tried live: `negotiate_inspect` (a listing's live page and up to 5 photos, read from the desktop, which needs Update for `/fetch/image`), the search method in Scout's notes (keep looking until a listing meets every must-have), and N4, several sellers at once under one approval, where the first agreement ends the others. The sellers it drops aren't told; a short "bought elsewhere" would need a send past the mandate check. Photos are picked by the marketplaces' image hosts and page order, checked against one page from each site on 2026-10-26.
 
@@ -75,6 +75,8 @@ Built in Scout (price reference, comparables, outcomes and the listing detail's 
 - **`scout_listing_detail`** has a `negotiation` block (days listed, price drops, the negotiable flag, the seller and their other listings, relists), `live: true` to check the listing on the marketplace now and `sellerListings: true`. The brain reads `listing.{url, title, price, marketplace, typical, watchId, priceNegotiable, postedAt|firstSeenAt}` and `history[].{price, observedAt}`. Still to do: check the listing with `live: true` before an offer and before paying (P1-3).
 - **`scout_inbox(marketplace, since?)`** and **`scout_conversation(id)`**, through Scout's stored marketplace sessions (N3, built in Scout): Scout's plugin offers them to the brain alone; over the MCP plugin they need Chat.
 
+Built 2026-11-13 from Scout's #51–#57, not tried against the real Scout: `scout_deals`, `scout_verify_listing` as a read, compact rows from `scout_search` and `scout_listings`, junk flags left out unless the model passes its own `excludeFlags`, and a search saying which marketplaces Scout paused or didn't finish. Left out on purpose: `refresh` (a repeat within 3 minutes is the same search), `scoreAgainst` and `sort` on searches, and compact `scout_listing_detail`, since the appraisal and `negotiate_inspect` read the full one, image and history included.
+
 For logins (built in Scout, 2026-10-26): **`scout_shared_sessions`** → `sessions[].{marketplace, label, revision}` and **`scout_shared_session {marketplace}`** → `{revision, storageState}`, Playwright storage state. Only connected apps get them, only for the sessions you shared, and the brain alone calls them (`desktop/logins.ts`); desktop-agent takes cookies only for the marketplaces' sites.
 
 One write tool:
@@ -92,13 +94,13 @@ For N6, Scout's handoff is `../scout/docs/hatbot-listing-plan.md`. In short:
 ### 3.3 N6, listing
 You mark a flip ready in Scout and pick channels, which is the approval; Haggler posts it on each channel and Scout gets the URLs back. Haggler only, since it holds the marketplace logins. Blocked live on the same thing as N1: Haggler's own accounts.
 
-**L1, Scout** (in Scout's repo, from its handoff; started in Scout's own T3 thread on 2026-10-24): the ready state, the four tools above, the button on the web and iOS, and delivery details (Vinted's parcel size, OLX and Allegro Lokalnie delivery and pickup) in the listing draft.
+**L1, Scout** (built in Scout, its PR #33): the ready state, the tools above, the button on the web and iOS, and delivery details (Vinted's parcel size, OLX and Allegro Lokalnie delivery and pickup) in the listing draft.
 
 L2 (photo uploads on the add-listing pages) and L3 (the lister, `apps/brain/src/listings/`) are built (2026-10-24) and tested against a stand-in Scout and desktop-agent, not live. Not checked yet: the add-listing pages' addresses (`UPLOAD_PAGES` in `packages/shared/src/desktop.ts`) and their publish buttons' labels (`listings/gate.ts`).
 
-Scout is connected with a button: Settings → Plugins → Scout (2026-10-25). Scout's side, the sign-in (MCP's OAuth with PKCE) and Connected apps, is being built on its `feat/hatbot-listing` branch.
+Scout is connected with a button: Settings → Plugins → Scout (2026-10-25), with Scout's sign-in (MCP's OAuth with PKCE) and Connected apps, merged in Scout with L1.
 
-**L4, live.** Once L1 and the sign-in are in Scout, connect it. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after marking it.
+**L4, live.** Connect the real Scout. Teach Haggler one listing per site, for its playbook skills ("list on OLX", "list on Allegro Lokalnie", "list on Vinted"); categories and delivery are where it'd stumble. Done when one real flip goes from "Ready to list" to a live OLX listing with its URL in Scout, with nobody at the keyboard after marking it.
 
 **L5, taking a sold flip down** (built 2026-11-05, tested against a stand-in Scout and desktop, not live; Scout's side merged as its PR #39). Recording the sale is the go-ahead, whether the owner records it in Scout or Haggler does (N5). Each tick reads `scout_flips_to_take_down`, and each listing to take down gets a row in `flip_takedowns` and a desktop task of its own, "Take down on OLX: …", ahead of any posting. Where it sold is left up: the buyer may still be paying there. Only listings Hatbot posted, so ones with a URL in Scout; one listed by hand isn't touched. The task opens the listing; if it's gone already, it says so with `record_taken_down`, otherwise it ends it with the site's own button ("Zakończ" on OLX and Allegro Lokalnie, "Usuń" on Vinted) and then says so. Its gate (`takeDownRefused`) keeps it on that marketplace, off the add-listing page, and to short typing; a delete or a confirmation goes through `confirm_intent` and the review as usual. The brain then ticks it in Scout. A task that ends without `record_taken_down` isn't tried again: the chat says to take it down by hand. A listing the owner ticks first, or a sale taken back, drops its row and stops its task. Not checked: the sites' end buttons and their confirmation steps; a skill per site (`take-down-on-olx`) can teach them.
 
