@@ -347,6 +347,8 @@ test("a listing is looked at as it is now, with its own photos, before it's chos
   expect(said).toContain('trusted="false"');
   expect(said).toContain("Stan: Używane");
   expect(said).toContain("Rysa na wentylatorze.");
+  // What Scout's flags caught in its words.
+  expect(said).toContain("wentylator do wymiany");
   expect(said).not.toContain("Szukaj");
   // Its structured photos first, then the gallery in the page's order, at a size the model reads well.
   expect(result.slice(1).map((b) => b.source?.data)).toEqual(

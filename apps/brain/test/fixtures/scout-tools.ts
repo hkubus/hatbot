@@ -35,6 +35,7 @@ export function scoutServer(o: ScoutOptions): McpServer {
       url: "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001.html",
       priceNegotiable: true,
       postedAt: "2026-10-01T10:00:00Z",
+      flags: [{ flag: "for_parts", match: "wentylator do wymiany", in: "description" }],
     },
     // A cross-border listing, priced in euro.
     "Vinted:2002": {
