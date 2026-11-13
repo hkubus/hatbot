@@ -283,11 +283,26 @@ extension View {
   func tiles(_ fill: Color = .surface1) -> some View {
     listRowBackground(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(fill).padding(.vertical, 1))
       .listRowSeparator(.hidden)
+      .macRowInsets()
   }
 
   /// On a Form or List whose rows are tiles: the page's surface between them.
   func tiledPage() -> some View {
     scrollContentBackground(.hidden).background(Color.surface)
+      #if targetEnvironment(macCatalyst)
+        // A Mac's lists leave no room after a section's footer, so the next header ran into it.
+        .listSectionSpacing(16)
+      #endif
+  }
+
+  /// A Mac's lists pad rows less than iOS's, so a row of two lines touched its tile's edges.
+  @ViewBuilder
+  fileprivate func macRowInsets() -> some View {
+    #if targetEnvironment(macCatalyst)
+      if #available(iOS 26, *) { listRowInsets(.vertical, 10) } else { self }
+    #else
+      self
+    #endif
   }
 
   /// A text field outside a form, filled as Material's are.
