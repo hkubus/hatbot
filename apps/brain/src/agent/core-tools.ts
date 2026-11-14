@@ -33,6 +33,7 @@ type Meta = {
   plugin: string;
   label: string;
   access?: "read" | "own";
+  looks?: boolean;
   places?: Place[];
   incognito?: boolean;
   deferred?: boolean;
@@ -75,7 +76,7 @@ const META: Record<string, Meta> = {
   run_task: { plugin: "tasks", label: "Starting a task", places: CHAT },
   todo_work: { plugin: "tasks", label: "Starting a task on a to-do", places: CHAT },
   ask_bot: { plugin: "tasks", label: "Asking another bot", places: CHAT, when: withOthers },
-  get_task: { plugin: "tasks", label: "Checking on a task", places: CHAT },
+  get_task: { plugin: "tasks", label: "Checking on a task", looks: true, places: CHAT },
   steer_task: { plugin: "tasks", label: "Steering a task", places: CHAT },
   ask_helpers: {
     plugin: "tasks",
@@ -138,6 +139,7 @@ function coreTool(def: (typeof TOOLS)[number], services: () => CoreServices): Pl
     description: def.description,
     schema: def.schema as z.ZodType,
     access: meta.access ?? "own",
+    looks: meta.looks,
     places: meta.places,
     incognito: meta.incognito,
     deferred: meta.deferred,

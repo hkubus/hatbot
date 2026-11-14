@@ -13,7 +13,7 @@ import {
   tool,
   type Verdict,
 } from "@hatbot/plugin-sdk";
-import { destructive, destructiveOnWindows } from "@hatbot/plugin-sdk/shell";
+import { destructive, destructiveOnWindows, readOnly } from "@hatbot/plugin-sdk/shell";
 import { type ApprovalKind, type ComputerInfo, SecretName } from "@hatbot/shared";
 import { z } from "zod";
 import type { Computers } from "./computers";
@@ -106,6 +106,10 @@ export function computerTools(computers: Computers, secrets: SecretsHost, files?
       access: "write",
       label: "Running a command on your computer",
       describe: ({ computer, command }) => `On ${computer}: ${command}`,
+      looks: ({ computer, command }) => {
+        const c = known(computer);
+        return !!c && !onWindows(c) && readOnly(command);
+      },
       target: ({ computer }) => computer.toLowerCase(),
       untrusted: true,
       policy: ({ computer, command }, call) => {

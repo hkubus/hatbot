@@ -684,6 +684,7 @@ export const sshPlugin = definePlugin({
           }),
         ),
         describe: ({ hosts, command }) => `On ${distinct(hosts).join(", ")}: ${command}`,
+        looks: ({ command }) => readOnly(command),
         target: ({ hosts }) => distinct(hosts),
         commands: ({ hosts, command }) => commandCount(command) * distinct(hosts).length,
         policy: ({ hosts, command }) => {
@@ -719,6 +720,7 @@ export const sshPlugin = definePlugin({
                 timeout_s: Timeout,
               }),
               describe: ({ host, guest, command }) => `In CT ${guest} on ${host}: ${command}`,
+              looks: ({ command }) => readOnly(command),
               // The container's own; its host's commands don't touch it.
               target: ({ host, guest }) => `${host}/${guest}`,
               commands: ({ command }) => commandCount(command),

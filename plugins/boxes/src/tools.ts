@@ -396,6 +396,8 @@ type BoxTool<S extends z.ZodType> = {
   label: string;
   /** Makes or changes a box: left to the code bot when there is one. */
   change?: boolean;
+  /** Changes nothing. */
+  looks?: boolean;
   schema: S;
   run: (input: z.infer<S>, ctx: ToolContext, signal: AbortSignal) => Promise<ToolOutput>;
 };
@@ -552,6 +554,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_list",
+    looks: true,
     label: "Looking at boxes",
     description: "Your boxes, the latest changed first.",
     schema: z.object({}),
@@ -569,6 +572,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_read",
+    looks: true,
     label: "Reading a box",
     description:
       "Read one of your boxes' page (a box with files: its files): the one that opens, or an earlier version.",
@@ -637,6 +641,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_data",
+    looks: true,
     label: "Reading what a box saved",
     description:
       "What one of your boxes' page has saved with hatbox.store, by key, its feeds with what they last read, its actions, and which of its secrets the owner has set.",
@@ -663,6 +668,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_look",
+    looks: true,
     label: "Looking at a box",
     description:
       "See one of your boxes as the owner would: a picture of the top of its page on a phone, or a desktop, with the errors it hit (uncaught exceptions, unhandled rejections, console.error, and what the browser refused it). It's drawn on the desktop with no network. hatbox.store starts empty and keeps what the page saves for that one look; hatbox.ask, .send and .feed fail there, and .fetch unless backend. with_data starts it with what the page saved, and what comes back is then untrusted. Use steps to try what the box does as the owner would (add an item, press its buttons), then check what it saved, which is shown after the steps. backend lets the page's hatbox.fetch reach the box's real backend, live: what it sends really changes the backend's data, and what comes back is untrusted.",
@@ -910,6 +916,7 @@ const TOOLS = [
   }),
   def({
     name: "boxes_logs",
+    looks: true,
     label: "Reading a box's logs",
     description:
       "The end of what one of your boxes' backend printed (console.log, errors, scheduled() runs), with notes on fetches it wasn't let make.",

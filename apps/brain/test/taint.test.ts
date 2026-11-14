@@ -241,7 +241,7 @@ test("tainted, a memory write or edit reaches the review as what it changes, not
   await t.tasks.idle();
   const [write, edit] = work.creates
     .filter((c) => c.system === REVIEW_PROMPT)
-    .map((c) => String(c.messages[0]?.content));
+    .map((c) => String(c.messages[0]?.content).split("<action>")[1]);
   expect(write).toContain("+ - CT 106: Immich");
   expect(write).not.toContain("CT 105: Jellyfin");
   expect(edit).toContain("+ - CT 107: Frigate");
@@ -271,6 +271,48 @@ test("in the chat, the review reads what the bot said there, so the owner's yeah
   expect(goal).toContain("Restarting it now.");
   expect(goal).not.toContain("Restarted.");
   expect(restarted).toEqual(["jellyfin"]);
+});
+
+test("the review sees the changes a reply or task already made, and not a look or one it blocked", async () => {
+  const steps = () => [
+    { content: [toolUse("lab_issue", {})] },
+    { content: [toolUse("lab_restart", { service: "nas" })] },
+    { content: [toolUse("lab_restart", { service: "jellyfin" })] },
+    { content: [toolUse("memory_edit", { path: "homelab.md", append: "- Jellyfin restarted" })] },
+  ];
+  const noNas = (p: { system?: unknown; messages: { content: unknown }[] }) =>
+    p.system !== REVIEW_PROMPT
+      ? undefined
+      : String(p.messages[0]?.content).split("<action>")[1]?.includes("nas")
+        ? '{"safe": false, "why": "Not asked."}'
+        : '{"safe": true, "why": "Routine."}';
+  // A look at a task is one of Hatbot's own tools, but changes nothing.
+  const look = { content: [toolUse("get_task", { id: 99 })] };
+  const chat = new FakeModel([look, ...steps(), { content: [text("Done.")] }]);
+  const work = new FakeModel([...steps(), finish("Done.")]);
+  chat.onCreate = noNas;
+  work.onCreate = noNas;
+  const restarted: string[] = [];
+  const t = await testApp(chat, work, {}, [labPlugin(() => "Jellyfin hangs", restarted)]);
+  await t.plugins.update("lab", { enabled: true });
+  const made = (m: FakeModel) =>
+    m.creates
+      .filter((c) => c.system === REVIEW_PROMPT)
+      .map((c) =>
+        JSON.parse(
+          String(c.messages[0]?.content)
+            .split("<changes_made>\n")[1]
+            ?.split("\n</changes_made>")[0] ?? "",
+        ),
+      );
+  // Haiku and then Opus block the NAS; Jellyfin's restart goes, and the edit after it sees it.
+  const after = [[], [], [], ['lab_restart {"service":"jellyfin"}']];
+  await t.thread.post("fix jellyfin").done;
+  expect(made(chat)).toEqual(after);
+  t.tasks.createBackgroundTask({ title: "Fix Jellyfin", goal: "Fix Jellyfin", origin: "chat" });
+  await t.tasks.idle();
+  expect(made(work)).toEqual(after);
+  expect(restarted).toEqual(["jellyfin", "jellyfin"]);
 });
 
 test("what code ran, in the sandbox or with the web tools, is untrusted and taints the chat", async () => {

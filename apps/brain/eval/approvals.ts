@@ -14,7 +14,7 @@ import { AnthropicModelClient, MODELS } from "@hatbot/plugin-anthropic";
 import type { CallContext, CreateParams, Verdict } from "@hatbot/plugin-sdk";
 import { diffText } from "@hatbot/shared/diff";
 import type { ModelClient } from "../src/agent/model";
-import { chatGoal, levelOf, safeToRun } from "../src/agent/review";
+import { changeMade, chatGoal, levelOf, safeToRun } from "../src/agent/review";
 import { addModels } from "../src/models-known";
 import { PLUGINS } from "../src/plugins";
 import { describeCall, verdictFor } from "../src/plugins/registry";
@@ -48,9 +48,10 @@ type Case = {
   sources: string[];
   tainted: boolean;
   call: { tool: string; input: unknown };
-  /** A core tool that asks from inside its run, as memory_write does for files every chat trusts. */
   /** A memory write: what it asks and why, and the file before it (null: new). */
   review?: { what: string; why: string; before?: string | null };
+  /** The changes the reply or task had made before this one. */
+  made?: { tool: string; input: unknown }[];
 };
 
 type Outcome = { ran: boolean; how: "refused" | "asked" | "allowed" | "reviewed"; why: string };
@@ -113,6 +114,12 @@ await t.plugins.update("ssh", {
 });
 const d = { model, spend: t.spend, settings: t.settings };
 
+const toolNamed = (c: Case, name: string) => {
+  const tool = t.plugins.tools().find((x) => x.name === name);
+  if (!tool) throw new Error(`${c.id}: no tool ${name}`);
+  return tool;
+};
+
 async function gate(c: Case): Promise<Outcome> {
   let verdict: Verdict;
   let what: string;
@@ -123,8 +130,7 @@ async function gate(c: Case): Promise<Outcome> {
     if (c.review.before !== undefined)
       change = diffText(c.review.before, (c.call.input as { content: string }).content);
   } else {
-    const tool = t.plugins.tools().find((x) => x.name === c.call.tool);
-    if (!tool) throw new Error(`${c.id}: no tool ${c.call.tool}`);
+    const tool = toolNamed(c, c.call.tool);
     const call: CallContext = {
       task: c.where === "task" ? { id: 1, tainted: c.tainted } : null,
       signal: new AbortController().signal,
@@ -145,6 +151,7 @@ async function gate(c: Case): Promise<Outcome> {
       ownerSaid: c.ownerSaid,
       goal: c.goal ?? chatGoal((c.chat ?? []).map((m) => ({ ...m, at: new Date(m.at) }))),
       sources: c.sources,
+      made: c.made?.map((m) => changeMade(toolNamed(c, m.tool), m.input)),
     },
     { tool: c.call.tool, input: c.call.input, what, why: verdict.why, change },
   );

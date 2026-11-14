@@ -32,6 +32,7 @@ export const codePlugin = definePlugin({
         description:
           "Run a bash command in the sandbox: a throwaway Linux user on the desktop container with Python 3 (numpy, pandas, matplotlib, openpyxl), jq, sqlite3, poppler-utils and git. Use it to compute, convert or analyse files, make files and images, or test a snippet. The working directory is the sandbox's home and persists between calls; files: copies the owner's attachments into in/ first. It reaches the internet but not your LAN, and can't see the browser or the screen. send_file hands the owner a file it made.",
         access: "write",
+        looks: true,
         label: "Running code",
         schema: z.object({
           command: z.string().min(1).max(20_000).describe("A bash command or script"),
@@ -83,6 +84,7 @@ export const codePlugin = definePlugin({
         description:
           "Create or replace a text file in the sandbox, relative to its home as code_run sees it. {{secret:NAME}} in content puts in a secret the owner keeps, which you never see: for a script's config or .env.",
         access: "write",
+        looks: true,
         label: "Writing a file in the sandbox",
         schema: z.object({
           path: z.string().min(1).max(500),

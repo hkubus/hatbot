@@ -21,7 +21,15 @@ import {
 import { z } from "zod";
 import { ownerAnswer, TASK_ASK_DESCRIPTION, TaskAskOwner } from "../agent/ask";
 import { agentPrompt, CHART_GUESS } from "../agent/prompt";
-import { Blocks, blockedText, levelOf, safeToRun, scopable } from "../agent/review";
+import {
+  Blocks,
+  blockedText,
+  changeMade,
+  changes,
+  levelOf,
+  safeToRun,
+  scopable,
+} from "../agent/review";
 import { memoryIndex } from "../agent/thread";
 import {
   AskBotInput,
@@ -450,6 +458,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : words;
 
   const blocks = new Blocks();
+  /** What this run has changed, which the review sees. */
+  const made: string[] = [];
   /** Why the run stops, once the review has blocked too much. */
   let gaveUp: string | null = null;
 
@@ -497,6 +507,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ownerSaid: withNotes(ownerWords()),
         goal: task.goal,
         sources: [...sources],
+        made,
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
       { reserve: tasks.reserves(task) },
@@ -533,7 +544,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
             attachments.save({ bytes, name, mediaType: "", from: "hatbot", taskId: id })
         : undefined,
       waitForTask: (childId) => waitForChild(childId),
-      approve: taskApprove(tasks, task),
+      approve: taskApprove(tasks, task, made),
       progress: shown,
       away: (fn) => withoutSlot(fn),
     };
@@ -627,6 +638,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       });
     const r = await runPluginTool(t, call.input, cc, d.plugins.hideSecrets);
     if (t.access === "write") blocks.ran();
+    if (changes(t, call.input) && !r.isError) made.push(changeMade(t, call.input));
     if (r.untrusted) taint(what);
     if (t.name === "send_file" && !r.isError)
       tasks.addStep(id, { kind: "action", name: "send_file", detail: r.content, url: null });

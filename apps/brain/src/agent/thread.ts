@@ -75,7 +75,16 @@ import {
   SUMMARY_PROMPT,
   systemPrompt,
 } from "./prompt";
-import { BLOCKS_IN_A_ROW, blockedText, chatGoal, levelOf, safeToRun, scopable } from "./review";
+import {
+  BLOCKS_IN_A_ROW,
+  blockedText,
+  changeMade,
+  changes,
+  chatGoal,
+  levelOf,
+  safeToRun,
+  scopable,
+} from "./review";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -603,6 +612,7 @@ export class Thread {
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
     progress: (line: string) => void,
+    made: string[],
   ): Promise<
     { note: string | null; byOwner?: true } | { content: string; isError: true; blocked?: true }
   > {
@@ -635,6 +645,7 @@ export class Thread {
             ? `${this.currentHandoff.task.goal}\n\n(${this.d.bots.nameOf(this.currentHandoff.task.requestedBy ?? HATBOT_ID)}, another of the owner's bots, asked for this: these aren't the owner's words.)`
             : chatGoal(this.chatSaid(episodeId)),
           sources,
+          made,
         },
         { ...call, why: verdict.why },
       );
@@ -696,6 +707,7 @@ export class Thread {
     signal: AbortSignal,
     progress: (line: string) => void,
     messageId: number,
+    made: string[],
   ): Promise<{ content: string; isError: boolean; images?: ToolImage[]; blocked?: true }> {
     const { attachments, approvals, settings } = this.d;
     const cc: CallContext = {
@@ -720,7 +732,7 @@ export class Thread {
     let byOwner = false;
     if (verdict.action === "ask") {
       const call = { tool: t.name, input, what, target: targetOf(t, input) };
-      const asked = await this.approve(episodeId, bot, call, verdict, signal, progress);
+      const asked = await this.approve(episodeId, bot, call, verdict, signal, progress, made);
       if ("content" in asked) return asked;
       note = asked.note;
       byOwner = Boolean(asked.byOwner);
@@ -2271,6 +2283,8 @@ export class Thread {
     let waited = 0;
     let commands = 0;
     let blocked = 0;
+    /** What this reply has changed, which the review sees. */
+    const made: string[] = [];
     let container: string | undefined;
     /** A change that waits for you. */
     const checked = async <T>(run: () => Promise<T>): Promise<T> => {
@@ -2381,7 +2395,7 @@ export class Thread {
                   isError: true,
                 };
               const r = await checked(() =>
-                this.gatedCall(episode.id, bot, t, input, signal, progress, out.id),
+                this.gatedCall(episode.id, bot, t, input, signal, progress, out.id, made),
               );
               blocked = "blocked" in r ? blocked + 1 : 0;
               return r;
@@ -2402,7 +2416,15 @@ export class Thread {
                   const verdict: Extract<Verdict, { action: "ask" }> = call.secret
                     ? { action: "ask", why, kind: "secret", always: true, careful: true }
                     : { action: "ask", why, tainted: true, always };
-                  const r = await this.approve(episode.id, bot, call, verdict, signal, progress);
+                  const r = await this.approve(
+                    episode.id,
+                    bot,
+                    call,
+                    verdict,
+                    signal,
+                    progress,
+                    made,
+                  );
                   if ("content" in r) return r;
                   return { content: r.note ? `\n\n${ownerNote(r.note)}` : "", isError: false };
                 }),
@@ -2417,6 +2439,8 @@ export class Thread {
                 }),
             },
           });
+          if (plugin && changes(plugin, call.input) && !r.isError)
+            made.push(changeMade(plugin, call.input));
           return toolResult(call.id, r.content, r.isError, r.images);
         };
         const lookup = (call: Anthropic.Beta.BetaToolUseBlock) =>

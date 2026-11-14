@@ -8,7 +8,7 @@ import { askOwner, endOf, Stop } from "./loop";
 import type { Tasks } from "./service";
 
 /** A change a task's tool asks for: the review checks it, or you're asked, as a write's change is. */
-export function taskApprove(tasks: Tasks, task: Task): JobRun["approve"] {
+export function taskApprove(tasks: Tasks, task: Task, made: string[] = []): JobRun["approve"] {
   const { d } = tasks;
   const id = task.id;
   const tainted = () => {
@@ -27,7 +27,7 @@ export function taskApprove(tasks: Tasks, task: Task): JobRun["approve"] {
       const check = await safeToRun(
         d,
         { taskId: id },
-        { ownerSaid: tasks.requestOf(id), goal: task.goal, sources },
+        { ownerSaid: tasks.requestOf(id), goal: task.goal, sources, made },
         { ...call, why },
       );
       if (check.safe) {

@@ -199,6 +199,11 @@ export type PluginTool<I = unknown> = {
    * which runs where it's offered and asks through `call.approve` itself when it must.
    */
   access: "read" | "write" | "own";
+  /**
+   * Changes nothing of the owner's (a look, or work in scratch space): the safety review isn't told of
+   * such calls among the changes made.
+   */
+  looks?: boolean | ((input: I) => boolean);
   /** Where it's offered; without it, the chat and tasks, and research too for a read. */
   places?: Place[];
   /** Offered in an incognito conversation; without it, a read is. */

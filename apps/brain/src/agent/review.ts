@@ -2,7 +2,7 @@
 // nothing untrusted could have put it there, it goes ahead; otherwise it's blocked, and the bot finds
 // another way. The small model looks first, and the expert model looks again before a block.
 
-import type { Verdict } from "@hatbot/plugin-sdk";
+import type { PluginTool, Verdict } from "@hatbot/plugin-sdk";
 import { localStamp, tagJson } from "@hatbot/plugin-sdk";
 import {
   type ApprovalKind,
@@ -11,6 +11,7 @@ import {
   type SafetyKind,
 } from "@hatbot/shared";
 import { modelName } from "../models-known";
+import { describeCall } from "../plugins/registry";
 import type { Settings, SettingsStore } from "../settings";
 import type { Spend } from "../spend";
 import { type ModelClient, oneShot } from "./model";
@@ -102,6 +103,27 @@ export function chatGoal(said: { owner: boolean; text: string; at: Date }[]): st
     : "(none: the owner is asking in the chat)";
 }
 
+/** The latest changes the review sees, and room for each. */
+const MADE_MOST = 20;
+const MADE_FIELD = 150;
+const MADE_CHARS = 400;
+
+/** Whether a call is a change the review is told of afterwards. */
+export function changes(t: PluginTool, input: unknown): boolean {
+  if (t.access === "read") return false;
+  if (typeof t.looks !== "function") return !t.looks;
+  const parsed = t.schema.safeParse(input);
+  return !parsed.success || !t.looks(parsed.data);
+}
+
+/** A change a reply or task made, as the review sees it: what its tool says it does, or its input cut short. */
+export function changeMade(t: PluginTool, input: unknown): string {
+  const line = t.describe
+    ? describeCall(t, input)
+    : `${t.name} ${JSON.stringify(input ?? {}, (_, v) => (typeof v === "string" && v.length > MADE_FIELD ? `${v.slice(0, MADE_FIELD)}…` : v))}`;
+  return line.length > MADE_CHARS ? `${line.slice(0, MADE_CHARS)}…` : line;
+}
+
 /** `by`: the reviewing model's name. */
 export type Review = { safe: boolean; why: string; by: string };
 
@@ -112,7 +134,7 @@ export type Review = { safe: boolean; why: string; by: string };
 export async function safeToRun(
   d: { model: ModelClient; spend: Spend; settings: SettingsStore },
   ref: { taskId?: number; episodeId?: number },
-  context: { ownerSaid: string | null; goal: string; sources: string[] },
+  context: { ownerSaid: string | null; goal: string; sources: string[]; made?: string[] },
   action: { tool: string; input: unknown; what: string; why: string; change?: string },
   { reserve = false }: { reserve?: boolean } = {},
 ): Promise<Review> {
@@ -121,6 +143,7 @@ export async function safeToRun(
   const content = [
     `<owner_said>\n${context.ownerSaid === null ? "(nothing the owner wrote is available for this task)" : tagText(context.ownerSaid)}\n</owner_said>`,
     `<task_goal>\n${tagText(context.goal)}\n</task_goal>`,
+    `<changes_made>\n${tagJson((context.made ?? []).slice(-MADE_MOST))}\n</changes_made>`,
     `<untrusted_sources>\n${tagJson(context.sources)}\n</untrusted_sources>`,
     `<action>\n${tagJson({
       tool: action.tool,
