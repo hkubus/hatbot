@@ -186,10 +186,10 @@ export const RunTaskInput = z.object({
       "What to do and what to report back, with every detail from the conversation it needs",
     ),
   effort: z
-    .enum(["medium", "high"])
+    .enum(["low", "medium", "high"])
     .optional()
     .describe(
-      'Leave out for routine work. "medium" for writing or changing code, or a long search; "high" when the owner asks for it or an earlier attempt failed',
+      'Leave out for routine work. "low" for a quick check; "medium" for writing or changing code, or a long search; "high" when the owner asks for it or an earlier attempt failed',
     ),
 });
 

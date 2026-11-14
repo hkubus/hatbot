@@ -569,11 +569,15 @@ test("on Haiku the chat can ask Opus once per reply; the answer goes in as is", 
   });
 });
 
-test("a task started from the chat keeps your words for its approval check; /task runs them untainted", async () => {
+test("a task started from the chat keeps your words for its approval check, at the effort the chat gives it; /task runs them untainted", async () => {
   const model = new FakeModel([
     {
       content: [
-        toolUse("run_task", { title: "Restart jellyfin", goal: "Restart jellyfin on nas" }),
+        toolUse("run_task", {
+          title: "Restart jellyfin",
+          goal: "Restart jellyfin on nas",
+          effort: "low",
+        }),
       ],
     },
     { content: [text("On it.")] },
@@ -586,11 +590,14 @@ test("a task started from the chat keeps your words for its approval check; /tas
     { content: [toolUse("finish_task", { outcome: "done", summary: "All fine.", notify: false })] },
   ]);
   const t = await testApp(model, work);
+  t.settings.update({ chatEffort: "high" });
   await t.thread.post("please restart jellyfin").done;
   await t.tasks.idle();
   await t.thread.idle();
   expect(t.thread.list().at(-1)?.text).toBe("Jellyfin is back.");
   const asked = t.tasks.list({}).at(-1);
+  // A quick job runs at low effort, below the chat's.
+  expect(work.requests[0]?.output_config?.effort).toBe("low");
   expect(t.tasks.requestOf(asked?.id as number)).toContain("please restart jellyfin");
   expect(asked?.conversationId).toBe(t.thread.conversationId);
 
