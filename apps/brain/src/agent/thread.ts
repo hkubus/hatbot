@@ -2653,9 +2653,33 @@ const toolResult = (
  * theirs, and the API turns the whole episode away without them.
  */
 export function answered(turns: Turn[]): Turn[] {
+  const ran = new Set(
+    turns.flatMap((t) =>
+      t.role === "assistant" && typeof t.content !== "string"
+        ? t.content.flatMap((b) => ("tool_use_id" in b ? [b.tool_use_id] : []))
+        : [],
+    ),
+  );
   const out: Turn[] = [];
   for (let i = 0; i < turns.length; i++) {
-    const turn = turns[i] as Turn;
+    let turn = turns[i] as Turn;
+    if (turn.role === "assistant" && typeof turn.content !== "string") {
+      // A search called alongside our tools runs, its result first in the next response, only when
+      // the request goes on from their results alone; one that never ran, because the reply was
+      // stopped there, turns every later request away.
+      const after = turns.slice(i + 1);
+      const goingOn = after.every(
+        (t) =>
+          t.role === "user" &&
+          typeof t.content !== "string" &&
+          t.content.every((b) => b.type === "tool_result"),
+      );
+      const content = goingOn
+        ? turn.content
+        : turn.content.filter((b) => b.type !== "server_tool_use" || ran.has(b.id));
+      if (!content.length) continue;
+      turn = { ...turn, content };
+    }
     out.push(turn);
     if (turn.role !== "assistant" || typeof turn.content === "string") continue;
     const calls = turn.content.filter((b) => b.type === "tool_use");

@@ -6,7 +6,7 @@ import {
   type ThreadMessage,
   threadGroups,
 } from "@hatbot/shared";
-import { activity, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
+import { activity, answered, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { FakeModel, text, toolUse } from "./fake-model";
@@ -769,6 +769,39 @@ test("tool calls a stop cut off get a result, so the next message still goes thr
     { type: "tool_result", tool_use_id: "toolu_b", is_error: true },
   ]);
   expect(JSON.stringify(last.slice(2))).toContain("second");
+});
+
+test("a tool search a stop cut off is left out, so the next message still goes through; one about to run is kept", async () => {
+  const model = new FakeModel([{ content: [text("one")] }, { content: [text("two")] }]);
+  const t = await testApp(model);
+  await t.thread.post("first").done;
+  // The API runs a search called beside our tools only once their results go back alone.
+  const call = toolUse("memory_read", { path: "a.md" }, "toolu_a");
+  const search = {
+    type: "server_tool_use",
+    id: "srvtoolu_a",
+    name: "tool_search_tool_regex",
+    input: { pattern: "automation" },
+  };
+  const turn = (role: string, content: unknown) =>
+    t.db
+      .query(
+        "INSERT INTO episode_turns (episode_id, role, content, created_at) VALUES (1, ?, ?, ?)",
+      )
+      .run(role, JSON.stringify(content), new Date().toISOString());
+  const result = { type: "tool_result", tool_use_id: "toolu_a", content: "a" };
+  turn("assistant", [call, search]);
+  turn("user", [result]);
+  const goingOn = [
+    { role: "assistant", content: [call, search] },
+    { role: "user", content: [result] },
+  ] as Parameters<typeof answered>[0];
+  expect(answered(goingOn)).toEqual(goingOn);
+
+  await t.thread.post("second").done;
+  const messages = model.requests[1]?.messages ?? [];
+  expect(messages.findLast((m) => m.role === "assistant")?.content).toEqual([call]);
+  expect(JSON.stringify(messages.at(-1)?.content)).toContain("second");
 });
 
 test("a reply its bot is deleted from under says so", async () => {
