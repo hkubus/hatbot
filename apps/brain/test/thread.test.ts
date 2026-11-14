@@ -811,6 +811,43 @@ test("a tool search a stop cut off is left out, so the next message still goes t
   expect(JSON.stringify(messages.at(-1)?.content)).toContain("second");
 });
 
+test("a PDF a fetch read whole that no request could carry is left out, and the reply goes on from before it; a short one stays", async () => {
+  const fetched = (id: string, url: string, bytes: number) => [
+    { type: "server_tool_use", id, name: "web_fetch", input: { url } },
+    {
+      type: "web_fetch_tool_result",
+      tool_use_id: id,
+      content: {
+        type: "web_fetch_result",
+        url,
+        retrieved_at: "2026-11-12T22:27:00Z",
+        content: {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: "A".repeat(bytes) },
+        },
+      },
+    },
+  ];
+  const short = fetched("srvtoolu_a", "https://example.com/q3.pdf", 40_000);
+  const long = fetched("srvtoolu_b", "https://example.com/prospectus.pdf", 5_000_000);
+  const said = text("The page has no inference margin; the prospectus should.");
+  const model = new FakeModel([
+    { content: [...short, said, ...long] as never, stop_reason: "pause_turn" },
+    { content: [text("Gross margin was 61%.")] },
+  ]);
+  const t = await testApp(model);
+  await t.thread.post("what's the margin?").done;
+  const messages = model.requests[1]?.messages ?? [];
+  expect(messages.findLast((m) => m.role === "assistant")?.content).toEqual([
+    ...short,
+    said,
+  ] as never);
+  expect(JSON.stringify(messages.at(-1)?.content)).toContain(
+    "the PDF at https://example.com/prospectus.pdf is too long",
+  );
+  expect(t.thread.list().at(-1)?.status).toBe("done");
+});
+
 test("a reply its bot is deleted from under says so", async () => {
   const model = new HangingModel();
   const t = await testApp(model);

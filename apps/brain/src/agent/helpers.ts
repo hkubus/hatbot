@@ -11,6 +11,7 @@ import {
   fixedTokens,
   invalidInput,
   localStamp,
+  longPdf,
   modelErrorText,
   type PluginTool,
   serverToolWaiting,
@@ -287,16 +288,24 @@ async function runHelper(c: HelperCall, part: Part, offeredTools: PluginTool[]):
       release();
     }
     record(model, res.usage);
-    messages.push({
-      role: "assistant",
-      content: res.content as Anthropic.Beta.BetaContentBlockParam[],
-    });
+    // Whatever followed it goes too, unrun: thinking after a block left out wouldn't be accepted.
+    const pdf = longPdf(res.content);
+    const kept = pdf ? pdf.before : res.content;
+    if (kept.length)
+      messages.push({
+        role: "assistant",
+        content: kept as Anthropic.Beta.BetaContentBlockParam[],
+      });
     container = containerOf(res, container);
     for (const read of webReads(res.content)) {
       step(c, "web", `${part.topic}: ${read}`);
       untrusted.push(read);
     }
-    if (res.stop_reason !== "tool_use") await early.settled();
+    if (res.stop_reason !== "tool_use" || pdf) await early.settled();
+    if (pdf) {
+      messages.push({ role: "user", content: [{ type: "text", text: pdf.note }] });
+      continue;
+    }
     paused = res.stop_reason === "pause_turn";
     if (paused) continue;
     if (res.stop_reason === "refusal") return stopped("The helper declined this part.");

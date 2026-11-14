@@ -13,6 +13,7 @@ import {
   type Hosts,
   invalidInput,
   localStamp,
+  longPdf,
   modelErrorText,
   type PluginAttachments,
   pathOf,
@@ -610,9 +611,12 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
       usage: res.usage,
       taskId: task.id,
     });
-    messages.push({ role: "assistant", content: res.content as BlockParam[] });
+    // Whatever followed it goes too, unrun: thinking after a block left out wouldn't be accepted.
+    const pdf = longPdf(res.content);
+    const kept = pdf ? pdf.before : res.content;
+    if (kept.length) messages.push({ role: "assistant", content: kept as BlockParam[] });
     container = containerOf(res, container);
-    await addRead(res.content, read);
+    await addRead(kept, read);
     for (const read of webReads(res.content)) {
       d.tasks.addStep(task.id, {
         kind: "action",
@@ -621,6 +625,10 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
         url: null,
       });
       run.taint(read);
+    }
+    if (pdf) {
+      messages.push({ role: "user", content: [{ type: "text", text: pdf.note }] });
+      continue;
     }
     paused = res.stop_reason === "pause_turn";
     if (paused) continue;

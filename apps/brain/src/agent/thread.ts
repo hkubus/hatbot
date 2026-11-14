@@ -13,6 +13,7 @@ import {
   fixedTokens,
   head,
   localStamp,
+  longPdf,
   modelErrorText,
   untrustedBlock,
 } from "@hatbot/plugin-sdk";
@@ -2458,9 +2459,12 @@ export class Thread {
             JSON.stringify(res.input_transformations).slice(0, 1000),
           );
         // What the declined model did before a fallback partway isn't kept, and its calls don't run.
-        const content = afterFallback(res.content);
+        const answer = afterFallback(res.content);
+        // Whatever followed it goes too, unrun: thinking after a block left out wouldn't be accepted.
+        const pdf = longPdf(answer);
+        const content = pdf ? pdf.before : answer;
         // The turn first: what the API has answered is kept, whatever recording its cost does.
-        this.appendTurn(episode.id, bot.id, "assistant", content);
+        if (content.length) this.appendTurn(episode.id, bot.id, "assistant", content);
         bill(chatModel, "thread", res.usage, prefix);
         // The last request's entry was there to read, but most of it was written again.
         const read = res.usage.cache_read_input_tokens ?? 0;
@@ -2476,7 +2480,11 @@ export class Thread {
         const toolUses = content.filter(
           (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
         );
-        if (res.stop_reason !== "tool_use") await early.settled();
+        if (res.stop_reason !== "tool_use" || pdf) await early.settled();
+        if (pdf) {
+          this.appendTurn(episode.id, bot.id, "user", [{ type: "text", text: pdf.note }]);
+          continue;
+        }
         if (res.stop_reason === "pause_turn") continue;
         if (res.stop_reason === "refusal") {
           return finish(

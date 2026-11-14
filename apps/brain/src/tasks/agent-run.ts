@@ -3,6 +3,7 @@ import {
   type CallContext,
   cutOff,
   localStamp,
+  longPdf,
   type PluginTool,
   type StreamParams,
   tagJson,
@@ -988,14 +989,21 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           early.onRetry();
         },
       });
-      record("assistant", res.content);
+      // Whatever followed it goes too, unrun: thinking after a block left out wouldn't be accepted.
+      const pdf = longPdf(res.content);
+      if (pdf?.before.length) record("assistant", pdf.before);
+      else if (!pdf) record("assistant", res.content);
       container = containerOf(res, container);
       for (const read of webReads(res.content)) {
         tasks.addStep(id, { kind: "action", name: "web", detail: read, url: null });
         taint(read);
       }
       addNotes(tasks, id, { content: res.content.slice(noted) });
-      if (res.stop_reason !== "tool_use") await early.settled();
+      if (res.stop_reason !== "tool_use" || pdf) await early.settled();
+      if (pdf) {
+        record("user", [{ type: "text", text: pdf.note }]);
+        continue;
+      }
       const calls = callsOf(res, () => nudge(textOf(res)));
       if (!calls) continue;
       said = textOf(res);

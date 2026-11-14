@@ -243,6 +243,46 @@ export function webReads(content: Anthropic.Beta.BetaContentBlock[]): string[] {
   });
 }
 
+// A PDF's pages take about a token for every four bytes, text and image together.
+const pdfTokens = (base64: string) => Math.round((base64.length * 3) / 16);
+export const LONG_PDF_TOKENS = 200_000;
+
+/**
+ * A PDF a fetch read whole and too long to go on with: max_content_tokens doesn't cut one, and every
+ * later request carries it. What came before that fetch, which a reply can go on from, and the note
+ * that tells the model why.
+ */
+export function longPdf(
+  content: Anthropic.Beta.BetaContentBlock[],
+): { before: Anthropic.Beta.BetaContentBlock[]; note: string } | null {
+  const pdf = content.find(
+    (b): b is Anthropic.Beta.BetaWebFetchToolResultBlock =>
+      b.type === "web_fetch_tool_result" &&
+      b.content.type === "web_fetch_result" &&
+      b.content.content.source.type === "base64" &&
+      b.content.content.source.media_type === "application/pdf" &&
+      pdfTokens(b.content.content.source.data) > LONG_PDF_TOKENS,
+  );
+  if (pdf?.content.type !== "web_fetch_result" || pdf.content.content.source.type !== "base64")
+    return null;
+  const { url } = pdf.content;
+  const tokens = pdfTokens(pdf.content.content.source.data);
+  const called = content.findIndex((b) => b.type === "server_tool_use" && b.id === pdf.tool_use_id);
+  let cut = called < 0 ? content.indexOf(pdf) : called;
+  // Calls made together, and code that made the fetch, come back after it: none is left without its result.
+  for (;;) {
+    const before = content.slice(0, cut);
+    const done = new Set(before.flatMap((b) => ("tool_use_id" in b ? [b.tool_use_id] : [])));
+    const open = before.findIndex((b) => b.type === "server_tool_use" && !done.has(b.id));
+    if (open < 0)
+      return {
+        before,
+        note: `(No message from the owner: the PDF at ${url} is too long to read whole, about ${Math.round(tokens / 1000)}k tokens, so it was left out and you go on from before you fetched it. Read it with web_fetch from code, keeping only the pages or figures you need, or find a shorter source.)`,
+      };
+    cut = open;
+  }
+}
+
 /**
  * A server tool call that hasn't run: called alongside client tools, it runs once their results are
  * back, and until then the API takes nothing but those results.
