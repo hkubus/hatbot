@@ -254,6 +254,27 @@ async function reviewed(
   return r.isError ? r.content : null;
 }
 
+function editedFile(
+  path: string,
+  md: string | null,
+  edits: { old: string; new: string }[],
+  append?: string,
+): string {
+  if (md === null && edits.length)
+    throw new MemoryError(`${path} isn't there: make it with memory_write, or append to it.`);
+  const text = edits.reduce((file, e, i) => {
+    const at = file.indexOf(e.old);
+    const again = at >= 0 && file.indexOf(e.old, at + 1) >= 0;
+    if (at < 0 || again)
+      throw new MemoryError(
+        `Not changed: edit ${i + 1}'s old text ${again ? `is in ${path} more than once; give more of it` : `isn't in ${path}`}.`,
+      );
+    return file.slice(0, at) + e.new + file.slice(at + e.old.length);
+  }, md ?? "");
+  if (!append) return text;
+  return `${text === "" || text.endsWith("\n") ? text : `${text}\n`}${append}`;
+}
+
 const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted ?? true;
 
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
@@ -352,19 +373,54 @@ export const TOOLS = [
   def({
     name: "memory_write",
     description:
-      "Create or replace a markdown file in your memory repo. Write the whole file. Each write is a git commit the owner can see and revert. Keep INDEX.md current when you add or remove files.",
+      "Create or replace a markdown file in your memory repo, written whole. To add to a file or change part of it, use memory_edit. Each write is a git commit the owner can see and revert. Keep INDEX.md current when you add or remove files.",
     schema: z.object({
       path: z.string().describe("Path relative to the repo root, ending in .md"),
       content: z.string().describe("The complete new file content"),
-      reason: z.string().describe("Short commit message saying what changed and why"),
+      reason: z.string().optional().describe("Short commit message saying what changed and why"),
     }),
-    run: async ({ path, content, reason }, ctx, signal) => {
+    run: async ({ path, content, reason = `Write ${path}` }, ctx, signal) => {
       const author = authorOf(ctx, path);
       const call = { tool: "memory_write", input: { path, content } };
       const blocked = await reviewed(ctx, call, path, reason, signal, content);
       if (blocked) return blocked;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
+      return `Saved ${path} (commit ${sha.slice(0, 7)}).`;
+    },
+  }),
+  def({
+    name: "memory_edit",
+    description:
+      "Change part of a markdown file in your memory repo without writing it all out: add lines at its end, or replace text in it. For a log or a list that grows, and for small fixes. Each change is a git commit the owner can see and revert.",
+    schema: z.object({
+      path: z.string().describe("Path relative to the repo root, ending in .md"),
+      append: z
+        .string()
+        .optional()
+        .describe("Lines added at the end of the file, which is made if it isn't there"),
+      edits: z
+        .array(
+          z.object({
+            old: z.string().min(1).describe("Text in the file, exactly, found there once"),
+            new: z.string().describe("What it becomes; empty removes it"),
+          }),
+        )
+        .max(50)
+        .optional()
+        .describe("Replacements, made in turn, before anything is added"),
+      reason: z.string().optional().describe("Short commit message saying what changed and why"),
+    }),
+    run: async ({ path, append, edits = [], reason = `Edit ${path}` }, ctx, signal) => {
+      if (!append && !edits.length) return "Nothing to change: give append or edits.";
+      const author = authorOf(ctx, path);
+      const change = (md: string | null) => editedFile(path, md, edits, append);
+      const after = change(await ctx.memory.readOrNull(path));
+      const call = { tool: "memory_edit", input: { path, append, edits } };
+      const blocked = await reviewed(ctx, call, path, reason, signal, after);
+      if (blocked) return blocked;
+      const sha = await ctx.memory.update(path, change, author, reason);
+      if (!sha) return "No change: the file already read like that.";
       return `Saved ${path} (commit ${sha.slice(0, 7)}).`;
     },
   }),

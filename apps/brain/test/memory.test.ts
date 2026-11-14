@@ -2,7 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runCoreTool } from "../src/agent/tools";
 import { openDb } from "../src/db";
+import { EventBus } from "../src/events";
 import { blobSha, HATBOT, MemoryError, MemoryStore } from "../src/memory/store";
 import { signIn, testApp } from "./helpers";
 
@@ -112,4 +114,38 @@ test("a save on top of an older copy is refused with what the file is now", asyn
   expect((await put("a.md", "x", "")).status).toBe(409);
   expect(await t.memory.read("a.md")).toBe("two\n");
   expect((await t.call("GET", "/memory/file?path=b.md", undefined, { cookie })).status).toBe(404);
+});
+
+test("memory_edit adds lines, making the file if it isn't there, and changes text found there once; otherwise nothing changes", async () => {
+  const t = await testApp();
+  const ctx = {
+    db: t.db,
+    memory: t.memory,
+    events: new EventBus(),
+    bot: t.bots.hatbot(),
+    bots: t.bots,
+  };
+  const edit = (input: object) => runCoreTool("memory_edit", { path: "log.md", ...input }, ctx);
+  expect((await edit({ append: "- 08:00 0%" })).isError).toBe(false);
+  await t.memory.write("log.md", "# Log\n- 08:00 0%", HATBOT, "Log");
+  await edit({ append: "- 08:15 2%\n- 08:30 0%" });
+  expect(await t.memory.read("log.md")).toBe("# Log\n- 08:00 0%\n- 08:15 2%\n- 08:30 0%\n");
+  await edit({ edits: [{ old: "- 08:00 0%\n", new: "" }], append: "- 08:45 1%" });
+  expect(await t.memory.read("log.md")).toBe("# Log\n- 08:15 2%\n- 08:30 0%\n- 08:45 1%\n");
+
+  for (const old of ["%", "- 09:00"]) {
+    const r = await edit({
+      edits: [
+        { old: "# Log", new: "# Loss" },
+        { old, new: "x" },
+      ],
+    });
+    expect(r.isError).toBe(true);
+  }
+  expect((await edit({})).content).toContain("Nothing to change");
+  expect(
+    (await runCoreTool("memory_edit", { path: "new.md", edits: [{ old: "a", new: "b" }] }, ctx))
+      .isError,
+  ).toBe(true);
+  expect(await t.memory.read("log.md")).toBe("# Log\n- 08:15 2%\n- 08:30 0%\n- 08:45 1%\n");
 });

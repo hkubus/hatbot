@@ -1083,6 +1083,7 @@ const DONE = {
   memory_list: "Listed memory",
   memory_read: "Read",
   memory_write: "Saved",
+  memory_edit: "Saved",
   memory_delete: "Deleted",
   memory_search: "Searched memory for",
   search_history: "Searched the chat for",

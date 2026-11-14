@@ -213,7 +213,7 @@ test("with the review off, tainted work asks before rewriting homelab.md, the ma
   expect(await t.memory.read("homelab.md")).toBe("# Homelab\n- CT 105: Jellyfin\n");
 });
 
-test("tainted, a memory write reaches the review as what it changes, not the whole file", async () => {
+test("tainted, a memory write or edit reaches the review as what it changes, not the whole file", async () => {
   const hosts = Array.from({ length: 30 }, (_, i) => `- CT ${200 + i}: guest ${i}`).join("\n");
   const work = new FakeModel([
     {
@@ -225,6 +225,7 @@ test("tainted, a memory write reaches the review as what it changes, not the who
         }),
       ],
     },
+    { content: [toolUse("memory_edit", { path: "homelab.md", append: "- CT 107: Frigate" })] },
     finish("Saved."),
   ]);
   work.onCreate = reviewSaysSafe;
@@ -238,10 +239,14 @@ test("tainted, a memory write reaches the review as what it changes, not the who
     payload: '{"text":"CT 106 runs Immich"}',
   });
   await t.tasks.idle();
-  const review = String(work.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
-  expect(review).toContain("+ - CT 106: Immich");
-  expect(review).not.toContain("CT 105: Jellyfin");
-  expect(await t.memory.read("homelab.md")).toContain("CT 106: Immich");
+  const [write, edit] = work.creates
+    .filter((c) => c.system === REVIEW_PROMPT)
+    .map((c) => String(c.messages[0]?.content));
+  expect(write).toContain("+ - CT 106: Immich");
+  expect(write).not.toContain("CT 105: Jellyfin");
+  expect(edit).toContain("+ - CT 107: Frigate");
+  expect(edit).not.toContain("CT 105: Jellyfin");
+  expect(await t.memory.read("homelab.md")).toContain("CT 106: Immich\n- CT 107: Frigate\n");
 });
 
 test("in the chat, the review reads what the bot said there, so the owner's yeah answers it", async () => {

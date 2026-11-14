@@ -52,6 +52,7 @@ const META: Record<string, Meta> = {
   memory_read: { plugin: "memory", label: "Reading memory", access: "read", places: ALL },
   memory_search: { plugin: "memory", label: "Searching memory", access: "read", places: ALL },
   memory_write: { plugin: "memory", label: "Saving to memory", places: ALL },
+  memory_edit: { plugin: "memory", label: "Saving to memory", places: ALL },
   memory_delete: { plugin: "memory", label: "Removing from memory", places: WORK },
   todo_list: { plugin: "memory", label: "Looking at the to-do list", access: "read", places: WORK },
   todo_add: { plugin: "memory", label: "Adding a to-do", places: WORK },
