@@ -6,7 +6,7 @@ struct BotView: View {
   @Environment(AppStore.self) private var store
   @Environment(\.dismiss) private var dismiss
   @State private var form = Form()
-  @State private var plugins: [PluginName] = []
+  @State private var plugins: [PluginInfo] = []
   /// The chat's model and effort in Settings, which a bot without its own uses.
   @State private var defaults: AppSettings?
   @State private var models: [ModelOption] = []
@@ -236,7 +236,7 @@ struct BotView: View {
         if form == filled { fill(nil) }
         templates = await store.loadBotTemplates()
       }
-      plugins = ((try? await store.loadPluginNames()) ?? []).sorted { $0.name < $1.name }
+      plugins = ((try? await store.loadPlugins()) ?? []).sorted { $0.name < $1.name }
       defaults = try? await store.loadSettings()
       models = await store.loadModels()
     }

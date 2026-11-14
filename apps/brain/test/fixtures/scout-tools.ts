@@ -1,5 +1,7 @@
-// A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: the tools Scout has
-// today; with `full`, also the price reference and comparables it doesn't have yet; with `flips`,
+// A stand-in for Scout's MCP server, for the negotiation, listing and watch tests: some of Scout's tools;
+// with `full`, also its price reference, comparables and negotiation outcomes; with `search`, its live
+// search (OLX answers, Vinted is paused, Allegro Lokalnie runs out of time), feed, deals and description
+// check; with `flips`,
 // the flips to list and the flip ledger, kept in that JSON file, which the tests change; and with `sessions`, the
 // marketplace logins shared with Hatbot, kept the same way; and with `inbox`, the marketplace inboxes,
 // `{conversations, messages: {[conversationId]: [...]}}`, kept the same way. Calls are appended to
@@ -11,6 +13,7 @@ import { z } from "zod";
 export type ScoutOptions = {
   log?: string;
   full?: boolean;
+  search?: boolean;
   flips?: string;
   sessions?: string;
   inbox?: string;
@@ -32,6 +35,7 @@ export function scoutServer(o: ScoutOptions): McpServer {
       url: "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001.html",
       priceNegotiable: true,
       postedAt: "2026-10-01T10:00:00Z",
+      flags: [{ flag: "for_parts", match: "wentylator do wymiany", in: "description" }],
     },
     // A cross-border listing, priced in euro.
     "Vinted:2002": {
@@ -49,11 +53,16 @@ export function scoutServer(o: ScoutOptions): McpServer {
     "scout_listing_detail",
     {
       description: "Full detail for one listing",
-      inputSchema: { key: z.string(), watchId: z.string().optional() },
+      inputSchema: {
+        key: z.string(),
+        watchId: z.string().optional(),
+        live: z.boolean().optional(),
+        sellerListings: z.boolean().optional(),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ key }) => {
-      log("scout_listing_detail", { key });
+    async ({ key, live, sellerListings }) => {
+      log("scout_listing_detail", { key, live, sellerListings });
       const listing = LISTINGS[key];
       if (!listing)
         return {
@@ -67,6 +76,22 @@ export function scoutServer(o: ScoutOptions): McpServer {
           { price: 1500, observedAt: "2026-10-05T10:00:00Z" },
         ],
         firstSeenAt: "2026-10-01T10:00:00Z",
+        negotiation: {
+          daysListed: 10,
+          priceDrops: { count: 1, total: 150 },
+          priceNegotiable: true,
+          seller: {
+            id: "s-1",
+            otherListings: {
+              source: sellerListings ? "marketplace" : "scout",
+              items: [{ key: "OLX:1009", title: "Zasilacz 650W", price: 200 }],
+            },
+          },
+          relists: [],
+        },
+        liveCheck: live
+          ? { availability: { status: "live" }, price: 1450, priceChanged: true }
+          : null,
       });
     },
   );
@@ -142,7 +167,12 @@ export function scoutServer(o: ScoutOptions): McpServer {
       "scout_price_reference",
       {
         description: "Scout's typical used asking price for a product",
-        inputSchema: { query: z.string(), sources: z.array(z.string()).optional() },
+        inputSchema: {
+          query: z.string(),
+          sources: z.array(z.string()).optional(),
+          terms: z.string().optional(),
+          excluded: z.string().optional(),
+        },
         annotations: { readOnlyHint: true },
       },
       async (input) => {
@@ -167,7 +197,11 @@ export function scoutServer(o: ScoutOptions): McpServer {
       "scout_comparables",
       {
         description: "Live alternatives for the same item",
-        inputSchema: { listingKey: z.string() },
+        inputSchema: {
+          listingKey: z.string(),
+          watchId: z.string().optional(),
+          limit: z.number().optional(),
+        },
         annotations: { readOnlyHint: true },
       },
       async (input) => {
@@ -182,6 +216,160 @@ export function scoutServer(o: ScoutOptions): McpServer {
             { title: "RTX 3070 FE", price: 1380, url: "https://www.olx.pl/d/oferta/y-ID2003.html" },
           ],
         });
+      },
+    );
+    server.registerTool(
+      "scout_record_outcome",
+      {
+        description: "Record how one of your negotiations ended",
+        inputSchema: {
+          negotiationId: z.string().min(1),
+          listingKey: z.string(),
+          outcome: z.enum(["agreed", "lost", "abandoned", "expired"]),
+          asking: z.number().positive(),
+          price: z.number().positive().nullable().optional(),
+          currency: z.string().optional(),
+        },
+        annotations: { readOnlyHint: false },
+      },
+      async (input) => {
+        log("scout_record_outcome", input);
+        if (input.currency !== undefined && input.currency !== "PLN")
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: "Scout records prices in PLN only" }],
+          };
+        return json({ ...input, created: true });
+      },
+    );
+  }
+  if (o.search) {
+    const row = {
+      id: "OLX:1001",
+      source: "OLX",
+      title: "Karta graficzna RTX 3070 8GB",
+      price: 1500,
+      url: "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID1001.html",
+      image: null,
+      flags: [],
+    };
+    // Scout's own enums and caps (server/mcp.ts), so a mismatch fails here as it would there.
+    const stored = ["for_parts", "wanted_ad", "swap", "replica", "damaged", "locked"] as const;
+    const flags = z.array(z.enum(stored)).max(stored.length).optional();
+    const searchFlags = z
+      .array(z.enum([...stored, "accessory"]))
+      .max(stored.length + 1)
+      .optional();
+    server.registerTool(
+      "scout_search",
+      {
+        description: "Live manual marketplace search",
+        inputSchema: {
+          query: z.string(),
+          sources: z.array(z.string()),
+          page: z.number().optional(),
+          excludeFlags: searchFlags,
+          typoVariants: z.boolean().optional(),
+          ignoreBackoff: z.boolean().optional(),
+          deadlineMs: z.number().optional(),
+          format: z.string().optional(),
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async (input) => {
+        log("scout_search", input);
+        const source = (name: string) =>
+          name === "OLX" && input.query.includes("blocked")
+            ? {
+                source: name,
+                status: "error",
+                errorKind: "blocked",
+                message: "OLX answered 403 (blocked)",
+                backoffUntil: null,
+              }
+            : name === "Vinted" && !input.ignoreBackoff
+              ? {
+                  source: name,
+                  status: "error",
+                  errorKind: "backoff",
+                  message: "Skipped: connector backoff",
+                  backoffUntil: "2026-10-09T14:30:00.000Z",
+                }
+              : name === "Allegro Lokalnie"
+                ? {
+                    source: name,
+                    status: "error",
+                    errorKind: "deadline",
+                    message: "Not finished within the 45 s deadline",
+                    backoffUntil: null,
+                  }
+                : {
+                    source: name,
+                    status: "ok",
+                    errorKind: null,
+                    message: "1 match",
+                    backoffUntil: null,
+                  };
+        const listings = input.sources.includes("OLX") ? [row] : [];
+        if (input.format !== "compact") return json({ listings, sources: input.sources });
+        return json({
+          schemaVersion: 1,
+          format: "compact",
+          query: input.query,
+          page: input.page ?? 1,
+          listings: listings.map((l) => ({
+            ...l,
+            matchedVia: "query",
+            jevCheck: null,
+            deal: null,
+            duplicateCount: 0,
+            duplicateCheapest: null,
+          })),
+          sources: input.sources.map(source),
+          typoVariants: null,
+          fromCache: false,
+          cachedAt: null,
+        });
+      },
+    );
+    server.registerTool(
+      "scout_listings",
+      {
+        description: "Query the listings feed",
+        inputSchema: {
+          q: z.string().optional(),
+          excludeFlags: flags,
+          format: z.string().optional(),
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async (input) => {
+        log("scout_listings", input);
+        return json({ listings: [row], pagination: { page: 1, pageSize: 20, total: 1 } });
+      },
+    );
+    server.registerTool(
+      "scout_deals",
+      {
+        description: "Strong+ deals right now",
+        inputSchema: { excludeFlags: flags, limit: z.number().optional() },
+        annotations: { readOnlyHint: true },
+      },
+      async (input) => {
+        log("scout_deals", input);
+        return json({ schemaVersion: 1, total: 1, deals: [{ ...row, tier: "strong" }] });
+      },
+    );
+    server.registerTool(
+      "scout_verify_listing",
+      {
+        description: "Run the description check on one stored listing now",
+        inputSchema: { key: z.string(), watchId: z.string().optional() },
+        annotations: { readOnlyHint: false },
+      },
+      async (input) => {
+        log("scout_verify_listing", input);
+        return json({ key: input.key, watch: null, status: "pass", reused: false });
       },
     );
   }

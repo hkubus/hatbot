@@ -11,12 +11,16 @@ use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, Co
 use windows::Win32::UI::Accessibility::*;
 
 use super::screen;
-use crate::computer::{InspectAt, Result};
-use crate::protocol::AgentElement;
+use crate::computer::{Fields, InspectAt, Result};
+use crate::protocol::{AgentElement, ComputerField};
 
 const TIMEOUT: Duration = Duration::from_secs(4);
 /// Most elements read looking for a form's buttons.
 const MAX_NODES: usize = 500;
+/// Most text fields read for what they hold.
+const MAX_FIELDS: i32 = 300;
+/// Console windows and Windows Terminal's: what's typed in them may be a password nothing marks.
+const TERMINALS: [&str; 3] = ["ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "TermControl"];
 
 type El = IUIAutomationElement;
 
@@ -47,6 +51,127 @@ fn find(at: InspectAt) -> windows::core::Result<Option<AgentElement>> {
             return Ok(None);
         }
         Ok(Some(element(&uia, &el)))
+    }
+}
+
+pub async fn fields(pid: Option<i32>, field: bool, filled: bool) -> Result<Option<Fields>> {
+    let read = tokio::task::spawn_blocking(move || {
+        read_fields(pid, field, filled).map_err(|e| format!("Couldn't read the app's controls: {e}."))
+    });
+    match tokio::time::timeout(TIMEOUT, read).await {
+        Err(_) => Err("The app's controls took too long to read.".into()),
+        Ok(Err(e)) => Err(format!("Hatbot's agent failed: {e}.")),
+        Ok(Ok(r)) => r,
+    }
+}
+
+/// Up from an element to its window: the pages it's in, whether it's in a terminal, and the window.
+struct Ancestry {
+    docs: usize,
+    terminal: bool,
+    window: El,
+}
+
+fn ancestry(uia: &IUIAutomation, walker: &IUIAutomationTreeWalker, el: &El) -> Ancestry {
+    let mut out = Ancestry { docs: 0, terminal: terminal(el), window: el.clone() };
+    // SAFETY: the walker's own calls on live elements.
+    let Ok(root) = (unsafe { uia.GetRootElement() }) else { return out };
+    let mut cur = el.clone();
+    for _ in 0..80 {
+        let Ok(parent) = (unsafe { walker.GetParentElement(&cur) }) else { break };
+        if same(uia, &parent, &root) || same(uia, &parent, &cur) {
+            break;
+        }
+        out.docs += usize::from(kind(&parent) == UIA_DocumentControlTypeId);
+        out.terminal |= terminal(&parent);
+        out.window = parent.clone();
+        cur = parent;
+    }
+    out
+}
+
+fn terminal(el: &El) -> bool {
+    // SAFETY: a plain property read.
+    unsafe { el.CurrentClassName() }.is_ok_and(|c| TERMINALS.contains(&c.to_string().as_str()))
+}
+
+fn field(el: &El, up: &Ancestry) -> ComputerField {
+    // SAFETY: plain property reads.
+    let (help, id, password) = unsafe {
+        (
+            el.CurrentHelpText().map(|s| s.to_string()).unwrap_or_default(),
+            el.CurrentAutomationId().map(|s| s.to_string()).unwrap_or_default(),
+            el.CurrentIsPassword().is_ok_and(|b| b.as_bool()),
+        )
+    };
+    let mut names = vec![name(el), help, id];
+    names.retain(|n| !n.trim().is_empty());
+    for n in &mut names {
+        *n = n.chars().take(200).collect();
+    }
+    ComputerField {
+        role: if up.terminal { "terminal".into() } else { tag(kind(el)).into() },
+        names,
+        password,
+        // A page's frame is a page in a page.
+        in_frame: up.docs > 1,
+        editable: value(el).is_some_and(|v| unsafe { v.CurrentIsReadOnly() }.is_ok_and(|r| !r.as_bool())),
+    }
+}
+
+fn value(el: &El) -> Option<IUIAutomationValuePattern> {
+    // SAFETY: a plain pattern read.
+    unsafe { el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }.ok()
+}
+
+fn read_fields(pid: Option<i32>, field_too: bool, filled: bool) -> windows::core::Result<Option<Fields>> {
+    // SAFETY: COM is set up on this thread before use; everything else is UI Automation's own calls.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+        let walker = uia.ControlViewWalker()?;
+        let focused = uia.GetFocusedElement()?;
+        if pid.is_some_and(|p| focused.CurrentProcessId().ok() != Some(p)) {
+            return Ok(None);
+        }
+        let up = ancestry(&uia, &walker, &focused);
+        let mut out = Fields { focused: field_too.then(|| field(&focused, &up)), ..Default::default() };
+        // Chromium gives its page's address as the page's value.
+        let page = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &UIA_DocumentControlTypeId.0.into())?;
+        if let Ok(doc) = up.window.FindFirst(TreeScope_Descendants, &page)
+            && let Some(url) = value(&doc).and_then(|v| v.CurrentValue().ok()).map(|v| v.to_string())
+            && ["http://", "https://", "file://"].iter().any(|p| url.starts_with(p))
+        {
+            out.url = Some(url);
+        }
+        if filled {
+            let edits = uia.CreatePropertyCondition(UIA_ControlTypePropertyId, &UIA_EditControlTypeId.0.into())?;
+            let all = up.window.FindAll(TreeScope_Descendants, &edits)?;
+            let n = all.Length()?;
+            if n > MAX_FIELDS {
+                return Ok(Some(out));
+            }
+            let mut held = Vec::new();
+            for i in 0..n {
+                let el = all.GetElement(i)?;
+                if el.CurrentIsOffscreen().is_ok_and(|b| b.as_bool()) {
+                    continue;
+                }
+                let password = el.CurrentIsPassword().is_ok_and(|b| b.as_bool());
+                let holds = match value(&el).map(|v| v.CurrentValue()) {
+                    Some(Ok(v)) => !v.is_empty(),
+                    // A password field that won't say shows dots.
+                    _ if password => false,
+                    // Anything else may hold something.
+                    _ => true,
+                };
+                if holds {
+                    held.push(field(&el, &ancestry(&uia, &walker, &el)));
+                }
+            }
+            out.filled = Some(held);
+        }
+        Ok(Some(out))
     }
 }
 

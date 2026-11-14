@@ -29,11 +29,12 @@ struct SettingsView: View {
               set: { on in Task { await attempt($error) { try await store.setPaused(on) } } }))
         }
         #if targetEnvironment(macCatalyst)
-          ThisMacSections()
+          if store.pluginOn("computer") { ThisMacSections() }
         #endif
         Section {
-          NavigationLink("Automations", value: Route.schedules)
+          if store.pluginOn("automation") { NavigationLink("Automations", value: Route.schedules) }
           NavigationLink("Spend", value: Route.spend)
+          if store.pluginOn("computer") { NavigationLink("Your computers", value: Route.computers) }
         }
         if let settings {
           Section("Models") {
@@ -55,7 +56,7 @@ struct SettingsView: View {
                 ForEach(models.choices(model), id: \.self) { m in Text(models.name(m)).tag(m) }
               }
             }
-            if let model = settings.desktopModel {
+            if let model = settings.desktopModel, store.pluginOn("desktop") {
               let desktop = setting(model, \.desktopModel)
               Picker("Desktop tasks", selection: desktop) {
                 ForEach(models.choices(model, only: \.computerUse), id: \.self) { m in Text(models.name(m)).tag(m) }
@@ -98,6 +99,14 @@ struct SettingsView: View {
         if let review = settings?.reviewChanges {
           Section("Safety") {
             Toggle("Let a safety review allow safe changes without asking you", isOn: setting(review, \.reviewChanges))
+          }
+        }
+        // Their own pages, which the app doesn't have: the web app's, in a web view.
+        if !store.installedPlugins.isEmpty {
+          Section("Plugins") {
+            ForEach(store.installedPlugins) { p in
+              NavigationLink(value: Route.plugin(p.id)) { LabeledContent(p.name, value: p.state.name) }
+            }
           }
         }
         Section("Account") {

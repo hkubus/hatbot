@@ -14,6 +14,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
@@ -33,6 +34,7 @@ import {
   badSecretName,
   boxConfig,
   type GuestBox,
+  type HatboxCheck,
   MAX_BOX_BODY,
   MAX_BOX_BUILT,
   MAX_BOX_NOTIFY,
@@ -51,6 +53,25 @@ const ANSWER_MS = 60_000;
 const INSTALL_MS = 120_000;
 /** A log is cut back to its last part past this. */
 const MAX_LOG = 1024 * 1024;
+/** The self-test's box: the brain's start at 1, and the routes take no other. */
+export const CHECK_BOX = 0;
+const CHECK_FILES: BoxFile[] = [
+  { path: "index.html", content: "<p>Check</p>" },
+  {
+    path: "server.ts",
+    content: `import { readlinkSync } from "node:fs";
+const net = () => { try { return readlinkSync("/proc/self/ns/net"); } catch { return null; } };
+export default { fetch: () => Response.json({ uid: process.getuid?.() ?? null, net: net() }) };`,
+  },
+];
+
+const netNamespace = () => {
+  try {
+    return readlinkSync("/proc/self/ns/net");
+  } catch {
+    return null;
+  }
+};
 
 /**
  * A refusal, with the status to answer it with. `missing`: the brain should send the box again;
@@ -106,7 +127,7 @@ export class Guest {
   list(): GuestBox[] {
     return readdirSync(this.dir("boxes")).flatMap((name) => {
       const id = Number(name);
-      const version = this.version(id);
+      const version = id === CHECK_BOX ? null : this.version(id);
       return version ? [{ id, version }] : [];
     });
   }
@@ -483,9 +504,44 @@ export class Guest {
     for (const [id, r] of this.running) if (now - r.used >= IDLE_MS) await this.stop(id);
   }
 
-  /** Every backend the agent knows of, stopped: when it starts, none of their sockets is its own. */
+  /** Every backend the agent knows of, stopped: when it starts, none of their sockets is its own. A
+   * check it stopped in the middle of left its test box, which isn't listed: that goes. */
   async stopAll() {
     for (const { id } of this.list()) await this.stop(id).catch(() => {});
+    if (existsSync(this.dir("boxes", CHECK_BOX))) await this.remove(CHECK_BOX).catch(() => {});
+  }
+
+  /** Check everything's: a test box, built and asked once through the boxes' own units, then removed. */
+  check(): Promise<HatboxCheck> {
+    this.checking ??= this.checkNow().finally(() => {
+      this.checking = null;
+    });
+    return this.checking;
+  }
+  private checking: Promise<HatboxCheck> | null = null;
+
+  private async checkNow(): Promise<HatboxCheck> {
+    try {
+      // One an agent that stopped halfway left behind.
+      await this.remove(CHECK_BOX);
+      this.put(CHECK_BOX, 1, CHECK_FILES);
+      const built = await this.build(CHECK_BOX, 1);
+      if (!built.ok)
+        return { ok: false, error: `The test box didn't build: ${built.output.slice(-500)}` };
+      const res = await this.relay(CHECK_BOX, "/", { method: "GET", headers: [] });
+      const said = (await res.json().catch(() => null)) as { uid?: unknown; net?: unknown } | null;
+      if (!res.ok || !said) return { ok: false, error: `The test box answered ${res.status}.` };
+      const net = netNamespace();
+      return {
+        ok: true,
+        ownUser: typeof said.uid === "number" && said.uid !== process.getuid?.(),
+        ownNetwork: typeof said.net === "string" && net !== null && said.net !== net,
+      };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    } finally {
+      await this.remove(CHECK_BOX).catch(() => {});
+    }
   }
 
   async remove(id: number) {

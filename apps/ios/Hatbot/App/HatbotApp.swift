@@ -27,8 +27,8 @@ struct HatbotApp: App {
   var body: some Scene {
     WindowGroup {
       Group {
-        if session.store != nil && session.setupPending {
-          ContentUnavailableView("Finish setting up Hatbot in the web app", systemImage: "safari")
+        if let store = session.store, let setup = session.setup {
+          SetupView(store: store, setup: setup)
         } else if let store = session.store {
           MainView().environment(store)
         } else {
@@ -155,6 +155,7 @@ struct MainView: View {
     ZStack {
       ForEach(AppTab.allCases.filter { opened.contains($0) || $0 == tab }, id: \.self) { t in
         section(t)
+          .offWithItsPlugin(t)
           .environment(\.sidebarRoot) { shown in roots[t] = max(0, roots[t, default: 0] + (shown ? 1 : -1)) }
           .environment(\.sectionShown, t == tab)
           .opacity(t == tab ? 1 : 0)
@@ -220,8 +221,8 @@ struct MainView: View {
     Task { await store.openConversation(chats[i + by].id) }
   }
 
-  /// Opens the approval's task; `approving`, a notification's Approve, asks to approve it, then
-  /// approves it once Face ID (or the passcode) says it's you.
+  /// Opens the approval's task, or the negotiation it's about; `approving`, a notification's Approve, asks to
+  /// approve it, then approves it once Face ID (or the passcode) says it's you.
   private func openApproval(_ id: Int, approving: Bool) {
     tab = .tasks
     tasksPath = []
@@ -229,7 +230,11 @@ struct MainView: View {
       let approval: Approval? = try? await store.api.get("/approvals/\(id)")
       guard let a = approval else { return }
       store.apply(.approvalCreated(a))
-      if let taskId = a.taskId { tasksPath = [.task(taskId)] }
+      if let taskId = a.taskId {
+        tasksPath = [.task(taskId)]
+      } else if let n = await store.findNegotiation(for: a) {
+        tasksPath = [.negotiation(n.id)]
+      }
       // Asked first, with what it is: any app or page can open this link, and Face ID doesn't say what it's for.
       // A secret is typed in where it shows, not approved from here.
       if approving && a.status == .pending && a.secret == nil { confirming = a }
@@ -250,6 +255,16 @@ struct MainView: View {
     }
   }
 
+  private func openAutomation(_ route: Route) {
+    tab = .settings
+    if store.pluginOn("automation") {
+      settingsPath = [.schedules, route]
+    } else {
+      settingsPath = []
+      store.toast = "\(store.plugins["automation"]?.name ?? "Automation") is off."
+    }
+  }
+
   /// hatbot://tasks/12 opens a task, hatbot://approvals/5 the approval's task; schedules and triggers
   /// open under Settings, like on the web app on a phone, and hatbot://boxes/4 a box under Boxes.
   private func open(_ url: URL) {
@@ -263,11 +278,9 @@ struct MainView: View {
     case let .approve(id):
       openApproval(id, approving: true)
     case let .schedule(id):
-      tab = .settings
-      settingsPath = [.schedules, .schedule(id)]
+      openAutomation(.schedule(id))
     case let .trigger(id):
-      tab = .settings
-      settingsPath = [.schedules, .trigger(id)]
+      openAutomation(.trigger(id))
     case let .box(id):
       tab = .boxes
       boxesPath = [.box(id)]

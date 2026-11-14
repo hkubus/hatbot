@@ -1,4 +1,6 @@
 // Teach-by-showing: record the owner doing a chore, have Opus draft a skill, save it once reviewed.
+
+import { ComputerError, type ComputersService } from "@hatbot/plugin-computer";
 import {
   BudgetError,
   type Db,
@@ -14,10 +16,9 @@ import {
 import { SKILL_NAME, type TeachSession } from "@hatbot/shared";
 import type { DesktopService } from "../index";
 import { TEACH_PROMPT } from "./prompt";
-import { describeSteps, OffPage, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
+import { describeSteps, PAGE_POLL_MS, Recorder, type RecStep } from "./recorder";
+import { computerScreen, desktopScreen, TEACH_LANE, type TeachScreen } from "./screens";
 
-/** Holds the screen lane while you record, so no task starts on the desktop. */
-const TEACH_LANE = -2;
 const SCREENS_SENT = 16;
 
 export class TeachError extends PluginError {}
@@ -26,6 +27,8 @@ export type TeachDeps = {
   db: Db;
   events: EventsHost;
   desktop: Omit<DesktopService, "teach">;
+  /** Your computers, when their plugin is on. */
+  computers?: () => ComputersService | null;
   screens: PluginScreens;
   model: ModelHost;
   settings: SettingsHost;
@@ -44,6 +47,7 @@ type Row = {
   name: string | null;
   draft: string | null;
   error: string | null;
+  screen: string | null;
 };
 
 /** Steps where you did something, rather than pages loading or the pointer passing by. */
@@ -76,10 +80,12 @@ export class Teach {
     id: number;
     recorder: Recorder;
     timer: ReturnType<typeof setInterval>;
-    desk: TeachDeps["desktop"];
+    screen: TeachScreen;
     /** Stops hearing the live view. */
     off: () => void;
   } | null = null;
+  /** A start between its check and the recording it makes: a second one would record too. */
+  private starting = false;
   private clock: () => number;
   private unlisten: () => void;
 
@@ -97,10 +103,12 @@ export class Teach {
         "UPDATE teach_sessions SET status = 'failed', error = 'Stopped: the brain restarted.' WHERE status = 'drafting'",
       )
       .run();
-    // Handing back some other way (the iOS app, say) ends the recording without a skill.
+    // Handing back some other way (the iOS app, say), or the computer taking itself back, ends the
+    // recording without a skill.
     this.unlisten = d.events.on((e) => {
-      if (e.type === "desktop.state" && e.state.control === "hatbot" && this.rec)
-        void this.discard(this.rec.id).catch((err) => console.error("teach discard failed", err));
+      const rec = this.rec;
+      if ((e.type === "desktop.state" || e.type === "computers") && rec?.screen.lost())
+        void this.discard(rec.id).catch((err) => console.error("teach discard failed", err));
     });
   }
 
@@ -125,6 +133,7 @@ export class Teach {
       name: r.name,
       draft: r.draft,
       error: r.error,
+      screen: r.screen,
     };
   }
 
@@ -159,70 +168,86 @@ export class Teach {
     if (session) this.d.events.emit({ type: "teach.updated", session });
   }
 
-  /** `replaces`: the skill this records again, whose name the draft keeps. */
-  async start(replaces?: string): Promise<TeachSession> {
+  /** The desktop, or a computer by its id. */
+  private screen(id: string | null): TeachScreen {
+    if (id === null) return desktopScreen(this.d.desktop);
+    const c = this.d.computers?.()?.screen(id);
+    if (!c) throw new TeachError("That computer is gone.", 404);
+    return computerScreen(c);
+  }
+
+  /**
+   * `replaces`: the skill this records again, whose name the draft keeps, on the screen it was shown on
+   * unless `screenId` says. `screenId`: a computer's id; null for the desktop.
+   */
+  async start(replaces?: string, screenId?: string | null): Promise<TeachSession> {
+    if (this.rec || this.starting) throw new TeachError("Already recording.", 409);
+    this.starting = true;
+    try {
+      return await this.begin(replaces, screenId);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  private async begin(replaces?: string, screenId?: string | null): Promise<TeachSession> {
     const { screens } = this.d;
-    if (this.rec) throw new TeachError("Already recording.", 409);
-    const desk = this.d.desktop;
-    if (!desk.agent.configured || !desk.control.get().online)
-      throw new TeachError("The desktop isn't answering.", 503);
-    const { control: desktop, lane, agent } = desk;
+    const screen = this.screen(
+      screenId === undefined && replaces ? this.shownOn(replaces) : (screenId ?? null),
+    );
+    const why = screen.unavailable();
+    if (why) throw new TeachError(why, 503);
+    const { lane } = screen;
     if (lane.holderId !== null)
-      throw new TeachError("A task is using the desktop. Wait for it, or cancel it first.", 409);
+      throw new TeachError(`A task is using ${screen.name}. Wait for it, or cancel it first.`, 409);
     await lane.acquire(TEACH_LANE, new AbortController().signal);
     try {
-      await desktop.takeover();
-    } catch {
+      await screen.takeover();
+    } catch (err) {
       lane.release(TEACH_LANE);
-      throw new TeachError("The desktop isn't answering.", 503);
+      // Another brain's task, or one this brain forgot when it restarted.
+      if (err instanceof ComputerError && err.code === "busy")
+        throw new TeachError(
+          `Something else is using ${screen.name}. Try again once it's done.`,
+          409,
+        );
+      throw new TeachError(
+        screen.id === null ? "The desktop isn't answering." : `${screen.name} isn't answering.`,
+        503,
+      );
     }
     const id = this.d.db
-      .query<{ id: number }, [string, string | null]>(
-        "INSERT INTO teach_sessions (status, started_at, name) VALUES ('recording', ?, ?) RETURNING id",
+      .query<{ id: number }, [string, string | null, string | null]>(
+        "INSERT INTO teach_sessions (status, started_at, name, screen) VALUES ('recording', ?, ?, ?) RETURNING id",
       )
-      .get(this.now(), replaces ?? null)?.id as number;
+      .get(this.now(), replaces ?? null, screen.id)?.id as number;
     const recorder = new Recorder({
       clock: this.clock,
-      secretField: async () => {
-        const el = await agent.inspect();
-        // No page on screen, or the keyboard is elsewhere (the address bar, another window): the typing
-        // went somewhere CDP can't see.
-        if (!el || el.pageFocus === false) throw new OffPage("the keyboard isn't on a page");
-        return {
-          secret:
-            Boolean(el.secret) ||
-            el.type === "password" ||
-            el.tag === "iframe" ||
-            el.tag === "frame",
-          url: el.url ?? null,
-        };
-      },
-      screen: async () => {
-        const [bytes, page] = await Promise.all([
-          agent.screenshot(),
-          // A page that can't say whether it shows a secret may show one. An older desktop-agent that
-          // doesn't say at all is taken at its word.
-          agent.context(false, true).catch(() => null),
-        ]);
-        return page && !page.secretShown ? { bytes, url: page.url } : null;
-      },
+      secretField: () => screen.field(),
+      screen: () => screen.shot(),
       save: (label, bytes) => screens.save(`teach-${id}`, label, bytes),
     });
+    // A computer's tree can take longer to read than a poll's interval.
+    let polling = false;
     const poll = async () => {
+      if (polling) return;
+      polling = true;
       try {
-        const page = await agent.context();
-        if (this.rec?.id === id) recorder.page(page.url, page.title);
+        const page = await screen.page();
+        if (this.rec?.id === id) recorder.page(page.url, page.title, page.app);
       } catch {
-        // Chromium is busy or closed; the next poll tries again.
+        // The browser or the computer is busy or gone; the next poll tries again.
+      } finally {
+        polling = false;
       }
     };
-    const offInput = desk.live.onInput((m) => this.input(m));
-    const offGone = desk.live.onViewerGone(() => this.viewerGone());
+    const offInput = screen.live.onInput((m) => this.input(m));
+    const offGone = screen.live.onViewerGone(() => this.viewerGone());
     this.rec = {
       id,
       recorder,
       timer: setInterval(poll, PAGE_POLL_MS),
-      desk,
+      screen,
       off: () => {
         offInput();
         offGone();
@@ -231,6 +256,17 @@ export class Teach {
     void poll();
     this.emit(id);
     return this.get(id) as TeachSession;
+  }
+
+  /** The screen a skill was last shown on: a computer's id, or null for the desktop. */
+  private shownOn(skill: string): string | null {
+    return (
+      this.d.db
+        .query<{ screen: string | null }, [string]>(
+          "SELECT screen FROM teach_sessions WHERE name = ? AND status = 'saved' ORDER BY id DESC LIMIT 1",
+        )
+        .get(skill)?.screen ?? null
+    );
   }
 
   private input(m: Parameters<Recorder["input"]>[0]) {
@@ -249,8 +285,8 @@ export class Teach {
     clearInterval(rec.timer);
     rec.off();
     const steps = await rec.recorder.finish();
-    await rec.desk.control.handback();
-    rec.desk.lane.release(TEACH_LANE);
+    await rec.screen.handback();
+    rec.screen.lane.release(TEACH_LANE);
     return steps;
   }
 
@@ -289,10 +325,14 @@ export class Teach {
   private async write(id: number) {
     const { screens } = this.d;
     try {
-      const steps = JSON.parse(this.row(id)?.events ?? "[]") as RecStep[];
+      const row = this.row(id);
+      const steps = JSON.parse(row?.events ?? "[]") as RecStep[];
       const { lines, screens: shots } = describeSteps(steps);
       const content: Extract<ModelMessageParam["content"], unknown[]> = [
-        { type: "text", text: `<recording>\n${lines.join("\n")}\n</recording>` },
+        {
+          type: "text",
+          text: `<screen>${this.about(row?.screen ?? null)}</screen>\n\n<recording>\n${lines.join("\n")}\n</recording>`,
+        },
       ];
       // Full size: the log's coordinates are in the screenshots' pixels.
       const picked = spread(
@@ -307,7 +347,8 @@ export class Teach {
           type: "image",
           source: {
             type: "base64",
-            media_type: "image/webp",
+            // The desktop's are WebP, a computer's JPEG.
+            media_type: bytes[0] === 0xff && bytes[1] === 0xd8 ? "image/jpeg" : "image/webp",
             data: Buffer.from(bytes).toString("base64"),
           },
         });
@@ -342,6 +383,16 @@ export class Teach {
           : `Failed: ${modelErrorText(err)}`;
       this.update(id, { status: "failed", error }, "drafting");
     }
+  }
+
+  /** Which screen a recording was made on, for its draft. */
+  private about(screen: string | null): string {
+    if (screen === null) return "Hatbot's own desktop: Linux (XFCE) with Chromium, 1280x800.";
+    const c = this.d.computers?.()?.screen(screen);
+    if (!c) return "One of the owner's own computers, since removed.";
+    const system = c.system();
+    const on = system === "windows" ? "Windows" : system ? `Linux (${system})` : null;
+    return `The owner's own computer "${c.name}"${on ? `, on ${on}` : ""}.`;
   }
 
   /** Saves your reviewed skill to memory as you. This is what makes it trusted. */

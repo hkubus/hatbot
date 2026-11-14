@@ -7,8 +7,8 @@ API with a bearer token. Notifications still come from the ntfy app.
   store, Markdown blocks, cron in words. `Package.swift` builds it on its own so it compiles and
   tests anywhere Swift runs.
 - `Hatbot/Views`, `Hatbot/App`: SwiftUI and UIKit. Chat, Search, Tasks, To-do, Boxes, Live, Memory and Settings;
-  Automations (the built-in jobs, the Heartbeat, schedules, watchers and triggers), Spend and Check
-  everything open from Settings. Siri and
+  Automations (the built-in jobs, the Heartbeat, schedules, watchers and triggers), Spend, Your
+  computers and Check everything open from Settings. Siri and
   Shortcuts actions are in `Hatbot/App/Intents.swift`.
 - `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
 - `Widgets`: the home-screen widget (today's spend and what needs you) and the Pause all control.

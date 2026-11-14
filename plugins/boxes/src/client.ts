@@ -4,6 +4,7 @@ import type {
   BoxRun,
   BoxSecrets,
   GuestBox,
+  HatboxCheck,
   HatboxStatus,
 } from "@hatbot/shared/hatbox";
 
@@ -32,6 +33,8 @@ export type BoxRequest = {
 export interface HatboxAgent {
   readonly configured: boolean;
   status(): Promise<HatboxStatus>;
+  /** Builds and runs a test box of the guest's own. */
+  check(): Promise<HatboxCheck>;
   boxes(): Promise<GuestBox[]>;
   /** The page inlined into one file, and the backend. */
   build(id: number, version: number, files: BoxFile[]): Promise<BoxBuild>;
@@ -104,6 +107,11 @@ export class HttpHatboxAgent implements HatboxAgent {
 
   async status() {
     return (await (await this.req("GET", "/health")).json()) as HatboxStatus;
+  }
+  async check() {
+    // Check everything gives up first, at 30 seconds: a box's build may hold it up.
+    const res = await this.req("POST", "/check", { timeoutMs: 60_000 });
+    return (await res.json()) as HatboxCheck;
   }
   async boxes() {
     return (await (await this.req("GET", "/boxes")).json()) as GuestBox[];

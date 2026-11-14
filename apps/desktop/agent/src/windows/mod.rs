@@ -11,7 +11,9 @@ mod wins;
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::computer::{BoxFuture, Button, Clip, Computer, Frame, InspectAt, Output, Result, SessionEvent, Window};
+use crate::computer::{
+    BoxFuture, Button, Clip, Computer, Fields, Frame, InspectAt, Output, Result, SessionEvent, Window,
+};
 use crate::keycode::KeyCode;
 use crate::protocol::AgentElement;
 use crate::typing::KeyTable;
@@ -36,7 +38,7 @@ impl Computer for WindowsComputer {
     }
 
     fn features(&self) -> Vec<String> {
-        ["screen", "live", "input", "windows", "uia", "files", "shell"].map(String::from).to_vec()
+        ["screen", "live", "input", "windows", "uia", "files", "shell", "teach"].map(String::from).to_vec()
     }
 
     fn focused_output(&self) -> BoxFuture<'_, Result<Output>> {
@@ -88,5 +90,15 @@ impl Computer for WindowsComputer {
 
     fn inspect(&self, at: InspectAt) -> BoxFuture<'_, Result<Option<AgentElement>>> {
         Box::pin(uia::inspect(at))
+    }
+
+    fn fields(
+        &self,
+        pid: Option<i32>,
+        _: Option<String>,
+        field: bool,
+        filled: bool,
+    ) -> BoxFuture<'_, Result<Option<Fields>>> {
+        Box::pin(uia::fields(pid, field, filled))
     }
 }

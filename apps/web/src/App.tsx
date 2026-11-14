@@ -2,6 +2,7 @@ import type { Conversation, Me } from "@hatbot/shared";
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorText } from "./api";
 import { inDesktopApp, toDesktopApp } from "./desktop";
+import { embedded } from "./embedded";
 import { BotMark, Icon, type IconName } from "./icons";
 import { Link } from "./link";
 import { LiveView } from "./live";
@@ -201,7 +202,7 @@ export function App() {
       );
   } else if (!me.setupDone) return <Setup onDone={refresh} />;
   if (!me.authenticated) return <Login onDone={refresh} />;
-  if (path === "/welcome" || (me.onboarded === false && !later))
+  if (path === "/welcome" || (me.onboarded === false && !later && !embedded))
     return (
       <Onboarding
         onDone={() => {

@@ -29,6 +29,15 @@ enum AppTab: Hashable, CaseIterable {
     case .settings: "gearshape"
     }
   }
+
+  /// The plugin it's part of: it hides while that's off, as on the web.
+  var plugin: String? {
+    switch self {
+    case .boxes: "boxes"
+    case .live: "desktop"
+    default: nil
+    }
+  }
 }
 
 extension EnvironmentValues {
@@ -180,7 +189,7 @@ struct Sidebar<Content: View>: View {
           }
           Divider().overlay(Color.line).padding(.vertical, 8).padding(.horizontal, 16)
         }
-        ForEach(AppTab.allCases.filter { $0 != .chat }, id: \.self) { t in
+        ForEach(AppTab.allCases.filter { t in t != .chat && t.plugin.map { store.pluginOn($0) } != false }, id: \.self) { t in
           row(t.title, icon: t.icon, selected: t == tab, count: t == .tasks ? store.needsYou : 0) {
             tab = t
           }

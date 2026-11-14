@@ -52,6 +52,7 @@ struct BoxView: View {
   @State private var picked: Int?
   @State private var busy = false
   @State private var confirmDelete = false
+  @State private var showSecrets = false
   @State private var error: String?
   @State private var tries = 0
 
@@ -96,6 +97,9 @@ struct BoxView: View {
     ) {
       try await store.deleteBox(id)
     }
+    .sheet(isPresented: $showSecrets) {
+      BoxSecretsView(id: id, secrets: Binding(get: { detail?.secrets ?? [] }, set: { detail?.secrets = $0 }))
+    }
     // Changed by its bot, here or elsewhere: read again, unless that's what was read last.
     .task(id: Reload(changed: store.boxes[id]?.updatedAt, tries: tries)) {
       if let detail, detail.box.updatedAt == store.boxes[id]?.updatedAt { return }
@@ -129,6 +133,11 @@ struct BoxView: View {
         }
       }
     }
+    if !d.secrets.isEmpty {
+      ToolbarItem(placement: .secondaryAction) {
+        Button("Secrets", systemImage: "key") { showSecrets = true }
+      }
+    }
     ToolbarItem(placement: .secondaryAction) {
       NavigationLink(value: Route.boxCode(id, version: version)) {
         Label("Code", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -145,6 +154,101 @@ struct BoxView: View {
       await attempt($error) {
         detail = try await store.revertBox(id, to: version)
         picked = nil
+      }
+      busy = false
+    }
+  }
+}
+
+/// Only its backend gets them, and they're never shown again, here or to the bot.
+private struct BoxSecretsView: View {
+  let id: Int
+  @Binding var secrets: [BoxSecret]
+  @Environment(AppStore.self) private var store
+  @Environment(\.dismiss) private var dismiss
+  @State private var editing: String?
+  @State private var value = ""
+  @State private var removing: String?
+  @State private var busy = false
+  @State private var error: String?
+  @FocusState private var typing: Bool
+
+  private var typed: String { value.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+  var body: some View {
+    NavigationStack {
+      TiledForm {
+        if let error { Text(error).foregroundStyle(Color.danger) }
+        Section {
+          ForEach(secrets, id: \.name) { s in
+            if editing == s.name { field(s.name) } else { row(s) }
+          }
+        }
+      }
+      .navigationTitle("Secrets")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+        }
+      }
+      .confirmationDialog(
+        "Remove \(removing ?? "")? The box's backend stops getting it.",
+        isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+        titleVisibility: .visible,
+        presenting: removing
+      ) { name in
+        Button("Remove", role: .destructive) { save([name: nil]) }
+      }
+    }
+  }
+
+  private func row(_ s: BoxSecret) -> some View {
+    HStack(spacing: 8) {
+      Text(s.name).font(.code(.callout))
+      Spacer()
+      Button(s.set ? "Change" : "Set") { edit(s.name) }
+      if s.set {
+        Button("Remove", role: .destructive) { removing = s.name }
+      }
+    }
+    .buttonStyle(.material(.tonal))
+    .controlSize(.small)
+    .disabled(busy)
+  }
+
+  private func field(_ name: String) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Text(name).font(.code(.callout))
+      SecureField("Value", text: $value)
+        .focused($typing)
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+        .materialField()
+        .onSubmit { if !busy && !typed.isEmpty { save([name: typed]) } }
+      HStack(spacing: 8) {
+        Spacer()
+        Button("Cancel") { edit(nil) }.buttonStyle(.material(.outlined))
+        Button("Save") { save([name: typed]) }
+          .buttonStyle(.material(.filled))
+          .disabled(busy || typed.isEmpty)
+      }
+      .controlSize(.small)
+    }
+    .onAppear { typing = true }
+  }
+
+  private func edit(_ name: String?) {
+    editing = name
+    value = ""
+  }
+
+  private func save(_ values: [String: String?]) {
+    Task {
+      busy = true
+      await attempt($error) {
+        secrets = try await store.setBoxSecrets(id, values)
+        if let editing, values.keys.contains(editing) { edit(nil) }
       }
       busy = false
     }

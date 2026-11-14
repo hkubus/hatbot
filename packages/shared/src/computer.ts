@@ -28,7 +28,7 @@ export type ComputerHello = {
   compositor: string;
   /** "Let Hatbot use this computer", switched only at the computer. Off: the brain may not ask anything but status. */
   enabled: boolean;
-  /** What this copy can do: "screen", "input", "windows", "atspi" or "uia", "files", "shell", "live". */
+  /** What this copy can do: "screen", "input", "windows", "atspi" or "uia", "files", "shell", "live", "teach". */
   features: string[];
 };
 
@@ -72,6 +72,31 @@ export type ComputerWindow = {
   hidden?: boolean;
 };
 
+/** A text field, for Teach's check for secret ones: what names it, and where it is. */
+export type ComputerField = {
+  /** AT-SPI's role name, or UI Automation's control type as one: "entry", "password text". */
+  role: string;
+  /** Its label, description or placeholder, id and input type, those the app gives. */
+  names: string[];
+  /** The app says it takes a password. */
+  password: boolean;
+  /** It's in a frame within a page, as a payment form's card fields are. */
+  inFrame: boolean;
+  editable: boolean;
+};
+
+/** Where the keyboard is, for Teach. */
+export type ComputerFocus = {
+  /** The window with the keyboard; null without the "windows" feature. */
+  window: { title: string; appId: string } | null;
+  /** The page's address, when that window is a browser's and its accessibility tree says. */
+  url: string | null;
+  /** With `field`: what has the keyboard; null when its app has no accessibility tree, or nothing in it has the keyboard. */
+  field?: ComputerField | null;
+  /** With `filled`: the text fields on show in that window that hold something. Absent when they couldn't be read. */
+  filled?: ComputerField[];
+};
+
 /** What the brain asks. Coordinates are in the screenshot's pixels, as on the guest. */
 export type ComputerRequest =
   | { op: "status" }
@@ -89,6 +114,8 @@ export type ComputerRequest =
   | { op: "focus_window"; id: number }
   /** The element under a point, or the focused one, from AT-SPI. Null when there's no tree there. */
   | { op: "inspect"; x?: number; y?: number }
+  /** For Teach, with the "teach" feature: the window and field with the keyboard, and the filled fields on show. */
+  | { op: "focus"; field?: boolean; filled?: boolean }
   /** A command run as the owner, never with sudo. */
   | { op: "exec"; command: string; timeoutMs: number }
   /** Base64. Written into ~/Downloads/Hatbot unless `path` is given (which needs approval brain-side). */
@@ -113,6 +140,7 @@ export type ComputerResult =
   | { op: "windows"; windows: ComputerWindow[] }
   | { op: "focus_window" }
   | { op: "inspect"; element: AgentElement | null }
+  | { op: "focus"; focus: ComputerFocus }
   | { op: "exec"; result: ShellResult }
   | { op: "put_file"; path: string }
   | { op: "get_file"; name: string; data: string }

@@ -324,6 +324,7 @@ export async function runScript(
           origin: task.origin,
           source: script.name,
           scheduleId: task.scheduleId ?? undefined,
+          triggerId: task.triggerId ?? undefined,
           watcherId: task.watcherId ?? undefined,
           botId: bot.id,
           runKey: `script:${script.id}:task`,

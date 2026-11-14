@@ -1,6 +1,7 @@
 // Boxes: small web apps a bot makes for you, opened from the chat and kept.
 import { z } from "zod";
 import { type BoxFile, MAX_BOX_SECRET, SECRET_NAME } from "./hatbox";
+import type { TaskStatus } from "./index";
 
 export type Box = {
   id: number;
@@ -25,7 +26,11 @@ export type BoxVersion = {
 /** A secret the box's box.json declares, and whether you've set it: never its value. */
 export type BoxSecret = { name: string; set: boolean };
 
-export type BoxDetail = Box & { versions: BoxVersion[]; secrets: BoxSecret[] };
+export type BoxDetail = Box & {
+  versions: BoxVersion[];
+  secrets: BoxSecret[];
+  actions: BoxActionInfo[];
+};
 
 /** A version's page, for its Code view. A box with files has them too, and its `html` is built from them. */
 export type BoxPage = BoxVersion & { html: string; files?: BoxFile[] };
@@ -43,6 +48,7 @@ export const MAX_BOX_ASK_TOKENS = 8000;
 /** A note hatbox.send puts in the chat, in characters. */
 export const MAX_BOX_NOTE = 2000;
 export const MAX_BOX_FEED_NAME = 40;
+export const MAX_BOX_ACTION_NAME = 40;
 
 export const OpenBox = z.object({
   version: z.number().int().positive().optional(),
@@ -82,7 +88,19 @@ export const BoxCall = z.discriminatedUnion("op", [
     maxTokens: z.number().int().min(1).max(MAX_BOX_ASK_TOKENS).optional(),
   }),
   z.object({ op: z.literal("send"), text: z.string().trim().min(1).max(MAX_BOX_NOTE) }),
-  z.object({ op: z.literal("feed"), name: z.string().max(MAX_BOX_FEED_NAME) }),
+  // `fresh`: run the feed's tool first, when its last run is over a minute old.
+  z.object({
+    op: z.literal("feed"),
+    name: z.string().max(MAX_BOX_FEED_NAME),
+    fresh: z.literal(true).optional(),
+  }),
+  // hatbox.action: runs one of the bot's scripts that the bot let the page run; `check`: how its last
+  // run went, without running it.
+  z.object({
+    op: z.literal("action"),
+    name: z.string().max(MAX_BOX_ACTION_NAME),
+    check: z.literal(true).optional(),
+  }),
 ]);
 export type BoxCall = z.infer<typeof BoxCall>;
 
@@ -94,3 +112,14 @@ export type BoxAnswer = { value?: unknown };
  * JSON) and when it came; `error` says why its last run failed, or why it stopped.
  */
 export type BoxFeedValue = { value: unknown; at: string; error?: string };
+
+/** An action's run, as its task: what hatbox.action gives the page. */
+export type BoxActionRun = { task: number; status: TaskStatus; summary?: string; at: string };
+
+/** One of the bot's scripts, with a fixed input, that the box's page may run. */
+export type BoxActionInfo = {
+  name: string;
+  script: string;
+  input: Record<string, unknown>;
+  last?: BoxActionRun;
+};

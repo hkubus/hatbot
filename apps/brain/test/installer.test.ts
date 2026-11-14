@@ -239,6 +239,75 @@ test("a plugin's data is deleted only while it's off", async () => {
   expect((await info(await restarted(t), "boxes")).enabled).toBe(false);
 });
 
+test("an installed plugin's settings come as a form, and save through it", async () => {
+  const t = track(await app());
+  await install(
+    t,
+    repo({
+      "package.json": JSON.stringify({ name: "hatbot-plugin-dialer", exports: "./src/index.ts" }),
+      "src/index.ts": `import { definePlugin, ready, z } from "@hatbot/plugin-sdk";
+
+export default definePlugin({
+  id: "dialer",
+  name: "Dialer",
+  description: "Rings",
+  config: z.object({
+    greeting: z.string().max(40).default("hi").describe("What it says first"),
+    tone: z.enum(["warm", "dry"]).default("warm"),
+    rings: z.number().int().min(1).max(9).default(3),
+    quiet: z.object({ night: z.boolean().default(false) }).default({ night: false }),
+    numbers: z.array(z.string()).default([]),
+    routes: z.array(z.object({ to: z.string() })).default([{ to: "desk" }]),
+  }),
+  start: ({ config }) => ready([], { test: async () => JSON.stringify(config) }),
+});
+`,
+    }),
+  );
+  const again = await restarted(t);
+  const p = await info(again, "dialer");
+  expect(p.form).toEqual([
+    { path: ["greeting"], label: "What it says first", kind: "text", max: 40, nullable: false },
+    {
+      path: ["tone"],
+      label: "Tone",
+      kind: "choice",
+      choices: [
+        { value: "warm", label: "Warm" },
+        { value: "dry", label: "Dry" },
+      ],
+    },
+    {
+      path: ["rings"],
+      label: "Rings",
+      kind: "number",
+      integer: true,
+      min: 1,
+      max: 9,
+      nullable: false,
+    },
+    {
+      path: ["quiet"],
+      label: "Quiet",
+      kind: "group",
+      fields: [{ path: ["quiet", "night"], label: "Night", kind: "switch" }],
+    },
+    { path: ["numbers"], label: "Numbers", kind: "list", numbers: false },
+  ]);
+
+  const patch = (config: unknown) =>
+    again.call("PATCH", "/plugins/dialer", { enabled: true, config }, signIn(again));
+  const wrong = await patch({ ...(p.config as object), rings: 12 });
+  expect(wrong.status).toBe(400);
+  expect(((await wrong.json()) as { field: string }).field).toBe("config.rings");
+
+  const config = { ...(p.config as object), tone: "dry", quiet: { night: true } };
+  expect((await patch(config)).status).toBe(200);
+  const res = await again.call("POST", "/plugins/dialer/test", {}, signIn(again));
+  const { message } = (await res.json()) as { message: string };
+  expect(JSON.parse(message)).toEqual(config);
+});
+
 test("plugins.json entries that aren't right are left out", () => {
   const dir = mkdtempSync(join(tmpdir(), "hatbot-index-"));
   tempDirs.push(dir);
