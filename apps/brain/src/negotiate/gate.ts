@@ -27,6 +27,8 @@ export type SendGate = {
   listingUrl: string;
   listingId: string;
   conversationUrl: string | null;
+  /** Where the site sent the tab from the conversation's address: Vinted's numbered ones go on to a UUID. */
+  movedTo?: string[];
 };
 
 export type GateState = {
@@ -81,6 +83,7 @@ export function sameAddress(tab: string, want: string): boolean {
 export function onConversation(tab: string, gate: SendGate): boolean {
   if (sameAddress(tab, gate.listingUrl)) return true;
   if (gate.conversationUrl && sameAddress(tab, gate.conversationUrl)) return true;
+  if (gate.movedTo?.some((u) => sameAddress(tab, u))) return true;
   return namesListing(tab, gate.listingUrl, gate.listingId);
 }
 

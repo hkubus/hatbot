@@ -42,6 +42,7 @@ import {
   type GateState,
   gateCheck,
   gateHeld,
+  onConversation,
   refused,
   sameAddress,
   typesText,
@@ -240,7 +241,7 @@ const CUSTOM_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: "record_conversation",
     description:
-      "Record the conversation with the seller (or the buyer, when we sell) as it is on screen now: every message, oldest first, who wrote it (the other person, or us: this account) and its text, copied exactly. The site's own notes are from site, not the seller: Vinted shows one at the start of every conversation, whether or not the seller wrote, and sites add safety tips and the item's card. An offer made with the site's offer button, or its answer, is whoever made or answered it; give an offer's price in offer. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
+      "Record the conversation with the seller (or the buyer, when we sell) as it is on screen now: every message, oldest first, who wrote it (the other person, or us: this account) and its text, copied exactly. The site's own notes are from site, not the seller: Vinted shows one at the start of every conversation, whether or not the seller wrote, and sites add safety tips, the item's card and the other person's profile (\"Hej, jestem …\"). An offer made with the site's offer button, or its answer, is whoever made or answered it; give an offer's price in offer. Call it once the conversation is open, before sending anything, and again after. It says what to do next.",
     schema: RecordConversation,
   },
   // Only in a listing's desktop tasks.
@@ -457,6 +458,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   let typed = false;
   /** The last click was on the listing page, so a conversation it opens is this seller's. */
   let fromListing = false;
+  /** The last action opened the conversation by its address, so wherever the site sends it is that one. */
+  let toConversation = false;
   const sources = new Set<string>();
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   /** Archive paths of the images in `messages`, so the stored transcript references files. */
@@ -757,8 +760,19 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (gate && fromListing && !gate.conversationUrl && conversationPage(url, gate.listingUrl)) {
       gate.conversationUrl = url;
       tasks.negotiations?.conversationOpened(id, url);
+    } else if (
+      gate?.conversationUrl &&
+      toConversation &&
+      !onConversation(url, gate) &&
+      conversationPage(url, gate.listingUrl)
+    ) {
+      const at = new URL(url);
+      const moved = `${at.origin}${at.pathname}`;
+      gate.movedTo = [...(gate.movedTo ?? []), moved];
+      tasks.negotiations?.conversationMoved(id, gate.conversationUrl, moved);
     }
     fromListing = false;
+    toConversation = false;
     if (armed && !armed.hold && !samePage(url, armed.page)) armed = null;
     if (!/^https?:/.test(url)) return;
     sources.add(url.slice(0, 300));
@@ -975,8 +989,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     // The model went on to something else: an approval it asks for next isn't for the held step.
     if (check || typesText(call.name, input) || call.name === "navigate") lastHeld = null;
     if (gate && typesText(call.name, input)) gateState.typed = true;
-    if (gate && (check || call.name === "navigate"))
+    if (gate && (check || call.name === "navigate")) {
       fromListing = check?.press === "click" && !!lastUrl && sameAddress(lastUrl, gate.listingUrl);
+      toConversation =
+        call.name === "navigate" &&
+        [gate.conversationUrl, ...(gate.movedTo ?? [])].some(
+          (u) => !!u && sameAddress(String(input.url), u),
+        );
+    }
     const step = tasks.addStep(id, {
       kind: call.name === "screenshot" ? "screenshot" : "action",
       name: call.name,
@@ -992,6 +1012,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     } finally {
       pendingStepId = undefined;
     }
+    // A click later in the same turn is checked against where the site sent the tab.
+    if (toConversation) await observePage();
     if (computer.interrupted) {
       computer.interrupted = false;
       await whenFree();

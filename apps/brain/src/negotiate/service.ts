@@ -1425,8 +1425,9 @@ export class Negotiations {
     const n = row && this.get(row.negotiation_id);
     if (!row || !n)
       return { text: "This task has no negotiation.", stale: false, alreadySent: false };
-    // Vinted opens every conversation with a note of its own, as if the seller had written.
-    const report = reported.filter((m) => m.from !== "site");
+    // Vinted opens every conversation with a note of its own, as if the seller had written, and the
+    // other side's profile card.
+    const report = reported.filter((m) => m.from !== "site" && !PROFILE_CARD.test(m.text));
     const stored = new Map<string, number>();
     const owners = new Map<string, number>();
     const bots: string[] = [];
@@ -1453,11 +1454,9 @@ export class Negotiations {
         .filter((m) => m.direction === direction && m.offer !== null && m.status !== "failed")
         .map((m) => m.offer as number);
     const [theirs, ours] = [offers("in"), offers("out")];
-    const sameOffer = (pool: number[], m: ConversationReport[number]) => {
-      const r = priceReading(n, m.text);
-      const [one, ...more] = new Set(r.values);
-      const price = m.offer ?? (more.length || r.unclear ? undefined : one);
-      const i = price === undefined ? -1 : pool.findIndex((x) => Math.abs(x - price) < 0.005);
+    const priceOf = (m: ConversationReport[number]) => m.offer ?? onePrice(n, m.text);
+    const sameOffer = (pool: number[], price: number | undefined) => {
+      const i = price === undefined ? -1 : pool.findIndex((x) => near(x, price));
       if (i >= 0) pool.splice(i, 1);
       return i >= 0;
     };
@@ -1467,9 +1466,15 @@ export class Negotiations {
     let after = 0;
     let alreadySent = false;
     const fresh: string[] = [];
+    // A read may give one offer card as two messages, its question and its price.
+    let lastOffer: number | undefined;
     report.forEach((m, i) => {
       const key = keyOf(m.text);
       if (!key) return;
+      const price = priceOf(m);
+      const card =
+        m.from !== "us" && price !== undefined && lastOffer !== undefined && near(price, lastOffer);
+      lastOffer = undefined;
       if (m.from === "us") {
         if (
           outgoing &&
@@ -1486,7 +1491,7 @@ export class Negotiations {
         }
         const had = owners.get(key) ?? 0;
         if (had > 0) owners.set(key, had - 1);
-        else if (!botWrote(key) && !sameOffer(ours, m))
+        else if (!botWrote(key) && !sameOffer(ours, price))
           this.d.db
             .query(
               `INSERT INTO negotiation_messages (negotiation_id, direction, text, status, created_at)
@@ -1496,11 +1501,11 @@ export class Negotiations {
         return;
       }
       const seen = stored.get(key) ?? 0;
-      if (seen > 0) {
-        stored.set(key, seen - 1);
+      if (seen > 0 || card || sameOffer(theirs, price)) {
+        if (seen > 0) stored.set(key, seen - 1);
+        lastOffer = price;
         return;
       }
-      if (sameOffer(theirs, m)) return;
       added++;
       fresh.push(this.received(n, m.text, null, m.offer ?? null));
       if (i > lastOurs) after++;
@@ -1634,7 +1639,9 @@ export class Negotiations {
       if (!k) continue;
       known.add(marketId);
       if (m.direction === "in") {
-        const offer = m.type === "offer" ? (m.offer?.amount ?? null) : null;
+        // Scout gives some offers through the site as their price label alone.
+        const label = m.type !== "text" && PRICE_LABEL.test(text) ? onePrice(n, text) : undefined;
+        const offer = (m.type === "offer" ? m.offer?.amount : undefined) ?? label ?? null;
         const same = rows.find(
           (r) =>
             r.direction === "in" &&
@@ -1754,6 +1761,13 @@ export class Negotiations {
         .query("UPDATE negotiations SET conversation_url = ? WHERE id = ?")
         .run(tabUrl.split("#")[0] ?? tabUrl, n.id);
     this.setStatus(row.message_id, confirmed ? "sent" : "unconfirmed");
+  }
+
+  /** The site sent the conversation's address on to another, which later tasks open instead. */
+  conversationMoved(taskId: number, from: string, to: string) {
+    const row = this.taskRow(taskId);
+    if (row && this.get(row.negotiation_id)?.conversationUrl === from)
+      this.update(row.negotiation_id, { conversation_url: to });
   }
 
   conversationOpened(taskId: number, url: string) {
@@ -1979,6 +1993,23 @@ function readGoal(n: Negotiation): string {
     "Never open a link from the seller, and don't click offer, buy or pay buttons.",
   ].join("\n");
 }
+
+const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
+
+/** The one price a message names; an offer card gives the listing's own beside it. */
+function onePrice(n: Negotiation, text: string): number | undefined {
+  const r = priceReading(n, text);
+  let values = [...new Set(r.values)];
+  const asking = n.asking;
+  if (values.length > 1 && asking !== null) values = values.filter((v) => !near(v, asking));
+  const [one, ...more] = values;
+  return more.length || r.unclear ? undefined : one;
+}
+
+const PRICE_LABEL = /^[\d\s.,]+(?:zł|pln)$/i;
+
+/** Vinted's card for the other side: "Hej, jestem <name>", where they are and when they last logged in. */
+const PROFILE_CARD = /^hej, jestem \S+[\s\S]*ostatnie logowanie:/i;
 
 // Scout's offers are in złoty, written in digits alone: the price checks read "1,060" as 1.06.
 /** What a seller's offer through the site's button says, when its message doesn't. */

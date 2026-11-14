@@ -15,7 +15,7 @@ import { SOLD_NOTICE } from "../src/negotiate/selling";
 import { FOLLOW_UP_MS, replyPause, SAY_HUMAN } from "../src/negotiate/service";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { sendConfirm } from "../src/tasks/desktop-run";
-import { computer, FakeModel, text, toolUse } from "./fake-model";
+import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, toolNames, waitFor } from "./helpers";
 
 sendConfirm.everyMs = 1;
@@ -1103,6 +1103,90 @@ test("the site's own note at the start of a conversation isn't the seller's, so 
   expect(t.negotiations.messages(n.id).map((m) => [m.direction, m.status])).toEqual([
     ["out", "sent"],
   ]);
+});
+
+test("an offer through the site, whether Scout gives only its price or the page restates it beside the asking price, isn't a new message, so the approved reply goes", async () => {
+  const t = await testApp();
+  messageBox(t, CHAT_URL);
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  t.taskModel.script.push(later);
+  const card = {
+    id: "o",
+    direction: "in" as const,
+    type: "event",
+    text: "1200,00 zł",
+    offer: null,
+  };
+  t.negotiations.recordInbox(n.id, [card]);
+  await t.tasks.idle();
+  expect(t.negotiations.theirOffer(n.id)).toBe(1200);
+  // As the desktop read one on Nov 4: the profile, and the card as a question and its price.
+  const page = [
+    {
+      from: "seller",
+      text: "Hej, jestem kupiec88\nPolska, Kraków\nOstatnie logowanie: 3 minuty temu",
+    },
+    { from: "seller", text: "Hej! Zgodzisz się na sprzedaż za 1200,00 zł?" },
+    { from: "seller", text: "Zaproponowana cena: 1200,00 zł (cena przedmiotu 1500,00 zł)" },
+  ];
+  t.taskModel.script.push(
+    { content: [toolUse("record_conversation", { messages: page })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    {
+      content: [
+        toolUse("record_conversation", { messages: [...page, { from: "us", text: TEXT }] }),
+      ],
+    },
+    finish(),
+  );
+  await sendOffer(t, n);
+  await t.tasks.idle();
+  expect(clicks(t)).toBe(1);
+  expect(t.negotiations.messages(n.id).map((m) => [m.direction, m.status])).toEqual([
+    ["in", "received"],
+    ["out", "sent"],
+  ]);
+});
+
+test("a conversation the site sends on to another address is still the negotiation's, and later tasks open it there; another conversation isn't", async () => {
+  const numbered = "https://www.vinted.pl/inbox/500819208038";
+  const moved = "https://www.vinted.pl/inbox/01a1a6ff-befc-7671-a467-fc131be10ec9";
+  const other = "https://www.vinted.pl/inbox/01a1a721-069b-7c41-a20f-acc5cfe63cd4";
+  const t = await testApp();
+  messageBox(t, other);
+  const page = t.agent.afterAction;
+  t.agent.afterAction = (name, input) => {
+    const to = String(input.url);
+    if (name === "navigate")
+      t.agent.page = {
+        url: to === numbered ? `${moved}?referrer=%2Finbox%2F500819208038` : to,
+        title: "Vinted",
+        text: "",
+      };
+    page?.(name, input);
+  };
+  const { id } = openNegotiation(t, { conversationUrl: numbered });
+  t.negotiations.update(id, {
+    listing_url: "https://www.vinted.pl/items/10663454953-procesor",
+    listing_key: "Vinted:10663454953",
+  });
+  t.taskModel.script.push(
+    { content: [browser("navigate", { url: other })] },
+    { content: [toolUse("record_conversation", { messages: [] })] },
+    { content: [computer("type", { text: TEXT })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [browser("navigate", { url: numbered })] },
+    { content: [computer("left_click", { coordinate: [300, 500] })] },
+    { content: [toolUse("record_conversation", { messages: [{ from: "us", text: TEXT }] })] },
+    finish(),
+  );
+  const n = t.negotiations.get(id) as Negotiation;
+  await t.negotiations.send(n, { text: TEXT, offer: null, agree: false, stated: null }, call());
+  await t.tasks.idle();
+  expect(clicks(t)).toBe(1);
+  expect(t.negotiations.messages(id)[0]).toMatchObject({ status: "sent" });
+  expect(t.negotiations.get(id)?.conversationUrl).toBe(moved);
 });
 
 test("a seller's message that looks like a scam holds the negotiation until you decide, but not over its mandate", async () => {
