@@ -86,6 +86,8 @@ const BETAS: Anthropic.Beta.AnthropicBeta[] = [
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 
 const SUMMARY_WORDS = 2000;
+// Models can't count characters: a summary a little over what it's told is kept, not written again.
+const SUMMARY_KEPT = 2500;
 // Chart blocks don't count: five listings with their photos' addresses take most of it.
 const wordsOf = (summary: string) =>
   chartBlocks(summary).reduceRight((s, b) => s.slice(0, b.start) + s.slice(b.end), summary);
@@ -97,7 +99,7 @@ const FinishTask = z.object({
     .min(1)
     .max(20_000)
     .refine(
-      (s) => wordsOf(s).length <= SUMMARY_WORDS,
+      (s) => wordsOf(s).length <= SUMMARY_KEPT,
       `Too long: at most ${SUMMARY_WORDS} characters, not counting chart blocks.`,
     )
     .optional()
@@ -901,7 +903,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           if (!p.success) return result(call, invalidInput(p.error), true);
           const summary = p.data.summary || said || wrote;
           if (!summary) return result(call, "Not finished: give the summary.", true);
-          if (summary.length > 20_000 || wordsOf(summary).length > SUMMARY_WORDS)
+          if (summary.length > 20_000 || wordsOf(summary).length > SUMMARY_KEPT)
             return result(
               call,
               "Not finished: what you wrote is too long to keep. Give a summary.",
