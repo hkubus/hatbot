@@ -15,6 +15,7 @@ import { z } from "zod";
 import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
+import { HATBOT } from "../src/memory/store";
 import { runPluginTool } from "../src/plugins/registry";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -210,6 +211,61 @@ test("with the review off, tainted work asks before rewriting homelab.md, the ma
   t.tasks.createBackgroundTask({ title: "Map", goal: "Start the map", origin: "schedule" });
   await t.tasks.idle();
   expect(await t.memory.read("homelab.md")).toBe("# Homelab\n- CT 105: Jellyfin\n");
+});
+
+test("tainted, a memory write reaches the review as what it changes, not the whole file", async () => {
+  const hosts = Array.from({ length: 30 }, (_, i) => `- CT ${200 + i}: guest ${i}`).join("\n");
+  const work = new FakeModel([
+    {
+      content: [
+        toolUse("memory_write", {
+          path: "homelab.md",
+          content: `# Homelab\n- CT 105: Jellyfin\n${hosts}\n- CT 106: Immich\n`,
+          reason: "Add CT 106",
+        }),
+      ],
+    },
+    finish("Saved."),
+  ]);
+  work.onCreate = reviewSaysSafe;
+  const t = await testApp(new FakeModel(), work);
+  await t.memory.write("homelab.md", `# Homelab\n- CT 105: Jellyfin\n${hosts}\n`, HATBOT, "Map");
+  t.tasks.createBackgroundTask({
+    title: "Learn from the webhook",
+    goal: "Note what it says",
+    origin: "webhook",
+    source: "Forgejo",
+    payload: '{"text":"CT 106 runs Immich"}',
+  });
+  await t.tasks.idle();
+  const review = String(work.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  expect(review).toContain("+ - CT 106: Immich");
+  expect(review).not.toContain("CT 105: Jellyfin");
+  expect(await t.memory.read("homelab.md")).toContain("CT 106: Immich");
+});
+
+test("in the chat, the review reads what the bot said there, so the owner's yeah answers it", async () => {
+  const restarted: string[] = [];
+  const chat = new FakeModel([
+    { content: [toolUse("lab_issue", {})] },
+    { content: [text("Jellyfin is stuck. Shall I restart it?")] },
+    { content: [text("Restarting it now."), toolUse("lab_restart", { service: "jellyfin" })] },
+    { content: [text("Restarted.")] },
+  ]);
+  chat.onCreate = reviewSaysSafe;
+  const t = await testApp(chat, new FakeModel(), {}, [
+    labPlugin(() => "Jellyfin hangs", restarted),
+  ]);
+  await t.plugins.update("lab", { enabled: true });
+  await t.thread.post("what's up with jellyfin?").done;
+  await t.thread.post("yeah").done;
+  const review = String(chat.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  const goal = review.split("<task_goal>")[1]?.split("</task_goal>")[0] ?? "";
+  expect(goal.indexOf("Shall I restart it?")).toBeLessThan(goal.indexOf("The owner: yeah"));
+  // The reply in progress too: what it said before the change.
+  expect(goal).toContain("Restarting it now.");
+  expect(goal).not.toContain("Restarted.");
+  expect(restarted).toEqual(["jellyfin"]);
 });
 
 test("what code ran, in the sandbox or with the web tools, is untrusted and taints the chat", async () => {

@@ -1,9 +1,9 @@
 import type { Commit, MemoryFile, Proposal, SkillStatus } from "@hatbot/shared";
+import { lineDiff } from "@hatbot/shared/diff";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAction } from "../action";
 import { ApiError, api, errorText } from "../api";
 import { ask, askText, useLeaveGuard } from "../confirm";
-import { lineDiff } from "../diff";
 import { dayTime, shortSha } from "../format";
 import { Icon } from "../icons";
 import { Link } from "../link";

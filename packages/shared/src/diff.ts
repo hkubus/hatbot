@@ -47,6 +47,14 @@ function diff(before: string | null, after: string | null): DiffLine[] {
   return out;
 }
 
+/** A diff as text: + before an added line, - before a removed one, two spaces before the rest. */
+export function diffText(before: string | null, after: string | null): string {
+  const mark = { add: "+ ", del: "- ", same: "  " } as const;
+  return lineDiff(before, after)
+    .map((l) => (l.kind === "gap" ? l.text : `${mark[l.kind]}${l.text}`))
+    .join("\n");
+}
+
 const MOST_EDITS = 2_000;
 
 /** Myers' diff: time grows with file size times edits, not file size squared. */

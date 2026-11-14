@@ -32,6 +32,7 @@ import {
   withDone,
   withTodo,
 } from "@hatbot/shared";
+import { diffText } from "@hatbot/shared/diff";
 import { z } from "zod";
 import type { Attachments } from "../attachments";
 import type { Bots } from "../bots";
@@ -86,7 +87,14 @@ export type ToolContext = {
   answering?: Task;
   /** Asks as a plugin's change asks: Haiku's review, then you. `always`: only you. */
   approve?: (
-    call: { tool: string; input: unknown; what: string; why: string; always?: boolean },
+    call: {
+      tool: string;
+      input: unknown;
+      what: string;
+      why: string;
+      always?: boolean;
+      change?: string;
+    },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
   /** The commit the brain runs, when it was deployed from one. */
@@ -217,7 +225,8 @@ function researchNotes(ctx: ToolContext, tool: string, path: string, text: strin
 
 /**
  * After reading untrusted content, a change to a file every later chat and task trusts goes to the
- * safety review. Null when it goes ahead, or why not.
+ * safety review. Null when it goes ahead, or why not. `after`: the file as it would be (null: gone),
+ * so the review reads what changes rather than the whole file.
  */
 async function reviewed(
   ctx: ToolContext,
@@ -225,16 +234,20 @@ async function reviewed(
   path: string,
   reason: string,
   signal = new AbortController().signal,
+  after?: string | null,
 ): Promise<string | null> {
   const { rel } = ctx.memory.resolve(path);
   if (!ctx.tainted?.() || !TRUSTED_FILE.test(rel) || !untrustedAsks(ctx)) return null;
   if (!ctx.approve)
     throw new MemoryError(`${rel} can't be changed here after reading untrusted content.`);
+  const change =
+    after === undefined ? undefined : diffText(await ctx.memory.readOrNull(rel), after);
   const r = await ctx.approve(
     {
       ...call,
       what: `Change ${rel}: ${reason}`,
       why: "This conversation has read untrusted content, and every later chat and task trusts this file.",
+      ...(change === undefined ? {} : { change }),
     },
     signal,
   );
@@ -348,7 +361,7 @@ export const TOOLS = [
     run: async ({ path, content, reason }, ctx, signal) => {
       const author = authorOf(ctx, path);
       const call = { tool: "memory_write", input: { path, content } };
-      const blocked = await reviewed(ctx, call, path, reason, signal);
+      const blocked = await reviewed(ctx, call, path, reason, signal, content);
       if (blocked) return blocked;
       const sha = await ctx.memory.write(path, content, author, reason);
       if (!sha) return "No change: the file already had this content.";
@@ -367,6 +380,7 @@ export const TOOLS = [
         path,
         reason,
         signal,
+        null,
       );
       if (blocked) return blocked;
       await ctx.memory.delete(path, author, reason);

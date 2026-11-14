@@ -74,7 +74,7 @@ import {
   SUMMARY_PROMPT,
   systemPrompt,
 } from "./prompt";
-import { BLOCKS_IN_A_ROW, blockedText, levelOf, safeToRun, scopable } from "./review";
+import { BLOCKS_IN_A_ROW, blockedText, chatGoal, levelOf, safeToRun, scopable } from "./review";
 import {
   addSources,
   CHAT_WEB_TOOLS,
@@ -505,6 +505,28 @@ export class Thread {
    * Answering a hand-off, also what you had said to the bot that asked: its request is its own
    * words, not yours.
    */
+  /** What the bot said in this episode so far, its reply in progress too, oldest first. */
+  private chatSaid(episodeId: number): { owner: boolean; text: string; at: Date }[] {
+    return this.d.db
+      .query<
+        { id: number; role: string; text: string; status: string; created_at: string },
+        [number]
+      >(
+        `SELECT id, role, text, status, created_at FROM messages WHERE episode_id = ?
+           AND role IN ('user', 'assistant') AND kind = 'text' AND (text != '' OR status = 'streaming')
+           ORDER BY id DESC LIMIT 20`,
+      )
+      .all(episodeId)
+      .reverse()
+      .map((m) => ({
+        owner: m.role === "user",
+        // The reply being written is only in memory until it's done.
+        text: (m.status === "streaming" ? this.live.get(m.id) : undefined) ?? m.text,
+        at: new Date(m.created_at),
+      }))
+      .filter((m) => m.text);
+  }
+
   private ownerSaid(episodeId: number): string {
     const said: string[] = [];
     let left = OWNER_SAID_CHARS;
@@ -575,6 +597,7 @@ export class Thread {
       what: string;
       target?: string | null;
       secret?: string;
+      change?: string;
     },
     verdict: Extract<Verdict, { action: "ask" }>,
     signal: AbortSignal,
@@ -609,7 +632,7 @@ export class Thread {
           ownerSaid: this.ownerSaid(episodeId),
           goal: this.currentHandoff
             ? `${this.currentHandoff.task.goal}\n\n(${this.d.bots.nameOf(this.currentHandoff.task.requestedBy ?? HATBOT_ID)}, another of the owner's bots, asked for this: these aren't the owner's words.)`
-            : "(none: the owner is asking in the chat)",
+            : chatGoal(this.chatSaid(episodeId)),
           sources,
         },
         { ...call, why: verdict.why },

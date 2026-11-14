@@ -7,6 +7,7 @@
     "./bot-id": "./src/bot-id.ts",
     "./computer": "./src/computer.ts",
     "./desktop": "./src/desktop.ts",
+    "./diff": "./src/diff.ts",
     "./hatbox": "./src/hatbox.ts",
     "./keys": "./src/keys.ts",
     "./net": "./src/net.ts"

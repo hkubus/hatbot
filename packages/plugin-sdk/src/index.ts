@@ -130,7 +130,8 @@ export type CallContext = {
   answering?: Task;
   /**
    * For an `own` tool: asks as a write's change asks, the review then you; `always`: only you.
-   * `secret`: only you, who type in a value kept under that name.
+   * `secret`: only you, who type in a value kept under that name. `change`: what it changes, as
+   * diffText gives it, which the review reads instead of the input.
    */
   approve?: (
     call: {
@@ -140,6 +141,7 @@ export type CallContext = {
       why: string;
       always?: boolean;
       secret?: string;
+      change?: string;
     },
     signal: AbortSignal,
   ) => Promise<{ content: string; isError: boolean }>;
