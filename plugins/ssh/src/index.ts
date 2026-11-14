@@ -7,6 +7,7 @@ import {
   ask,
   askCareful,
   block,
+  covered,
   definePlugin,
   keepSecretFrom,
   MAX_ATTACHMENT_BYTES,
@@ -95,6 +96,8 @@ const silentOn = (names: string[], out: string | undefined) => {
   );
 };
 const distinct = (names: string[]) => [...new Set(names)];
+/** Why a look that changes nothing runs without asking, even after reading untrusted content. */
+const LOOKS = "It only looks; it changes nothing.";
 
 export type Run = (
   args: string[],
@@ -689,11 +692,13 @@ export const sshPlugin = definePlugin({
               "Use ssh_pct_exec to run commands in containers: there each container's own rules apply.",
             );
           const d = destructive(command);
+          const looks = readOnly(command);
           // A careful host waits for the owner whatever the command; the pattern's reason still shows.
           // On a Proxmox host only a look that writes nothing passes: a file can run later (~/.bashrc).
           const careful = distinct(hosts)
-            .map((h) => carefulOf(h) ?? (readOnly(command) ? null : reachesCareful(h)))
+            .map((h) => carefulOf(h) ?? (looks ? null : reachesCareful(h)))
             .filter((why) => why !== null);
+          if (!careful.length && !d && looks) return covered(LOOKS);
           return verdict(careful.join(" ") || null, d && `This command ${d.why}.`, d?.kind);
         },
         run: async ({ hosts, command, timeout_s }, { signal }) =>
@@ -721,8 +726,10 @@ export const sshPlugin = definePlugin({
                 const refused = guestRefused(guest);
                 if (refused) return block(refused);
                 const d = destructive(command, "container");
+                const careful = carefulOf(host, guest);
+                if (!careful && !d && readOnly(command)) return covered(LOOKS);
                 // A careful guest is careful about everything, not only power actions.
-                return verdict(carefulOf(host, guest), d && `This command ${d.why}.`, d?.kind);
+                return verdict(careful, d && `This command ${d.why}.`, d?.kind);
               },
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
                 const h = placeOf({ host, guest, path: "/" });

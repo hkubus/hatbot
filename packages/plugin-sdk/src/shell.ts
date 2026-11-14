@@ -3,7 +3,10 @@
 // untrusted content.
 import type { ApprovalKind } from "@hatbot/shared";
 
-const REBOOT = /\breboot\b|\binit\s+6\b/;
+// Not /var/run/reboot-required, which only says one is due.
+const REBOOT = /(?<![\w.-])reboot(\.target)?(?![\w.-])|\binit\s+6\b/;
+const ACCOUNTS =
+  /\b(passwd|chpasswd|usermod|chage|visudo|useradd|adduser|groupadd|addgroup|gpasswd)\b|authorized_keys|\.ssh\/|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b|\bpveum\b[^|;&\n]*\s(add|modify|delete|remove|passwd)\b/;
 
 /**
  * `host`: only on a host; inside a container, rebooting it is no worse than restarting a service.
@@ -99,10 +102,10 @@ const RULES: Rule[] = [
   },
   { re: /\b(userdel|groupdel|deluser|delgroup)\b/, why: "deletes accounts", kind: "delete" },
   {
-    re: /\b(passwd|chpasswd|usermod|chage|visudo|useradd|adduser|groupadd|addgroup|gpasswd)\b|authorized_keys|\.ssh\/|\/etc\/(sudoers|shadow|passwd)\b|\bssh-keygen\b|\bpveum\b[^|;&\n]*\s(add|modify|delete|remove|passwd)\b/,
+    re: ACCOUNTS,
     why: "changes accounts, passwords or keys",
     kind: "account_security",
-    unless: (command) => readsAccounts(command),
+    unless: (command) => readsAccounts(command) || !ACCOUNTS.test(sansLookups(command)),
   },
   { re: /\b(chmod|chown|chgrp)\s+(-\S*\s+)*-\S*R/, why: "changes permissions recursively" },
   {
@@ -294,6 +297,53 @@ function readsAccounts(command: string): boolean {
   );
 }
 
+/**
+ * The command without what only looks accounts up (getent passwd) or adds a system user no one can
+ * log in as, for a service to run as.
+ */
+function sansLookups(command: string): string {
+  return command
+    .split(/(;|&&|\|\||\||\n)/)
+    .map((part) =>
+      systemUser(part) ? "" : part.replace(/\bgetent\s+(-\S+\s+)*(passwd|group)\b/g, "getent"),
+    )
+    .join("");
+}
+
+/** useradd --system --shell /usr/sbin/nologin NAME, and adduser's: no password, groups or UID. */
+function systemUser(part: string): boolean {
+  const words = part.trim().split(/\s+/);
+  const at = words.findIndex((w) => /^(\S*\/)?(useradd|adduser)$/.test(w));
+  if (at < 0 || !words.slice(0, at).every((w) => w === "sudo" || w === "-n")) return false;
+  let system = false;
+  let nologin = false;
+  let names = 0;
+  const args = words.slice(at + 1).flatMap((a) => (a.startsWith("--") ? a.split("=") : [a]));
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--system" || a === "-r") system = true;
+    else if (a === "--shell" || a === "-s")
+      nologin = /^(\/usr)?\/s?bin\/(nologin|false)$/.test(args[++i] ?? "");
+    else if (["--home", "--home-dir", "-d"].includes(a)) i++;
+    else if (a.startsWith("-") && !SYSTEM_USER_FLAGS.includes(a)) return false;
+    else if (!a.startsWith("-")) names++;
+  }
+  return system && nologin && names === 1;
+}
+const SYSTEM_USER_FLAGS = [
+  "--no-create-home",
+  "-M",
+  "--create-home",
+  "-m",
+  "--user-group",
+  "-U",
+  "--group",
+  "--disabled-password",
+  "--disabled-login",
+  "--quiet",
+  "-q",
+];
+
 /** Commands that read and change nothing, and the subcommands allowed (null: any). */
 const READERS: Record<string, string[] | null> = {
   cat: null,
@@ -314,6 +364,26 @@ const READERS: Record<string, string[] | null> = {
   dmesg: null,
   date: null,
   df: null,
+  echo: null,
+  which: null,
+  id: null,
+  whoami: null,
+  uname: null,
+  uptime: null,
+  free: null,
+  nproc: null,
+  hostname: [""],
+  printenv: null,
+  lsblk: null,
+  findmnt: null,
+  pgrep: null,
+  lsof: null,
+  netstat: null,
+  md5sum: null,
+  sha1sum: null,
+  sha256sum: null,
+  sha512sum: null,
+  tailscale: ["status", "ip", "version", "whois"],
   ip: ["a", "addr", "address", "r", "ro", "route", "l", "link", "n", "neigh"],
   pct: ["list", "status", "config", "listsnapshot", "df", "pending"],
   qm: ["list", "status", "config", "listsnapshot", "pending"],
@@ -338,24 +408,60 @@ const READERS: Record<string, string[] | null> = {
 };
 /**
  * A reader's options that change something: journalctl's maintenance, dmesg clearing the buffer or
- * switching console logging, date setting the clock, ss killing sockets.
+ * switching console logging, date setting the clock, ss killing sockets, hostname setting the name.
  */
 const WRITES: Record<string, RegExp> = {
   journalctl: /^--(rotate|vacuum|flush|sync|relinquish|setup-keys|update-catalog)/,
   dmesg: /^-[^-]*[cCDEn]|^--(clear|read-clear|console)/,
   date: /^-[^-]*s|^--set/,
   ss: /^-[^-]*K|^--kill/,
+  hostname: /^-[^-]*[Fb]|^--(file|boot)/,
 };
+
+/**
+ * Readers whose every word must be one of these: tmux ls \; kill-server runs both, and screen's
+ * other options act on sessions.
+ */
+const EXACTLY: Record<string, string[][]> = {
+  screen: [["-ls"], ["-list"]],
+  tmux: [["ls"], ["list-sessions"]],
+};
+/** Readers a glob may give arguments to: none of their options, whatever a file is named, writes. */
+const GLOBS = new Set([
+  "ls",
+  "cat",
+  "head",
+  "tail",
+  "grep",
+  "wc",
+  "stat",
+  "du",
+  "md5sum",
+  "sha1sum",
+  "sha256sum",
+  "sha512sum",
+]);
+
+/** sudo -n -l: what sudo would let the user run. */
+const sudoList = (words: string[]) =>
+  words[0] === "sudo" &&
+  words.length > 1 &&
+  words.slice(1).every((a) => /^-[nl]+$|^--(list|non-interactive)$/.test(a)) &&
+  words.slice(1).some((a) => a.includes("l"));
 
 /** On a Proxmox host this may run while a container is careful: it can't reach one to change it. */
 export function readOnly(command: string): boolean {
   if (statusOnly(command, { writes: false })) return true;
-  const parsed = pipelines(command);
+  const parsed = pipelines(command, { globs: true });
   if (!parsed?.lines.length || parsed.files.some((f) => f !== "/dev/null")) return false;
   return parsed.lines.every((p) =>
     p.every((words, i) => {
+      if (sudoList(words)) return true;
       const w = plain(words);
-      if (i > 0 && isFilter(w)) return true;
+      if (parsed.globbed.has(words) && !GLOBS.has(w[0]?.split("/").pop() ?? "")) return false;
+      const exactly = EXACTLY[w[0]?.split("/").pop() ?? ""];
+      if (exactly) return exactly.some((x) => x.join(" ") === w.slice(1).join(" "));
+      if (i > 0 && isFilter(w) && !changes(w)) return true;
       const [prog = "", ...args] = w;
       const name = prog.split("/").pop() ?? "";
       const subs = READERS[name];
@@ -555,11 +661,16 @@ const VALUE_OPTS = ["-u", "-U", "-g", "-p", "-C", "-D", "-R", "-T"];
  * A shell line's plain commands as words, grouped into pipelines; null when it does more than run
  * plain commands with literal words (substitutions, variables, globs, input from files, subshells,
  * groups, here-documents). Output redirections to a plain file are left out of the words: they
- * change where output goes, not what it says. `files`: the files they write.
+ * change where output goes, not what it says. `files`: the files they write. `globs`: globs are
+ * kept as words, and `globbed` has the commands with one.
  */
-function pipelines(line: string): { lines: string[][][]; files: string[] } | null {
+function pipelines(
+  line: string,
+  { globs = false } = {},
+): { lines: string[][][]; files: string[]; globbed: Set<string[]> } | null {
   const out: string[][][] = [[[]]];
   const files: string[] = [];
+  const globbed = new Set<string[]>();
   let word: string | null = null;
   const end = () => {
     if (word !== null) out.at(-1)?.at(-1)?.push(word);
@@ -622,11 +733,19 @@ function pipelines(line: string): { lines: string[][][]; files: string[] } | nul
       end();
       if ((c === "|" || c === "&") && line[i + 1] === c) i++;
       out.push([[]]);
+    } else if (globs && "*?[".includes(c)) {
+      word = (word ?? "") + c;
+      const cmd = out.at(-1)?.at(-1);
+      if (cmd) globbed.add(cmd);
       // A glob lists files' names, and a variable prints what it holds.
     } else if ("`<(){}#$*?[".includes(c)) return null;
     else if (/\s/.test(c)) end();
     else word = (word ?? "") + c;
   }
   end();
-  return { lines: out.map((p) => p.filter((cmd) => cmd.length)).filter((p) => p.length), files };
+  return {
+    lines: out.map((p) => p.filter((cmd) => cmd.length)).filter((p) => p.length),
+    files,
+    globbed,
+  };
 }
