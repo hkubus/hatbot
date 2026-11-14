@@ -141,7 +141,7 @@ test("what you marked careful asks you whatever Safety allows", async () => {
   expect(done).toEqual([]);
 });
 
-test("the chat runs as many commands in a reply as Safety lets it", async () => {
+test("the chat runs as many commands in a reply as Safety lets it, and is told how many", async () => {
   const done: string[] = [];
   const restarts = { content: [1, 2, 3].map(() => toolUse("lab_restart", {})) };
   const chat = new FakeModel([restarts, { content: [text("Done.")] }]);
@@ -154,6 +154,7 @@ test("the chat runs as many commands in a reply as Safety lets it", async () => 
   t.settings.update({ safety: { chatCommands: 3 } });
   await t.thread.post("again").done;
   expect(done).toHaveLength(5);
+  expect(JSON.stringify(chat.requests.at(-1)?.system)).toContain("at most 3 commands");
 });
 
 const reviewSaysUnsafe = (p: { system?: unknown }) =>

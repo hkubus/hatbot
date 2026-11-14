@@ -869,10 +869,19 @@ test("copy_file moves bytes between hosts, containers, the sandbox and the chat"
   expect(reply?.attachments).toMatchObject([{ name: "blob.bin", from: "hatbot" }]);
 });
 
-test("a shell line counts each chained part, and a loop as many", () => {
+test("a shell line counts each chained part that may change something, and a loop as many", () => {
   expect(commandCount("apt list --upgradable 2>/dev/null | wc -l")).toBe(1);
   expect(commandCount("apt-get update && apt-get -y upgrade")).toBe(2);
   expect(commandCount("cd /srv; git pull\nsystemctl restart app")).toBe(3);
+  expect(commandCount("echo 'a;b' && rm -rf /tmp/x; touch /y")).toBe(2);
+  // Looks and separators between them, and what's quoted or fed in, aren't parts of their own.
+  for (const cmd of [
+    "date; echo ---; tail -n 3 /root/loss.csv; echo ---; grep -c 1.1.1.1 /root/loss.csv",
+    "tail -n 60 loss.csv | awk -F, '{ s+=$3; n++ } END { print s/n }'",
+    "systemctl restart caddy && systemctl is-active caddy",
+    "python3 - <<'EOF'\nimport os; print(1)\nprint(2)\nEOF\necho done",
+  ])
+    expect(commandCount(cmd), cmd).toBe(1);
   for (const cmd of [
     "for ct in 101 102 103; do pct exec $ct -- apt list --upgradable; done",
     "pct list | awk 'NR>1{print $1}' | xargs -n1 pct status",

@@ -879,10 +879,16 @@ export class Thread {
     const left = bots.leftToOthers(bot);
     const guidance = plugins.guidance(bot.plugins, left);
     const others = bots.list().filter((b) => b.id !== bot.id);
-    const solo = promptFor(systemPrompt(plugins.prompt("chat", bot.plugins, left)), bot, others, {
-      plugins: (b) => plugins.names(b.plugins, bots.leftToOthers(b)),
-      chat: true,
-    });
+    const commands = settings.get().safety.chatCommands;
+    const solo = promptFor(
+      systemPrompt(plugins.prompt("chat", bot.plugins, left), commands),
+      bot,
+      others,
+      {
+        plugins: (b) => plugins.names(b.plugins, bots.leftToOthers(b)),
+        chat: true,
+      },
+    );
     const group = this.group();
     const prompt = group
       ? `${solo}\n\n${groupPrompt(
@@ -2364,7 +2370,7 @@ export class Thread {
                 const most = this.d.settings.get().safety.chatCommands;
                 if (commands > most)
                   return {
-                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command counts, and a loop is many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
+                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command that may change something counts, and a loop is too many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
                     isError: true,
                   };
               }

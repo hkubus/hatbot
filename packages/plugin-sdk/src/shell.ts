@@ -242,12 +242,52 @@ export function destructiveOnWindows(command: string): { why: string; kind: Appr
   return destructive(command);
 }
 
+/**
+ * The commands a line runs, for the chat's limit: one, and one more for each further part that may
+ * change something; a loop, xargs or find -exec as any number. A look or a line of output (echo ---)
+ * between them doesn't count.
+ */
 export function commandCount(command: string): number {
   if (
     /\b(for|while|until)\b[\s\S]*\bdo\b|\b(xargs|parallel)\b|\bfind\b[^|;&]*\s-exec/.test(command)
   )
     return Number.POSITIVE_INFINITY;
-  return Math.max(1, command.split(/;|&&|\|\||\n/).filter((part) => part.trim()).length);
+  return Math.max(1, partsOf(command).filter((part) => !readOnly(part)).length);
+}
+
+/** A line's parts between ;, &&, || and new lines, outside quotes, brackets and here-documents. */
+function partsOf(line: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === "\\") i++;
+    else if (c === "'") i = line.indexOf("'", i + 1) >>> 0;
+    else if (c === '"') {
+      i++;
+      while (i < line.length && line[i] !== '"') i += line[i] === "\\" ? 2 : 1;
+    } else if (line.startsWith("<<", i) && line[i + 2] !== "<") {
+      const tag = /^<<-?\s*(['"]?)(\w+)\1/.exec(line.slice(i))?.[2];
+      const end = tag && new RegExp(`\\n\\s*${tag}\\s*(?=\\n|$)`, "g");
+      if (end) {
+        end.lastIndex = i;
+        const m = end.exec(line);
+        if (m) i = m.index + m[0].length - 1;
+      }
+    } else if (c === "(") depth++;
+    else if (c === ")") depth = Math.max(0, depth - 1);
+    else if (
+      depth === 0 &&
+      (c === ";" || c === "\n" || ((c === "&" || c === "|") && line[i + 1] === c))
+    ) {
+      parts.push(line.slice(from, i));
+      if (c === "&" || c === "|") i++;
+      from = i + 1;
+    }
+  }
+  parts.push(line.slice(from));
+  return parts.map((p) => p.trim()).filter(Boolean);
 }
 
 /** `where`: "container" for ssh_pct_exec. */
