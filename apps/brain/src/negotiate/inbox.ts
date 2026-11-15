@@ -12,7 +12,7 @@ import type { Db } from "../db";
 import type { Plugins } from "../plugins/registry";
 import type { Tasks } from "../tasks/service";
 import { parseKey, readScout, scoutTool } from "./appraise";
-import { type BuyerConversation, postedFor } from "./selling";
+import { type BuyerConversation, type Flips, openFlips, postedFor } from "./selling";
 import type { InboxMessage, Negotiations } from "./service";
 
 export const INBOX_EVERY_MS = 10 * 60_000;
@@ -27,7 +27,6 @@ export type SellerInboxDeps = {
 };
 
 type Listed = BuyerConversation & { seen: string };
-type Flips = { items: Map<number, Record<string, unknown>>; all: boolean };
 
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -156,7 +155,7 @@ export class SellerInbox {
       if (this.d.negotiations.forConversation(c.id) !== null) continue;
       const p = postedFor(c, posted);
       if (!p || this.d.negotiations.soldHere(p.flipId)) continue;
-      flips ??= await this.openFlips(tools, signal);
+      flips ??= await openFlips(tools, signal);
       const flip = flips?.items.get(p.flipId);
       // Scout has it sold. Past the 50 it lists, it may only be older.
       if (flips?.all && !flip) continue;
@@ -179,20 +178,5 @@ export class SellerInbox {
     this.d.db
       .query("UPDATE negotiations SET inbox_conversation = ?, inbox_seen = ? WHERE id = ?")
       .run(c.id, c.seen, id);
-  }
-
-  /** Scout's unsold flips, with their asking prices and break-even; null without scout_flips. */
-  private async openFlips(tools: PluginTool[], signal: AbortSignal): Promise<Flips | null> {
-    const t = scoutTool(tools, "scout_flips");
-    if (!t) return null;
-    const open = obj((await readScout(t, { status: "open", limit: 50 }, signal)).open);
-    const list = Array.isArray(open.items) ? open.items : [];
-    const items = new Map(
-      list.flatMap((f) => {
-        const o = obj(f);
-        return typeof o.id === "number" ? [[o.id, o] as const] : [];
-      }),
-    );
-    return { items, all: typeof open.count === "number" && open.count <= list.length };
   }
 }

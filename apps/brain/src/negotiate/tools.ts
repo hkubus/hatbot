@@ -9,6 +9,7 @@ import { collapse } from "./gate";
 import { inspect, MAX_PHOTOS } from "./inspect";
 import { mandateAims, StartInput, startLimit, toMandate } from "./mandate";
 import { type SendInput, sendPolicy, zl } from "./policy";
+import { soldNote } from "./selling";
 import { MAX_TEXT, type Negotiations } from "./service";
 
 const ListingKey = z
@@ -32,7 +33,7 @@ export function negotiationLine(n: Negotiation): string {
   return `#${n.id} ${n.status}${price}: ${n.title} (${n.listingKey}), asking ${n.asking !== null ? money(n.asking) : "?"}; want #${n.wantId} "${n.want}"${last}`;
 }
 
-function negotiationText(neg: Negotiations, n: Negotiation): string {
+function negotiationText(neg: Negotiations, n: Negotiation, gone: string | null): string {
   const m = n.mandate;
   const money = (x: number) => zl(x, m.currency);
   const head = [
@@ -45,7 +46,11 @@ function negotiationText(neg: Negotiations, n: Negotiation): string {
   if (held) head.push(held);
   const other = n.role === "sell" ? "buyer" : "seller";
   if (n.role === "sell")
-    head.push(`You're selling.\n${neg.saleListing(n) ?? "The listing as posted isn't on record."}`);
+    head.push(
+      gone
+        ? `You're selling. ${soldNote(gone)}`
+        : `You're selling, and it's still for sale.\n${neg.saleListing(n) ?? "The listing as posted isn't on record."}`,
+    );
   const c = n.claims;
   const claims = [
     c.max !== null ? `your stated max ${money(c.max)}` : null,
@@ -284,12 +289,16 @@ export function negotiateTools(
       untrusted: true,
       label: "Reading the negotiation",
       describe: ({ negotiation }) => `Negotiation #${negotiation}`,
-      run: async ({ negotiation }) => negotiationText(neg, neg.mine(bot, negotiation)),
+      run: async ({ negotiation }, call) => {
+        const n = neg.mine(bot, negotiation);
+        const gone = n.status === "open" ? await neg.saleGone(n, available, call.signal) : null;
+        return negotiationText(neg, n, gone);
+      },
     }),
 
     tool({
       name: "negotiate_send",
-      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else; on Vinted and OLX it first makes \`offer\` through the site's own offer button where there is one, so sellers see a real offer. There, answer with the site's own buttons where they say it all: with \`offer_only\`, the offer goes through the offer button alone, and agreeing to their offer through the site goes through its Accept button alone; the text goes only where there's no such button. Leave it off when the message says more than the price (a question, delivery, the first message's greeting). Put the price you offer in \`offer\`; set \`agree\` when this message accepts a price (biorę, zgoda, deal), with that price in \`offer\` and in the text; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own; whatever the check can't read for certain asks the owner. These ask: an amount, an offer or a stated max past the limit; amounts that together pass it (every amount in the message counts); agreeing to a seller's price past it; while the seller's last price is past the limit, a message that doesn't name your price inside it; another currency; a way to pay or a delivery the mandate's terms don't name; saying something was paid or sent; contact details the mandate doesn't allow; a link; an amount in words; and anything but plain letters, digits and punctuation (no emoji). So write amounts in digits, one price to a message and no amounts set by another (no percentages, "the rest", "o 100 więcej"); name the price you agree to in the text, or it asks; until you agree, name your price in every message and offer it (mogę dać 1200 zł) rather than open with ok or yes or use words that accept; and don't repeat the seller's price unless you agree to it. You aren't told the limit: past the target, go up in small steps, and a price past the limit asks the owner. If they say no, that was your last offer. Nothing goes between 22:00 and 08:00. Keep it brief: a sentence or two, at most ${MAX_TEXT} characters; greet only in the first message, and match the seller's tone. Write as the buyer asking them to sell (sprzeda pan za 140 zł z wysyłką InPost?, mogę dać 140 zł), never as if offering them the item (weźmie pan dysk za 140 zł? is a seller's question). Where the seller's gender isn't plain from their name or messages, write around pan and pani (mogę zaproponować 140 zł, pasuje?), and never put both. You may bluff about our side (a lower max, other offers, urgency, walking away); if the seller asks whether you're a bot or an AI, don't answer it unless negotiate_get says the owner let you say you're a person: it's the owner's, and it holds the negotiation for them. Never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier. When you sell (a buyer wrote about the owner's listing), you're the seller: the same rules hold the other way round, with a floor you aren't told in place of the limit; hold the asking price and come down in small steps.`,
+      description: `The only way to message a seller: a desktop task types exactly this text into the negotiation's conversation and sends it, and nothing else; on Vinted and OLX it first makes \`offer\` through the site's own offer button where there is one, so sellers see a real offer. There, answer with the site's own buttons where they say it all: with \`offer_only\`, the offer goes through the offer button alone, and agreeing to their offer through the site goes through its Accept button alone; the text goes only where there's no such button. Leave it off when the message says more than the price (a question, delivery, the first message's greeting). Put the price you offer in \`offer\`; set \`agree\` when this message accepts a price (biorę, zgoda, deal), with that price in \`offer\` and in the text; put what it claims about our side in \`stated\`. Inside the mandate it goes on its own; whatever the check can't read for certain asks the owner. These ask: an amount, an offer or a stated max past the limit; amounts that together pass it (every amount in the message counts); agreeing to a seller's price past it; while the seller's last price is past the limit, a message that doesn't name your price inside it; another currency; a way to pay or a delivery the mandate's terms don't name; saying something was paid or sent; contact details the mandate doesn't allow; a link; an amount in words; and anything but plain letters, digits and punctuation (no emoji). So write amounts in digits, one price to a message and no amounts set by another (no percentages, "the rest", "o 100 więcej"); name the price you agree to in the text, or it asks; until you agree, name your price in every message and offer it (mogę dać 1200 zł) rather than open with ok or yes or use words that accept; and don't repeat the seller's price unless you agree to it. You aren't told the limit: past the target, go up in small steps, and a price past the limit asks the owner. If they say no, that was your last offer. Nothing goes between 22:00 and 08:00. Keep it brief: a sentence or two, at most ${MAX_TEXT} characters; greet only in the first message, and match the seller's tone. Write as the buyer asking them to sell (sprzeda pan za 140 zł z wysyłką InPost?, mogę dać 140 zł), never as if offering them the item (weźmie pan dysk za 140 zł? is a seller's question). Where the seller's gender isn't plain from their name or messages, write around pan and pani (mogę zaproponować 140 zł, pasuje?), and never put both. You may bluff about our side (a lower max, other offers, urgency, walking away); if the seller asks whether you're a bot or an AI, don't answer it unless negotiate_get says the owner let you say you're a person: it's the owner's, and it holds the negotiation for them. Never misstate the item, claim to have paid or sent anything, fake proof, or pose as the marketplace or a courier. When you sell (a buyer wrote about the owner's listing), you're the seller: the same rules hold the other way round, with a floor you aren't told in place of the limit; hold the asking price and come down in small steps. But answer only what the buyer asked, in a few words, and name a price only when you haggle or agree: the price, delivery and listing are on the site already. Nothing goes once the item's found sold.`,
       schema: z.object({
         negotiation: Id,
         text: z
@@ -324,6 +333,9 @@ export function negotiateTools(
         return sendVerdict(n, toSend(i));
       },
       run: async (i, call) => {
+        // First, since nothing may wait between the send's check and its claim.
+        const gone = await neg.saleGone(neg.mine(bot, i.negotiation), available, call.signal);
+        if (gone) throw new PluginError(`Not sent. ${soldNote(gone)}`);
         const n = neg.mine(bot, i.negotiation);
         const input = toSend(i);
         // Again, since an approval may have taken hours: a hold, quiet hours and the pace still hold.
@@ -422,6 +434,10 @@ export function negotiateTools(
         // Again, since asking may have taken hours.
         const held = neg.scamHeld(n);
         if (held) throw new PluginError(held);
+        const gone =
+          i.outcome === "lost" && n.status === "open"
+            ? await neg.saleGone(n, available, call.signal)
+            : null;
         const path = await neg.close(
           n,
           i.outcome,
@@ -432,12 +448,13 @@ export function negotiateTools(
         // Stopped or closed while this one was being asked about: that stands.
         if (path === null)
           throw new PluginError(`Negotiation #${n.id} is ${neg.get(n.id)?.status} already.`);
+        if (gone) neg.tellSold(n);
         if (n.role === "sell") {
           const scout =
             i.outcome === "agreed" && i.price !== undefined
               ? await neg.sold(available, n, i.price)
               : "";
-          return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " The other buyers are told it's sold, and the owner sends it once the buyer has paid on the site." : ""}`;
+          return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " The other buyers are told it's sold, and the owner sends it once the buyer has paid on the site." : ""}${gone ? " Hatbot tells the buyer it's sold." : ""}`;
         }
         const scout = await neg.recordOutcome(n, i.outcome, i.price ?? null);
         return `Negotiation #${n.id} is ${i.outcome}. Notes are in ${path}.${scout ? ` ${scout}` : ""}${i.outcome === "agreed" ? " Paying is a separate desktop task, which stops at the checkout and asks the owner." : ""}`;

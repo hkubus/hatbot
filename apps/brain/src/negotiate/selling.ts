@@ -2,10 +2,14 @@
 // its own, with a mandate the owner set by marking the flip ready: the asking price, down to Scout's
 // break-even plus the margin in Settings.
 
+import type { PluginTool } from "@hatbot/plugin-sdk";
 import type { Mandate, Negotiation } from "@hatbot/shared";
+import { readScout, scoutTool } from "./appraise";
 import { collapse, namesListing } from "./gate";
 
 export const SALE_DAYS = 30;
+/** How long a check that the item's still for sale holds, so a reply's reads and its send share one. */
+export const SALE_CHECK_MS = 5 * 60_000;
 /** What the other buyers hear once one has it. Hatbot's words, not the model's. */
 export const SOLD_NOTICE = "Dziękuję za zainteresowanie, ale przedmiot został już sprzedany.";
 
@@ -30,6 +34,56 @@ export type BuyerConversation = {
   title: string | null;
   url: string | null;
 };
+
+export type Flips = { items: Map<number, Record<string, unknown>>; all: boolean };
+
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+/** Scout's unsold flips, with their asking prices and break-even; null without scout_flips. */
+export async function openFlips(tools: PluginTool[], signal: AbortSignal): Promise<Flips | null> {
+  const t = scoutTool(tools, "scout_flips");
+  if (!t) return null;
+  const open = obj((await readScout(t, { status: "open", limit: 50 }, signal)).open);
+  const list = Array.isArray(open.items) ? open.items : [];
+  const items = new Map(
+    list.flatMap((f) => {
+      const o = obj(f);
+      return typeof o.id === "number" ? [[o.id, o] as const] : [];
+    }),
+  );
+  return { items, all: typeof open.count === "number" && open.count <= list.length };
+}
+
+/**
+ * Why the listing's page says it's no longer for sale: gone, or sold in the site's own structured
+ * data, which Vinted keeps; its words alone could be anyone's.
+ */
+export function pageSays(
+  page: { status: number; body: string },
+  marketplace: string,
+): string | null {
+  if (page.status === 404 || page.status === 410) return `the listing is gone from ${marketplace}`;
+  if (page.status >= 300) return null;
+  for (const m of page.body.matchAll(/<script[^>]*ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+    let data: unknown;
+    try {
+      data = JSON.parse(m[1] ?? "");
+    } catch {
+      continue;
+    }
+    const things = [data].flat().flatMap((x) => [x, ...[obj(x)["@graph"] ?? []].flat()]);
+    const offers = things.flatMap((x) => [obj(x).offers ?? []].flat());
+    if (offers.some((o) => /SoldOut|OutOfStock|Discontinued/i.test(String(obj(o).availability))))
+      return `${marketplace} shows it as sold`;
+  }
+  return null;
+}
+
+/** What the reply does once the item's found sold: never "it's available". */
+export function soldNote(why: string): string {
+  return `It's no longer for sale: ${why}. Don't tell the buyer it's available, and send them nothing yourself. If they're the one who bought it (they say they bought or paid), close it as abandoned: the owner answers them. Otherwise close it as lost, and Hatbot tells them it's sold.`;
+}
 
 const titleKey = (s: string) =>
   collapse(s)
@@ -91,8 +145,8 @@ export function saleGoal(n: Negotiation): string {
   return [
     `A buyer wrote about the owner's listing in negotiation #${n.id}: you're the seller. Answer them now, then finish.`,
     "",
-    `1. negotiate_get ${n.id} for the listing as posted, the conversation and what you've told them so far.`,
-    "2. Answer their latest messages with one negotiate_send, as the seller. Answer questions about the item only from the listing as posted; when it doesn't say, tell them you'll check and say so in your summary, for the owner. Hold the asking price; when they haggle, come down in small steps with a reason, and put your price in offer. When they agree to your price, or offer one you take, set agree with that price, then close the negotiation as agreed. If they lose interest, close it as lost.",
+    `1. negotiate_get ${n.id} for the listing as posted, the conversation, what you've told them so far, and whether it's still for sale, checked just now.`,
+    "2. If it's no longer for sale, do what negotiate_get says. Otherwise answer their latest messages with one negotiate_send, as the seller, in as few words as will do: answer only what they asked (Czy aktualne? gets Tak, aktualne.), and don't restate the price, the delivery or the listing unless they ask. Answer questions about the item only from the listing as posted; when it doesn't say, tell them you'll check and say so in your summary, for the owner. Hold the asking price; when they haggle, come down in small steps and put your price in offer. When they agree to your price, or offer one you take, set agree with that price, then close the negotiation as agreed. If they lose interest, close it as lost.",
     "3. Finish with what you sent or did, in a line.",
     "",
     "The buyer pays on the site and the item goes through its delivery, or is picked up if the listing allows. Never give an address, phone number or account number, never take payment any other way, and never say it was sent: the owner sends it.",

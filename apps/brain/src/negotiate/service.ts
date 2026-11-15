@@ -69,7 +69,10 @@ import { disputed, scamSignals } from "./scam";
 import {
   type BuyerConversation,
   listingText,
+  openFlips,
   type Posted,
+  pageSays,
+  SALE_CHECK_MS,
   SOLD_NOTICE,
   saleGoal,
   saleMandate,
@@ -199,6 +202,7 @@ export type InboxMessage = {
 export class Negotiations {
   readonly clock: () => number;
   private applying = new Set<number>();
+  private saleChecks = new Map<number, { at: number; why: string | null }>();
 
   constructor(readonly d: NegotiationsDeps) {
     this.clock = d.clock ?? Date.now;
@@ -854,6 +858,38 @@ export class Negotiations {
          WHERE f.flip_id = ? AND n.status IN ('agreed', 'paid', 'received') LIMIT 1`,
       )
       .get(flipId);
+  }
+
+  /**
+   * Why the item a buyer writes about is no longer for sale, from Scout's ledger and the listing's own
+   * page, read before every reply; null while neither says so or neither can be read.
+   */
+  async saleGone(n: Negotiation, tools: PluginTool[], signal: AbortSignal): Promise<string | null> {
+    if (n.role !== "sell") return null;
+    const seen = this.saleChecks.get(n.id);
+    if (seen && this.clock() - seen.at < SALE_CHECK_MS) return seen.why;
+    const flipId = this.d.db
+      .query<{ id: number }, [number]>(
+        "SELECT f.flip_id AS id FROM negotiations n JOIN flip_listings f ON f.id = n.flip_listing_id WHERE n.id = ?",
+      )
+      .get(n.id)?.id;
+    const flips = flipId === undefined ? null : await openFlips(tools, signal).catch(() => null);
+    let why =
+      flips?.all && flipId !== undefined && !flips.items.has(flipId)
+        ? "Scout has it as sold"
+        : null;
+    const agent = this.d.desktop()?.agent;
+    if (!why && agent?.configured) {
+      const page = await agent.fetch(n.listingUrl).catch(() => null);
+      why = page && pageSays(page, parseKey(n.listingKey)?.marketplace ?? "the marketplace");
+    }
+    this.saleChecks.set(n.id, { at: this.clock(), why });
+    return why;
+  }
+
+  /** Hatbot's own "it's sold", to a buyer who wrote. */
+  tellSold(n: Negotiation) {
+    if (this.messages(n.id).some((m) => m.direction === "in")) this.queueNotice(n);
   }
 
   /** The negotiation following a buyer's conversation, if one does. */
@@ -1874,8 +1910,7 @@ export class Negotiations {
         )
         .all(n.wantId, n.id);
       for (const o of this.negotiations(others)) {
-        if (o.role === "sell" && this.messages(o.id).some((m) => m.direction === "in"))
-          this.queueNotice(o);
+        if (o.role === "sell") this.tellSold(o);
         await this.close(
           o,
           "abandoned",
