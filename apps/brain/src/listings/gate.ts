@@ -1,6 +1,6 @@
-// In a listing's desktop task, Publish goes through without asking, once, on that marketplace's
-// add-listing page, while the form holds exactly the approved title, description and price. The rest
-// of that form goes through too, but for anything that may cost money.
+// In a listing's desktop task, Publish goes through without asking, once (again if the site refused
+// it), on that marketplace's add-listing page, while the form holds exactly the approved title,
+// description and price. The rest of that form goes through too, but for anything that may cost money.
 import { type AgentElement, uploadPage } from "@hatbot/shared/desktop";
 import { combosIn, readCombo } from "@hatbot/shared/keys";
 import { exact, toAddress, typesText, UNSEEN_MOUSE } from "../negotiate/gate";
@@ -153,6 +153,12 @@ export function listingCheck(
       why: `The form doesn't hold exactly the approved ${missing.join(", ")}. Make ${missing.length > 1 ? "them" : "it"} exactly as in the task (form_input sets a box's whole text), then publish again.`,
     };
   return { action: "publish" };
+}
+
+/** After Publish: still its add-listing form, with the title in, so the site didn't take it. */
+export function stillInForm(g: ListingGate, el: AgentElement | null | undefined): boolean {
+  if (!el?.fields || uploadPage(el.url)?.channel !== g.channel) return false;
+  return el.fields.map(exact).includes(exact(g.title));
 }
 
 /** The new listing's address: on the marketplace, and not the add-listing page itself. */

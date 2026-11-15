@@ -14,8 +14,11 @@ import {
   takeDownCheck,
   takeDownRefused,
 } from "../src/listings/gate";
+import { sendConfirm } from "../src/tasks/desktop-run";
 import { browser, FakeModel, toolUse } from "./fake-model";
 import { type TestApp, tempDirs, testApp, waitFor } from "./helpers";
+
+sendConfirm.everyMs = 1;
 
 const TITLE = "Karta graficzna RTX 3070 8GB";
 const DESCRIPTION = "Sprawna, bez kopania.\nWysyłka w oryginalnym pudełku.";
@@ -302,6 +305,53 @@ test("a listing task types only the approved text, puts photos only on the add-l
     "1 199",
     DESCRIPTION,
   ]);
+  expect(scout.calls("scout_flip_listed")).toEqual([
+    { flipId: 7, channel: "OLX", status: "listed", url: OLX_URL },
+  ]);
+  await t.plugins.stopAll();
+});
+
+test("a publish the site refuses, its form still there, can be pressed again once it's fixed", async () => {
+  const fill = (ref: string, value: string | number) =>
+    browser("form_input", { target: { type: "ref", ref }, value });
+  const publish = browser("left_click", { target: { type: "ref", ref: "ref_9" } });
+  const work = new FakeModel([
+    { content: [browser("navigate", { url: OLX_ADD })] },
+    { content: [fill("ref_1", TITLE)] },
+    { content: [fill("ref_2", DESCRIPTION)] },
+    { content: [fill("ref_3", "1199.00")] },
+    { content: [publish] },
+    { content: [fill("ref_3", "1199,00")] },
+    { content: [publish] },
+    { content: [browser("navigate", { url: OLX_ADD })] },
+    { content: [fill("ref_1", TITLE)] },
+    { content: [fill("ref_2", DESCRIPTION)] },
+    { content: [fill("ref_3", "1199")] },
+    { content: [publish] },
+    { content: [toolUse("record_listing", { url: OLX_URL })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Listed." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const scout = await withScout(t, [flip({ channels: { OLX: "ready" } })]);
+  addPage(t, { "olx.pl": OLX_URL });
+  // OLX wants a comma: with a point, Publish leaves the form as it was.
+  const after = t.agent.afterAction;
+  t.agent.afterAction = (name, input) => {
+    const price = t.agent.browserCalls.findLast(
+      (c) => (c.input.target as { ref?: string } | undefined)?.ref === "ref_3",
+    )?.input.value;
+    if (name === "left_click" && String(price).includes(".")) return;
+    after?.(name, input);
+  };
+  await t.listings.tick();
+  await waitFor(() => scout.calls("scout_flip_listed").length === 1);
+  await t.tasks.idle();
+
+  const said = (i: number) => JSON.stringify(work.requests[i]?.messages.at(-1));
+  expect(said(5)).toContain("didn't take it");
+  expect(said(7)).toContain("record_listing");
+  expect(said(12)).toContain("published once");
+  expect(clicks(t)).toBe(2);
   expect(scout.calls("scout_flip_listed")).toEqual([
     { flipId: 7, channel: "OLX", status: "listed", url: OLX_URL },
   ]);
