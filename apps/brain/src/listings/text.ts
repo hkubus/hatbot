@@ -71,7 +71,8 @@ export function listingGoal(d: Draft, channel: Channel, photos: number): string 
   const price = d.prices[channel] ?? 0;
   const listing = [
     `Title: ${d.title}`,
-    `Price: ${price} ${d.currency === "PLN" ? "zł" : d.currency}`,
+    // Polish sites take a comma before the grosze, and refuse a point.
+    `Price: ${String(price).replace(".", ",")} ${d.currency === "PLN" ? "zł" : d.currency}`,
     `Condition: ${conditionWord(d, channel) ?? "pick what fits the description"}`,
     `Category: ${d.category || "pick what fits the title"}`,
     `Delivery: ${delivery(d, channel)}`,
@@ -88,7 +89,7 @@ export function listingGoal(d: Draft, channel: Channel, photos: number): string 
     `1. Open ${addUrl(channel)}, the add-listing page. If you aren't logged in, call request_takeover.`,
     `2. Add the photos with set_files: ${s(photos, "photo")}, staged for this task, in order. Give it the photo upload control's ref, or none if the page has one file input.`,
     "3. Fill in the title, the description and the price exactly as above. Use form_input for the description: it keeps the line breaks. Pick the category, condition and delivery that fit. Leave the contact details, location and phone number as they are.",
-    '4. Press the publish button ("Dodaj ogłoszenie", "Opublikuj", "Wystaw", "Prześlij") once. It\'s checked against the approved text: don\'t call confirm_intent for it.',
+    '4. Press the publish button ("Dodaj ogłoszenie", "Opublikuj", "Wystaw", "Prześlij") once. It\'s checked against the approved text: don\'t call confirm_intent for it. If the form stays and says something is wrong, fix that and press it again.',
     "5. Once the new listing's page shows, call record_listing with its address, then finish_task.",
     "",
     "Don't pay for anything or pick a paid promotion or package. If the site won't publish without paying, finish and say so.",
