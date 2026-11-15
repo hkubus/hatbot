@@ -32,7 +32,13 @@ import { COMPUTER_PROMPT, DESKTOP_PROMPT } from "../agent/prompt";
 import { Blocks, blockedText, levelOf, safeToRun } from "../agent/review";
 import { ownerNote } from "../approvals";
 import { promptFor } from "../bots";
-import { listingCheck, listingRefused, takeDownCheck, takeDownRefused } from "../listings/gate";
+import {
+  listingCheck,
+  listingRefused,
+  stillInForm,
+  takeDownCheck,
+  takeDownRefused,
+} from "../listings/gate";
 import { skillPath } from "../memory/skills";
 import { modelInfo, modelName } from "../models-known";
 import {
@@ -1026,17 +1032,20 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       );
     }
     if (publishing && listing) {
-      // Once: whether it went or not, nothing more is published from this task.
-      listing.published = true;
+      // Once, unless the form stays with the title in: the site refused it, most often a field it
+      // wants written another way. A page that hung looks the same, so it may still have gone up.
+      const refused = await stayedInForm(listing, inspectAgain);
+      if (!refused) listing.published = true;
       tasks.listings?.publishPassed(id);
       tasks.addStep(id, {
         kind: "note",
-        name: "Published the approved listing",
+        name: refused ? "The site didn't take the listing" : "Published the approved listing",
         detail: listing.title,
         url: lastUrl,
       });
-      const note =
-        "Published. Once the new listing's page shows, call record_listing with its address, then finish.";
+      const note = refused
+        ? "The form is still there, so the site didn't take it. Look for what it says is wrong, fix that, then publish again."
+        : "Published. Once the new listing's page shows, call record_listing with its address, then finish.";
       const content = r.content ?? [];
       r = {
         ...r,
@@ -1156,6 +1165,18 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (el?.fields && gone(el.fields)) return { went: true, url: el.url ?? null };
     }
     return { went: false, url: null };
+  };
+
+  const stayedInForm = async (
+    g: NonNullable<typeof listing>,
+    inspectAgain: (() => Promise<Inspected>) | null,
+  ): Promise<boolean> => {
+    for (let i = 0; i < sendConfirm.tries; i++) {
+      await Bun.sleep(sendConfirm.everyMs);
+      const el = (await inspectAgain?.()) ?? (await screen.inspect().catch(() => null));
+      if (!stillInForm(g, el)) return false;
+    }
+    return true;
   };
 
   const recordConversation = withInput(RecordConversation, async (call, input) => {
