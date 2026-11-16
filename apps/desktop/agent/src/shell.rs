@@ -102,6 +102,8 @@ async fn kill_tree(pid: u32) {
 }
 
 /// PowerShell's own quoting of a `-Command` argument mangles quotes; an encoded one arrives as written.
+/// Encoded without `-OutputFormat`, it takes the caller for another PowerShell and writes errors and
+/// progress to stderr as CLIXML.
 #[cfg(windows)]
 fn shell(command: &str) -> Command {
     use base64::Engine;
@@ -110,7 +112,7 @@ fn shell(command: &str) -> Command {
     );
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut c = Command::new("powershell.exe");
-    c.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"])
+    c.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand"])
         .arg(base64::engine::general_purpose::STANDARD.encode(utf16))
         .creation_flags(NO_WINDOW);
     c
@@ -168,9 +170,10 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn runs_in_powershell_and_stops_at_the_timeout() {
-        let r = run("Write-Output 'hi \"there\"'; exit 3", 20_000).await.unwrap();
+        let r = run("Write-Output 'hi \"there\"'; Write-Error oops; exit 3", 20_000).await.unwrap();
         assert_eq!(r.exit_code, 3);
-        assert_eq!(r.output, "hi \"there\"");
+        assert!(r.output.starts_with("hi \"there\"\n[stderr]\n"), "{}", r.output);
+        assert!(r.output.contains("oops") && !r.output.contains("CLIXML"), "{}", r.output);
         let r = run("Start-Sleep -Seconds 5", 1000).await.unwrap();
         assert!(r.timed_out);
     }
