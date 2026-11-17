@@ -668,6 +668,20 @@ test("a Haiku desktop task out of steps carries on, once, on Opus; one its budge
   expect(broke.requests).toHaveLength(0);
 });
 
+test("a browser that can't say what's open fails the action, not the task", async () => {
+  const work = new FakeModel([{ content: [browser("screenshot")] }, finish()]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.browserState = async () => {
+    throw new DesktopError("Chromium isn't running, or isn't answering on its DevTools port.", 502);
+  };
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(work.requests[1]?.messages.at(-1)?.content).toMatchObject([
+    { type: "tool_result", is_error: true },
+  ]);
+});
+
 test("a desktop task Haiku finishes as failed isn't tried again on Opus", async () => {
   const work = new FakeModel([
     { content: [computer("screenshot")] },

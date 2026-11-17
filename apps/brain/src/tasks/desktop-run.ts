@@ -324,11 +324,34 @@ class Computer extends BetaAbstractComputerToolset20260801 {
 
 /** Like Computer, the run checks policy before calling it. */
 class Browser extends BetaAbstractBrowserToolset20260801 {
+  private seen: { tabs: BetaBrowserState["tabs"]; failed: boolean };
+
   constructor(
     private agent: DesktopAgent,
     private onImage: (bytes: Uint8Array) => Promise<void>,
   ) {
-    super({ browserState: async () => (await agent.browserState()) as BetaBrowserState });
+    // The SDK ends the whole run when this throws: a browser that stopped answering is the call's error.
+    const seen = { tabs: [] as BetaBrowserState["tabs"], failed: false };
+    super({
+      browserState: async () => {
+        try {
+          const state = (await agent.browserState()) as BetaBrowserState;
+          seen.tabs = state.tabs;
+          return state;
+        } catch {
+          seen.failed = true;
+          return { tabs: seen.tabs };
+        }
+      },
+    });
+    this.seen = seen;
+  }
+
+  async answer(call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> {
+    this.seen.failed = false;
+    const r = await this.toolResult(call);
+    if (!this.seen.failed) return r;
+    return { ...r, content: "The browser isn't responding.", is_error: true };
   }
 
   protected override async execute(
@@ -1016,7 +1039,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     try {
       if (isBrowser && !browser) return textResult(call, "There's no browser tool here.", true);
       if (machine) await whenFree();
-      r = await (isBrowser && browser ? browser : computer).toolResult(call);
+      r = isBrowser && browser ? await browser.answer(call) : await computer.toolResult(call);
     } finally {
       pendingStepId = undefined;
     }
