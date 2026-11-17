@@ -77,10 +77,14 @@ export function samePrice(field: string, price: number): boolean {
   return /^\d+(?:\.\d{1,2})?$/.test(n) && Number(n) === price;
 }
 
+/** Vinted refuses a title with "too many capital letters", so one in other capitals is still the title. */
+const caseless = (s: string) => exact(s).toLowerCase();
+const isTitle = (g: ListingGate) => (field: string) => caseless(field) === caseless(g.title);
+
 function allowedText(g: ListingGate, text: string): boolean {
   const t = exact(text);
-  if (!t || samePrice(t, g.price)) return true;
-  if ([g.title, g.description, ...g.choices].some((v) => exact(v) === t)) return true;
+  if (!t || samePrice(t, g.price) || isTitle(g)(t)) return true;
+  if ([g.description, ...g.choices].some((v) => exact(v) === t)) return true;
   return t.length <= MAX_FREE_TEXT && !CONTACT.test(t);
 }
 
@@ -140,7 +144,7 @@ const descriptions = (g: ListingGate) => [
 function notShown(g: ListingGate, text: string): string[] {
   const prices = [...fold(text).matchAll(PRICE_SHOWN)].map((m) => m[1] ?? "");
   return [
-    ...(exact(text).includes(exact(g.title)) ? [] : ["title"]),
+    ...(caseless(text).includes(caseless(g.title)) ? [] : ["title"]),
     // It's typed in the form, and a summary may not show it.
     ...(g.described ? [] : ["description"]),
     ...(prices.length && prices.every((p) => samePrice(p, g.price)) ? [] : ["price"]),
@@ -160,8 +164,7 @@ export async function listingCheck(
 ): Promise<ListingCheck> {
   if (!el?.url || uploadPage(el.url)?.channel !== g.channel) return { action: "usual" };
   const fields = el.fields?.map(exact) ?? [];
-  if (fields.includes(exact(g.title)))
-    g.described = fields.some((f) => descriptions(g).includes(f));
+  if (fields.some(isTitle(g))) g.described = fields.some((f) => descriptions(g).includes(f));
   // A click or a space in a text box types.
   if (kind === "click" && el.editable) return { action: "usual" };
   // Enter in a box submits its form or presses the button after it, which the ordinary check may not hold.
@@ -207,7 +210,7 @@ export async function listingCheck(
     return { action: "publish" };
   }
   const missing = [
-    ...(fields.includes(exact(g.title)) ? [] : ["title"]),
+    ...(fields.some(isTitle(g)) ? [] : ["title"]),
     ...(fields.some((f) => descriptions(g).includes(f)) ? [] : ["description"]),
     ...(fields.some((f) => samePrice(f, g.price)) ? [] : ["price"]),
   ];
@@ -230,7 +233,7 @@ export function stillInForm(
 ): boolean {
   if (!el?.fields || uploadPage(el.url)?.channel !== g.channel) return false;
   if (!from?.fields?.length) return samePage(el.url, from?.url);
-  return el.fields.map(exact).includes(exact(g.title));
+  return el.fields.some(isTitle(g));
 }
 
 /** The new listing's address: on the marketplace, and not the add-listing page itself. */

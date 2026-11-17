@@ -10,6 +10,7 @@ import {
   type ListingGate,
   listingCheck,
   listingRefused,
+  stillInForm,
   type TakeDownGate,
   takeDownCheck,
   takeDownRefused,
@@ -25,6 +26,7 @@ const DESCRIPTION = "Sprawna, bez kopania.\nWysyłka w oryginalnym pudełku.";
 const OLX_ADD = "https://www.olx.pl/adding/";
 const OLX_URL = "https://www.olx.pl/d/oferta/karta-rtx-3070-CID99-ID777.html";
 const VINTED_URL = "https://www.vinted.pl/items/888-karta-rtx-3070";
+const VINTED_ADD = "https://www.vinted.pl/items/new";
 
 type Flip = {
   id: number;
@@ -165,7 +167,7 @@ const listings = (t: TestApp) =>
 test("a flip Scout marks ready is posted on each marketplace in turn without asking, and Scout hears where", async () => {
   const work = new FakeModel([
     ...posting(OLX_ADD, 1199, OLX_URL),
-    ...posting("https://www.vinted.pl/items/new", 1249, VINTED_URL),
+    ...posting(VINTED_ADD, 1249, VINTED_URL),
   ]);
   const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
   const scout = await withScout(t, [flip()]);
@@ -414,6 +416,23 @@ test("a description longer than what desktop-agent sends of a box still publishe
   });
   const cut = formButton("Dodaj ogłoszenie", { fields: [TITLE, shown.slice(0, 3000), "1199"] });
   expect(await listingCheck(gateFor({ description: long }), "click", cut, null)).toMatchObject({
+    action: "hold",
+  });
+});
+
+test("a title the site wants in other capitals still publishes, and one with a word changed doesn't", async () => {
+  // Vinted: "Tytuł zawiera za dużo wielkich liter".
+  const sentence = "Karta graficzna rtx 3070 8gb";
+  const typed = listingRefused(gateFor({ title: `${TITLE} ${"X".repeat(60)}` }), "type", {
+    text: `${sentence} ${"x".repeat(60)}`,
+  });
+  expect(typed).toBeNull();
+  const publish = (title: string) =>
+    formButton("Dodaj", { url: VINTED_ADD, fields: [title, DESCRIPTION, "1199"] });
+  const g = gateFor({ channel: "Vinted", host: "vinted.pl", addUrl: VINTED_ADD });
+  expect(await listingCheck(g, "click", publish(sentence), null)).toEqual({ action: "publish" });
+  expect(stillInForm(g, publish(sentence), publish(sentence))).toBe(true);
+  expect(await listingCheck(g, "click", publish("Karta graficzna rtx 3070"), null)).toMatchObject({
     action: "hold",
   });
 });
