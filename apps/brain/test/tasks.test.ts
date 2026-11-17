@@ -626,6 +626,24 @@ test("a task's end says whether it was notified, so the desktop app shows only t
   expect(t.notifier.sent.map((n) => n.message)).toEqual(["A disk failed."]);
 });
 
+test("a finish without notify ends the task quietly", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "All fine." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Check the disks",
+    goal: "Check the disks",
+    origin: "schedule",
+    source: "nightly",
+    runKey: "schedule:1",
+  }) as Task;
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done", summary: "All fine." });
+  expect(work.requests).toHaveLength(1);
+  expect(t.notifier.sent).toEqual([]);
+});
+
 test("a Haiku desktop task out of steps carries on, once, on Opus; one its budget stopped doesn't", async () => {
   const shot = { content: [computer("screenshot")] };
   const work = new FakeModel([shot, shot, shot, finish("Booked on Opus.")]);

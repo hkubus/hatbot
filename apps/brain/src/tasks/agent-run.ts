@@ -123,8 +123,9 @@ const FinishTask = z.object({
     ),
   notify: z
     .boolean()
+    .default(false)
     .describe(
-      "true only if the owner should hear about this now: something needs them, went wrong or changed in a way they care about. false for a routine result (nothing new, all fine, much like last time); it stays in the Tasks list. A scheduled run is routine unless it found something",
+      "true only if the owner should hear about this now: something needs them, went wrong or changed in a way they care about. Leave it out for a routine result (nothing new, all fine, much like last time); it stays in the Tasks list. A scheduled run is routine unless it found something",
     ),
 });
 
