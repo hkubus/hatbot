@@ -699,7 +699,7 @@ test("a helper's request in flight counts for the chat and other tasks too", asy
   await waitFor(() => work.requests.some(isHelper));
   // All of the day but a cent is spent: with the helper's request held, nothing else fits.
   const today = t.spend.summary().todayUsd;
-  t.settings.update({ limits: { dailyUsd: today + 0.06 } });
+  t.settings.update({ limits: { dailyUsd: today + 0.05 } });
   expect(() => t.spend.check(0.01)).toThrow("Today's");
   release();
   await t.tasks.idle();

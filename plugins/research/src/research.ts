@@ -41,7 +41,7 @@ const MAX_PARTS = 5;
 const MAX_WORKER_STEPS = 12;
 const WORKER_TOKENS = 16000;
 /** Searches and fetches each of a helper's requests may make, and the most of a page it reads. */
-const HELPER_USES = 5;
+const HELPER_USES = 3;
 const HELPER_PAGE_TOKENS = 10_000;
 /** About what a search's results add to the prompt. */
 const SEARCH_RESULT_TOKENS = 3_000;
@@ -617,7 +617,7 @@ async function runWorker(
           output_config: { effort: "medium" },
           // Pages read early are cleared on the server once the prompt passes 40k, so that what one
           // request's searches and fetches add mostly stays under the 100k where Haiku 5.5 bills the
-          // whole request at 5x.
+          // whole request at 5x. Each clear rewrites the cache after it: only one worth 20k is made.
           betas: ["context-management-2025-06-27"],
           context_management: {
             edits: [
@@ -625,7 +625,7 @@ async function runWorker(
                 type: "clear_tool_uses_20250919",
                 trigger: { type: "input_tokens", value: 40_000 },
                 keep: { type: "tool_uses", value: 3 },
-                clear_at_least: { type: "input_tokens", value: 10_000 },
+                clear_at_least: { type: "input_tokens", value: 20_000 },
                 exclude_tools: ["report_findings"],
               },
             ],
