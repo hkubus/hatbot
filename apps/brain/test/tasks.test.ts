@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "@hatbot/plugin-desktop";
 import type { Task, TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
+import { ALERT_SECTION, CODE_SECTION } from "../src/agent/prompt";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, isReview, text, toolUse } from "./fake-model";
 import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -1004,4 +1005,20 @@ test("a task's summary may run past its limit with chart blocks, and a little ov
   expect(summary.replace(chart, "").length).toBeGreaterThan(2000);
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("not counting chart blocks");
   expect(t.tasks.get(task.id)?.summary).toBe(summary);
+});
+
+test("a task's prompt has the alerts section only for an alert, and the code section only with a plugin for code", async () => {
+  const work = new FakeModel([done("a"), done("b"), done("c")]);
+  const t = await testApp(new FakeModel(), work);
+  const sections = async (origin: Task["origin"]) => {
+    t.tasks.createBackgroundTask({ title: "NAS", goal: "Look at the NAS.", origin });
+    await t.tasks.idle();
+    const system =
+      (work.requests.at(-1)?.system as { text: string }[] | undefined)?.[0]?.text ?? "";
+    return { alert: system.includes(ALERT_SECTION), code: system.includes(CODE_SECTION) };
+  };
+  expect(await sections("chat")).toEqual({ alert: false, code: false });
+  expect(await sections("alert")).toEqual({ alert: true, code: false });
+  await t.plugins.update("code", { enabled: true });
+  expect(await sections("chat")).toEqual({ alert: false, code: true });
 });

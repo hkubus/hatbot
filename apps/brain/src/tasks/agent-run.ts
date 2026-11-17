@@ -55,7 +55,7 @@ import {
 import { tagText } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
-import { promptFor } from "../bots";
+import { CODE_WORK, promptFor } from "../bots";
 import { brokenChartsOf } from "../chart-data";
 import { UserError } from "../errors";
 import {
@@ -377,9 +377,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
   const prompt = runner
     ? promptFor(runner.prompt(bot), bot, others, { plugins, handOver: runner.handOver })
-    : promptFor(agentPrompt(d.plugins.prompt("task", bot.plugins, left)), bot, others, {
-        plugins,
-      });
+    : promptFor(
+        agentPrompt(d.plugins.prompt("task", bot.plugins, left), {
+          alert: task.origin === "alert",
+          code: CODE_WORK.some((id) => d.plugins.readyFor(id, bot.plugins, left)),
+        }),
+        bot,
+        others,
+        { plugins },
+      );
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
   // A schedule that runs again within the hour finds the bot's tools and system still cached.
   const nextRun =
