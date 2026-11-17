@@ -6,6 +6,7 @@ import { callFailure, resultText, unsent } from "@hatbot/plugin-mcp";
 import {
   allow,
   block,
+  type CallContext,
   definePlugin,
   needsSetup,
   PluginError,
@@ -23,6 +24,8 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 const CALL_TIMEOUT_MS = 120_000;
+/** Scout turns away a live search while this many run. */
+const SEARCHES_AT_ONCE = 3;
 const refusedBy = (err: unknown) =>
   err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
@@ -658,6 +661,24 @@ export const scoutPlugin = definePlugin({
         if (r.isError) throw new PluginError(`Scout says: ${text.slice(0, 2000)}`);
         return text;
       });
+    let searching = 0;
+    let freed: (() => void)[] = [];
+    const searchSlot = async <T>(c: CallContext, fn: () => Promise<T>): Promise<T> => {
+      if (searching >= SEARCHES_AT_ONCE) c.progress?.("Waiting for Scout's other searches to end.");
+      while (searching >= SEARCHES_AT_ONCE) {
+        await new Promise<void>((go) => freed.push(go));
+        c.signal.throwIfAborted();
+      }
+      searching++;
+      try {
+        return await fn();
+      } finally {
+        searching--;
+        const waiting = freed;
+        freed = [];
+        for (const go of waiting) go();
+      }
+    };
 
     const tools: PluginTool[] = [
       ...READS.map((r) =>
@@ -669,11 +690,9 @@ export const scoutPlugin = definePlugin({
           untrusted: true,
           ...(r.brainOnly ? { brainOnly: true } : {}),
           run: async (input, c) => {
-            const text = await call(
-              r.name,
-              r.with ? r.with(input as Input, Boolean(c.task)) : input,
-              c.signal,
-            );
+            const send = () =>
+              call(r.name, r.with ? r.with(input as Input, Boolean(c.task)) : input, c.signal);
+            const text = await (r.name === "scout_search" ? searchSlot(c, send) : send());
             return r.answer ? r.answer(text) : text;
           },
         }),

@@ -10,7 +10,7 @@ import { BOT_TEMPLATES, type Mandate } from "@hatbot/shared";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { scoutServer } from "./fixtures/scout-tools";
-import { ORIGIN, type TestApp, tempDirs, testApp } from "./helpers";
+import { ORIGIN, type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 
 const SCOUT = "http://scout.lan:3001";
 const call = () => ({ task: null, signal: new AbortController().signal });
@@ -49,6 +49,7 @@ function fakeScout(metadata: Record<string, string> | null = {}, full = false) {
     tokens: new Set<string>(),
     bearers: [] as string[],
     posts: [] as string[],
+    searches: { running: 0, held: Promise.resolve() },
   };
   const handle = async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
@@ -85,7 +86,14 @@ function fakeScout(metadata: Record<string, string> | null = {}, full = false) {
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
         });
-        await scoutServer({ log, full, search: true, flips, sessions }).connect(transport);
+        await scoutServer({
+          log,
+          full,
+          search: true,
+          flips,
+          sessions,
+          searches: s.searches,
+        }).connect(transport);
         return transport.handleRequest(new Request(url, init));
       }
     }
@@ -349,6 +357,27 @@ test("a search gets Scout's compact rows, says which marketplaces were paused or
   // Any other failure is named too, so an empty result isn't read as "nothing for sale".
   const blocked = await runPluginTool(search, { query: "blocked 3070", sources: ["OLX"] }, call());
   expect(blocked.text.split("\n\n")[0]).toBe("OLX wasn't searched: OLX answered 403 (blocked).");
+});
+
+test("searches past the three Scout runs at once wait their turn instead of failing", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const search = named(t.plugins.tools(), "scout_search");
+  const { promise, resolve } = Promise.withResolvers<void>();
+  scout.s.searches.held = promise;
+  const waiting: string[] = [];
+  const all = [1, 2, 3, 4].map((i) =>
+    runPluginTool(
+      search,
+      { query: `rtx 30${i}0`, sources: ["OLX"] },
+      { ...call(), progress: (line) => waiting.push(line) },
+    ),
+  );
+  await waitFor(() => waiting.length === 1 && scout.s.searches.running === 3);
+  resolve();
+  for (const r of await Promise.all(all)) expect(r.isError).toBe(false);
+  expect(scout.calls("scout_search")).toHaveLength(4);
 });
 
 test("flag lists and watch ids that Scout would refuse are stopped before the call", async () => {
