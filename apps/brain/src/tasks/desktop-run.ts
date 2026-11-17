@@ -857,7 +857,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     let offering: "open" | "offer" | "accept" | null = null;
     /** A message to a person, which waits for the owner to stop it first. */
     let toSend: string | null = null;
-    let publishing = false;
+    /** The approved listing's publish, pressed here. */
+    let publishing: AgentElement | null = null;
     if (check) {
       const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
       /** Where each look was, for a computer's screenshot check. */
@@ -945,13 +946,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const posts = takeDown && takeDownCheck(el, lastUrl);
       if (posts) return notRun(call, posts);
       if (listing) {
-        const l = listingCheck(listing, kind, el, hold);
+        const text = async () => (await guest?.context(true).catch(() => null))?.text ?? null;
+        const l = await listingCheck(listing, kind, el, hold, text);
         if (l.action === "hold") return notRun(call, l.why);
         // Filling in its form, and the approved listing's publish, need no confirm_intent.
         if (l.action === "fill") hold = null;
         if (l.action === "publish") {
           hold = null;
-          publishing = true;
+          publishing = el;
         }
       }
       // One asked before trying is spent on the first held step, covered or not.
@@ -1034,7 +1036,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (publishing && listing) {
       // Once, unless the form stays with the title in: the site refused it, most often a field it
       // wants written another way. A page that hung looks the same, so it may still have gone up.
-      const refused = await stayedInForm(listing, inspectAgain);
+      const refused = await stayedInForm(listing, inspectAgain, publishing);
       if (!refused) listing.published = true;
       tasks.listings?.publishPassed(id);
       tasks.addStep(id, {
@@ -1170,11 +1172,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const stayedInForm = async (
     g: NonNullable<typeof listing>,
     inspectAgain: (() => Promise<Inspected>) | null,
+    from: AgentElement,
   ): Promise<boolean> => {
     for (let i = 0; i < sendConfirm.tries; i++) {
       await Bun.sleep(sendConfirm.everyMs);
       const el = (await inspectAgain?.()) ?? (await screen.inspect().catch(() => null));
-      if (!stillInForm(g, el)) return false;
+      if (!stillInForm(g, el, from)) return false;
     }
     return true;
   };

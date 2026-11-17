@@ -70,6 +70,8 @@ const read = (label: string) => {
 };
 
 export const buyingLabel = (label: string) => BUYING.test(read(label));
+/** It sends, posts, books or buys, by its words alone. */
+export const strongLabel = (label: string) => STRONG.test(read(label));
 
 const SENDING = words([
   `(?:send|post|publish|reply)${END}`,

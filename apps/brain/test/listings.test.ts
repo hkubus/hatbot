@@ -383,39 +383,126 @@ const formButton = (label: string, over: Partial<AgentElement> = {}): AgentEleme
   ...over,
 });
 
-test("on its add-listing page, a listing task fills in the form without asking, but for what may cost money", () => {
+test("on its add-listing page, a listing task fills in the form without asking, but for what may cost money", async () => {
   const g = gateFor();
   const fill = { action: "fill" } as const;
   const usual = { action: "usual" } as const;
-  expect(listingCheck(g, "click", formButton("Dalej"), { label: "Dalej" })).toEqual(fill);
-  expect(listingCheck(g, "click", formButton(""), { unlabelled: "button" })).toEqual(fill);
+  expect(await listingCheck(g, "click", formButton("Dalej"), { label: "Dalej" })).toEqual(fill);
+  expect(await listingCheck(g, "click", formButton(""), { unlabelled: "button" })).toEqual(fill);
   const promote = formButton("Wyróżnij ogłoszenie");
-  expect(listingCheck(g, "click", promote, { label: promote.label })).toEqual(usual);
-  expect(listingCheck(g, "click", formButton("Dalej"), { frame: "" })).toEqual(usual);
-  expect(listingCheck(g, "click", formButton("Dalej"), { unseen: true })).toEqual(usual);
+  expect(await listingCheck(g, "click", promote, { label: promote.label })).toEqual(usual);
+  expect(await listingCheck(g, "click", formButton("Dalej"), { frame: "" })).toEqual(usual);
+  expect(await listingCheck(g, "click", formButton("Dalej"), { unseen: true })).toEqual(usual);
   // Allegro Lokalnie's way past its promotions was asked as a purchase.
   const none = formButton("Nie chcę wyróżniać Zapłacisz: 0 zł");
-  expect(listingCheck(g, "click", none, { label: none.label })).toEqual(fill);
+  expect(await listingCheck(g, "click", none, { label: none.label })).toEqual(fill);
   for (const label of ["Wyróżnij ogłoszenie Zapłacisz: 9,99 zł", "Zapłacisz: 0 zł, potem 9,99 zł"])
-    expect(listingCheck(g, "click", formButton(label), { label })).toEqual(usual);
+    expect(await listingCheck(g, "click", formButton(label), { label })).toEqual(usual);
   const elsewhere = formButton("Dalej", { url: OLX_URL });
-  expect(listingCheck(g, "click", elsewhere, { label: "Dalej" })).toEqual(usual);
+  expect(await listingCheck(g, "click", elsewhere, { label: "Dalej" })).toEqual(usual);
   // A drag reorders photos; a right click opens a menu.
   expect(listingRefused(g, "left_click_drag", {})).toBeNull();
   expect(listingRefused(g, "right_click", {})).toContain("left_click");
 });
 
-test("a description longer than what desktop-agent sends of a box still publishes", () => {
+test("a description longer than what desktop-agent sends of a box still publishes", async () => {
   const long = Array.from({ length: 900 }, (_, i) => `Zdanie ${i}.`).join(" ");
   const shown = long.slice(0, 4000);
   const publish = formButton("Dodaj ogłoszenie", { fields: [TITLE, shown, "1199"] });
-  expect(listingCheck(gateFor({ description: long }), "click", publish, null)).toEqual({
+  expect(await listingCheck(gateFor({ description: long }), "click", publish, null)).toEqual({
     action: "publish",
   });
   const cut = formButton("Dodaj ogłoszenie", { fields: [TITLE, shown.slice(0, 3000), "1199"] });
-  expect(listingCheck(gateFor({ description: long }), "click", cut, null)).toMatchObject({
+  expect(await listingCheck(gateFor({ description: long }), "click", cut, null)).toMatchObject({
     action: "hold",
   });
+});
+
+const AL_FORM = "https://www.allegrolokalnie.pl/o/oferty/wystaw/opis";
+const AL_SUMMARY = "https://www.allegrolokalnie.pl/o/oferty/wystaw/podsumowanie";
+const AL_URL = "https://allegrolokalnie.pl/oferta/karta-graficzna-rtx-3070-8gb";
+const alSummary = (price: string) =>
+  `Podsumowanie\n${TITLE}\nStan: Bardzo dobry\nCena: ${price}\nZapłacisz po wystawieniu:\n0\n zł\nWYSTAW JAKO OGŁOSZENIE ZWYKŁE`;
+
+test("on a summary page with no form, a listing task publishes only what the page shows as approved, after the form held the approved description", async () => {
+  const g = gateFor({ channel: "Allegro Lokalnie", host: "allegrolokalnie.pl", addUrl: AL_FORM });
+  const publish = formButton("WYSTAW JAKO OGŁOSZENIE ZWYKŁE", { url: AL_SUMMARY, fields: [] });
+  const shows = (price: string) => async () => alSummary(price);
+  const held = { label: publish.label };
+  // The form hasn't been seen with the approved description.
+  expect(await listingCheck(g, "click", publish, held, shows("1 199 zł"))).toMatchObject({
+    action: "hold",
+  });
+  const next = formButton("KOLEJNY KROK", { url: AL_FORM, fields: [TITLE, DESCRIPTION] });
+  expect(await listingCheck(g, "click", next, null)).toEqual({ action: "fill" });
+  expect(await listingCheck(g, "click", publish, held, shows("1 199 zł"))).toEqual({
+    action: "publish",
+  });
+  expect(await listingCheck(g, "click", publish, held, shows("999 zł"))).toMatchObject({
+    action: "hold",
+  });
+  // A Wystaw it doesn't know would post past this check.
+  const unknown = formButton("Wystaw jako ogłoszenie z dostawą", { url: AL_SUMMARY, fields: [] });
+  expect(
+    await listingCheck(g, "click", unknown, { label: unknown.label }, shows("1 199 zł")),
+  ).toMatchObject({ action: "hold" });
+});
+
+test("on Allegro Lokalnie, Wystaw jako on the summary page publishes the approved listing without asking, and it's recorded as published", async () => {
+  const fill = (ref: string, value: string) =>
+    browser("form_input", { target: { type: "ref", ref }, value });
+  const work = new FakeModel([
+    { content: [browser("navigate", { url: AL_FORM })] },
+    { content: [fill("ref_1", TITLE)] },
+    { content: [fill("ref_2", DESCRIPTION)] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_8" } })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_9" } })] },
+    { content: [toolUse("record_listing", { url: AL_URL })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Listed." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const scout = await withScout(t, [
+    flip({ prices: { "Allegro Lokalnie": 1199 }, channels: { "Allegro Lokalnie": "ready" } }),
+  ]);
+  const boxes = new Map<string, string>();
+  const onSummary = () => t.agent.page.url === AL_SUMMARY;
+  Object.defineProperty(t.agent, "element", {
+    get: (): AgentElement => ({
+      tag: "button",
+      role: null,
+      type: "button",
+      label: onSummary() ? "WYSTAW JAKO OGŁOSZENIE ZWYKŁE" : "KOLEJNY KROK",
+      inForm: !onSummary(),
+      url: t.agent.page.url ?? "",
+      editable: false,
+      fields: onSummary() ? [] : [...boxes.values()],
+    }),
+    configurable: true,
+  });
+  t.agent.health = { features: ["profiles", "exec", "files", "fields", "upload"] };
+  t.agent.page = { url: AL_FORM, title: "", text: "" };
+  t.agent.afterAction = (name, input) => {
+    if (name === "form_input")
+      boxes.set(String((input.target as { ref: string }).ref), String(input.value));
+    if (name === "left_click")
+      t.agent.page = onSummary()
+        ? { url: `${AL_FORM.replace("opis", "sukces")}?offerSlug=karta`, title: "", text: "" }
+        : { url: AL_SUMMARY, title: "", text: alSummary("1 199,00 zł") };
+  };
+  await t.listings.tick();
+  await waitFor(() => scout.calls("scout_flip_listed").length === 1);
+  await t.tasks.idle();
+
+  expect(clicks(t)).toBe(2);
+  expect(t.approvals.list(false)).toEqual([]);
+  const [row] = t.db
+    .query<{ published_at: string | null }, []>("SELECT published_at FROM flip_listings")
+    .all();
+  expect(row?.published_at).not.toBeNull();
+  expect(scout.calls("scout_flip_listed")).toEqual([
+    { flipId: 7, channel: "Allegro Lokalnie", status: "listed", url: AL_URL },
+  ]);
+  await t.plugins.stopAll();
 });
 
 test("on its add-listing page, a listing task's Dalej and Enter in a filled box go on without asking, and an Enter that publishes goes through the listing's check", async () => {

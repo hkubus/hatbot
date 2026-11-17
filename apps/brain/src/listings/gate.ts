@@ -1,10 +1,19 @@
 // In a listing's desktop task, Publish goes through without asking, once (again if the site refused
 // it), on that marketplace's add-listing page, while the form holds exactly the approved title,
-// description and price. The rest of that form goes through too, but for anything that may cost money.
+// description and price (on a summary page with no form, while it shows them). The rest of that form
+// goes through too, but for anything that may cost money, and any other button that may post or send.
 import { type AgentElement, uploadPage } from "@hatbot/shared/desktop";
 import { combosIn, readCombo } from "@hatbot/shared/keys";
 import { exact, toAddress, typesText, UNSEEN_MOUSE } from "../negotiate/gate";
-import { buyingLabel, fold, type Hold, hostOf, onHost } from "../tasks/policy";
+import {
+  buyingLabel,
+  fold,
+  type Hold,
+  hostOf,
+  onHost,
+  samePage,
+  strongLabel,
+} from "../tasks/policy";
 
 export type ListingGate = {
   channel: string;
@@ -20,6 +29,8 @@ export type ListingGate = {
   photos: number;
   stage: string;
   published: boolean;
+  /** The form last seen with the title in held the approved description too. */
+  described?: boolean;
 };
 
 export type ListingCheck =
@@ -33,7 +44,7 @@ export const MAX_FREE_TEXT = 60;
 const CONTACT = /https?:|www\.|\.(?:pl|com|eu|cz|net)\b|@|\d[\d\s().-]{6,}\d/i;
 
 const PUBLISH =
-  /^(?:dodaj|opublikuj|wystaw|publish|post|list|przeslij|upload)(?: (?:ogloszenie|przedmiot|oferte|teraz|za darmo|it|item|listing))*$/;
+  /^(?:(?:dodaj|opublikuj|wystaw|publish|post|list|przeslij|upload)(?: (?:ogloszenie|przedmiot|oferte|teraz|za darmo|it|item|listing))*|wystaw jako (?:ogloszenie zwykle|kup teraz|licytacja))$/;
 export const publishLabel = (label: string) => PUBLISH.test(fold(label));
 
 /** Paid extras offered while listing: promotions, bumps and packages. */
@@ -116,14 +127,41 @@ function leaves(host: string, name: string, input: Record<string, unknown>, text
   );
 }
 
-/** `held`: the ordinary check's answer for this element. */
-export function listingCheck(
+/** "Cena: 229,99 zł" on a page that sums the listing up, or "Cena wywoławcza: …". */
+const PRICE_SHOWN = /(?<![\p{L}])cena(?: \p{L}+)?:? ?(\d[\d .,]*?) ?(?:zl|pln)(?![\p{L}])/gu;
+
+// desktop-agent sends a box's first 4000 characters.
+const descriptions = (g: ListingGate) => [
+  exact(g.description),
+  exact(exact(g.description).slice(0, 4000)),
+];
+
+/** What a page with no boxes, such as Allegro Lokalnie's summary, doesn't show as approved. */
+function notShown(g: ListingGate, text: string): string[] {
+  const prices = [...fold(text).matchAll(PRICE_SHOWN)].map((m) => m[1] ?? "");
+  return [
+    ...(exact(text).includes(exact(g.title)) ? [] : ["title"]),
+    // It's typed in the form, and a summary may not show it.
+    ...(g.described ? [] : ["description"]),
+    ...(prices.length && prices.every((p) => samePrice(p, g.price)) ? [] : ["price"]),
+  ];
+}
+
+/**
+ * `held`: the ordinary check's answer for this element. `pageText`: the tab's text, for a publish on a
+ * page with no boxes.
+ */
+export async function listingCheck(
   g: ListingGate,
   kind: "click" | "enter",
   el: AgentElement | null,
   held: Hold | null,
-): ListingCheck {
+  pageText: () => Promise<string | null> = async () => null,
+): Promise<ListingCheck> {
   if (!el?.url || uploadPage(el.url)?.channel !== g.channel) return { action: "usual" };
+  const fields = el.fields?.map(exact) ?? [];
+  if (fields.includes(exact(g.title)))
+    g.described = fields.some((f) => descriptions(g).includes(f));
   // A click or a space in a text box types.
   if (kind === "click" && el.editable) return { action: "usual" };
   // Enter in a box submits its form or presses the button after it, which the ordinary check may not hold.
@@ -135,9 +173,18 @@ export function listingCheck(
           ...(el.inForm && el.submitLabel ? [el.submitLabel] : []),
           ...(el.buttonsAfter ?? []),
         ];
-  // A checkout, a frame (perhaps a payment widget), or something Hatbot couldn't see asks as usual.
-  if (!labels.some(publishLabel))
-    return mayCost(held, labels) ? { action: "usual" } : { action: "fill" };
+  if (!labels.some(publishLabel)) {
+    // A checkout, a frame (perhaps a payment widget), or something Hatbot couldn't see asks as usual.
+    if (mayCost(held, labels)) return { action: "usual" };
+    // A publish button it doesn't know would post past the check below.
+    const acts = labels.find((l) => strongLabel(l) && !buyingLabel(l) && !PAID.test(fold(l)));
+    return acts === undefined
+      ? { action: "fill" }
+      : {
+          action: "hold",
+          why: `"${acts}" may post or send something, and it isn't a publish button the listing's check knows, so a listing task doesn't press it. If the site publishes with it, finish and say so.`,
+        };
+  }
   // A promotion or payment step in a frame, or a checkout, asks as it always does.
   if (held && ("checkout" in held || "frame" in held)) return { action: "usual" };
   if (g.published)
@@ -150,12 +197,18 @@ export function listingCheck(
       action: "hold",
       why: "The desktop is out of date and can't show what's in the form, so nothing is published. The owner needs to update desktop-agent.",
     };
-  const fields = el.fields.map(exact);
-  // desktop-agent sends a box's first 4000 characters.
-  const description = [exact(g.description), exact(exact(g.description).slice(0, 4000))];
+  if (!fields.length) {
+    const missing = notShown(g, (await pageText()) ?? "");
+    if (missing.length)
+      return {
+        action: "hold",
+        why: `Publishing from a page with no form needs it to show exactly the approved title and price, and the form to have held exactly the approved description when you last moved on from it with its own button. The ${missing.join(", ")} ${missing.length > 1 ? "aren't" : "isn't"}. Go back to the form, make ${missing.length > 1 ? "them" : "it"} exactly as in the task, move on with its buttons, then publish again.`,
+      };
+    return { action: "publish" };
+  }
   const missing = [
     ...(fields.includes(exact(g.title)) ? [] : ["title"]),
-    ...(fields.some((f) => description.includes(f)) ? [] : ["description"]),
+    ...(fields.some((f) => descriptions(g).includes(f)) ? [] : ["description"]),
     ...(fields.some((f) => samePrice(f, g.price)) ? [] : ["price"]),
   ];
   if (missing.length)
@@ -166,9 +219,17 @@ export function listingCheck(
   return { action: "publish" };
 }
 
-/** After Publish: still its add-listing form, with the title in, so the site didn't take it. */
-export function stillInForm(g: ListingGate, el: AgentElement | null | undefined): boolean {
+/**
+ * After Publish: still its add-listing form with the title in, or still the page with no form it was
+ * pressed on, so the site didn't take it.
+ */
+export function stillInForm(
+  g: ListingGate,
+  el: AgentElement | null | undefined,
+  from: AgentElement | null,
+): boolean {
   if (!el?.fields || uploadPage(el.url)?.channel !== g.channel) return false;
+  if (!from?.fields?.length) return samePage(el.url, from?.url);
   return el.fields.map(exact).includes(exact(g.title));
 }
 
