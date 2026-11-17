@@ -10,6 +10,7 @@ import { activity, answered, markPrevious, parseSummary, titleOf } from "../src/
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
+import { RETOLD } from "../src/tasks/agent-run";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, testApp, toolNames, waitFor } from "./helpers";
 import { finish } from "./plugin-helpers";
@@ -677,6 +678,9 @@ test("a task started from the chat keeps your words for its approval check, at t
     JSON.stringify(work.requests[i]?.messages[0]?.content).match(/Started by [^,]+/)?.[0];
   expect(startedBy(0)).toBe("Started by the bot in the chat");
   expect(startedBy(1)).toBe("Started by the owner");
+  const first = (i: number) => JSON.stringify(work.requests[i]?.messages[0]?.content);
+  expect(first(0)).toContain(RETOLD);
+  expect(first(1)).not.toContain(RETOLD);
 
   // The model hears about it with your next message.
   await t.thread.post("how's it going?").done;

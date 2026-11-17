@@ -100,6 +100,9 @@ type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 const SUMMARY_WORDS = 2000;
 // Models can't count characters: a summary a little over what it's told is kept, not written again.
 const SUMMARY_KEPT = 2500;
+/** Said with the task, not in the prompt its bot's other tasks share from the cache. */
+export const RETOLD =
+  "Write your summary for that bot, not the owner: a few short plain lines with the answer and the facts, numbers and links behind it, without Markdown or bold, besides any chart blocks.";
 // Chart blocks don't count: five listings with their photos' addresses take most of it.
 const wordsOf = (summary: string) =>
   chartBlocks(summary).reduceRight((s, b) => s.slice(0, b.start) + s.slice(b.end), summary);
@@ -922,17 +925,18 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : task.payload
         ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
         : "";
+    const retold = task.origin === "chat" && tasks.retold(task);
     const startedBy = `Started by ${
       task.origin !== "chat"
         ? (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
-        : tasks.retold(task)
+        : retold
           ? "the bot in the chat, which answers the owner from your summary"
           : "the owner, from the chat"
     }`;
     record("user", [
       {
         type: "text",
-        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.${retold ? ` ${RETOLD}` : ""}`,
       },
     ]);
 
