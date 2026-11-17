@@ -72,6 +72,7 @@ import {
   groupPrompt,
   INCOGNITO_PROMPT,
   MAX_GROUP_REPLIES,
+  SHORTEN_PROMPT,
   SUMMARY_PROMPT,
   systemPrompt,
 } from "./prompt";
@@ -239,6 +240,8 @@ export type ThreadDeps = {
 const RESOLVED_SHOWN_MS = 7 * 86400_000;
 /** The most of a thread thread_read hands the main chat. */
 const READ_THREAD_MESSAGES = 40;
+/** The summary prompt asks for 300; past this it's asked once to shorten it. */
+const MAX_SUMMARY_WORDS = 400;
 
 export function parseSummary(out: string): { recap: string | null; summary: string } {
   const tag = (name: string) =>
@@ -1531,19 +1534,28 @@ export class Thread {
       .join("\n");
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
-      const content = `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
-      const out = await oneShot(this.d, this.summaryRequest(SUMMARY_PROMPT, content), {
-        purpose: "summary",
-        episodeId,
-        botId: this.bot().id,
-      });
+      const content = `Today is ${localStamp(new Date(this.clock()))}.\n\n<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
+      const ledger = { purpose: "summary", episodeId, botId: this.bot().id };
+      const out = await oneShot(this.d, this.summaryRequest(SUMMARY_PROMPT, content), ledger);
       const { recap, summary } = parseSummary(out.trim());
       if (!summary) throw new Error(`no summary for episode ${episodeId}`);
-      this.saveSummary(summary);
+      this.saveSummary(await this.shortened(summary, ledger));
       if (recap)
         this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
     }
     this.markSummarized(episodeId);
+  }
+
+  /** Nothing else holds a summary to its 300 words, and one that grows is in every conversation. */
+  private async shortened(
+    summary: string,
+    ledger: { purpose: string; episodeId: number; botId: string },
+  ): Promise<string> {
+    const words = summary.split(/\s+/).length;
+    if (words <= MAX_SUMMARY_WORDS) return summary;
+    const content = `It's ${words} words.\n\n<summary>\n${summary}\n</summary>`;
+    const out = await oneShot(this.d, this.summaryRequest(SHORTEN_PROMPT, content), ledger);
+    return parseSummary(out.trim()).summary || summary;
   }
 
   private summarized(episodeId: number): boolean {

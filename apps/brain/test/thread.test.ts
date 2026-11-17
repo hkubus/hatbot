@@ -158,6 +158,27 @@ test("a conversation goes on within 30 minutes; idle past that, it gets a recap 
   expect(lastUserText(model.requests[2])).toContain("2026-10-09: sdb on the NAS is failing.");
 });
 
+test("a summary well over its 300 words is asked once to be shortened, and the shorter one is kept", async () => {
+  const long = Array.from({ length: 450 }, (_, i) => `word${i}`).join(" ");
+  const model = new FakeModel(
+    [{ content: [text("Hi.")] }],
+    [
+      `<recap>Said hi.</recap>\n<summary>${long}</summary>`,
+      "<summary>2026-10-09: said hi.</summary>",
+    ],
+  );
+  const t = await testApp(model);
+  await t.thread.post("hello").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  expect(model.creates).toHaveLength(2);
+  expect(JSON.stringify(model.creates[1]?.messages)).toContain("word449");
+  expect(
+    t.db.query<{ summary: string }, []>("SELECT summary FROM conversations WHERE id = 1").get()
+      ?.summary,
+  ).toBe("2026-10-09: said hi.");
+});
+
 test("a new conversation starts when the prompt or tools change, the model switches, or the last request passed 90k", async () => {
   const model = new FakeModel([
     { content: [text("one")] },
