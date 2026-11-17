@@ -41,3 +41,35 @@ live("a long page is read 20,000 characters at a time, saying how to read the re
     expect(cut).toMatch(/^20000 characters\. \S.*\]$/);
   }
 });
+
+live("wait ends once the page is quiet, and not while a request is in flight", async () => {
+  let release = () => {};
+  const slow = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () =>
+      new Promise<Response>((answer) => {
+        release = () => answer(new Response("ok"));
+      }),
+  });
+  const timed = async (duration: number) => {
+    const start = Date.now();
+    await browser.call("wait", { duration });
+    return Date.now() - start;
+  };
+  try {
+    pages["/quiet"] = "<!doctype html><body>Nothing more to load.</body>";
+    await browser.call("navigate", { url: `${base}/quiet` });
+    expect(await timed(5)).toBeLessThan(2000);
+
+    pages["/busy"] = `<!doctype html><body><script>
+      fetch("http://127.0.0.1:${slow.port}/", { mode: "no-cors" });</script></body>`;
+    await browser.call("navigate", { url: `${base}/busy` });
+    expect(await timed(1)).toBeGreaterThanOrEqual(1000);
+    release();
+    expect(await timed(5)).toBeLessThan(2000);
+  } finally {
+    release();
+    slow.stop(true);
+  }
+});
