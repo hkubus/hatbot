@@ -1,6 +1,7 @@
 // Research: a background task that plans a question, hands its parts to helpers that search at once,
 // checks what it cites against what the pages said, and ends in a saved, cited report.
 import {
+  clip,
   definePlugin,
   ENDS_REPLY,
   hosts,
@@ -37,11 +38,17 @@ export { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "
 export { plain, quoteFound } from "./research";
 
 const ResearchInput = z.object({
-  title: z.string().min(1).max(80).describe('Short title, e.g. "Quiet NAS for four drives"'),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    // Cut rather than refused: a refusal costs the whole call again.
+    .transform((s) => clip(s, 80))
+    .describe('Short title, e.g. "Quiet NAS for four drives"'),
   question: z
     .string()
     .min(1)
-    .max(4000)
+    .max(8000)
     .describe(
       "What to find out, with everything from the conversation that bears on it: what it's for, the budget, where the owner is, must-haves, what they already know or ruled out, and what the answer should cover",
     ),

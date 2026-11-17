@@ -108,8 +108,15 @@ export const NeedsYou = z
     "True when you need the owner's answer or view before you go on. The thread shows as needing them until they write in it. Not for news or a report.",
   );
 
+/** Cut to fit rather than refused: a refusal costs the whole call again. */
+const Title = z
+  .string()
+  .trim()
+  .min(1)
+  .transform((s) => clip(s, 80));
+
 export const ThreadOpenInput = z.object({
-  title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
+  title: Title.describe('Short, e.g. "Backups failing on pve"'),
   message: z
     .string()
     .min(1)
@@ -128,15 +135,11 @@ export const ThreadOpenInput = z.object({
 });
 
 export const DesktopTaskInput = z.object({
-  title: z
-    .string()
-    .min(1)
-    .max(80)
-    .describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
+  title: Title.describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
   goal: z
     .string()
     .min(1)
-    .max(4000)
+    .max(8000)
     .describe("What to do, with every detail from the conversation it needs"),
   success_criteria: z.string().max(1000).describe("How to tell it's done"),
   skill: z
@@ -173,15 +176,11 @@ export const AskBotInput = z.object({
 });
 
 export const RunTaskInput = z.object({
-  title: z
-    .string()
-    .min(1)
-    .max(80)
-    .describe('Short title, e.g. "Restart Jellyfin" or "Fix the failing CI on hatbot"'),
+  title: Title.describe('Short title, e.g. "Restart Jellyfin" or "Fix the failing CI on hatbot"'),
   goal: z
     .string()
     .min(1)
-    .max(4000)
+    .max(8000)
     .describe(
       "What to do and what to report back, with every detail from the conversation it needs",
     ),

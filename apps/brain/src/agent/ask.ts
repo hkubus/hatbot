@@ -1,12 +1,19 @@
 // In the chat, ask_owner's questions end the reply and the owner's next message answers them; a
 // background task waits for the answers.
+import { clip } from "@hatbot/plugin-sdk";
 import { MAX_CHOICE_CHARS, MAX_CHOICES, MAX_QUESTIONS_AT_ONCE } from "@hatbot/shared";
 import { z } from "zod";
 
 const OneQuestion = z.object({
   question: z.string().trim().min(1).max(1000).describe("One question, as you'd write it to them"),
   choices: z
-    .array(z.string().trim().min(1).max(MAX_CHOICE_CHARS))
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1)
+        .transform((s) => clip(s, MAX_CHOICE_CHARS)),
+    )
     .max(MAX_CHOICES)
     .default([])
     .describe(

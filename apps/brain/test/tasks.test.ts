@@ -799,6 +799,23 @@ test("an ended task runs again with its goal as you edited it, still tainted", a
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("Deploy main again");
 });
 
+test("a task whose title runs past 80 characters starts with it cut short, not refused", async () => {
+  const title =
+    "Check every container on pve for pending updates and list what each one will upgrade";
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title, goal: "Check the containers for updates" })] },
+    { content: [text("On it.")] },
+    { content: [text("All current.")] },
+  ]);
+  const t = await testApp(chat, new FakeModel([done("All current.")]));
+  t.thread.post("any updates on pve?");
+  await t.thread.idle();
+  const [task] = t.tasks.list();
+  expect(task?.title).toBe(`${title.slice(0, 79)}…`);
+  await t.tasks.idle();
+  await t.thread.idle();
+});
+
 test("the chat steers its running task: the note wakes it and comes with its next step, and the owner's words join its request", async () => {
   const chat = new FakeModel([
     { content: [toolUse("run_task", { title: "Buy filters", goal: "Order one water filter" })] },
