@@ -115,13 +115,25 @@ async function grade(q: (typeof QUESTIONS)[number], answer: string) {
 function quotesOf(taskId: number) {
   const quotes = { all: 0, found: 0, unchecked: 0 };
   const rows = brain.db
-    .query<{ content: string }, [number]>("SELECT content FROM task_turns WHERE task_id = ?")
+    .query<{ content: string }, [number]>(
+      "SELECT content FROM task_turns WHERE task_id = ? ORDER BY id",
+    )
     .all(taskId);
+  // read_findings gives the same findings back: only investigate's count.
+  const investigated = new Set<string>();
   for (const row of rows) {
-    const blocks = JSON.parse(row.content) as { type?: string; content?: unknown }[];
+    const blocks = JSON.parse(row.content) as {
+      type?: string;
+      id?: string;
+      name?: string;
+      tool_use_id?: string;
+      content?: unknown;
+    }[];
     if (!Array.isArray(blocks)) continue;
     for (const b of blocks) {
+      if (b.type === "tool_use" && b.name === "investigate" && b.id) investigated.add(b.id);
       if (b.type !== "tool_result" || typeof b.content !== "string") continue;
+      if (!investigated.has(b.tool_use_id ?? "")) continue;
       if (!b.content.startsWith('<findings trusted="false">')) continue;
       const lines = b.content.split("\n");
       const all = lines.filter((l) => l.startsWith("  Quote: ")).length;
