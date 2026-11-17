@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
 import { minecraftPlugin } from "@hatbot/plugin-minecraft";
 import { ping, rcon } from "@hatbot/plugin-minecraft/protocol";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { closedPort, fakeGame, fakeRcon } from "./fake-minecraft";
-import { FakeModel, toolUse } from "./fake-model";
+import { FakeModel, isReview, toolUse } from "./fake-model";
 import { signIn } from "./helpers";
 import {
   call,
@@ -183,7 +182,7 @@ test("a task sees who's on every server, lists them, and whitelists a player pas
   ]);
   const reviewed: string[] = [];
   work.onCreate = (p) => {
-    if (p.system !== REVIEW_PROMPT) return undefined;
+    if (!isReview(p)) return undefined;
     reviewed.push(JSON.stringify(p.messages));
     return '{"safe": true, "why": "The owner asked for it."}';
   };

@@ -240,7 +240,7 @@ test("a task's question and the owner's answer reach the review as the owner's w
   t.questions.answer(question.id, "Yes, restart it");
   await finished(t, id);
   expect(done).toEqual(["lab_restart"]);
-  const review = work.creates.find((c) => c.system === REVIEW_PROMPT);
+  const review = work.creates.find((c) => isReview(c));
   const ownerSaid = String(review?.messages[0]?.content).split("</owner_said>")[0] ?? "";
   expect(ownerSaid).toContain("Restart the web service?");
   expect(ownerSaid).toContain("Yes, restart it");
@@ -275,7 +275,7 @@ test("a step's reviewed changes on different guests are all checked before any r
   ]);
   let reviews = 0;
   work.onCreate = (p) => {
-    if (p.system !== REVIEW_PROMPT) return undefined;
+    if (!isReview(p)) return undefined;
     done.push("review");
     // Once a's output has tainted the task, the first step's others are blocked, by Haiku and Opus.
     return ++reviews <= 6 ? '{"safe": false, "why": "No."}' : '{"safe": true, "why": "Asked."}';
@@ -285,7 +285,7 @@ test("a step's reviewed changes on different guests are all checked before any r
   expect(t.tasks.get(id)?.status).toBe("done");
   expect(done.slice(0, 10)).toEqual(["upgrade a", ...Array(9).fill("review")]);
   expect(done.slice(10).sort()).toEqual(["upgrade b", "upgrade c", "upgrade d"]);
-  const asked = work.creates.filter((c) => c.system === REVIEW_PROMPT).at(-1);
+  const asked = work.creates.filter((c) => isReview(c)).at(-1);
   const content = String(asked?.messages[0]?.content);
   const action = ["b", "c", "d"].find((g) => content.includes(`"summary":"Upgrade ${g}"`));
   expect(action).toBeDefined();
