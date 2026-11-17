@@ -1552,6 +1552,16 @@ test("the scam screen catches paying or talking off the platform however it's wr
     expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
 });
 
+test("a Vinted username with a dot isn't a link, while a host with a real top-level domain is", () => {
+  for (const text of [
+    "Hej, jestem benedict.ioan Rumunia, Timișoara Ostatnie logowanie: 1 godzinę temu",
+    "Hej, jestem rasmus-85. Ostatnie logowanie: 21 minut temu",
+  ])
+    expect([text, scamSignals(text, [])]).toEqual([text, []]);
+  for (const text of ["zapłać na olx-pay.top/x", "zapłać na olx-pay.top", "https://foo.xyz"])
+    expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
+});
+
 /** Our message to the seller, as gone. */
 function sent(t: TestApp, n: Negotiation, text = TEXT, offer = 1060) {
   const id = t.negotiations.claimSend(n, { text, offer, agree: false, stated: null });
