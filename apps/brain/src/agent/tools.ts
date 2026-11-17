@@ -454,13 +454,16 @@ export const TOOLS = [
   def({
     name: "memory_search",
     description:
-      "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt.",
+      "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt; research notes, which come from the web, as file:line only.",
     schema: z.object({ query: z.string().min(1) }),
-    run: async ({ query }, ctx) => {
-      const hits = await ctx.memory.search(query);
-      const out = hits.map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") || "No matches.";
-      const research = hits.find((h) => RESEARCH_FILE.test(h.path));
-      return research ? researchNotes(ctx, "memory_search", research.path, out) : out;
+    run: async ({ query }, { memory }) => {
+      const hits = await memory.search(query);
+      // Research's notes come from the web and would taint the search: reading one is a step of its own.
+      const line = (h: { path: string; line: number; text: string }) =>
+        RESEARCH_FILE.test(h.path)
+          ? `${h.path}:${h.line} (research notes: memory_read the file to see it)`
+          : `${h.path}:${h.line}: ${h.text}`;
+      return hits.map(line).join("\n") || "No matches.";
     },
   }),
   def({
