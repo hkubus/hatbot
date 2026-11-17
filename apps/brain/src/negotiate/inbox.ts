@@ -16,9 +16,12 @@ import { type BuyerConversation, type Flips, openFlips, postedFor } from "./sell
 import type { InboxMessage, Negotiations } from "./service";
 
 export const INBOX_EVERY_MS = 10 * 60_000;
+/** Most failures are a timeout that the next read gets past. */
+export const INBOX_FAILING_MS = 30 * 60_000;
 
 export type SellerInboxDeps = {
   db: Db;
+  clock: () => number;
   negotiations: Negotiations;
   plugins: Plugins;
   bots: Bots;
@@ -77,7 +80,9 @@ function messagesOf(out: Record<string, unknown>): InboxMessage[] {
 
 export class SellerInbox {
   private ticking: Promise<void> | null = null;
-  /** Inboxes that failed, already said in the chat, until one reads again. */
+  /** When each inbox started failing, until one reads again. */
+  private failing = new Map<string, number>();
+  /** Inboxes whose failing was said in the chat. */
   private told = new Set<string>();
 
   constructor(readonly d: SellerInboxDeps) {}
@@ -114,14 +119,18 @@ export class SellerInbox {
       if (!bot) continue;
       try {
         await this.read(bot, market, ns);
+        this.failing.delete(k);
         this.told.delete(k);
       } catch (err) {
         console.error(`seller inbox ${market} failed`, err);
-        if (this.told.has(k)) continue;
+        const now = this.d.clock();
+        const since = this.failing.get(k) ?? now;
+        this.failing.set(k, since);
+        if (this.told.has(k) || now - since < INBOX_FAILING_MS) continue;
         this.told.add(k);
         this.d.chats.note(
           bot.id,
-          `Scout couldn't read the ${market} inbox, so messages there aren't read until it can: ${err instanceof Error ? err.message : String(err)}`,
+          `Scout hasn't been able to read the ${market} inbox for half an hour, so messages there aren't read until it can: ${err instanceof Error ? err.message : String(err)}`,
           "Scout's answer",
         );
       }

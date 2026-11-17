@@ -1697,6 +1697,31 @@ test("a seller's reply in Scout's inbox gets an answer, with nobody in the chat"
   await t.plugins.stopAll();
 });
 
+test("a Scout inbox that can't be read is said in the chat once it has failed for half an hour, not on a passing failure", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  const dir = mkdtempSync(join(tmpdir(), "hatbot-inbox-"));
+  tempDirs.push(dir);
+  const file = join(dir, "inbox.json");
+  await withScout(t, { scout_inbox: "chat", scout_conversation: "chat" }, { SCOUT_INBOX: file });
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  sent(t, n);
+  const notes = () => t.chats.direct(n.botId).list().length;
+  const before = notes();
+  const read = async (ok: boolean, after = 10 * 60_000) => {
+    t.advance(after);
+    writeFileSync(file, ok ? JSON.stringify({ conversations: [], messages: {} }) : "down");
+    await t.sellerInbox.tick();
+  };
+  await read(false);
+  await read(true);
+  for (let i = 0; i < 3; i++) await read(false);
+  expect(notes()).toBe(before);
+  await read(false);
+  await read(false);
+  expect(notes()).toBe(before + 1);
+  await t.plugins.stopAll();
+});
+
 test("Scout's inbox and the desktop record a message once, and the owner's words and the seller's answer to an offer are told apart", async () => {
   const t = await testApp();
   messageBox(t, CHAT_URL);
