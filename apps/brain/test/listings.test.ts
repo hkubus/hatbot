@@ -393,6 +393,11 @@ test("on its add-listing page, a listing task fills in the form without asking, 
   expect(listingCheck(g, "click", promote, { label: promote.label })).toEqual(usual);
   expect(listingCheck(g, "click", formButton("Dalej"), { frame: "" })).toEqual(usual);
   expect(listingCheck(g, "click", formButton("Dalej"), { unseen: true })).toEqual(usual);
+  // Allegro Lokalnie's way past its promotions was asked as a purchase.
+  const none = formButton("Nie chcę wyróżniać Zapłacisz: 0 zł");
+  expect(listingCheck(g, "click", none, { label: none.label })).toEqual(fill);
+  for (const label of ["Wyróżnij ogłoszenie Zapłacisz: 9,99 zł", "Zapłacisz: 0 zł, potem 9,99 zł"])
+    expect(listingCheck(g, "click", formButton(label), { label })).toEqual(usual);
   const elsewhere = formButton("Dalej", { url: OLX_URL });
   expect(listingCheck(g, "click", elsewhere, { label: "Dalej" })).toEqual(usual);
   // A drag reorders photos; a right click opens a menu.

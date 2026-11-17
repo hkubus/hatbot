@@ -40,10 +40,21 @@ export const publishLabel = (label: string) => PUBLISH.test(fold(label));
 const PAID =
   /(?<![\p{L}\p{N}])(?:podbij|wyroznij|wyroznien|promuj|promow|promot|pakiet|bump|boost)/u;
 
+/** Turning the extra down ("Nie chcę wyróżniać Zapłacisz: 0 zł"), or a price of nothing for what isn't one. */
+const DECLINE = /^(?:nie chce|nie,? dziekuje|bez )/;
+const NOTHING =
+  /(?<![\p{L}\p{N}])(?:0(?:[.,]0+)? ?(?:zl|pln)(?![\p{L}])|za darmo|bezplatn|darmow)/u;
+
+function free(label: string): boolean {
+  const l = fold(label);
+  if (/(?!0)\p{N}/u.test(l)) return false;
+  return DECLINE.test(l) || (NOTHING.test(l) && !PAID.test(l));
+}
+
 function mayCost(held: Hold | null, labels: string[]): boolean {
   if (held && !("label" in held) && !("unlabelled" in held)) return true;
   return [...labels, held && "label" in held ? held.label : ""].some(
-    (l) => buyingLabel(l) || PAID.test(fold(l)),
+    (l) => !free(l) && (buyingLabel(l) || PAID.test(fold(l))),
   );
 }
 
