@@ -2809,7 +2809,18 @@ export async function memoryIndex(memory: MemoryStore, botId: string): Promise<s
   const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);
   const mine = own ? await memory.readOrNull(own) : null;
-  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}${await openTodos(memory)}`;
+  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}${await preferences(memory)}${await openTodos(memory)}`;
+}
+
+const PREFERENCES_FILE = "preferences.md";
+/** Shown whole while it's short: the owner's rules matter in replies that wouldn't think to read it. */
+const PREFERENCES_SHOWN_CHARS = 2000;
+
+async function preferences(memory: MemoryStore): Promise<string> {
+  const text = (await memory.readOrNull(PREFERENCES_FILE))?.trim() ?? "";
+  // Only headings, as it starts out, says nothing.
+  if (!/^[^#\s]/m.test(text) || text.length > PREFERENCES_SHOWN_CHARS) return "";
+  return `\n<preferences path="${PREFERENCES_FILE}">\n${text}\n</preferences>`;
 }
 
 const TODOS_SHOWN = 20;

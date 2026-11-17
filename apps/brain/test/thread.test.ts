@@ -9,6 +9,7 @@ import {
 import { activity, answered, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
+import { HATBOT } from "../src/memory/store";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, testApp, toolNames, waitFor } from "./helpers";
 import { finish } from "./plugin-helpers";
@@ -156,6 +157,25 @@ test("a conversation goes on within 30 minutes; idle past that, it gets a recap 
   expect(model.creates.length).toBe(1);
   expect(model.requests[2]?.messages.length).toBe(1);
   expect(lastUserText(model.requests[2])).toContain("2026-10-09: sdb on the NAS is failing.");
+});
+
+test("preferences.md opens every conversation while it's short, and not once it's long", async () => {
+  const model = new FakeModel([{ content: [text("Noted.")] }, { content: [text("Noted.")] }]);
+  const t = await testApp(model);
+  const rule = "- Tomorrow at 3am means the same day.";
+  await t.memory.write("preferences.md", `# Preferences\n${rule}\n`, HATBOT, "Rule");
+  await t.thread.post("remind me tomorrow at 3am").done;
+  expect(lastUserText(model.requests[0])).toContain(rule);
+
+  await t.memory.write(
+    "preferences.md",
+    `# Preferences\n${rule}\n${"- x\n".repeat(600)}`,
+    HATBOT,
+    "Long",
+  );
+  t.advance(31 * 60_000);
+  await t.thread.post("and again").done;
+  expect(lastUserText(model.requests[1])).not.toContain(rule);
 });
 
 test("a summary well over its 300 words is asked once to be shortened, and the shorter one is kept", async () => {

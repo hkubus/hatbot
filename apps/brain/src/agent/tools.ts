@@ -213,7 +213,8 @@ function authorOf(ctx: ToolContext, path: string) {
 }
 
 /** Files every later chat and task reads and trusts. */
-const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|todo\.md)$/;
+const TRUSTED_FILE =
+  /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|preferences\.md|todo\.md)$/;
 
 /** Research's reports and notes: written from what it read on the web. */
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
