@@ -376,6 +376,12 @@ export function negotiateTools(
           );
         if (!["open", "agreed", "paid", "received"].includes(n.status))
           return block(`Negotiation #${n.id} is ${n.status}.`);
+        // Else the task searches the inbox for a conversation that was never started.
+        const reached = neg
+          .messages(n.id)
+          .some((m) => m.direction !== "out" || m.status === "sent" || m.status === "unconfirmed");
+        if (!n.conversationUrl && !reached)
+          return block(`Nothing has reached the ${n.role === "sell" ? "buyer" : "seller"} yet.`);
         return covered("It only reads the conversation");
       },
       run: async ({ negotiation }, call) => {

@@ -1482,6 +1482,24 @@ test("after a deal the seller's messages are read but go to you, and a dispute s
   );
 });
 
+test("the conversation isn't read before anything has reached the seller", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  const check = named(negotiateTools(t), "negotiate_check");
+  const input = check.schema.parse({ negotiation: n.id });
+  const failed = t.negotiations.claimSend(n, {
+    text: TEXT,
+    offer: 1060,
+    agree: false,
+    stated: null,
+  });
+  t.negotiations.dropSend(failed);
+  expect(verdictFor(check, input, call(), true).action).toBe("block");
+
+  sent(t, n);
+  expect(verdictFor(check, input, call(), true).action).toBe("allow");
+});
+
 test("the seller's own words in the title can't pass for the mandate's terms", () => {
   const n = {
     ...({} as Negotiation),
