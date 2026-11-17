@@ -73,6 +73,24 @@ export class WeeklyReport {
       )
       .all(since);
     const total = spend.reduce((n, r) => n + r.usd, 0);
+    // A deleted bot's spend stays, and a new bot may have its name.
+    const names = spend.map((r) => this.d.bots.nameOf(r.bot));
+    const botName = (r: { bot: string }, i: number) =>
+      names.filter((n) => n === names[i]).length > 1 ? `${names[i]} (${r.bot})` : names[i];
+    const automations = db
+      .query<{ kind: string; name: string; usd: number; runs: number }, [string]>(
+        `SELECT CASE WHEN t.schedule_id IS NOT NULL THEN 'schedule'
+           WHEN t.trigger_id IS NOT NULL THEN 'trigger' ELSE 'watcher' END AS kind,
+         coalesce(s.name, g.name, w.name, max(t.source), max(t.title)) AS name, sum(l.cost_usd) AS usd,
+         count(DISTINCT CASE WHEN t.parent_id IS NULL THEN t.id END) AS runs
+         FROM spend_ledger l JOIN tasks t ON t.id = l.task_id
+         LEFT JOIN schedules s ON s.id = t.schedule_id
+         LEFT JOIN triggers g ON g.id = t.trigger_id
+         LEFT JOIN watchers w ON w.id = t.watcher_id
+         WHERE l.created_at >= ? AND coalesce(t.schedule_id, t.trigger_id, t.watcher_id) IS NOT NULL
+         GROUP BY t.schedule_id, t.trigger_id, t.watcher_id ORDER BY usd DESC LIMIT 3`,
+      )
+      .all(since);
     const tasks = db
       .query<{ status: string; n: number }, [string]>(
         `SELECT status, count(*) AS n FROM tasks WHERE parent_id IS NULL AND created_at >= ? GROUP BY status`,
@@ -123,8 +141,12 @@ export class WeeklyReport {
 
     const lines = ["**Your week**", ""];
     lines.push(
-      `- Spent ${usd(total)}${spend.length > 1 ? `: ${spend.map((r) => `${this.d.bots.nameOf(r.bot)} ${usd(r.usd)}`).join(", ")}` : ""}.`,
+      `- Spent ${usd(total)}${spend.length > 1 ? `: ${spend.map((r, i) => `${botName(r, i)} ${usd(r.usd)}`).join(", ")}` : ""}.`,
     );
+    if (automations.length)
+      lines.push(
+        `- Spent most: ${automations.map((a) => `${a.kind} "${a.name}" ${usd(a.usd)} in ${plural(a.runs, "run")}`).join(", ")}.`,
+      );
     lines.push(
       ran
         ? `- ${plural(ran, "task")}: ${count("done")} done, ${count("failed")} failed${count("cancelled") ? `, ${count("cancelled")} cancelled` : ""}.`
