@@ -324,7 +324,7 @@ export function negotiateTools(
       untrusted: true,
       label: "Messaging the seller",
       describe: (i) =>
-        `Message the seller in negotiation #${i.negotiation}${i.offer !== undefined ? ` (${i.agree ? "agree to" : "offer"} ${zl(i.offer, neg.get(i.negotiation)?.mandate.currency)})` : ""}: "${collapse(i.text)}"`,
+        `Message the ${neg.get(i.negotiation)?.role === "sell" ? "buyer" : "seller"} in negotiation #${i.negotiation}${i.offer !== undefined ? ` (${i.agree ? "agree to" : "offer"} ${zl(i.offer, neg.get(i.negotiation)?.mandate.currency)})` : ""}: "${collapse(i.text)}"`,
       target: (i) => `negotiation:${i.negotiation}`,
       // In code, not by Haiku: the mandate stands in for the approval.
       policy: (i) => {
@@ -363,7 +363,8 @@ export function negotiateTools(
       untrusted: true,
       commands: () => 0,
       label: "Reading the conversation",
-      describe: ({ negotiation }) => `Read the seller's messages in negotiation #${negotiation}`,
+      describe: ({ negotiation }) =>
+        `Read the ${neg.get(negotiation)?.role === "sell" ? "buyer" : "seller"}'s messages in negotiation #${negotiation}`,
       target: (i) => `negotiation:${i.negotiation}`,
       policy: (i) => {
         const n = neg.get(i.negotiation);
