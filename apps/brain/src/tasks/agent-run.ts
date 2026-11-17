@@ -471,9 +471,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : standingWords();
   };
 
+  /** The owner's answers to ask_owner, with what was asked: a "yes" means nothing without it. */
+  const answered: string[] = [];
+
   const withNotes = (words: string | null): string | null =>
-    notes.length
-      ? `${words ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
+    notes.length || answered.length
+      ? [
+          words ?? "",
+          notes.length
+            ? `What the owner told this task on its approvals:\n${notes.join("\n")}`
+            : "",
+          answered.length ? `What the owner answered this task:\n${answered.join("\n")}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n")
       : words;
 
   const blocks = new Blocks();
@@ -759,13 +770,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const answers = await withoutSlot(() =>
       Promise.all(asked.map((q) => d.questions.wait(q.id, signal))),
     );
-    for (const [i, answer] of answers.entries())
+    for (const [i, answer] of answers.entries()) {
       tasks.addStep(id, {
         kind: "note",
         name: answer === null ? "No answer" : "Your answer",
         detail: answer ?? asked[i]?.question ?? "",
         url: null,
       });
+      // Quoted, so a question written from what the task read can't forge an answer.
+      if (answer !== null)
+        answered.push(
+          `[${localStamp(new Date(tasks.clock()))}] Asked: ${JSON.stringify(asked[i]?.question ?? "")} — The owner answered: ${JSON.stringify(answer)}`,
+        );
+    }
     const unanswered = `No answer within ${hours === 1 ? "an hour" : `${hours} hours`}. Carry on with what's safest and say what you assumed, or finish_task and say what you need.`;
     if (asked.length === 1) {
       const [answer] = answers;

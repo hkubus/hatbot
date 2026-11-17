@@ -183,6 +183,22 @@ test("the review blocks a task's change without asking; Run anyway lets the runn
   expect(t.tasks.get(id)?.status).toBe("done");
 });
 
+test("a task's question and the owner's answer reach the review as the owner's words", async () => {
+  const asks = {
+    content: [toolUse("ask_owner", { questions: [{ question: "Restart the web service?" }] })],
+  };
+  const { t, done, work } = await lab([call("lab_issue"), asks, call("lab_restart"), finish]);
+  const id = runTask(t);
+  const question = await waitFor(() => t.questions.pending()[0]);
+  t.questions.answer(question.id, "Yes, restart it");
+  await finished(t, id);
+  expect(done).toEqual(["lab_restart"]);
+  const review = work.creates.find((c) => c.system === REVIEW_PROMPT);
+  const ownerSaid = String(review?.messages[0]?.content).split("</owner_said>")[0] ?? "";
+  expect(ownerSaid).toContain("Restart the web service?");
+  expect(ownerSaid).toContain("Yes, restart it");
+});
+
 test("a task stops after the review blocks three changes in a row, and a review that fails blocks", async () => {
   const { t, done, work } = await lab([
     call("lab_wipe"),
