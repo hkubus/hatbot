@@ -448,6 +448,12 @@ const READERS: Record<string, string[] | null> = {
   zpool: ["list", "status", "iostat"],
   zfs: ["list", "get"],
   docker: ["ps", "logs", "inspect", "images", "stats"],
+  cd: null,
+  zcat: null,
+  tr: null,
+  test: null,
+  "[": null,
+  "rc-status": null,
   systemctl: [
     "",
     "status",
@@ -474,6 +480,83 @@ const WRITES: Record<string, RegExp> = {
 };
 
 /**
+ * Readers that only read with some of their words: their other options write, or set config that
+ * runs a command (apt -o, tar -I, curl -K), so theirs must be among these.
+ */
+const ONLY: Record<string, (args: string[]) => boolean> = {
+  apt: ([sub, ...a]) =>
+    sub === "list" && flags(a, /^-[aq]+$|^--(upgradable|installed|all-versions|manual-installed)$/),
+  "apt-cache": ([sub = "", ...a]) =>
+    ["policy", "show", "madison", "depends", "rdepends", "search", "showpkg"].includes(sub) &&
+    flags(a, /^-[qn]+$|^--(names-only|full|installed|recurse)$/),
+  // Simulated (-s); check only rebuilds apt's own cache.
+  "apt-get": (a) => {
+    const sub = a.find((x) => !x.startsWith("-")) ?? "";
+    const simulated = a.some((x) =>
+      /^-[qyV]*s|^--(simulate|dry-run|just-print|recon|no-act)$/.test(x),
+    );
+    return (
+      flags(
+        a,
+        /^-[sqyV]+$|^--(simulate|dry-run|just-print|recon|no-act|quiet|assume-yes|yes|no-install-recommends)$/,
+      ) &&
+      (sub === "check" ||
+        (simulated && ["install", "upgrade", "dist-upgrade", "full-upgrade"].includes(sub)))
+    );
+  },
+  dpkg: ([op = "", ...a]) =>
+    /^-[lsLSCp]$|^--(list|status|listfiles|search|audit|print-avail|get-selections|print-architecture)$/.test(
+      op,
+    ) && a.every((x) => !x.startsWith("-")),
+  find: (a) => !a.some((x) => /^-(delete$|exec|ok|fprint|fls$)/.test(x)),
+  gzip: (a) =>
+    a.some((x) => /^-[vq]*[tl]|^--(test|list)$/.test(x)) &&
+    flags(a, /^-[tlvq]+$|^--(test|list|verbose|quiet)$/),
+  // t lists, and nothing else may run; a name with a colon is an archive on another host.
+  tar: (a) =>
+    /^-?[vzjJf]*t[vzjJf]*$|^--list$/.test(a[0] ?? "") &&
+    a.every((x) =>
+      x.startsWith("-")
+        ? /^-[tvzjJf]+$|^--(list|verbose|gzip|bzip2|xz|zstd|wildcards)$/.test(x)
+        : !x.includes(":"),
+    ),
+  fuser: (a) =>
+    flags(a, /^-[vmMuaws46]+$|^-n$|^--(verbose|mount|ismountpoint|user|all|silent|writeonly)$/),
+  npm: ([sub = "", ...a]) =>
+    ["ls", "list", "ll", "la"].includes(sub) &&
+    flags(
+      a,
+      /^-[galp]+$|^--(global|all|long|json|parseable|depth|prefix|omit|production)(=[\w./@-]*)?$/,
+    ),
+  curl: (a) => {
+    let urls = 0;
+    let discarded = false;
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i] ?? "";
+      if (x === "-o" || x === "--output") {
+        if (a[++i] !== "/dev/null") return false;
+        discarded = true;
+      } else if (x === "-w" || x === "--write-out") {
+        // Not @FILE, or %output{FILE}, which writes one.
+        if (!/^([^%@]|%\{\w+\})*$/.test(a[++i] ?? "")) return false;
+      } else if (["-m", "--max-time", "--connect-timeout"].includes(x)) {
+        if (!/^\d+(\.\d+)?$/.test(a[++i] ?? "")) return false;
+      } else if (LAN_PAGE.test(x)) urls++;
+      else if (!/^-[sSkIfv]+$|^--(silent|show-error|insecure|head|fail|verbose)$/.test(x))
+        return false;
+    }
+    return discarded && urls === 1;
+  },
+};
+const flags = (args: string[], ok: RegExp) => args.every((a) => !a.startsWith("-") || ok.test(a));
+/**
+ * The front page of a web server on this machine or the LAN, whose GET changes nothing; other paths
+ * can (WLED's and Shelly's /reset and /reboot, Tasmota's ?cmnd=).
+ */
+const LAN_PAGE =
+  /^https?:\/\/(localhost|127(\.\d{1,3}){3}|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}|\[::1\])(:\d{1,5})?\/?$/;
+
+/**
  * Readers whose every word must be one of these: tmux ls \; kill-server runs both, and screen's
  * other options act on sessions.
  */
@@ -495,6 +578,11 @@ const GLOBS = new Set([
   "sha1sum",
   "sha256sum",
   "sha512sum",
+  "echo",
+  "cd",
+  "zcat",
+  "test",
+  "[",
 ]);
 
 /** sudo -n -l: what sudo would let the user run. */
@@ -504,10 +592,33 @@ const sudoList = (words: string[]) =>
   words.slice(1).every((a) => /^-[nl]+$|^--(list|non-interactive)$/.test(a)) &&
   words.slice(1).some((a) => a.includes("l"));
 
-/** On a Proxmox host this may run while a container is careful: it can't reach one to change it. */
+/**
+ * On a Proxmox host this may run while a container is careful: it can't reach one to change it. A for
+ * loop over words or globs is a look if its body is; there its variable, quoted, is any file's name.
+ */
 export function readOnly(command: string): boolean {
-  if (statusOnly(command, { writes: false })) return true;
-  const parsed = pipelines(command, { globs: true });
+  const parts = partsOf(command);
+  const vars: string[] = [];
+  for (const p of parts) {
+    const part = vars.length ? p.replace(/^do(\s+|$)/, "") : p;
+    const loop = /^for\s+([A-Za-z_]\w*)\s+in\s([\s\S]*)$/.exec(part);
+    const done = vars.length ? /^done(?![\w.-])([\s\S]*)$/.exec(part) : null;
+    if (loop) {
+      if (!looks(`echo ${loop[2]}`, new Set(vars))) return false;
+      vars.push(loop[1] ?? "");
+    } else if (done) {
+      vars.pop();
+      // What its output goes through: done | tail -n 5.
+      if (done[1]?.trim() && !looks(`echo ${done[1]}`, new Set(vars))) return false;
+    } else if (part && !statusOnly(part, { writes: false }) && !looks(part, new Set(vars)))
+      return false;
+  }
+  return parts.length > 0 && !vars.length;
+}
+
+/** Plain commands that only read. `vars`: variables that, quoted, stand for any word, as a glob does. */
+function looks(line: string, vars?: Set<string>): boolean {
+  const parsed = pipelines(line, { globs: true, vars });
   if (!parsed?.lines.length || parsed.files.some((f) => f !== "/dev/null")) return false;
   return parsed.lines.every((p) =>
     p.every((words, i) => {
@@ -519,6 +630,8 @@ export function readOnly(command: string): boolean {
       if (i > 0 && isFilter(w) && !changes(w)) return true;
       const [prog = "", ...args] = w;
       const name = prog.split("/").pop() ?? "";
+      const only = ONLY[name];
+      if (only) return only(args);
       const subs = READERS[name];
       if (subs === undefined || changes(w)) return false;
       const writes = WRITES[name];
@@ -690,12 +803,13 @@ function plain(words: string[]): string[] {
     locale.push(w[0]);
     w = w.slice(1);
   }
-  // sudo's own options, which say nothing, come after the command, where they read as its words.
+  // sudo's own options, which say nothing, come after the command, where they read as its words;
+  // -n, which only says not to ask for a password, goes.
   if (w[0] === "sudo") {
     const opts: string[] = [];
     let rest = w.slice(1);
     while (rest.length && (rest[0] ?? "").startsWith("-")) {
-      opts.push(rest[0] as string);
+      if (rest[0] !== "-n") opts.push(rest[0] as string);
       rest = rest.slice(VALUE_OPTS.includes(rest[0] as string) ? 2 : 1);
     }
     w = [...rest, ...opts];
@@ -717,11 +831,11 @@ const VALUE_OPTS = ["-u", "-U", "-g", "-p", "-C", "-D", "-R", "-T"];
  * plain commands with literal words (substitutions, variables, globs, input from files, subshells,
  * groups, here-documents). Output redirections to a plain file are left out of the words: they
  * change where output goes, not what it says. `files`: the files they write. `globs`: globs are
- * kept as words, and `globbed` has the commands with one.
+ * kept as words, and `globbed` has the commands with one, or with one of `vars` in double quotes.
  */
 function pipelines(
   line: string,
-  { globs = false } = {},
+  { globs = false, vars }: { globs?: boolean; vars?: Set<string> } = {},
 ): { lines: string[][][]; files: string[]; globbed: Set<string[]> } | null {
   const out: string[][][] = [[[]]];
   const files: string[] = [];
@@ -761,8 +875,15 @@ function pipelines(
       let w = "";
       for (; j < line.length && line[j] !== '"'; j++) {
         if (line[j] === "\\") j++;
-        else if (line[j] === "`" || (line[j] === "$" && /[\w{(@*#?$!-]/.test(line[j + 1] ?? "")))
-          return null;
+        else if (line[j] === "`" || (line[j] === "$" && /[\w{(@*#?$!-]/.test(line[j + 1] ?? ""))) {
+          const v = /^\$(?:\{(\w+)\}|([A-Za-z_]\w*))/.exec(line.slice(j));
+          if (!v || !vars?.has(v[1] ?? v[2] ?? "")) return null;
+          const cmd = out.at(-1)?.at(-1);
+          if (cmd) globbed.add(cmd);
+          w += v[0];
+          j += v[0].length - 1;
+          continue;
+        }
         w += line[j] ?? "";
       }
       if (j >= line.length) return null;
@@ -788,6 +909,9 @@ function pipelines(
       end();
       if ((c === "|" || c === "&") && line[i + 1] === c) i++;
       out.push([[]]);
+    } else if (c === "[" && word === null && /\s/.test(line[i + 1] ?? "")) {
+      // [ -f x ] is test, not a glob.
+      word = "[";
     } else if (globs && "*?[".includes(c)) {
       word = (word ?? "") + c;
       const cmd = out.at(-1)?.at(-1);
