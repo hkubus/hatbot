@@ -224,6 +224,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const children = new Set<number>();
+  /** It handed work on, or talked with the owner: news alone doesn't end it then. */
+  let involved = false;
+  /** Ended by news that left nothing to do (`TaskOrigin.settles`). */
+  let settled = false;
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
@@ -342,6 +346,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** Without holding a slot: one on the screen or another bot's may need it. */
   const waitForChild = async (childId: number, name?: string): Promise<Task> => {
     children.add(childId);
+    involved = true;
     tasks.addStep(id, {
       kind: "task",
       name: name ?? tasks.get(childId)?.title ?? `Task #${childId}`,
@@ -669,6 +674,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   let asks = 0;
   let threadOpened = false;
   const thread = (call: Anthropic.Beta.BetaToolUseBlock) => {
+    involved = true;
     try {
       if (call.name === "thread_open") {
         const p = ThreadOpenInput.safeParse(call.input);
@@ -719,6 +725,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         true,
       );
     asks++;
+    involved = true;
     const { questions, wait_hours: hours } = p.data;
     const asked = questions.map((q) =>
       d.questions.create({
@@ -1048,21 +1055,31 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger,
       // apart from an event's untrusted part. Not while the web tools' code is still running: then only tool
       // results may follow.
-      if (!serverToolWaiting(res.content))
-        for (const { kind, text: event } of tasks.takeInbox(id)) {
-          if (kind === "note") {
-            results.push({ type: "text", text: steerNote(event) });
-            continue;
-          }
-          const parts = origin?.event?.(event) ?? null;
-          if (parts?.untrusted) taint(parts.untrusted.source);
-          results.push({
-            type: "text",
-            text: parts
-              ? eventBlock(parts, tagText).trim()
-              : `<event trusted="true">\n${tagText(event)}\n</event>`,
-          });
+      const news = serverToolWaiting(res.content) ? [] : tasks.takeInbox(id);
+      if (news.some((n) => n.kind === "note")) involved = true;
+      const last = news.at(-1);
+      const over =
+        last?.kind === "event" && !made.length && !involved
+          ? (origin?.settles?.(last.text, task) ?? null)
+          : null;
+      if (over) {
+        settled = true;
+        throw new Stop("done", over);
+      }
+      for (const { kind, text: event } of news) {
+        if (kind === "note") {
+          results.push({ type: "text", text: steerNote(event) });
+          continue;
         }
+        const parts = origin?.event?.(event) ?? null;
+        if (parts?.untrusted) taint(parts.untrusted.source);
+        results.push({
+          type: "text",
+          text: parts
+            ? eventBlock(parts, tagText).trim()
+            : `<event trusted="true">\n${tagText(event)}\n</event>`,
+        });
+      }
       const told =
         !serverToolWaiting(res.content) &&
         state?.after?.({
@@ -1089,7 +1106,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // One that didn't finish never showed you its offer.
     else if (offeredScript) repeats?.withdraw(id);
     // Its offer is answered in the chat, so a routine run's report goes there too, quietly.
-    if (offeredScript && ended.status === "done" && ended.notify === false)
+    if (settled || (offeredScript && ended.status === "done" && ended.notify === false))
       tasks.finish(id, "done", ended.summary, true, { ntfy: false });
     else tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {

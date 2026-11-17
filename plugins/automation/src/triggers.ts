@@ -31,6 +31,8 @@ const KUMA_SLACK_MS = 30_000;
 const ALERT_COOLDOWN_MS = 3600_000;
 /** A day's tasks per trigger, so a flapping monitor or a busy forge can't run up a bill. */
 const MAX_TASKS_PER_DAY = 24;
+const BACK_UP = "is back up";
+const CAME_BACK = "came back by itself.";
 
 type Row = {
   id: number;
@@ -345,8 +347,8 @@ export class Triggers {
     if (hb.status === 1) {
       if (this.db.query("DELETE FROM kuma_waiting WHERE run_key = ?").run(runKey).changes)
         console.log(`kuma: ${name} came back up in time; dropped its alert`);
-      if (active) update(active.id, "is back up");
-      else this.again(runKey, `${name} is back up`, message, name);
+      if (active) update(active.id, BACK_UP);
+      else this.again(runKey, `${name} ${BACK_UP}`, message, name);
       return { status: "skipped", reason: "ignored" };
     }
     if (hb.status !== 0) return { status: "skipped", reason: "ignored" };
@@ -615,6 +617,7 @@ export class Triggers {
         startedBy: (s) => `an Uptime Kuma alert, through "${s}"`,
         standing,
         event: alertEvent,
+        settles: cameBack,
         reserve: true,
         overLimit: (limit, task) => notInvestigated(limit, task.payload),
       },
@@ -631,6 +634,29 @@ function alertEvent(text: string) {
     trusted: a.alert,
     ...(a.message ? { untrusted: { source: alertMessageSource(monitor), text: a.message } } : {}),
   };
+}
+
+// Kuma's times are UTC without a zone: "2026-10-26 14:48:10.102".
+function kumaTime(time: unknown): number | null {
+  if (typeof time !== "string") return null;
+  const ms = Date.parse(/^\d{4}-\d\d-\d\d \d/.test(time) ? `${time.replace(" ", "T")}Z` : time);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** The monitor is back up: how long it was down, by Kuma's times. */
+function cameBack(event: string, task: Task): string | null {
+  const read = (text: string | null) => {
+    try {
+      return JSON.parse(text ?? "") as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  };
+  const news = read(event);
+  if (news?.status !== BACK_UP || typeof news.monitor !== "string") return null;
+  const from = kumaTime(read(task.payload)?.time) ?? Date.parse(task.createdAt);
+  const minutes = Math.max(1, Math.round(((kumaTime(news.time) ?? from) - from) / 60_000));
+  return `${news.monitor} was down ${minutes} min and ${CAME_BACK}`;
 }
 
 /** What an alert the limits stopped said, so you still hear it. */

@@ -305,6 +305,11 @@ export type TaskOrigin = {
   event?: (
     text: string,
   ) => { trusted: string; untrusted?: { source: string; text: string } } | null;
+  /**
+   * News that leaves nothing to do while the task hasn't changed anything, such as a monitor back up
+   * by itself: the line it then ends with, in the chat and without a notification.
+   */
+  settles?: (event: string, task: Task) => string | null;
   /** It may spend what's kept back for alerts. */
   reserve?: boolean;
   /** What to tell the owner when a spend limit stops it. */

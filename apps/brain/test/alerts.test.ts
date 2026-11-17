@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
+import { z } from "zod";
 import { FakeModel, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
 
@@ -107,4 +109,67 @@ test("a flapping monitor goes on its last task's timeline for an hour; a trigger
   t.advance(24 * 3600_000);
   expect(t.triggers.receiveKuma(triggerId, other(8)).status).toBe("started");
   await t.tasks.idle();
+});
+
+/** A lab whose check and restart run `meanwhile` first, as if Kuma's news came while they ran. */
+const lab = (meanwhile: () => void) =>
+  definePlugin({
+    id: "lab",
+    name: "Lab",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready(
+        (["read", "write"] as const).map((access) =>
+          tool({
+            name: access === "read" ? "lab_status" : "lab_restart",
+            description: "",
+            access,
+            schema: z.object({}),
+            run: async () => {
+              meanwhile();
+              return "Done.";
+            },
+          }),
+        ),
+      ),
+  });
+
+test("a monitor back up before its task changed anything ends the task in a line, without a notification; after a change, it reports", async () => {
+  let meanwhile = () => {};
+  const work = new FakeModel([
+    { content: [toolUse("lab_status", {})] },
+    { content: [toolUse("lab_restart", {})] },
+    done("Restarted Plex."),
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [lab(() => meanwhile())]);
+  await t.plugins.update("lab", { enabled: true });
+  const triggerId = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Fix it" }).id;
+  const kuma = (status: number, id: number, name: string, time: string) =>
+    t.triggers.receiveKuma(triggerId, {
+      heartbeat: { status, msg: status ? "200 - OK" : "timeout", time },
+      monitor: { id, name },
+    }) as { task: Task };
+  const ended = (task: Task) =>
+    waitFor(() => {
+      const now = t.tasks.get(task.id);
+      return now?.finishedAt ? now : null;
+    });
+
+  meanwhile = () => kuma(1, 3, "Jellyfin", "2026-10-09 12:03:10.000");
+  const quiet = await ended(kuma(0, 3, "Jellyfin", "2026-10-09 12:00:00.000").task);
+  expect(quiet).toMatchObject({ status: "done", summary: expect.stringContaining("3 min") });
+  expect(work.requests).toHaveLength(1);
+  expect(
+    t.thread
+      .list()
+      .filter((m) => m.kind === "task")
+      .map((m) => m.taskId),
+  ).toEqual([quiet.id]);
+  expect(t.notifier.sent).toHaveLength(0);
+
+  meanwhile = () => kuma(1, 4, "Plex", "2026-10-09 12:05:00.000");
+  const fixed = await ended(kuma(0, 4, "Plex", "2026-10-09 12:01:00.000").task);
+  expect(fixed.summary).toBe("Restarted Plex.");
+  expect(t.notifier.sent.map((n) => n.click)).toEqual([`https://hatbot.test/tasks/${fixed.id}`]);
 });
