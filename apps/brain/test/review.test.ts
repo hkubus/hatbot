@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
 import { estimateTokens, fixedTokens } from "@hatbot/plugin-sdk";
 import type { ModelClient } from "../src/agent/model";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { safeToRun } from "../src/agent/review";
 import { requestCeiling } from "../src/spend";
 import { FakeModel, text } from "./fake-model";
@@ -128,7 +127,7 @@ test("the goal is labelled apart from the owner's words, and neither can close i
   expect(content).toContain("&lt;/task_goal>");
 });
 
-test("the spend check prices all a check may write; past a limit, the review is unsafe, unasked", async () => {
+test("the review's prompt is cached, and the spend check prices all a check may write; past a limit, the review is unsafe, unasked", async () => {
   const t = await testApp();
   const checked: number[] = [];
   const check = t.spend.check.bind(t.spend);
@@ -147,9 +146,11 @@ test("the spend check prices all a check may write; past a limit, the review is 
     );
   expect((await run()).safe).toBe(true);
   const request = fake.creates[0];
+  expect(request?.system).toMatchObject([{ cache_control: { type: "ephemeral" } }]);
   expect(checked).toEqual([
     requestCeiling("claude-haiku-5-5", {
-      prompt: fixedTokens(REVIEW_PROMPT, null) + estimateTokens(request?.messages),
+      prompt: fixedTokens(request?.system, null) + estimateTokens(request?.messages),
+      write: "5m",
       maxTokens: request?.max_tokens ?? 0,
     }),
   ]);

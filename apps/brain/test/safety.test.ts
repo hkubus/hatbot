@@ -2,8 +2,7 @@
 import { expect, test } from "bun:test";
 import { ask, askCareful, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = {
@@ -65,7 +64,7 @@ function labPlugin(done: string[]) {
 
 /** Haiku's review lets everything through, so only what doesn't reach it asks. */
 const reviewSaysSafe = (p: { system?: unknown }) =>
-  p.system === REVIEW_PROMPT ? '{"safe": true, "why": "Routine."}' : undefined;
+  isReview(p) ? '{"safe": true, "why": "Routine."}' : undefined;
 
 async function lab(steps: ReturnType<typeof call>[]) {
   const done: string[] = [];
@@ -79,7 +78,7 @@ async function lab(steps: ReturnType<typeof call>[]) {
 const runTask = (t: TestApp) =>
   t.tasks.createBackgroundTask({ title: "Fix", goal: "Fix it", origin: "chat" })?.id ?? 0;
 const finished = (t: TestApp, id: number) => waitFor(() => t.tasks.get(id)?.finishedAt);
-const reviewed = (m: FakeModel) => m.creates.some((c) => c.system === REVIEW_PROMPT);
+const reviewed = (m: FakeModel) => m.creates.some((c) => isReview(c));
 
 test("Safety settings save one kind at a time and refuse a level that isn't one", async () => {
   const { t } = await lab([]);
@@ -174,9 +173,7 @@ test("the chat runs as many commands in a reply as Safety lets it, and is told h
 });
 
 const reviewSaysUnsafe = (p: { system?: unknown }) =>
-  p.system === REVIEW_PROMPT
-    ? '{"safe": false, "why": "Nothing you said asks for it."}'
-    : undefined;
+  isReview(p) ? '{"safe": false, "why": "Nothing you said asks for it."}' : undefined;
 
 test("the review blocks a task's change without asking; Run anyway lets the running task do it once", async () => {
   const { t, done, work } = await lab([
@@ -256,7 +253,7 @@ test("a task stops after the review blocks three changes in a row, and a review 
     call("lab_wipe"),
     finish,
   ]);
-  work.onCreate = (p) => (p.system === REVIEW_PROMPT ? "not json" : undefined);
+  work.onCreate = (p) => (isReview(p) ? "not json" : undefined);
   const id = runTask(t);
   await finished(t, id);
   expect(done).toEqual([]);

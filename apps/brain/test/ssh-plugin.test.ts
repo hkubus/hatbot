@@ -5,9 +5,8 @@ import { textOf } from "@hatbot/plugin-sdk";
 import { commandCount, destructive, readOnly, statusOnly } from "@hatbot/plugin-sdk/shell";
 import { spawnRun, sshPlugin } from "@hatbot/plugin-ssh";
 import type { Task } from "@hatbot/shared";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
 import {
   call,
@@ -721,7 +720,7 @@ test("the review: a change the rules ask about is reviewed with your words, and 
     finish(),
   ]);
   work.onCreate = (p) => {
-    if (p.system !== REVIEW_PROMPT) return undefined;
+    if (!isReview(p)) return undefined;
     const shown = JSON.stringify(p.messages);
     reviews.push(shown);
     return JSON.stringify(
@@ -747,7 +746,7 @@ test("the review: a change the rules ask about is reviewed with your words, and 
   const second = chatTask(r, "restart dnsmasq on the router", "A web page");
   const asked = await waitFor(() => r.approvals.list(true)[0]);
   expect(asked.summary).toBe("On router: echo restarted dnsmasq");
-  expect(careful.creates.some((c) => c.system === REVIEW_PROMPT)).toBe(false);
+  expect(careful.creates.some((c) => isReview(c))).toBe(false);
   r.approvals.decide(asked.id, "deny", "web");
   await ended(r, second.id);
 });

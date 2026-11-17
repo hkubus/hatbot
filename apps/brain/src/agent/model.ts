@@ -22,6 +22,10 @@ export async function oneShot(
   const release = d.spend.hold(
     requestCeiling(params.model, {
       prompt: fixedTokens(params.system, null) + estimateTokens(params.messages),
+      write:
+        Array.isArray(params.system) && params.system.some((b) => b.cache_control)
+          ? "5m"
+          : undefined,
       maxTokens: params.max_tokens,
     }),
     task,

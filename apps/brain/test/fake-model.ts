@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CreateParams, StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
 import type { ModelClient } from "../src/agent/model";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 
 type Block = Anthropic.Beta.BetaContentBlock;
 export type Scripted = {
@@ -28,6 +29,10 @@ const usage = (over: Partial<Anthropic.Beta.BetaUsage> = {}) =>
     iterations: null,
     ...over,
   }) as Anthropic.Beta.BetaUsage;
+
+/** Whether a request is a change's safety review. */
+export const isReview = (p: { system?: unknown }) =>
+  Array.isArray(p.system) && p.system[0]?.text === REVIEW_PROMPT;
 
 export const text = (t: string): Block => ({ type: "text", text: t, citations: null }) as Block;
 export const toolUse = (

@@ -3,8 +3,7 @@ import { expect, test } from "bun:test";
 import { HttpHatboxAgent, NO_GUEST } from "@hatbot/plugin-boxes";
 import type { BoxPage } from "@hatbot/shared";
 import type { BoxResponse } from "@hatbot/shared/hatbox";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { lastUserText, ORIGIN, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const PAGE = '<!doctype html><script type="module" src="./app.ts"></script>';
@@ -240,8 +239,7 @@ test("a backend's scheduled() notifies you, opening the box, with a note the bot
 test("a backend's secrets: set by you, sent only to the guest, never in an answer, event or the model's context; with one set, a new host or a tainted chat's code change goes to the review, which can block it", async () => {
   const model = new FakeModel([{ content: [text("Hello.")] }]);
   let safe = true;
-  model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT ? JSON.stringify({ safe, why: "Fine." }) : undefined;
+  model.onCreate = (p) => (isReview(p) ? JSON.stringify({ safe, why: "Fine." }) : undefined);
   const t = await testApp(model);
   const KEY = "sk-w/eather+5ecret";
   const config = { hosts: ["api.weather.test"], secrets: ["WEATHER_KEY"] };
@@ -268,7 +266,7 @@ test("a backend's secrets: set by you, sent only to the guest, never in an answe
     { content: [text("Added.")] },
   );
   await t.thread.post("let it reach x.test too").done;
-  const review = JSON.stringify(model.creates.find((p) => p.system === REVIEW_PROMPT)?.messages);
+  const review = JSON.stringify(model.creates.find((p) => isReview(p))?.messages);
   expect(review).toContain("reach x.test");
   expect(review).toContain("WEATHER_KEY");
   expect(t.boxes.hosts(1)).toEqual(["api.weather.test", "x.test"]);

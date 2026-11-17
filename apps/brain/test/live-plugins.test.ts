@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { allow, ask, definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import { z } from "zod";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 import { ended, finish, scheduled } from "./plugin-helpers";
 
@@ -130,7 +130,7 @@ test("a plugin restarted while its call waited for approval or the review doesn'
   // The chat's, let through by Haiku's review after its plugin was switched off.
   const reviewed = await chatWith(["web"], calls);
   reviewed.chat.onCreate = (p) => {
-    if (!String(p.system).includes("wants to make a change")) return undefined;
+    if (!isReview(p)) return undefined;
     void reviewed.t.plugins.update("guests", { enabled: false });
     return JSON.stringify({ safe: true, why: "A restart." });
   };

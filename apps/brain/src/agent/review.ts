@@ -194,7 +194,8 @@ export async function safeToRun(
           thinking: { type: "adaptive" },
           // Low and medium effort stopped many safe changes the owner then had to approve.
           output_config: { effort: "high", format: { type: "json_schema", schema: VERDICT } },
-          system: REVIEW_PROMPT,
+          // Reviews mostly come in runs, minutes apart: the prompt is read from the cache.
+          system: [{ type: "text", text: REVIEW_PROMPT, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content }],
         },
         { purpose: "review", ...ref },

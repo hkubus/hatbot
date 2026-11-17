@@ -12,12 +12,11 @@ import {
 } from "@hatbot/plugin-sdk";
 import type { Bot, Task } from "@hatbot/shared";
 import { z } from "zod";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
 import { HATBOT } from "../src/memory/store";
 import { runPluginTool } from "../src/plugins/registry";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 /** Text that tries to end the block it's in and speak as the system. */
@@ -100,9 +99,9 @@ function labPlugin(said: () => string, restarted: string[]) {
 
 /** Haiku's review lets everything through. */
 const reviewSaysSafe = (p: { system?: unknown }) =>
-  p.system === REVIEW_PROMPT ? '{"safe": true, "why": "Routine."}' : undefined;
+  isReview(p) ? '{"safe": true, "why": "Routine."}' : undefined;
 
-const reviewed = (m: FakeModel) => m.creates.some((c) => c.system === REVIEW_PROMPT);
+const reviewed = (m: FakeModel) => m.creates.some((c) => isReview(c));
 
 test("untrusted text, and a plugin's output or error, can't close the block it's in", async () => {
   const block = untrustedBlock("tool_output", ESCAPE("tool_output"), { tool: "x_read" });
@@ -240,7 +239,7 @@ test("tainted, a memory write or edit reaches the review as what it changes, not
   });
   await t.tasks.idle();
   const [write, edit] = work.creates
-    .filter((c) => c.system === REVIEW_PROMPT)
+    .filter((c) => isReview(c))
     .map((c) => String(c.messages[0]?.content).split("<action>")[1]);
   expect(write).toContain("+ - CT 106: Immich");
   expect(write).not.toContain("CT 105: Jellyfin");
@@ -264,7 +263,7 @@ test("in the chat, the review reads what the bot said there, so the owner's yeah
   await t.plugins.update("lab", { enabled: true });
   await t.thread.post("what's up with jellyfin?").done;
   await t.thread.post("yeah").done;
-  const review = String(chat.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  const review = String(chat.creates.find((c) => isReview(c))?.messages[0]?.content);
   const goal = review.split("<task_goal>")[1]?.split("</task_goal>")[0] ?? "";
   expect(goal.indexOf("Shall I restart it?")).toBeLessThan(goal.indexOf("The owner: yeah"));
   // The reply in progress too: what it said before the change.
@@ -281,7 +280,7 @@ test("the review sees the changes a reply or task already made, and not a look o
     { content: [toolUse("memory_edit", { path: "homelab.md", append: "- Jellyfin restarted" })] },
   ];
   const noNas = (p: { system?: unknown; messages: { content: unknown }[] }) =>
-    p.system !== REVIEW_PROMPT
+    !isReview(p)
       ? undefined
       : String(p.messages[0]?.content).split("<action>")[1]?.includes("nas")
         ? '{"safe": false, "why": "Not asked."}'
@@ -297,7 +296,7 @@ test("the review sees the changes a reply or task already made, and not a look o
   await t.plugins.update("lab", { enabled: true });
   const made = (m: FakeModel) =>
     m.creates
-      .filter((c) => c.system === REVIEW_PROMPT)
+      .filter((c) => isReview(c))
       .map((c) =>
         JSON.parse(
           String(c.messages[0]?.content)
@@ -433,7 +432,7 @@ test("an Uptime Kuma alert's message is untrusted data; the monitor, status and 
   expect(opening).toContain('<event_message trusted="false">');
   expect(count(opening, "</event_message>")).toBe(1);
   // Haiku's review sees the alert as trusted, but not its message.
-  const review = String(work.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  const review = String(work.creates.find((c) => isReview(c))?.messages[0]?.content);
   expect(review).toContain('"monitor": "Jellyfin"');
   expect(review).not.toContain("evil.example");
   expect(restarted).toEqual(["jellyfin"]);
@@ -534,7 +533,7 @@ test("a hand-off's request, written by the asking bot, never reaches the review 
     trusted: false,
   });
   await t.tasks.idle();
-  const review = String(chat.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  const review = String(chat.creates.find((c) => isReview(c))?.messages[0]?.content);
   const ownerSaid = review.split("</owner_said>")[0] ?? "";
   expect(ownerSaid).toContain("Look after the homelab; fix what's broken.");
   expect(ownerSaid).not.toContain("CHILDMARK");
@@ -560,7 +559,7 @@ test("an attached or shared file is untrusted, and the review reads only the own
   });
   await t.thread.post("What does this mean?", [file.id]).done;
   expect(episodeTaint(t)).toEqual({ tainted: 1, tainted_by: 'Attached file "Shared text.txt"' });
-  const review = String(chat.creates.find((c) => c.system === REVIEW_PROMPT)?.messages[0]?.content);
+  const review = String(chat.creates.find((c) => isReview(c))?.messages[0]?.content);
   expect(review).toContain("What does this mean?");
   expect(review).not.toContain("backup keys");
   expect(restarted).toEqual(["nas"]);

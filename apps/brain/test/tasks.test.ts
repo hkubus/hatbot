@@ -2,9 +2,8 @@ import { expect, test } from "bun:test";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "@hatbot/plugin-desktop";
 import type { Task, TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
 import { limits } from "../src/tasks/desktop-run";
-import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
+import { browser, computer, FakeModel, isReview, text, toolUse } from "./fake-model";
 import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
@@ -391,7 +390,7 @@ test("desktop_shell runs commands as text; the review blocks a destructive one y
     timedOut: false,
   });
   t.taskModel.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify(
           JSON.stringify(p.messages).includes("build")
             ? { safe: true, why: "Build output." }
@@ -466,7 +465,7 @@ test("each line break in typed text is checked on its own: the review looks at e
   };
   const verdicts = [true, true, false];
   t.taskModel.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify({ safe: verdicts.shift(), why: "The owner asked to write to Ann." })
       : undefined;
   const task = startTask(t, "Write to Ann");
@@ -513,7 +512,7 @@ test("a held click is reviewed where it is, without confirm_intent, unless it ch
   });
   let reviews = 0;
   t.taskModel.onCreate = (p) => {
-    if (p.system !== REVIEW_PROMPT) return undefined;
+    if (!isReview(p)) return undefined;
     reviews++;
     return JSON.stringify({ safe: true, why: "The owner asked for it." });
   };
@@ -549,7 +548,7 @@ test("with a wait set, a message the review lets through waits for you to stop i
     buttonsAfter: ["Send"],
   };
   t.taskModel.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
       : undefined;
   t.settings.update({ safety: { sendWaitS: 30 } });
