@@ -173,3 +173,53 @@ test("a monitor back up before its task changed anything ends the task in a line
   expect(fixed.summary).toBe("Restarted Plex.");
   expect(t.notifier.sent.map((n) => n.click)).toEqual([`https://hatbot.test/tasks/${fixed.id}`]);
 });
+
+test("an alert task hears what the last one on its monitor found, as untrusted if that one had read untrusted content", async () => {
+  const work = new FakeModel([
+    done("The limiter answers the check with 429."),
+    done("Restarted Plex."),
+    done("Still the limiter."),
+    done("Restarted it again."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const triggerId = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Fix it" }).id;
+  const alert = (id: number, name: string, msg: string) => {
+    const r = t.triggers.receiveKuma(triggerId, {
+      heartbeat: { status: 0, msg },
+      monitor: { id, name },
+    }) as { task: Task };
+    return waitFor(() => {
+      const now = t.tasks.get(r.task.id);
+      return now?.finishedAt ? now : null;
+    });
+  };
+  const opening = (i: number) =>
+    ((work.requests[i]?.messages[0]?.content ?? []) as { text?: string }[])
+      .map((b) => b.text)
+      .join("");
+
+  const searx = await alert(2, "SearXNG", 'keyword "searx" not found');
+  await alert(5, "Plex", "timeout of 48000ms exceeded");
+  // One that only saw it come back has nothing to pass on.
+  const at = new Date(t.clock()).toISOString();
+  t.db
+    .query(
+      `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at, trigger_id, run_key, summary)
+       VALUES ('SearXNG is down', 'g', '', 'alert', 'background', 'm', 'done', 0, ?1, ?1, ?2, ?3, 'SearXNG was down 2 min and came back by itself.')`,
+    )
+    .run(at, triggerId, `kuma:${triggerId}:2`);
+  t.advance(2 * 3600_000);
+  const again = await alert(2, "SearXNG", "timeout of 48000ms exceeded");
+  const plex = await alert(5, "Plex", "timeout of 48000ms exceeded");
+
+  expect(opening(0)).not.toContain("earlier_findings");
+  expect(opening(2)).toContain('<earlier_findings trusted="false">');
+  expect(opening(2)).toContain("The limiter answers the check with 429.");
+  expect(again).toMatchObject({
+    tainted: true,
+    taintedBy: `Task #${searx.id}, which had read: The message in the alert for "SearXNG"`,
+  });
+  expect(opening(3)).toContain('<earlier_findings trusted="true">');
+  expect(opening(3)).toContain("Restarted Plex.");
+  expect(plex.tainted).toBe(false);
+});

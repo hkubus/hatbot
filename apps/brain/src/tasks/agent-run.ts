@@ -206,12 +206,26 @@ const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
-/** An event's trusted part, then the part whoever reaches its source could write. */
+/** An event's trusted part, the part whoever reaches its source could write, then what an earlier task found. */
 const eventBlock = (
-  { trusted, untrusted }: { trusted: string; untrusted?: { text: string } },
+  {
+    trusted,
+    untrusted,
+    earlier,
+  }: {
+    trusted: string;
+    untrusted?: { text: string };
+    earlier?: { text: string; source: string | null };
+  },
   encode: (text: string) => string,
 ) =>
-  `\n<event trusted="true">\n${encode(trusted)}\n</event>${untrusted?.text ? `\n${untrustedBlock("event_message", untrusted.text)}` : ""}`;
+  `\n<event trusted="true">\n${encode(trusted)}\n</event>${untrusted?.text ? `\n${untrustedBlock("event_message", untrusted.text)}` : ""}${
+    !earlier
+      ? ""
+      : earlier.source
+        ? `\n${untrustedBlock("earlier_findings", earlier.text)}`
+        : `\n<earlier_findings trusted="true">\n${encode(earlier.text)}\n</earlier_findings>`
+  }`;
 
 export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
@@ -792,6 +806,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const event = task.payload ? (origin?.event?.(task.payload) ?? null) : null;
+    if (event?.earlier?.source) taint(event.earlier.source);
     const payload = event
       ? eventBlock(event, tagJson)
       : task.payload
@@ -1073,6 +1088,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         }
         const parts = origin?.event?.(event) ?? null;
         if (parts?.untrusted) taint(parts.untrusted.source);
+        if (parts?.earlier?.source) taint(parts.earlier.source);
         results.push({
           type: "text",
           text: parts

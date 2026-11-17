@@ -63,6 +63,9 @@ export type Received =
   | { status: "waiting"; until: string }
   | { status: "test" };
 
+/** What a monitor's last alert task found; `source` if it had read untrusted content. */
+type Earlier = { task: number; ended: string; summary: string; source: string | null };
+
 /** Uptime Kuma's webhook body (its "Application/json" preset). */
 type KumaBody = {
   heartbeat?: { status?: number; msg?: string; time?: string } | null;
@@ -503,6 +506,7 @@ export class Triggers {
     }
     const limited = this.limited(t);
     if (limited) return limited;
+    const earlier = this.earlier(runKey);
     const task = this.tasks.createBackgroundTask({
       title: `${name} is down`,
       goal: t.prompt,
@@ -511,14 +515,43 @@ export class Triggers {
       triggerId: t.id,
       botId: t.botId,
       runKey,
-      payload,
+      payload: earlier ? JSON.stringify({ ...JSON.parse(payload), earlier }, null, 2) : payload,
       // Kuma's own fields are trusted; its message often quotes the service's response.
       trusted: true,
-      taintedBy: message ? alertMessageSource(name) : null,
+      taintedBy: message ? alertMessageSource(name) : (earlier?.source ?? null),
     });
     if (!task) return { status: "skipped", reason: "running" };
     this.started(t);
     return { status: "started", task };
+  }
+
+  /** What the monitor's last alert task found, so the next needn't find it again; not one that only saw it come back. */
+  private earlier(runKey: string): Earlier | null {
+    const r = this.db
+      .query<
+        {
+          id: number;
+          summary: string;
+          finished_at: string;
+          tainted: number;
+          tainted_by: string | null;
+        },
+        [string, string]
+      >(
+        `SELECT id, summary, finished_at, tainted, tainted_by FROM tasks
+         WHERE run_key = ? AND origin = 'alert' AND status = 'done' AND coalesce(summary, '') != ''
+         AND summary NOT LIKE ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(runKey, `%${CAME_BACK}`);
+    if (!r) return null;
+    return {
+      task: r.id,
+      ended: r.finished_at,
+      summary: r.summary,
+      source: r.tainted
+        ? `Task #${r.id}, which had read: ${r.tainted_by ?? "untrusted content"}`
+        : null,
+    };
   }
 
   private blocked(t: Trigger): Received | null {
@@ -630,9 +663,18 @@ function alertEvent(text: string) {
   const a = alertParts(text);
   if (!a) return null;
   const monitor = String((JSON.parse(a.alert) as { monitor?: unknown }).monitor);
+  const e = a.earlier;
   return {
     trusted: a.alert,
     ...(a.message ? { untrusted: { source: alertMessageSource(monitor), text: a.message } } : {}),
+    ...(e
+      ? {
+          earlier: {
+            text: `What task #${e.task}, the last alert task on this monitor, found. It ended ${e.ended}; this may be out of date.\n\n${e.summary}`,
+            source: e.source,
+          },
+        }
+      : {}),
   };
 }
 
@@ -701,14 +743,21 @@ export const kumaSaid = (message: string) => KUMA_OWN.some((re) => re.test(messa
  * What Kuma itself says is trusted. Any other message often quotes the monitored service's response,
  * so anyone who can reach the service can write it.
  */
-export function alertParts(payload: string): { alert: string; message: string } | null {
+export function alertParts(
+  payload: string,
+): { alert: string; message: string; earlier: Earlier | null } | null {
   try {
-    const { message, ...alert } = JSON.parse(payload) as Record<string, unknown>;
+    const { message, earlier, ...alert } = JSON.parse(payload) as Record<string, unknown>;
     if (typeof alert.monitor !== "string") return null;
     const text = typeof message === "string" ? message.trim() : "";
+    const found = (earlier ?? null) as Earlier | null;
     if (kumaSaid(text))
-      return { alert: JSON.stringify({ ...alert, message: text }, null, 2), message: "" };
-    return { alert: JSON.stringify(alert, null, 2), message: text };
+      return {
+        alert: JSON.stringify({ ...alert, message: text }, null, 2),
+        message: "",
+        earlier: found,
+      };
+    return { alert: JSON.stringify(alert, null, 2), message: text, earlier: found };
   } catch {
     return null;
   }

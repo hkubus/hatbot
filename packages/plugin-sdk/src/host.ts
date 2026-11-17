@@ -302,9 +302,12 @@ export type TaskOrigin = {
   /** The standing instructions the owner gave, as the approval review may read them; null if untrusted. */
   standing?: (task: Task) => string | null;
   /** Splits an event (its payload, or news told it later) into what's trusted and what isn't. */
-  event?: (
-    text: string,
-  ) => { trusted: string; untrusted?: { source: string; text: string } } | null;
+  event?: (text: string) => {
+    trusted: string;
+    untrusted?: { source: string; text: string };
+    /** What an earlier task found, which may be out of date; `source` if that task had read untrusted content. */
+    earlier?: { text: string; source: string | null };
+  } | null;
   /**
    * News that leaves nothing to do while the task hasn't changed anything, such as a monitor back up
    * by itself: the line it then ends with, in the chat and without a notification.
