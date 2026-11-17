@@ -965,11 +965,12 @@ export async function runOffered(
 /**
  * Calls in a row run together when `parallel` allows (true, or the thing a change acts on), changes
  * each on a different thing. Lookups and changes don't share a batch. Results keep the calls' order.
+ * `run` gets the batch a call runs in.
  */
 export async function inBatches<C, R>(
   calls: C[],
   parallel: (call: C) => boolean | string | string[],
-  run: (call: C) => Promise<R>,
+  run: (call: C, batch: C[]) => Promise<R>,
 ): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < calls.length; ) {
@@ -986,7 +987,8 @@ export async function inBatches<C, R>(
       }
       j++;
     }
-    out.push(...(await Promise.all(calls.slice(i, j).map(run))));
+    const batch = calls.slice(i, j);
+    out.push(...(await Promise.all(batch.map((call) => run(call, batch)))));
     i = j;
   }
   return out;

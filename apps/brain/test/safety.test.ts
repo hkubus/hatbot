@@ -11,7 +11,10 @@ const finish = {
 };
 const call = (name: string, input: object = {}) => ({ content: [toolUse(name, input)] });
 
-/** An untrusted read, a delete that asks, a change on a careful thing, and a plain change. */
+/**
+ * An untrusted read, a delete that asks, a change on a careful thing, a plain change, and an upgrade
+ * on a guest, whose output is untrusted.
+ */
 function labPlugin(done: string[]) {
   const write = (name: string, policy?: () => ReturnType<typeof ask>) =>
     tool({
@@ -43,6 +46,19 @@ function labPlugin(done: string[]) {
         write("lab_wipe", () => ask("It deletes the logs.", "delete")),
         write("lab_door", () => askCareful("The owner asked to approve changes to it.")),
         write("lab_restart"),
+        tool({
+          name: "lab_upgrade",
+          description: "",
+          access: "write",
+          schema: z.object({ guest: z.string() }),
+          describe: ({ guest }) => `Upgrade ${guest}`,
+          target: ({ guest }) => guest,
+          untrusted: true,
+          run: async ({ guest }) => {
+            done.push(`upgrade ${guest}`);
+            return "Upgraded.";
+          },
+        }),
       ]),
   });
 }
@@ -248,6 +264,36 @@ test("a task stops after the review blocks three changes in a row, and a review 
   expect(t.tasks.get(id)?.summary).toContain("blocked 3 changes in a row");
   expect(t.approvals.list(true).map((a) => a.status)).toEqual(["blocked", "blocked", "blocked"]);
   expect(t.approvals.list(true)[0]?.reason).toContain("it couldn't be checked");
+});
+
+// Task 743 upgraded 21 containers one at a time, each reviewed, for 53 minutes.
+test("a step's reviewed changes on different guests are all checked before any runs, each seeing the others, and its blocks count once", async () => {
+  const upgrades = (guests: string[]) => ({
+    content: guests.map((guest) => toolUse("lab_upgrade", { guest })),
+  });
+  const { t, done, work } = await lab([
+    upgrades(["a", "b", "c", "d"]),
+    upgrades(["b", "c", "d"]),
+    finish,
+  ]);
+  let reviews = 0;
+  work.onCreate = (p) => {
+    if (p.system !== REVIEW_PROMPT) return undefined;
+    done.push("review");
+    // Once a's output has tainted the task, the first step's others are blocked, by Haiku and Opus.
+    return ++reviews <= 6 ? '{"safe": false, "why": "No."}' : '{"safe": true, "why": "Asked."}';
+  };
+  const id = runTask(t);
+  await finished(t, id);
+  expect(t.tasks.get(id)?.status).toBe("done");
+  expect(done.slice(0, 10)).toEqual(["upgrade a", ...Array(9).fill("review")]);
+  expect(done.slice(10).sort()).toEqual(["upgrade b", "upgrade c", "upgrade d"]);
+  const asked = work.creates.filter((c) => c.system === REVIEW_PROMPT).at(-1);
+  const content = String(asked?.messages[0]?.content);
+  const action = ["b", "c", "d"].find((g) => content.includes(`"summary":"Upgrade ${g}"`));
+  expect(action).toBeDefined();
+  for (const g of ["b", "c", "d"].filter((g) => g !== action))
+    expect(content.split("</changes_alongside>")[0]).toContain(`Upgrade ${g}`);
 });
 
 test("Always on a blocked change lets that exact call skip the review from then on", async () => {

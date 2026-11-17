@@ -206,6 +206,47 @@ const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
+/** Reviewed changes a step runs at once, so a long step on many hosts doesn't run one at a time. */
+const REVIEWED_AT_ONCE = 4;
+
+/**
+ * Changes a step makes at once, each on a different thing. Every one is checked first, and the
+ * review sees the others; those it passed run once all are checked.
+ */
+class Together {
+  private unchecked: Set<string>;
+  private checked: Promise<void>;
+  private release = () => {};
+  private free = REVIEWED_AT_ONCE;
+  private queue: (() => void)[] = [];
+
+  constructor(readonly calls: Anthropic.Beta.BetaToolUseBlock[]) {
+    this.unchecked = new Set(calls.map((c) => c.id));
+    this.checked = new Promise((r) => {
+      this.release = r;
+    });
+  }
+
+  /** `id` is checked, or won't run after all. */
+  done(id: string) {
+    if (!this.unchecked.delete(id) || this.unchecked.size) return;
+    this.release();
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.checked;
+    if (this.free) this.free--;
+    else await new Promise<void>((r) => this.queue.push(r));
+    try {
+      return await fn();
+    } finally {
+      const next = this.queue.shift();
+      if (next) next();
+      else this.free++;
+    }
+  }
+}
+
 /** An event's trusted part, the part whoever reaches its source could write, then what an earlier task found. */
 const eventBlock = (
   {
@@ -492,6 +533,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const made: string[] = [];
   /** Why the run stops, once the review has blocked too much. */
   let gaveUp: string | null = null;
+  /** A step's blocks count once: the bot hears of them all at once. */
+  let blockedThisStep = false;
 
   /** As Settings → Safety says; by default never for money, accounts, doors or what's careful. */
   const reviewed = async (
@@ -499,6 +542,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
     verdict: Extract<Verdict, { action: "ask" }>,
+    alongside: string[],
   ): Promise<{ safe: boolean; why: string; by?: string }> => {
     const level = levelOf(d.settings.get(), verdict);
     if (level === "allow") {
@@ -538,6 +582,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         goal: task.goal,
         sources: [...sources],
         made,
+        alongside,
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
       { reserve: tasks.reserves(task) },
@@ -559,6 +604,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const pluginCall = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
+    turn?: Together,
   ): Promise<BlockParam> => {
     const cc: CallContext = {
       task: { id, tainted: task.tainted },
@@ -592,7 +638,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return result(call, `Refused: ${verdict.why}`, true);
     }
     if (verdict.action === "ask") {
-      const check = await reviewed(t, call, what, verdict);
+      const alongside = (turn?.calls ?? []).flatMap((c) => {
+        const other = c.id === call.id ? undefined : pluginTools.get(c.name);
+        return other ? [changeMade(other, c.input)] : [];
+      });
+      const check = await reviewed(t, call, what, verdict, alongside);
       const target = targetOf(t, call.input);
       // Never for money, accounts or what you said to always ask about; doors only in one schedule.
       const scopes = scopable(verdict)
@@ -617,10 +667,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           detail: `${what}. ${check.why}`,
           url: null,
         });
-        gaveUp ??= blocks.blocked();
+        if (!blockedThisStep) gaveUp ??= blocks.blocked();
+        blockedThisStep = true;
         return result(call, blockedText(check.why), true);
       }
       if (!check.safe) {
+        // Yours to decide: the others in its step don't wait for you.
+        turn?.done(call.id);
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
@@ -640,6 +693,23 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         byOwner = true;
       }
     }
+    turn?.done(call.id);
+    return turn && verdict.action === "ask" && !byOwner
+      ? turn.run(() => runChecked(t, call, cc, what, verdict, byOwner, note))
+      : runChecked(t, call, cc, what, verdict, byOwner, note);
+  };
+
+  /** A plugin's call once it may go: a message to people may wait to be stopped first. */
+  const runChecked = async (
+    t: PluginTool,
+    call: Anthropic.Beta.BetaToolUseBlock,
+    cc: CallContext,
+    what: string,
+    verdict: Verdict,
+    byOwner: boolean,
+    note: string | null,
+  ): Promise<BlockParam> => {
+    if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
     const wait = byOwner || !sends(t, call.input) ? 0 : d.settings.get().safety.sendWaitS;
     if (wait) {
       tasks.addStep(id, { kind: "note", name: `Sending in ${wait} s`, detail: what, url: null });
@@ -926,10 +996,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       requests.hold(reserveUsd, overLimit);
 
       let finished: (z.infer<typeof FinishTask> & { summary: string }) | null = null;
+      blockedThisStep = false;
       /** What this reply wrote alongside its calls. */
       let said = "";
-      // Lookups in a row run at once, and so do changes allowed without asking, each on a different
-      // thing (checking updates on every host); anything that asks runs on its own.
+      // Lookups in a row run at once, and so do changes allowed without asking or reviewed, each on a
+      // different thing (updating every host); anything that asks you runs on its own.
       const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string[] => {
         const t = pluginTools.has(call.name) ? current(call.name) : null;
         if (!t || typeof t === "string") return false;
@@ -938,15 +1009,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const parsed = t.schema.safeParse(call.input);
         if (!parsed.success) return false;
         const cc = { task: { id, tainted: task.tainted }, signal };
-        if (verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety).action !== "allow")
-          return false;
+        const settings = d.settings.get();
+        const verdict = verdictFor(t, call.input, cc, task.tainted, settings.safety);
+        if (verdict.action === "block") return false;
+        if (verdict.action === "ask" && levelOf(settings, verdict) === "ask") return false;
+        // What one reads would make the others asked about; once the task has read untrusted
+        // content, they are anyway.
+        if (!task.tainted && untrustedOf(t, parsed.data)) return false;
         const plugin = t.name.split("_")[0];
-        return (
-          !untrustedOf(t, parsed.data) &&
-          [t.target(parsed.data)].flat().map((x) => `${plugin}:${x}`)
-        );
+        return [t.target(parsed.data)].flat().map((x) => `${plugin}:${x}`);
       };
-      const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
+      const run = async (
+        call: Anthropic.Beta.BetaToolUseBlock,
+        turn?: Together,
+      ): Promise<BlockParam> => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (!sent.has(call.name)) return result(call, `Unknown tool "${call.name}".`, true);
@@ -1013,7 +1089,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           // Its description is in the prompt: a server untrusted now, though not at the start, taints too.
           const foreign = untrustedDefinitions([plugin]);
           if (foreign) taint(foreign);
-          return pluginCall(plugin, call);
+          return pluginCall(plugin, call, turn);
         }
         return result(call, `Unknown tool "${call.name}".`, true);
       };
@@ -1059,16 +1135,32 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!calls) continue;
       said = textOf(res);
 
+      const together = new Map<Anthropic.Beta.BetaToolUseBlock[], Together>();
+      const turnOf = (batch: Anthropic.Beta.BetaToolUseBlock[]) => {
+        const known = together.get(batch);
+        if (known || batch.length < 2) return known;
+        const made = new Together(batch);
+        together.set(batch, made);
+        return made;
+      };
       const results: BlockParam[] = await inBatches(
         calls,
         (call) => !cutOff(res) && parallel(call),
-        (call) =>
-          early.started(call) ??
-          (cutOff(res)
-            ? Promise.resolve(
-                result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
-              )
-            : run(call)),
+        (call, batch) => {
+          const turn = turnOf(batch);
+          const ran =
+            early.started(call) ??
+            (cutOff(res)
+              ? Promise.resolve(
+                  result(
+                    call,
+                    "Input was cut off at max_tokens. Retry with a shorter input.",
+                    true,
+                  ),
+                )
+              : run(call, turn));
+          return turn ? ran.finally(() => turn.done(call.id)) : ran;
+        },
       );
       wrote = "";
       if (repeats)

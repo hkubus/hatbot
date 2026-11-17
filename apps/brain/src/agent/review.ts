@@ -149,7 +149,14 @@ export type Review = { safe: boolean; why: string; by: string };
 export async function safeToRun(
   d: { model: ModelClient; spend: Spend; settings: SettingsStore },
   ref: { taskId?: number; episodeId?: number },
-  context: { ownerSaid: string | null; goal: string; sources: string[]; made?: string[] },
+  context: {
+    ownerSaid: string | null;
+    goal: string;
+    sources: string[];
+    made?: string[];
+    /** Changes asked for in the same step, reviewed at once with this one. */
+    alongside?: string[];
+  },
   action: { tool: string; input: unknown; what: string; why: string; change?: string },
   { reserve = false }: { reserve?: boolean } = {},
 ): Promise<Review> {
@@ -159,6 +166,11 @@ export async function safeToRun(
     `<owner_said>\n${context.ownerSaid === null ? "(nothing the owner wrote is available for this task)" : tagText(context.ownerSaid)}\n</owner_said>`,
     `<task_goal>\n${tagText(context.goal)}\n</task_goal>`,
     `<changes_made>\n${tagJson((context.made ?? []).slice(-MADE_MOST))}\n</changes_made>`,
+    ...(context.alongside?.length
+      ? [
+          `<changes_alongside>\n${tagJson(context.alongside.slice(0, MADE_MOST))}\n</changes_alongside>`,
+        ]
+      : []),
     `<untrusted_sources>\n${tagJson(sourcesSeen(context.sources))}\n</untrusted_sources>`,
     `<action>\n${tagJson({
       tool: action.tool,
