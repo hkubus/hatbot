@@ -158,3 +158,24 @@ test("the spend check prices all a check may write; past a limit, the review is 
   expect((await run()).safe).toBe(false);
   expect(fake.creates).toHaveLength(1);
 });
+
+test("a long run's sources stay bounded in the review: the first, the latest, each cut short", async () => {
+  const t = await testApp();
+  const fake = new FakeModel();
+  fake.onCreate = () => JSON.stringify({ safe: true, why: "ok" });
+  const sources = Array.from(
+    { length: 100 },
+    (_, i) => `In CT ${i} on pve: ${"apt-get -y upgrade && ".repeat(40)}`,
+  );
+  await safeToRun(
+    { model: fake, spend: t.spend, settings: t.settings },
+    { taskId: 1 },
+    { ...context, sources },
+    action,
+  );
+  const content = String(fake.creates[0]?.messages[0]?.content);
+  expect(content.length).toBeLessThan(6000);
+  expect(content).toContain("In CT 0 on pve");
+  expect(content).toContain("In CT 99 on pve");
+  expect(content).not.toContain("In CT 50 on pve");
+});
