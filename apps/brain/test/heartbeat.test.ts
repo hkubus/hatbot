@@ -239,6 +239,18 @@ test("the triage's spend check is what its request may cost, which it holds whil
   expect(() => t.spend.check(0.004)).not.toThrow();
 });
 
+test("what the review blocked and nobody ran isn't an approval that expired unanswered", async () => {
+  const t = await testApp();
+  const asked = t.approvals.create({ taskId: null, kind: "other", summary: "Restart the NAS" });
+  const blocked = t.approvals.block({ taskId: null, kind: "other", summary: "Wipe the NAS" });
+  t.advance(25 * 3600_000);
+  t.approvals.expireDue();
+  expect(t.approvals.get(blocked.id)?.status).toBe("expired");
+  const since = new Date(t.clock() - 30 * 60_000).toISOString();
+  expect((await t.heartbeat.gather(since)).map((s) => s.key)).toEqual([`approval:${asked.id}`]);
+  expect((await t.report.make()).line).toEndWith(", 1 approval expired.");
+});
+
 test("the weekly report goes out once when it's due, and one that fails is tried again an hour later", async () => {
   const t = await testApp();
   const send = t.report.send.bind(t.report);

@@ -97,9 +97,10 @@ export class WeeklyReport {
       )
       .all(since)
       .filter((r) => r.done || r.failed);
+    // What the review blocked was never put to you, and lapses after a day.
     const approvals = db
       .query<{ status: string; n: number }, [string]>(
-        "SELECT status, count(*) AS n FROM approvals WHERE created_at >= ? GROUP BY status",
+        "SELECT status, count(*) AS n FROM approvals WHERE created_at >= ? AND blocked = 0 GROUP BY status",
       )
       .all(since);
     const answered = approvals
