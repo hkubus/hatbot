@@ -501,8 +501,40 @@ type HelperReport = Findings & {
   unreadable?: { pages: Set<string>; code: boolean };
   visited?: Set<string>;
   fetched?: Set<string>;
-  pages?: Map<string, string>;
 };
+
+type QuoteStatus = "confirmed" | "unchecked" | "not on page" | "not fetched";
+
+/**
+ * Whether a helper's quote is in what it read, or on its page as any helper fetched it. One from a
+ * page that can't be read here (a PDF it couldn't open, or code's encrypted output) can't be told
+ * apart from one it typed, so it's unchecked.
+ */
+function quoteStatus(
+  quote: string,
+  url: string,
+  r: Pick<HelperReport, "read" | "unreadable" | "fetched">,
+  pages: Map<string, string>,
+): QuoteStatus {
+  const page = pages.get(url);
+  if (quoteFound(quote, r.read) || (page !== undefined && quoteFound(quote, plain(page))))
+    return "confirmed";
+  if (r.unreadable && (r.unreadable.code || r.unreadable.pages.has(url))) return "unchecked";
+  return r.fetched?.has(url) || page !== undefined ? "not on page" : "not fetched";
+}
+
+/** What goes back to a helper whose quotes aren't in what it read, or "" if they all are. */
+function quotesNotRead(r: HelperReport, pages: Map<string, string>): string {
+  const lines = r.findings.flatMap((f) => {
+    const status = quoteStatus(f.quote, pageUrl(f.url), r, pages);
+    if (status === "not on page") return [`- ${f.url}: ${tagJson(f.quote)} isn't on the page.`];
+    if (status === "not fetched")
+      return [`- ${f.url}: ${tagJson(f.quote)} is from a page you didn't fetch.`];
+    return [];
+  });
+  if (!lines.length) return "";
+  return `Not taken yet: these quotes aren't in the pages you read, so they can't back their claims.\n${lines.join("\n")}\nFetch each page (again, if it's gone from what you see) and copy the words exactly as the page has them, or drop the finding. Then call report_findings again with all your findings.`;
+}
 
 const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "report_findings" };
 
@@ -511,24 +543,28 @@ const REPORT_NOW: Anthropic.Beta.BetaToolChoiceTool = { type: "tool", name: "rep
  * for the lead's next request. Its last step, and one the limit leaves room for only, must report what
  * it has.
  */
-async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<HelperReport> {
+async function runWorker(
+  run: ResearchRun,
+  sources: ResearchSources,
+  part: z.infer<typeof Part>,
+): Promise<HelperReport> {
   const { d, task, signal } = run;
   const model = d.settings.get().smallModel;
+  // Pages go into the run's as they're fetched: a helper's quote may be on a page another one read.
   const read: Read = {
     texts: [],
     visited: new Set(),
     fetched: new Set(),
-    pages: new Map(),
+    pages: sources.pages,
     unreadable: { pages: new Set(), code: false },
   };
-  const { texts, unreadable, visited, fetched, pages } = read;
+  const { texts, unreadable, visited, fetched } = read;
   const done = (r: Findings & { note?: string }): HelperReport => ({
     ...r,
     read: plain(texts.join("\n")),
     unreadable,
     visited,
     fetched,
-    pages,
   });
   const stopped = (note: string) => done({ findings: [], gaps: "", note });
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -542,6 +578,7 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
   let paused = false;
   let mustReport = false;
   let wasCut = false;
+  let sentBack = false;
   // Two more steps than the cap, for paused turns to finish before the last, forced one.
   for (let step = 0; step < MAX_WORKER_STEPS + 2; step++) {
     if (signal.aborted) throw signal.reason;
@@ -640,7 +677,13 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
     // A report cut off can look complete with its gaps cut short: it's asked for again, shorter.
     const cut = cutOff(res);
     const parsed = !cut && report ? ReportFindings.safeParse(report.input) : undefined;
-    if (parsed?.success) return done(parsed.data);
+    // Once, while it has steps and money left to fetch the pages again.
+    const notRead =
+      parsed?.success && !sentBack && !mustReport && step < MAX_WORKER_STEPS - 2
+        ? quotesNotRead(done(parsed.data), sources.pages)
+        : "";
+    if (parsed?.success && !notRead) return done(parsed.data);
+    if (notRead) sentBack = true;
     if (cut && wasCut) return stopped("The helper's report was cut off.");
     if (cut) wasCut = mustReport = true;
     // Not while the web tools' code is still running: then only tool results may follow.
@@ -659,9 +702,11 @@ async function runWorker(run: ResearchRun, part: z.infer<typeof Part>): Promise<
             is_error: true,
             content: cut
               ? "Cut off at max_tokens."
-              : c === report && parsed && !parsed.success
-                ? invalidInput(parsed.error)
-                : `Unknown tool "${c.name}".`,
+              : c === report && notRead
+                ? notRead
+                : c === report && parsed && !parsed.success
+                  ? invalidInput(parsed.error)
+                  : `Unknown tool "${c.name}".`,
           }),
         ),
         ...(nudge && !serverToolWaiting(res.content)
@@ -721,7 +766,7 @@ export async function investigate(
     });
   const results = await Promise.all(
     parts.map((part) =>
-      runWorker(run, part).catch((err): HelperReport => {
+      runWorker(run, sources, part).catch((err): HelperReport => {
         if (run.signal.aborted) throw err;
         console.error(`research task ${run.task.id}: a helper failed`, err);
         return {
@@ -733,26 +778,25 @@ export async function investigate(
       }),
     ),
   );
-  for (const r of results) for (const [url, text] of r.pages ?? []) sources.pages.set(url, text);
   const blocks = parts.map((part, i) => {
     const r = results[i] as HelperReport;
     const bySource = new Map<number, string[]>();
     // What came from the pages is in JSON strings, so it can't close the tags around it.
     for (const f of r.findings) {
-      // A quote the helper typed but didn't read can't check a claim. One from a page that can't be
-      // read here (a PDF it couldn't open, or code's encrypted output) can't be told apart from it, so
-      // it's used as it is. The page as another helper fetched it counts too.
+      // A quote the helper typed but didn't read can't check a claim; an unchecked one is used as it is.
       const url = pageUrl(f.url);
-      const page = sources.pages.get(url);
-      const confirmed =
-        quoteFound(f.quote, r.read) || (page !== undefined && quoteFound(f.quote, plain(page)));
-      const unchecked =
-        !confirmed && Boolean(r.unreadable && (r.unreadable.code || r.unreadable.pages.has(url)));
-      const fetched = Boolean(r.fetched?.has(url) || page !== undefined);
-      const n = sources.add(f, confirmed, unchecked, r.visited?.has(url), fetched);
+      const status = quoteStatus(f.quote, url, r, sources.pages);
+      const fetched = Boolean(r.fetched?.has(url) || sources.pages.has(url));
+      const n = sources.add(
+        f,
+        status === "confirmed",
+        status === "unchecked",
+        r.visited?.has(url),
+        fetched,
+      );
       bySource.set(n, [
         ...(bySource.get(n) ?? []),
-        `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${confirmed ? "" : `\n  ${unchecked ? UNCHECKED : fetched ? NOT_ON_PAGE : NOT_FETCHED}`}`,
+        `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${status === "confirmed" ? "" : `\n  ${QUOTE_NOTE[status]}`}`,
       ]);
     }
     const found = [...bySource].map(([n, lines]) => {
@@ -778,8 +822,12 @@ export async function investigate(
   };
 }
 
-const NOT_ON_PAGE = "Unconfirmed: the quote isn't in what the helper read.";
-const NOT_FETCHED = "Unconfirmed: the helper didn't fetch this page, so its quote isn't checked.";
+const QUOTE_NOTE: Record<Exclude<QuoteStatus, "confirmed">, string> = {
+  "not on page": "Unconfirmed: the quote isn't in what the helper read.",
+  "not fetched": "Unconfirmed: the helper didn't fetch this page, so its quote isn't checked.",
+  unchecked:
+    "Unchecked: the helper read it through code, or in a PDF whose text couldn't be read here.",
+};
 /** read_source: a source's page as a helper fetched it, or the parts of it around `find`. */
 export function readSource(
   sources: ResearchSources,
@@ -821,9 +869,6 @@ export function readSource(
     isError: false,
   };
 }
-
-const UNCHECKED =
-  "Unchecked: the helper read it through code, or in a PDF whose text couldn't be read here.";
 
 /** Citations like [3] or [2, 5], outside code; not a link's text, nor one already linked. */
 const CITE = /(?<!\[)\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\](?![(\]])/g;
@@ -1247,7 +1292,7 @@ function readFindings(result: string, sources: ResearchSources) {
       if (last) last.confirmed = false;
       if (last && line.startsWith("  Unchecked:")) last.unchecked = true;
       const s = last && sources.get(last.n);
-      if (s && line !== `  ${NOT_FETCHED}`) s.fetched = true;
+      if (s && line !== `  ${QUOTE_NOTE["not fetched"]}`) s.fetched = true;
     }
   }
 }

@@ -271,6 +271,38 @@ test("a quote is found in what the helper read, whatever the spaces and number f
   expect(quoteFound("4", survey)).toBe(false);
 });
 
+test("a helper whose quotes aren't in what it read gets one turn to fix or drop them", async () => {
+  const work = new FakeModel([ONE_PART, finish("It's **2,399 zł** [1].", "The DS925+ [1].")]);
+  const madeUp = { ...PRICE, quote: "Synology DS925+ 2 299,00 zł" };
+  const forum = { ...NOISE, url: "https://forum.example.com/ds925-noise", title: "Forum" };
+  // It fixes the price; the forum quote, from a page it never fetched, it keeps.
+  const reports = [[madeUp, forum], [PRICE, forum], [PRICE]];
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...fetched(PRICE.url, SHOP_PAGE, `srvtoolu_${reports.length}`),
+            toolUse("report_findings", { findings: reports.shift(), gaps: "" }),
+          ],
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+
+  const helperRequests = work.requests.filter(isHelper);
+  expect(helperRequests).toHaveLength(2);
+  const sentBack = helperRequests[1]?.messages.at(-1)?.content as { is_error?: boolean }[];
+  expect(sentBack[0]?.is_error).toBe(true);
+  expect(resultsIn(helperRequests[1])).toContain('"Synology DS925+ 2 299,00 zł"');
+  expect(resultsIn(helperRequests[1])).toContain(forum.url);
+
+  const findings = resultsIn(work.requests.findLast((r) => !isHelper(r)));
+  expect(findings).toContain('Quote: "Synology DS925+ 2 399,00 zł"\n[2]');
+  expect(findings.match(/Unconfirmed:/g)).toHaveLength(1);
+  expect(task.status).toBe("done");
+});
+
 test("research gets lookups and memory, and no tool that changes things", async () => {
   const restarted: string[] = [];
   const lab = definePlugin({
