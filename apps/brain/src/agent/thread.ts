@@ -38,7 +38,7 @@ import {
   withTodo,
 } from "@hatbot/shared";
 import { z } from "zod";
-import { type Approvals, ownerNote } from "../approvals";
+import { type Approvals, ownerNote, sameCall } from "../approvals";
 import type { Attachments } from "../attachments";
 import { type Bots, botIndex, promptFor } from "../bots";
 import { brokenChartsOf, chartProblemOf } from "../chart-data";
@@ -267,6 +267,8 @@ export class Thread {
   private handoffAnswers = new Map<number, Handoff>();
   /** The approval the reply in progress waits for; your next message cancels it. */
   private waiting: number | null = null;
+  /** What you ran anyway that the bot has been told how to run. */
+  private toldAnyway = new Set<number>();
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
   /** And what it has thought and done so far. */
@@ -2076,6 +2078,16 @@ export class Thread {
       if (user?.attachments?.length && this.d.attachments) {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
+      }
+      // The apps write for you after Run anyway, but only the same call goes, so the bot is told it.
+      const anyway = (this.d.approvals?.ranAnyway(episode.id, bot.id) ?? []).filter(
+        (a) => !this.toldAnyway.has(a.id),
+      );
+      for (const a of anyway) {
+        this.toldAnyway.add(a.id);
+        const exact = sameCall(a) || "make the same call exactly as before";
+        const ran = `(The owner chose to run what the safety review blocked anyway: ${a.summary}. To run it, ${exact})`;
+        note = note ? `${note}\n\n${ran}` : ran;
       }
       // A system message follows a user turn; with nothing else to say, the note is that turn.
       if (note && !userBlocks.length) {

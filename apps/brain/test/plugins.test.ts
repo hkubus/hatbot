@@ -299,6 +299,8 @@ test("the review blocks a risky change in the chat; Run anyway lets the next rep
   expect(anyway.status).toBe(200);
   await t.thread.post("Run it anyway.").done;
   expect(calls).toEqual(["restart db"]);
+  // Told the exact call, as text: a call made differently is reviewed again.
+  expect(said(chat, 2)).toContain('{\\"guest\\":\\"db\\"}');
   // Once: the same change is reviewed again after that.
   await t.thread.post("and again").done;
   expect(calls).toEqual(["restart db"]);

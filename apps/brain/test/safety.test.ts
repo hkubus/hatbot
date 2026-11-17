@@ -181,6 +181,40 @@ test("the review blocks a task's change without asking; Run anyway lets the runn
   await finished(t, id);
   expect(done).toEqual(["lab_wipe"]);
   expect(t.tasks.get(id)?.status).toBe("done");
+  expect(t.tasks.list({})).toHaveLength(1);
+});
+
+test("Run anyway on a task that has ended goes on in a new run, which makes the same call; another of its blocks goes to that run", async () => {
+  const { t, done, work } = await lab([
+    call("lab_issue"),
+    call("lab_wipe"),
+    call("lab_restart"),
+    finish,
+    call("lab_wipe"),
+    call("wait", { minutes: 5, for: "the owner" }),
+    call("lab_restart"),
+    finish,
+  ]);
+  work.onCreate = reviewSaysUnsafe;
+  const id = runTask(t);
+  await finished(t, id);
+  expect(done).toEqual([]);
+  const [restart, wipe] = t.approvals.list(true);
+  const { cookie } = signIn(t);
+  const anyway = (a?: { id: number }) =>
+    t.call("POST", `/approvals/${a?.id}/anyway`, {}, { cookie });
+  expect((await anyway(wipe)).status).toBe(200);
+  await waitFor(() => done.length === 1);
+  expect((await anyway(restart)).status).toBe(200);
+  const [next] = t.tasks.list({}).filter((task) => task.id !== id);
+  await finished(t, next?.id ?? 0);
+  expect(done).toEqual(["lab_wipe", "lab_restart"]);
+  expect(t.tasks.list({})).toHaveLength(2);
+  expect(t.tasks.get(next?.id ?? 0)).toMatchObject({ status: "done", tainted: true });
+  const used = t.db
+    .query<{ used_at: string | null }, []>("SELECT used_at FROM approvals ORDER BY id")
+    .all();
+  expect(used.every((a) => a.used_at)).toBe(true);
 });
 
 test("a task's question and the owner's answer reach the review as the owner's words", async () => {
