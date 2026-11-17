@@ -161,6 +161,31 @@ describe("the ceiling and the floor", () => {
     expect(act("Mogę zejść do 1000 zł.", { offer: 1000 }, selling())).toBe("allow");
     expect(act("Zgoda, 1000 zł.", agree, selling(), sellerSaid("Dam 1000 zł."))).toBe("allow");
   });
+
+  test("selling: the buyer's price, turned down beside our offer inside the mandate, doesn't ask", () => {
+    const cpu = selling({
+      title: "Intel Core i5-12400F procesor",
+      asking: 439.99,
+      mandate: { ...selling().mandate, opening: 439.99, target: 439.99, limit: 402 },
+    });
+    const buyer = sellerSaid("319,10 zł");
+    const ours = { offer: 419.99 };
+    for (const text of [
+      "Dzień dobry, 319,10 zł to za mało. Procesor jest sprawny, mogę zejść do 419,99 zł z wysyłką przez Vinted.",
+      "Nie zgodzę się na 319,10 zł. Mogę zejść do 419,99 zł.",
+      "Nie, 319,10 zł to za mało, mogę zejść do 419,99 zł. Pasuje?",
+    ])
+      expect([text, act(text, ours, cpu, buyer)]).toEqual([text, "allow"]);
+    for (const [text, input] of [
+      ["Mogę 319,10 lub 419,99.", ours],
+      ["OK, 319,10 zł.", ours],
+      ["Nie ma sprawy, 319,10 zł, a 419,99 zł z wysyłką.", ours],
+      ["Nie, 319,10 zł jest OK, a 419,99 zł z wysyłką.", ours],
+      ["300 zł to za mało, mogę zejść do 419,99 zł.", ours],
+      ["319,10 zł to za mało, mogę zejść do 399,99 zł.", { offer: 399.99 }],
+    ] as const)
+      expect([text, act(text, input, cpu, buyer)]).toEqual([text, "ask"]);
+  });
 });
 
 describe("an amount in the text counts, however it's written", () => {

@@ -124,8 +124,37 @@ export function outside(
     );
   const text = plain(input.text);
   const r = read(input.text, n.title, n.asking);
-  const amounts = r.found.filter((a) =>
-    buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit,
+  // A message that reads as agreeing agrees to the other side's price, so it must name its own: a number
+  // read from the seller's message is never trusted for a bare "Zgoda". While their price is past the
+  // limit or unreadable, only a message naming a price of ours inside the mandate goes at all.
+  const theirs = theirPrice(n, f.seller);
+  const pastTheirs = theirs === null || beyond(theirs);
+  const sized = (v: number) => !beyond(v) && v >= priceFloor(m);
+  const named = r.found.some((a) => a.values.some(sized));
+  const offer = input.offer;
+  const namesOffer =
+    offer !== null &&
+    sized(offer) &&
+    r.found.some((a) => a.values.some((v) => Math.abs(v - offer) < 0.01));
+  const agreeing =
+    input.agree ||
+    acceptance(text) !== null ||
+    AGREES.test(text) ||
+    AFFIRMATIVE_ONLY.test(text) ||
+    (pastTheirs && AFFIRMATIVE_OPENING.test(text));
+  // Selling, "319,10 zł to za mało, mogę zejść do 419,99 zł" quotes the buyer's price to turn it
+  // down. Buying, the two add up past the ceiling anyway.
+  const turnedDown = (a: Found) =>
+    !buying &&
+    theirs !== null &&
+    namesOffer &&
+    !agreeing &&
+    a.values.every((v) => !beyond(v) || Math.abs(v - theirs) < 0.01) &&
+    refused(r.s, a);
+  const amounts = r.found.filter(
+    (a) =>
+      (buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit) &&
+      !turnedDown(a),
   );
   if (amounts.length)
     why.push(`The text says ${amounts.map((a) => `"${a.raw}"`).join(", ")}, ${past} ${limit}.`);
@@ -177,24 +206,6 @@ export function outside(
       `It's about more than one item ("${SEVERAL_ITEMS.exec(text)?.[0]}"), and the mandate covers this listing only.`,
     );
 
-  // A message that reads as agreeing agrees to the other side's price, so it must name its own: a number
-  // read from the seller's message is never trusted for a bare "Zgoda". While their price is past the
-  // limit or unreadable, only a message naming a price of ours inside the mandate goes at all.
-  const theirs = theirPrice(n, f.seller);
-  const pastTheirs = theirs === null || beyond(theirs);
-  const sized = (v: number) => !beyond(v) && v >= priceFloor(m);
-  const named = r.found.some((a) => a.values.some(sized));
-  const offer = input.offer;
-  const namesOffer =
-    offer !== null &&
-    sized(offer) &&
-    r.found.some((a) => a.values.some((v) => Math.abs(v - offer) < 0.01));
-  const agreeing =
-    input.agree ||
-    acceptance(text) !== null ||
-    AGREES.test(text) ||
-    AFFIRMATIVE_ONLY.test(text) ||
-    (pastTheirs && AFFIRMATIVE_OPENING.test(text));
   if (agreeing && !namesOffer)
     why.push(
       "It reads as agreeing but doesn't name the price it agrees to, inside the mandate, in both the text and offer.",
@@ -363,6 +374,28 @@ const AFFIRMATIVE_OPENING =
   /^\s*(?:ok(?:ay|ej|i)?|tak|dobrze|dobra|jasne|pewnie|spoko|super|[śs]wietnie|git|zgoda|fine|sure|yes|yeah|yep|great|perfect|alright|all\s+right|cool|sold|deal|w\s+porz[ąa]dku|czemu\s+nie|why\s+not)(?![\p{L}])/iu;
 /** The least that's a price rather than a fee or a count: half the opening offer, or of the limit. */
 const priceFloor = (m: Negotiation["mandate"]) => Math.min(m.opening, m.limit) / 2;
+
+const TOO_LOW =
+  /(?<!(?:nie|not|n['’]t)\s+(?:jest\s+|is\s+)?)(?:za\s+ma[łl]o|za\s+nisk\p{L}*|too?\s+low)(?![\p{L}])/iu;
+/** With a verb that turns it down: "nie ma sprawy" agrees. */
+const NO =
+  /(?<![\p{L}])nie\s+(?:zgodz|zgadz|przyjm|akceptuj|sprzeda|zejd|schodz|dam|oddam|ma\s+mowy|pasuje|odpowiada)\p{L}*/iu;
+/** Right before the amount: "419,99 zł, nie 319,10", "nie za 319,10". */
+const NOT_THIS = /(?<![\p{L}])nie\s+(?:(?:za|na)\s+)?$/iu;
+
+/** A word turning the amount down in its own clause, with no other number or sentence between. */
+function refused(s: string, a: { index: number; end: number }): boolean {
+  const before =
+    s
+      .slice(Math.max(0, a.index - 40), a.index)
+      .split(/[.!?\d]/)
+      .at(-1) ?? "";
+  const after = s.slice(a.end, a.end + 40).split(/[.!?\d]/)[0] ?? "";
+  return (
+    [NO, NOT_THIS, TOO_LOW].some((re) => re.test(before)) ||
+    [NO, TOO_LOW].some((re) => re.test(after))
+  );
+}
 
 export function acceptance(raw: string): string | null {
   return ACCEPT.exec(plain(raw))?.[0] ?? null;
