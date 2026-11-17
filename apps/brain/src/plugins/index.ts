@@ -3,6 +3,7 @@ import { forgejoPlugin } from "@hatbot/plugin-forgejo";
 import { githubPlugin } from "@hatbot/plugin-github";
 import { homeassistantPlugin } from "@hatbot/plugin-homeassistant";
 import { mcpPlugin } from "@hatbot/plugin-mcp";
+import { minecraftPlugin } from "@hatbot/plugin-minecraft";
 import { openaiPlugin } from "@hatbot/plugin-openai";
 import { pbsPlugin } from "@hatbot/plugin-pbs";
 import { proxmoxPlugin } from "@hatbot/plugin-proxmox";
@@ -18,6 +19,7 @@ export const PLUGINS: Plugin[] = [
   sshPlugin,
   homeassistantPlugin,
   uptimeKumaPlugin,
+  minecraftPlugin,
   forgejoPlugin,
   githubPlugin,
   mcpPlugin,

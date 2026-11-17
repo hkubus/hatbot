@@ -24,6 +24,7 @@
         "@hatbot/plugin-github": "workspace:*",
         "@hatbot/plugin-homeassistant": "workspace:*",
         "@hatbot/plugin-mcp": "workspace:*",
+        "@hatbot/plugin-minecraft": "workspace:*",
         "@hatbot/plugin-openai": "workspace:*",
         "@hatbot/plugin-pbs": "workspace:*",
         "@hatbot/plugin-proxmox": "workspace:*",
@@ -76,6 +77,7 @@
         "@hatbot/plugin-computer": "workspace:*",
         "@hatbot/plugin-homeassistant": "workspace:*",
         "@hatbot/plugin-mcp": "workspace:*",
+        "@hatbot/plugin-minecraft": "workspace:*",
         "@hatbot/plugin-openai": "workspace:*",
         "@hatbot/plugin-proxmox": "workspace:*",
         "@hatbot/plugin-scout": "workspace:*",
@@ -218,6 +220,20 @@
         "@hatbot/web": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.1",
         "ajv": "^8.20.0",
+        "react": "^19.3.0",
+        "zod": "^4.6.5",
+      },
+      "devDependencies": {
+        "@types/react": "^19.3.0",
+      },
+    },
+    "plugins/minecraft": {
+      "name": "@hatbot/plugin-minecraft",
+      "version": "1.0.0",
+      "dependencies": {
+        "@hatbot/plugin-sdk": "workspace:*",
+        "@hatbot/shared": "workspace:*",
+        "@hatbot/web": "workspace:*",
         "react": "^19.3.0",
         "zod": "^4.6.5",
       },
@@ -387,6 +403,8 @@
     "@hatbot/plugin-homeassistant": ["@hatbot/plugin-homeassistant@workspace:plugins/homeassistant"],
 
     "@hatbot/plugin-mcp": ["@hatbot/plugin-mcp@workspace:plugins/mcp"],
+
+    "@hatbot/plugin-minecraft": ["@hatbot/plugin-minecraft@workspace:plugins/minecraft"],
 
     "@hatbot/plugin-openai": ["@hatbot/plugin-openai@workspace:plugins/openai"],
 
