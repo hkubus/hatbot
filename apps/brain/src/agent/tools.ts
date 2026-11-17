@@ -351,6 +351,9 @@ export function dueInput(due: string): string {
 
 const def = <S extends z.ZodType>(t: ToolDef<S>) => t;
 
+/** Rewriting a long file whole takes a minute of output; memory_edit changes the part that changes. */
+const REWRITE_MAX_CHARS = 8000;
+
 export const TOOLS = [
   def({
     name: "memory_list",
@@ -374,7 +377,7 @@ export const TOOLS = [
   def({
     name: "memory_write",
     description:
-      "Create or replace a markdown file in your memory repo, written whole. To add to a file or change part of it, use memory_edit. Each write is a git commit the owner can see and revert. Keep INDEX.md current when you add or remove files.",
+      "Create or replace a markdown file in your memory repo, written whole. To add to a file or change part of it, use memory_edit, which is also the only way to change a file over 8 KB. Each write is a git commit the owner can see and revert. Keep INDEX.md current when you add or remove files.",
     schema: z.object({
       path: z.string().describe("Path relative to the repo root, ending in .md"),
       content: z.string().describe("The complete new file content"),
@@ -382,6 +385,11 @@ export const TOOLS = [
     }),
     run: async ({ path, content, reason = `Write ${path}` }, ctx, signal) => {
       const author = authorOf(ctx, path);
+      const was = (await ctx.memory.readOrNull(path))?.length ?? 0;
+      if (was > REWRITE_MAX_CHARS)
+        throw new MemoryError(
+          `${path} is ${Math.round(was / 1000)} KB: change it with memory_edit rather than write it whole.`,
+        );
       const call = { tool: "memory_write", input: { path, content } };
       const blocked = await reviewed(ctx, call, path, reason, signal, content);
       if (blocked) return blocked;
