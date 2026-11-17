@@ -113,6 +113,12 @@ const CACHE_MS = 5 * 60_000;
  * again at no output: a cache read, far cheaper than an hour-long write, while you might reply.
  */
 const WARM_AFTER_MS = 3 * 60_000;
+/**
+ * Only a model whose cache reads cost under this share of its input is kept warm: at Haiku's tenth,
+ * the owner's replies came too seldom within the half hour for its pings to cost less than writing
+ * again.
+ */
+const WARM_READ_DISCOUNT = 15;
 const MAX_SUMMARY_TRIES = 3;
 /** A conversation whose last request was this long carries on in a new one. */
 const LONG_EPISODE_TOKENS = 90_000;
@@ -1207,8 +1213,8 @@ export class Thread {
 
   /**
    * Sends each bot's last request again, at no output, before its cache runs out: for half an hour
-   * after it, while the episode is open, and while these reads cost less than the episode saved by
-   * writing for five minutes rather than an hour.
+   * after it, while the episode is open, while these reads cost less than the episode saved by
+   * writing for five minutes rather than an hour, and only on a model whose reads are cheap enough.
    */
   private async keepWarm() {
     const { db, settings, spend, model } = this.d;
@@ -1226,9 +1232,11 @@ export class Thread {
            FROM spend_ledger WHERE episode_id = ? AND bot_id = ?`,
         )
         .get(w.episodeId, botId);
+      const price = priceOf(w.params.model);
       // An hour's write is 2x input, five minutes' 1.25x.
-      const saved = ((r?.written ?? 0) * priceOf(w.params.model).input * 0.75) / 1_000_000;
+      const saved = ((r?.written ?? 0) * price.input * 0.75) / 1_000_000;
       if (
+        price.input < price.cacheRead * WARM_READ_DISCOUNT ||
         !open ||
         now - w.at >= EPISODE_IDLE_MS ||
         now - sent.at >= CACHE_MS ||

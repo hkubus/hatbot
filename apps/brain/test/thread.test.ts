@@ -245,17 +245,18 @@ test("a chat is kept cached for half an hour after its last request, while that 
   const model = new FakeModel(
     [
       { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
-      // Haiku: 200 tokens written for five minutes rather than an hour save what two reads cost. A
+      // Opus: 100 tokens written for five minutes rather than an hour save what two reads cost. A
       // read doesn't take away from that.
       {
         content: [text("Hi again.")],
-        usage: { cache_creation_input_tokens: 200, cache_read_input_tokens: 5000 },
+        usage: { cache_creation_input_tokens: 100, cache_read_input_tokens: 5000 },
         wait: slow.promise,
       },
     ],
     ["<recap>Said hi.</recap>\n<summary>2026-10-09: said hi.</summary>"],
   );
   const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-opus-5-5" });
   const pings = () => model.creates.filter((c) => c.max_tokens === 0);
   const minutes = async (n: number) => {
     for (let i = 0; i < n; i++) {
@@ -291,6 +292,20 @@ test("a chat is kept cached for half an hour after its last request, while that 
     .query<{ n: number }, []>("SELECT count(*) AS n FROM spend_ledger WHERE purpose = 'keep-warm'")
     .get();
   expect(spend?.n).toBe(11);
+});
+
+test("a chat on a model whose cache reads are a tenth of its input isn't kept cached", async () => {
+  const model = new FakeModel([
+    { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
+  ]);
+  const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-haiku-5-5" });
+  await t.thread.post("hello").done;
+  for (let i = 0; i < 10; i++) {
+    t.advance(60_000);
+    await t.thread.sweep();
+  }
+  expect(model.creates.filter((c) => c.max_tokens === 0)).toHaveLength(0);
 });
 
 test("each request marks where the last one ended, after the same system and tools, within four breakpoints; tasks cache theirs too", async () => {
