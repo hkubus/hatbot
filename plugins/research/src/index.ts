@@ -29,6 +29,7 @@ import {
   RESEARCH_TOOLS,
   type ResearchRun,
   ResearchState,
+  readFindings,
   readSource,
   refusedLinks,
   researchPrompt,
@@ -132,6 +133,8 @@ const researchRunner = (d: Deps): TaskRunner => ({
   webTools: LEAD_WEB_TOOLS,
   loopTools: RESEARCH_LOOP_TOOLS,
   tools: RESEARCH_TOOLS,
+  // Its findings come back with read_findings and its draft is kept here, so their calls may go.
+  clearInputs: true,
   prompt: researchPrompt,
   handOver: RESEARCH_ASK_BOT,
   nudge: {
@@ -153,6 +156,7 @@ const researchRunner = (d: Deps): TaskRunner => ({
       call: async (name, input, c) => {
         if (name === "investigate") return investigate(run, found.sources, input);
         if (name === "read_source") return readSource(found.sources, input);
+        if (name === "read_findings") return readFindings(found.sources, input, d.clock());
         if (finishedIn === c.step)
           return { content: "Not run: call finish_research once a turn.", isError: true };
         finishedIn = c.step;

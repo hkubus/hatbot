@@ -303,6 +303,38 @@ test("a helper whose quotes aren't in what it read gets one turn to fix or drop 
   expect(task.status).toBe("done");
 });
 
+test("research's older findings and tool calls may be cleared, and read_findings gives the findings back", async () => {
+  const work = new FakeModel([
+    INVESTIGATE,
+    { content: [toolUse("read_findings", { sources: [2, 9] })] },
+    { content: [toolUse("read_findings", {})] },
+    finish("It's **2,399 zł** [2].", "The DS925+ [1, 2]."),
+  ]);
+  helpers(work);
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+
+  const leads = work.requests.filter((r) => !isHelper(r));
+  const edit = leads[0]?.context_management?.edits?.[0] as {
+    clear_tool_inputs?: boolean;
+    exclude_tools?: string[];
+  };
+  expect(edit.clear_tool_inputs).toBe(true);
+  expect(edit.exclude_tools ?? []).not.toContain("investigate");
+
+  const some = resultsIn(leads[2]);
+  expect(some).toContain(
+    '[2] "Synology DS925+ | x-kom" https://www.x-kom.pl/p/ds925 (undated; primary)\n- "The DS925+ costs 2,399 zł at x-kom."',
+  );
+  expect(some).not.toContain("synology.com");
+  expect(some).toContain("There's no source [9].");
+  const all = resultsIn(leads[3]);
+  expect(all).toContain('[1] "DS925+ specifications"');
+  expect(all).toContain('Gaps ("DS925+ price"): "No stock."');
+  expect(task.status).toBe("done");
+});
+
 test("research gets lookups and memory, and no tool that changes things", async () => {
   const restarted: string[] = [];
   const lab = definePlugin({

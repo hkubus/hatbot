@@ -26,8 +26,10 @@ export type TaskRunner = {
   webTools?: ModelTool[];
   /** The loop's own tools it keeps (ask_bot, ask_owner, run_desktop_task, wait…); all when left out. */
   loopTools?: string[];
-  /** Its own tools, answered by its `call`; their results are never cleared. */
+  /** Its own tools, answered by its `call`; old results are cleared from the prompt like any tool's. */
   tools: ModelTool[];
+  /** Old tool calls' inputs are cleared with their results: what it wrote long ago, like a report. */
+  clearInputs?: boolean;
   prompt: (bot: Bot) => string;
   /** In place of the line about handing work to other bots. */
   handOver?: string;

@@ -369,13 +369,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   if (tools.some((t) => "defer_loading" in t && t.defer_loading)) tools.push(TOOL_SEARCH);
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   const runnerTools = new Set((runner?.tools ?? []).flatMap((t) => ("name" in t ? [t.name] : [])));
-  /**
-   * Results never cleared: a research task's findings are what it cites, and a search's are what
-   * loaded the tools it found.
-   */
-  const keptTools = ["finish_task", ...runnerTools, "tool_search_tool_regex"].filter((n) =>
-    sent.has(n),
-  );
+  /** A search's results are what loaded the tools it found, so they're never cleared. */
+  const keptTools = ["finish_task", "tool_search_tool_regex"].filter((n) => sent.has(n));
   const left = d.bots.leftToOthers(bot);
   const guidance = d.plugins.guidance(bot.plugins, left);
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
@@ -1010,7 +1005,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               trigger: { type: "input_tokens", value: 70_000 },
               keep: { type: "tool_uses", value: 6 },
               clear_at_least: { type: "input_tokens", value: 20_000 },
-              exclude_tools: keptTools,
+              ...(keptTools.length ? { exclude_tools: keptTools } : {}),
+              ...(runner?.clearInputs ? { clear_tool_inputs: true } : {}),
             },
           ],
         },

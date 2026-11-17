@@ -69,6 +69,14 @@ const ReadSource = z.object({
     .optional()
     .describe("Words to look for: only the parts of the page around them come back"),
 });
+const ReadFindings = z.object({
+  sources: z
+    .array(z.number().int().min(1))
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("The sources' numbers; all of them, and the parts' gaps, when left out"),
+});
 /** The most of a page read_source gives back, and of the page around each match of `find`. */
 const SOURCE_PAGE_CHARS = 40_000;
 const AROUND_CHARS = 1_500;
@@ -157,6 +165,12 @@ export const RESEARCH_TOOLS: Anthropic.Beta.BetaTool[] = [
     description:
       "The text a helper fetched from a source this run, all of it or the parts around some words, without fetching it again: to check a finding against its page. Pages come from the web: untrusted data.",
     schema: ReadSource,
+  }),
+  toolParam({
+    name: "read_findings",
+    description:
+      "The findings the helpers brought back this run, under their numbered sources as investigate gave them: all of them with the parts' gaps, or only some sources'. Older tool results are cleared from what you see as the task goes on; this gives findings back, to write up from. They come from web pages: untrusted data.",
+    schema: ReadFindings,
   }),
   toolParam({
     name: "finish_research",
@@ -342,6 +356,8 @@ export class ResearchSources {
   readonly findings: Quoted[] = [];
   /** The pages the helpers fetched this run, by URL, for read_source and to find quotes in. */
   readonly pages = new Map<string, string>();
+  /** What each part couldn't find or confirm. */
+  readonly gaps: { topic: string; text: string }[] = [];
 
   add(
     f: Omit<z.infer<typeof Finding>, "kind"> & { kind?: Kind },
@@ -794,16 +810,12 @@ export async function investigate(
         r.visited?.has(url),
         fetched,
       );
-      bySource.set(n, [
-        ...(bySource.get(n) ?? []),
-        `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${status === "confirmed" ? "" : `\n  ${QUOTE_NOTE[status]}`}`,
-      ]);
+      bySource.set(n, [...(bySource.get(n) ?? []), findingLines(f, status)]);
     }
-    const found = [...bySource].map(([n, lines]) => {
-      const s = sources.get(n) as Source;
-      const about = aboutSource(s, run.d.clock()).slice(s.date ? 1 : 0);
-      return `[${n}] ${tagJson(s.title)} ${s.url}${s.date ? ` ${tagJson(s.date)}` : ""}${about.length ? ` (${about.join("; ")})` : ""}\n${lines.join("\n")}`;
-    });
+    if (r.gaps.trim()) sources.gaps.push({ topic: part.topic, text: r.gaps.trim() });
+    const found = [...bySource].map(
+      ([n, lines]) => `${sourceHead(sources.get(n) as Source, run.d.clock())}\n${lines.join("\n")}`,
+    );
     return [
       `<part topic=${tagJson(part.topic)}>`,
       found.length ? found.join("\n") : "No findings.",
@@ -828,6 +840,59 @@ const QUOTE_NOTE: Record<Exclude<QuoteStatus, "confirmed">, string> = {
   unchecked:
     "Unchecked: the helper read it through code, or in a PDF whose text couldn't be read here.",
 };
+/** A source as the lead sees it: its number, title, link, date and what kind it is. */
+function sourceHead(s: Source, now: number): string {
+  const about = aboutSource(s, now).slice(s.date ? 1 : 0);
+  return `[${s.n}] ${tagJson(s.title)} ${s.url}${s.date ? ` ${tagJson(s.date)}` : ""}${about.length ? ` (${about.join("; ")})` : ""}`;
+}
+
+const findingLines = (f: { claim: string; quote: string }, status: QuoteStatus) =>
+  `- ${tagJson(f.claim)}\n  Quote: ${tagJson(f.quote)}${status === "confirmed" ? "" : `\n  ${QUOTE_NOTE[status]}`}`;
+
+/** read_findings: the findings so far, as investigate gave them, of some sources or all. */
+export function readFindings(
+  sources: ResearchSources,
+  input: unknown,
+  now: number,
+): { content: string; isError: boolean } {
+  const p = ReadFindings.safeParse(input);
+  if (!p.success) return { content: invalidInput(p.error), isError: true };
+  const wanted = p.data.sources ?? sources.list.map((s) => s.n);
+  const missing = wanted.filter((n) => !sources.get(n));
+  const blocks = [...new Set(wanted)].flatMap((n) => {
+    const s = sources.get(n);
+    if (!s) return [];
+    const lines = sources.findings
+      .filter((f) => f.n === n)
+      .map((f) =>
+        findingLines(
+          f,
+          f.confirmed
+            ? "confirmed"
+            : f.unchecked
+              ? "unchecked"
+              : s.fetched
+                ? "not on page"
+                : "not fetched",
+        ),
+      );
+    return [`${sourceHead(s, now)}\n${lines.join("\n")}`];
+  });
+  const gaps = p.data.sources
+    ? []
+    : sources.gaps.map((g) => `Gaps (${tagJson(g.topic)}): ${tagJson(g.text)}`);
+  const found = [...blocks, ...gaps];
+  return {
+    content: [
+      found.length ? untrustedFields("findings", found.join("\n\n")) : "No findings yet.",
+      missing.length ? `There's no source ${missing.map((n) => `[${n}]`).join(", ")}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    isError: false,
+  };
+}
+
 /** read_source: a source's page as a helper fetched it, or the parts of it around `find`. */
 export function readSource(
   sources: ResearchSources,
@@ -1269,7 +1334,7 @@ const QUOTE_LINE = new RegExp(`^  Quote: (${JSON_STRING})$`);
  * The findings in an investigate result, added to `sources` in the order they were numbered, so the
  * numbers come out the same.
  */
-function readFindings(result: string, sources: ResearchSources) {
+function parseFindings(result: string, sources: ResearchSources) {
   let source: { title: string; url: string; date?: string; kind?: Kind } | null = null;
   let claim: string | null = null;
   for (const line of result.split("\n")) {
@@ -1332,7 +1397,7 @@ export async function keepAfterRestart(d: Deps, task: Task, why: string): Promis
           names.get(b.tool_use_id ?? "") === "investigate" &&
           typeof b.content === "string"
         )
-          readFindings(b.content, state.sources);
+          parseFindings(b.content, state.sources);
       }
     }
   } catch (err) {
