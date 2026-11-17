@@ -603,8 +603,6 @@ test("a listing task that published but recorded no address tells Scout it may h
   const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
   const scout = await withScout(t, [flip({ channels: { OLX: "ready" } })]);
   addPage(t, { "olx.pl": OLX_ADD });
-  // Opus doesn't take over the failed task.
-  t.settings.update({ desktopEscalate: false });
   await t.listings.tick();
   await waitFor(() => scout.calls("scout_flip_listed").length === 1);
   expect(scout.calls("scout_flip_listed")[0]).toMatchObject({ status: "failed" });
@@ -717,7 +715,6 @@ test("a take-down task stays on the marketplace and posts nothing, and one that 
   const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
   const scout = await withScout(t, [sold()]);
   listingPage(t);
-  t.settings.update({ desktopEscalate: false });
   await t.listings.tick();
   await waitFor(() => t.thread.list().some((m) => m.text.includes("Take it down yourself")));
   await t.tasks.idle();

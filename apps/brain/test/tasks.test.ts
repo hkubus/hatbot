@@ -668,6 +668,26 @@ test("a Haiku desktop task out of steps carries on, once, on Opus; one its budge
   expect(broke.requests).toHaveLength(0);
 });
 
+test("a desktop task Haiku finishes as failed isn't tried again on Opus", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")] },
+    {
+      content: [
+        toolUse("finish_task", { outcome: "failed", summary: "The restaurant is closed." }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({
+    status: "failed",
+    summary: "The restaurant is closed.",
+    model: "claude-haiku-5-5",
+  });
+  expect(work.requests.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-haiku-5-5"]);
+});
+
 test("cancelling a task cancels the desktop task it started, which then does nothing more", async () => {
   let release = () => {};
   const gate = new Promise<void>((resolve) => {

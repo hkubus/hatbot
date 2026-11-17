@@ -1777,13 +1777,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         );
       if (finished) {
         const prefix = finished.outcome === "blocked" ? "Blocked: " : "";
-        // Blocked is a login or captcha: the expert model can't get past it either.
-        throw new Stop(
-          finished.outcome === "done" ? "done" : "failed",
-          prefix + finished.summary,
-          true,
-          finished.outcome === "failed" && { account: "" },
-        );
+        // A model that says it can't be done has looked (a closed shop, a conversation that isn't
+        // there): the expert model would only find the same, at many times the cost.
+        throw new Stop(finished.outcome === "done" ? "done" : "failed", prefix + finished.summary);
       }
       if (signal.aborted) {
         record("user", results);
