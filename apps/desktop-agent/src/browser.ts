@@ -28,7 +28,7 @@ import { webp } from "./x11";
 
 const CDP = process.env.HATBOT_CDP ?? "http://127.0.0.1:9222";
 const COMMAND_TIMEOUT_MS = 30_000;
-const MAX_READ_CHARS = 50_000;
+const MAX_READ_CHARS = 20_000;
 
 /** A failure the model should read: becomes an error result. */
 export class BrowserError extends Error {}
@@ -1007,7 +1007,7 @@ export class Browser {
     const r = await this.run<{ lines: string[]; next: number; truncated: boolean; error?: string }>(
       targetId,
       READ_PAGE,
-      { ...opts, next, maxChars: MAX_READ_CHARS },
+      { maxChars: MAX_READ_CHARS, ...opts, next },
     );
     if (r.error) throw new BrowserError(r.error);
     this.nextRef.set(targetId, r.next);
@@ -1171,7 +1171,8 @@ export class Browser {
       case "find": {
         const query = String(input.query ?? "").trim();
         if (!query) throw new BrowserError("query must describe the element to find.");
-        const r = await this.read(tab(), { find: true, depth: 50 });
+        // It answers with 20 lines, so it can look through more than a read shows.
+        const r = await this.read(tab(), { find: true, depth: 50, maxChars: 50_000 });
         const words = query
           .toLowerCase()
           .split(/[^\p{L}\p{N}]+/u)

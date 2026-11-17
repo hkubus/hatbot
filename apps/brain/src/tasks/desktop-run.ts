@@ -1684,13 +1684,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     thinking: thinkingFor(model),
     output_config: { effort: "medium" },
     // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
+    // It clears well before 100k input tokens, past which Haiku charges five times as much; it keeps 8
+    // because a turn batches up to that many calls, and one cleared before the model saw it is lost.
     context_management: {
       edits: [
         {
           type: "clear_tool_uses_20250919",
-          trigger: { type: "input_tokens", value: 80_000 },
+          trigger: { type: "input_tokens", value: 60_000 },
           keep: { type: "tool_uses", value: 8 },
-          clear_at_least: { type: "input_tokens", value: 30_000 },
+          clear_at_least: { type: "input_tokens", value: 15_000 },
           exclude_tools: ["confirm_intent", "request_takeover", "finish_task"],
         },
       ],
