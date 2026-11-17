@@ -94,3 +94,39 @@ test("a tidy-up whose stream failed partway is billed for that try too", async (
     .all();
   expect(rows.map((r) => r.input_tokens)).toEqual([5000, 1000]);
 });
+
+test("a tidy-up reads the root notes first, and sees a long research report only as its path and first line", async () => {
+  const t = await testApp();
+  const { cookie } = signIn(t);
+  const report = "bots/researcher/research/2026-11-01-quiet-nas.md";
+  await t.memory.writeAll(
+    [
+      {
+        path: report,
+        content: `# Quiet NAS for four drives\n${"Found on the web. ".repeat(10_500)}`,
+      },
+      {
+        path: "homelab.md",
+        content: `# Homelab\nNAS at 192.168.55.110.\n${"- a disk\n".repeat(2000)}`,
+      },
+    ],
+    HATBOT,
+    "Notes",
+  );
+  answers(t, (p) => {
+    const sent = JSON.stringify(p.messages);
+    expect(sent).toContain("NAS at 192.168.55.110.");
+    expect(sent).toContain(`${report}: # Quiet NAS for four drives`);
+    expect(sent).not.toContain("Found on the web.");
+    return JSON.stringify({
+      title: "Tidy the NAS notes",
+      reason: "Shorter.",
+      changes: [
+        { path: "homelab.md", content: "# Homelab\nNAS: 192.168.55.110\n" },
+        { path: report, delete: true },
+      ],
+    });
+  });
+  const p = await tidy(t, cookie);
+  expect(p.changes.map((c) => c.path)).toEqual(["homelab.md"]);
+});

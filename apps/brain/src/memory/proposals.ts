@@ -1,5 +1,5 @@
 import { transformJSONSchema } from "@anthropic-ai/sdk/lib/transform-json-schema";
-import { fixedTokens, modelErrorText, type Notifier } from "@hatbot/plugin-sdk";
+import { clip, fixedTokens, modelErrorText, type Notifier } from "@hatbot/plugin-sdk";
 import { lastDue, type Proposal, type SkillStatus } from "@hatbot/shared";
 import { z } from "zod";
 import type { ModelClient } from "../agent/model";
@@ -15,6 +15,10 @@ import { MemoryConflict, type MemoryStore } from "./store";
 const TIDY_KEY = "tidy:last";
 /** Memory larger than this is tidied in part: the files that fit. */
 const MAX_INPUT_CHARS = 200_000;
+/** Research reports and logs: long, written from the web or only ever added to. */
+const LISTED_ONLY = /^(bots\/[^/]+\/)?(research|journal)\/|log\.md$/;
+/** The notes everything reads come first, the bots' own last, so length cuts the least shared. */
+const tidyOrder = (path: string) => (!path.includes("/") ? 0 : path.startsWith("bots/") ? 2 : 1);
 
 export class ProposalError extends UserError {}
 
@@ -175,10 +179,17 @@ export class Proposals {
     try {
       const files: string[] = [];
       let size = 0;
+      const listed: { path: string; first: string }[] = [];
       const left: string[] = [];
-      for (const f of await this.d.memory.tree()) {
-        if (f.path.startsWith("skills/")) continue;
+      const tree = (await this.d.memory.tree())
+        .filter((f) => !f.path.startsWith("skills/"))
+        .sort((a, b) => tidyOrder(a.path) - tidyOrder(b.path) || a.path.localeCompare(b.path));
+      for (const f of tree) {
         const content = await this.d.memory.read(f.path);
+        if (LISTED_ONLY.test(f.path)) {
+          listed.push({ path: f.path, first: clip(content.trim().split("\n")[0] ?? "", 200) });
+          continue;
+        }
         if (size + content.length > MAX_INPUT_CHARS) {
           left.push(f.path);
           continue;
@@ -186,14 +197,21 @@ export class Proposals {
         size += content.length;
         files.push(`<file path="${f.path}">\n${content}\n</file>`);
       }
-      const note = left.length
-        ? `\n\nLeft out for length, so don't touch or index-remove them: ${left.join(", ")}`
-        : "";
+      const note = [
+        listed.length
+          ? `\n\nReports and logs, by path and first line only: index them from these, but don't change or delete them.\n${listed.map((l) => `- ${l.path}: ${l.first}`).join("\n")}`
+          : "",
+        left.length
+          ? `\n\nLeft out for length, so don't touch or index-remove them: ${left.join(", ")}`
+          : "",
+      ].join("");
       const out = await this.ask(TIDY_PROMPT, `${files.join("\n\n")}${note}`, "tidy");
+      const unread = new Set([...left, ...listed.map((l) => l.path)]);
       // Skills are changed through their own fixes, by whatever path: notes/../skills/x.md too.
-      const changes = out.changes.filter(
-        (c) => !this.d.memory.resolve(c.path).rel.startsWith("skills/"),
-      );
+      const changes = out.changes.filter((c) => {
+        const { rel } = this.d.memory.resolve(c.path);
+        return !rel.startsWith("skills/") && !unread.has(rel);
+      });
       return await this.store("tidy", out.title, out.reason, changes, null);
     } finally {
       this.tidying = false;
