@@ -204,14 +204,20 @@ test("the destructive check: what loses data, stops things or lets someone in as
     "journalctl -u docker > /dev/null",
     "cat /etc/passwd | cut -d: -f1",
     "apt list --upgradable 2>/dev/null | wc -l",
-    // Only says a reboot is due.
+    // Only says a reboot is due, and what echo prints.
     "cat /var/run/reboot-required",
+    'sudo -n -l 2>&1 | head -n 30; echo "--- reboot flag:"; ls -l /var/run/reboot-required 2>&1',
     // A service's user, who can't log in.
     "getent passwd minecraft || sudo -n useradd --system --shell /usr/sbin/nologin --home /opt/mc minecraft",
     "useradd -r -M -s /bin/false -d /srv/x x",
   ])
     expect(destructive(cmd), cmd).toBeNull();
-  for (const cmd of ["/sbin/reboot", "systemctl start reboot.target", "init 6"])
+  for (const cmd of [
+    "/sbin/reboot",
+    "systemctl start reboot.target",
+    "init 6",
+    "echo 'reboot' | xargs sudo -n",
+  ])
     expect(destructive(cmd), cmd).not.toBeNull();
   // Accounts and keys, wherever they are; ~/.ssh/rc runs at every login.
   for (const cmd of [

@@ -295,11 +295,26 @@ export function destructive(
   command: string,
   where: "host" | "container" = "host",
 ): { why: string; kind: ApprovalKind } | null {
+  const text = sansPrinted(command);
   for (const r of RULES)
-    if (!(r.host && where === "container") && r.re.test(command) && !r.unless?.(command))
+    if (!(r.host && where === "container") && r.re.test(text) && !r.unless?.(command))
       return { why: r.why.replace("{where}", `the ${where}`), kind: r.kind ?? "other" };
   return null;
 }
+
+/**
+ * The line with the quoted words echo and printf only print emptied (echo "--- reboot flag:"), unless
+ * their output goes on to a pipe or the line runs what it builds.
+ */
+function sansPrinted(line: string): string {
+  if (/\$\(|`|\beval\b/.test(line)) return line;
+  return line.replace(
+    PRINTED,
+    (_, before: string, cmd: string) => `${before}${cmd.replace(/'[^']*'|"[^"]*"/g, "''")}`,
+  );
+}
+const PRINTED =
+  /(^|[;\n]|&&|\|\|)(\s*(?:echo|printf)(?:\s+(?:'[^']*'|"[^"$`\\]*"|[^\s'"|;&<>()$`\\]+))*\s*)(?=$|[;\n]|&&|\|\|)/g;
 
 /** Commands that only read accounts and public keys: getent passwd, cat ~/.ssh/authorized_keys. */
 const ACCOUNT_READERS = new Set([
