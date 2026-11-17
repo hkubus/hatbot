@@ -401,7 +401,7 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
         },
         prompt: {
           chat: `- Scripts are steps you save once that run without a model: from the chat (script_run), a schedule, a watcher or a webhook. Their tools load when you need them: find them with tool_search_tool_regex ("script_"). When the owner asks for something one of your scripts does, run it rather than doing it by hand; when they ask for the same thing again and again, offer to save it as one.`,
-          task: `- A script (script_run) does its fixed steps without a model: use one of yours when it does what this task needs.`,
+          task: `- A script (script_run) does its fixed steps without a model: use one of yours when it does what this task needs. Its tools load when you need them: find them with tool_search_tool_regex ("script_").`,
         },
         stop: unlisten,
       });

@@ -41,9 +41,11 @@ import {
   liveTool,
   missingSkill,
   NeedsYou,
+  offeredToolParam,
   serverToolWaiting,
   startEarly,
   ThreadOpenInput,
+  TOOL_SEARCH,
   type ToolImage,
   toolParam,
   WEB_TOOLS,
@@ -347,8 +349,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       onlyLooks: runner?.onlyLooks,
     });
   };
-  const tools = [
-    ...[...pluginTools.values()].map(toolParam),
+  const tools: Anthropic.Beta.BetaToolUnion[] = [
+    // One its goal names is loaded: a negotiation's follow-up names negotiate_send.
+    ...[...pluginTools.values()].map((t) => offeredToolParam(t, offer, task.goal.includes(t.name))),
     ...LOOP_TOOLS.filter(
       (t) =>
         (others.length || t.name !== "ask_bot") &&
@@ -358,10 +361,16 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(runner?.tools ?? []),
     ...(runner?.webTools ?? WEB_TOOLS),
   ];
+  if (tools.some((t) => "defer_loading" in t && t.defer_loading)) tools.push(TOOL_SEARCH);
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   const runnerTools = new Set((runner?.tools ?? []).flatMap((t) => ("name" in t ? [t.name] : [])));
-  /** Results never cleared: a research task's findings are what it cites. */
-  const keptTools = ["finish_task", ...runnerTools].filter((n) => sent.has(n));
+  /**
+   * Results never cleared: a research task's findings are what it cites, and a search's are what
+   * loaded the tools it found.
+   */
+  const keptTools = ["finish_task", ...runnerTools, "tool_search_tool_regex"].filter((n) =>
+    sent.has(n),
+  );
   const left = d.bots.leftToOthers(bot);
   const guidance = d.plugins.guidance(bot.plugins, left);
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));

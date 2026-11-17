@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
-import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
+import type { CallContext, Offer, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   botFolder,
   clip,
@@ -898,10 +898,15 @@ export const TOOL_SEARCH: Anthropic.Beta.BetaToolUnion = {
 
 /**
  * A deferred tool loads only when the model searches for it: about a third of the chat prompt's
- * tokens, paid on every cold cache, for things most conversations never touch.
+ * tokens, paid on every cold cache, for things most conversations never touch. Research has no tool
+ * search, so it loads them all.
  */
-export const chatToolParam = (t: PluginTool): Anthropic.Beta.BetaTool =>
-  t.deferred ? { ...toolParam(t), defer_loading: true } : toolParam(t);
+export const deferredIn = (t: PluginTool, o: Offer) =>
+  o.place !== "research" &&
+  (typeof t.deferred === "function" ? t.deferred(o) : Boolean(t.deferred));
+
+export const offeredToolParam = (t: PluginTool, o: Offer, load = false): Anthropic.Beta.BetaTool =>
+  !load && deferredIn(t, o) ? { ...toolParam(t), defer_loading: true } : toolParam(t);
 
 type Ran = { content: string; isError: boolean; untrusted?: boolean; images?: ToolImage[] };
 

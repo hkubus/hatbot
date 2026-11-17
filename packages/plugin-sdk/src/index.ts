@@ -208,8 +208,11 @@ export type PluginTool<I = unknown> = {
   places?: Place[];
   /** Offered in an incognito conversation; without it, a read is. */
   incognito?: boolean;
-  /** In the chat, loaded only when the model looks for it, to keep the prompt short. */
-  deferred?: boolean;
+  /**
+   * In the chat and tasks, loaded only when the model looks for it, to keep the prompt short. A
+   * function decides it for each bot.
+   */
+  deferred?: boolean | ((o: Offer) => boolean);
   /** Offered only when this says so. */
   when?: (o: Offer) => boolean;
   /** Its output isn't cut short. */

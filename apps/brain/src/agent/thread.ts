@@ -89,12 +89,12 @@ import {
 import {
   addSources,
   CHAT_WEB_TOOLS,
-  chatToolParam,
   containerOf,
   imageBlocks,
   inBatches,
   invalidInput,
   liveTool,
+  offeredToolParam,
   runOffered,
   startEarly,
   TOOL_SEARCH,
@@ -939,7 +939,7 @@ export class Thread {
     const expert = settings.get().expertModel;
     const asksExpert = chatModel !== expert;
     const tools = [
-      ...pluginTools.map(chatToolParam),
+      ...pluginTools.map((t) => offeredToolParam(t, offer)),
       ASK_OWNER,
       TOOL_SEARCH,
       ...(asksExpert ? [askExpert(modelName(expert))] : []),
