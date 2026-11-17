@@ -149,6 +149,29 @@ export const FinishResearch = z.object({
 });
 export type ResearchResult = z.infer<typeof FinishResearch>;
 
+const FixReport = z.object({
+  edits: z
+    .array(
+      z.object({
+        find: z
+          .string()
+          .min(1)
+          .max(2000)
+          .describe(
+            "Words in the answer, report or unverified list you last sent, exactly as written, found there once",
+          ),
+        replace: z.string().max(4000).describe("What they become; empty removes them"),
+      }),
+    )
+    .min(1)
+    .max(40),
+  unverified: z
+    .string()
+    .max(3000)
+    .optional()
+    .describe("Lines added at the end of unverified: what you dropped, with why"),
+});
+
 /** The task loop's tools research keeps: the desktop for pages that need a browser, other bots, and questions to the owner. */
 export const RESEARCH_LOOP_TOOLS = ["run_desktop_task", "ask_bot", "ask_owner"];
 
@@ -175,8 +198,14 @@ export const RESEARCH_TOOLS: Anthropic.Beta.BetaTool[] = [
   toolParam({
     name: "finish_research",
     description:
-      "End the research with the answer for the chat and the full report, citing sources as [n]. First, what you cite as [n] is checked against the quotes the helpers copied from those pages (confirmed and unchecked ones, not unconfirmed), and numbers without a citation are listed; a problem comes back to fix. Call it once.",
+      "End the research with the answer for the chat and the full report, citing sources as [n]. First, what you cite as [n] is checked against the quotes the helpers copied from those pages (confirmed and unchecked ones, not unconfirmed) and the sources' dates, and numbers without a citation are listed; a problem comes back to fix with fix_report. Call it once.",
     schema: FinishResearch,
+  }),
+  toolParam({
+    name: "fix_report",
+    description:
+      "After finish_research sent the report back: change only what needs it, without writing the report again. Each edit replaces words in the answer, report or unverified list you last sent, found there exactly once; none is made if one isn't found. Then it finishes as finish_research does.",
+    schema: FixReport,
   }),
 ];
 
@@ -938,6 +967,8 @@ export function readSource(
 /** Citations like [3] or [2, 5], outside code; not a link's text, nor one already linked. */
 const CITE = /(?<!\[)\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\](?![(\]])/g;
 const numbersIn = (match: string) => match.match(/\d+/g)?.map(Number) ?? [];
+/** A citation with words in it, like [35, unchecked]: it isn't read as one. */
+const WORDY_CITE = /(?<!\[)\[\d{1,3}(?:\s*,\s*\d{1,3})*\s*[,;:]\s*[^\]\d\s][^\]\n]*\](?![(\]])/g;
 
 function outsideCode(text: string, fn: (part: string) => string): string {
   return text
@@ -984,8 +1015,12 @@ const CHECK_SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { text: { type: "string" }, why: { type: "string" } },
-        required: ["text", "why"],
+        properties: {
+          text: { type: "string" },
+          why: { type: "string" },
+          supported: { type: "boolean" },
+        },
+        required: ["text", "why", "supported"],
         additionalProperties: false,
       },
     },
@@ -1010,7 +1045,8 @@ function evidenceFor(sources: ResearchSources, cited: number[]): string {
   const blocks: string[] = [];
   const left: number[] = [];
   for (const n of cited) {
-    const lines = [`[${n}] ${tagJson((sources.get(n) as Source).title)}`];
+    const s = sources.get(n) as Source;
+    const lines = [`[${n}] ${tagJson(s.title)}${s.date ? `, dated ${tagJson(s.date)}` : ""}`];
     let size = lines[0]?.length ?? 0;
     for (const f of sources.findings) {
       const line = `- ${tagJson(f.quote)}`;
@@ -1050,6 +1086,7 @@ async function checkReport(
     untrustedFields("question", run.task.goal),
     untrustedFields("sources", evidenceFor(sources, cited)),
     `<report>\n${text}\n</report>`,
+    `The research was done on ${dayOf(d.clock())}.`,
   ].join("\n\n");
   const { id } = run.task;
   try {
@@ -1074,9 +1111,10 @@ async function checkReport(
     }
     if (!Array.isArray(json.problems)) return { failed: "the check gave no verdict" };
     return {
+      // It sometimes lists what it found supported, too.
       problems: json.problems
-        .flatMap((p: { text?: unknown; why?: unknown }) =>
-          typeof p?.text === "string"
+        .flatMap((p: { text?: unknown; why?: unknown; supported?: unknown }) =>
+          typeof p?.text === "string" && p.supported !== true
             ? [{ text: p.text.slice(0, 200), why: String(p.why ?? "").slice(0, 300) }]
             : [],
         )
@@ -1094,6 +1132,39 @@ const slugOf = (title: string) => slugWords(title).slice(0, 60).replace(/-+$/, "
 
 /** The owner's date, YYYY-MM-DD. */
 const dayOf = (ms: number) => new Date(ms).toLocaleDateString("sv-SE");
+
+/** fix_report: the last report with its edits made, each found once in it, or why none was. */
+export function fixedDraft(
+  draft: ResearchResult | null,
+  input: unknown,
+): { result: ResearchResult } | { error: string } {
+  const p = FixReport.safeParse(input);
+  if (!p.success) return { error: invalidInput(p.error) };
+  if (!draft) return { error: "There's no report to fix yet: write it with finish_research." };
+  const fields = { answer: draft.answer, report: draft.report, unverified: draft.unverified };
+  const keys = ["answer", "report", "unverified"] as const;
+  const wrong: string[] = [];
+  for (const { find, replace } of p.data.edits) {
+    const counts = keys.map((k) => fields[k].split(find).length - 1);
+    const times = counts.reduce((a, b) => a + b, 0);
+    const k = keys[counts.findIndex((c) => c > 0)];
+    if (times === 1 && k) fields[k] = fields[k].replace(find, () => replace);
+    else
+      wrong.push(
+        times
+          ? `${tagJson(find)} is in it ${times} times: add words around it.`
+          : `${tagJson(find)} isn't in it.`,
+      );
+  }
+  if (wrong.length) return { error: `Nothing changed. ${wrong.join(" ")}` };
+  if (p.data.unverified?.trim())
+    fields.unverified = [fields.unverified.trim(), p.data.unverified.trim()]
+      .filter(Boolean)
+      .join("\n");
+  const result = FinishResearch.safeParse({ ...draft, ...fields });
+  if (!result.success) return { error: `Nothing changed: ${invalidInput(result.error)}` };
+  return { result: result.data };
+}
 
 /**
  * finish_research: checks the report (citations that aren't sources each time, and once what its
@@ -1120,6 +1191,16 @@ export async function finishResearch(
   // Citations that aren't sources go back every time; the rest is checked on the first report
   // that's done, not on a failed one before it or one that cites no source yet.
   const unknown = citedIn(all).filter((n) => !sources.get(n));
+  const wordy = new Set<string>();
+  for (const text of all)
+    outsideCode(text, (part) => {
+      for (const m of part.matchAll(WORDY_CITE)) wordy.add(m[0]);
+      return part;
+    });
+  if (wordy.size)
+    return {
+      retry: `Not finished: citations hold only source numbers, like [3] or [2, 5]; these don't: ${[...wordy].join(", ")}. Say the rest in the text, then call finish_research or fix_report again.`,
+    };
   const check =
     state.checked || result.outcome !== "done"
       ? null
@@ -1166,7 +1247,7 @@ export async function finishResearch(
               ),
             ]
           : []),
-        "Look at each against its source (fetch it again if you need to): correct it if the source says otherwise, cite a finding that says it, or drop it if you can't confirm it. Then call finish_research again.",
+        "Look at each against its source (read_source shows the page): correct it if the source says otherwise, cite a finding whose quote says it, or drop it if you can't confirm it. Then change just those with fix_report.",
       ].join("\n"),
     };
   }
@@ -1391,6 +1472,8 @@ export async function keepAfterRestart(d: Deps, task: Task, why: string): Promis
           names.set(b.id, b.name);
           const draft = b.name === "finish_research" ? FinishResearch.safeParse(b.input) : null;
           if (draft?.success) state.draft = draft.data;
+          const fixed = b.name === "fix_report" ? fixedDraft(state.draft, b.input) : null;
+          if (fixed && "result" in fixed) state.draft = fixed.result;
         }
         if (
           b.type === "tool_result" &&

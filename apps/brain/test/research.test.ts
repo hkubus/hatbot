@@ -181,7 +181,7 @@ test("research runs on Haiku with helpers on the web, checks its numbers, and sa
   // The check reads the question and the confirmed quotes only, as data.
   const check = work.creates.find((c) => c.system === RESEARCH_CHECK_PROMPT);
   expect(String(check?.messages[0]?.content)).toStartWith(
-    '<question trusted="false">\nWhich quiet four-bay NAS should I buy, under 3,000 zł?\n</question>\n\n<sources trusted="false">\n[2] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[1] "DS925+ specifications"\n- "Noise level: 22.4 dB(A)"\n</sources>',
+    '<question trusted="false">\nWhich quiet four-bay NAS should I buy, under 3,000 zł?\n</question>\n\n<sources trusted="false">\n[2] "Synology DS925+ | x-kom"\n- "Synology DS925+ 2 399,00 zł"\n\n[1] "DS925+ specifications", dated "2026-04"\n- "Noise level: 22.4 dB(A)"\n</sources>',
   );
 
   // Renumbered as first cited, as links; saved in memory and attached.
@@ -223,6 +223,7 @@ test("the check runs once, on a finish it can check; citations that aren't sourc
       ],
     },
     finish("It's quiet [7].", "Report [7]."),
+    finish("It's quiet [1, unchecked].", "Report [1]."),
     finish("It's **19 dB** [1], see [8].", "Report [1]."),
     finish("It's **19 dB** [1].", "Report [1]."),
     finish("It's **22.4 dB(A)** [1].", "Report [1]."),
@@ -233,21 +234,66 @@ test("the check runs once, on a finish it can check; citations that aren't sourc
     if (p.system !== RESEARCH_CHECK_PROMPT) return undefined;
     // The first check fails, and doesn't count; the second runs.
     if (++checks === 1) throw new Error("overloaded");
-    return '{"problems": [{"text": "It\'s **19 dB** [1]", "why": "The quote says 22.4 dB(A)."}]}';
+    return '{"problems": [{"text": "It\'s **19 dB** [1]", "why": "The quote says 22.4 dB(A).", "supported": false}, {"text": "Report [1].", "why": "Consistent.", "supported": true}]}';
   };
   const { t, task } = await research(work);
   const leads = work.requests.filter((r) => !isHelper(r));
   expect(resultsIn(leads[2])).toContain("These citations aren't source numbers: [9].");
   expect(resultsIn(leads[3])).toContain("These citations aren't source numbers: [7].");
-  expect(resultsIn(leads[4])).toContain("These citations aren't source numbers: [8].");
-  // What the checker says, having read untrusted quotes, comes back as data.
-  expect(resultsIn(leads[5])).toContain(
+  // A citation with words in it isn't read as one: it goes back before any check.
+  expect(resultsIn(leads[4])).toContain("[1, unchecked]");
+  expect(resultsIn(leads[5])).toContain("These citations aren't source numbers: [8].");
+  // What the checker says, having read untrusted quotes, comes back as data, without what it found supported.
+  expect(resultsIn(leads[6])).toContain(
     '<check trusted="false">\n- "It\'s **19 dB** [1]": "The quote says 22.4 dB(A)."\n</check>',
   );
   expect(checks).toBe(2);
   expect(task.status).toBe("done");
   expect(task.summary).toStartWith("It's **22.4 dB(A)** [[1]]");
   expect(await t.memory.read(task.reportPath as string)).not.toContain("wasn't checked");
+});
+
+test("a report the check sends back is fixed where it's wrong, without writing it again", async () => {
+  const fix = (edits: { find: string; replace: string }[], unverified?: string) => ({
+    content: [toolUse("fix_report", { edits, ...(unverified ? { unverified } : {}) })],
+  });
+  const work = new FakeModel([
+    INVESTIGATE,
+    finish(
+      "Quiet: **19 dB** [1].",
+      "## Noise\n\nIt runs at **19 dB** [1]. It costs **2,399 zł** [2].",
+    ),
+    // Words found twice, or not at all: nothing changes.
+    fix([
+      { find: "**19 dB** [1]", replace: "**22.4 dB(A)** [1]" },
+      { find: "18 dB", replace: "17 dB" },
+    ]),
+    fix(
+      [
+        { find: "Quiet: **19 dB** [1]", replace: "Quiet: **22.4 dB(A)** [1]" },
+        { find: "runs at **19 dB** [1]", replace: "runs at **22.4 dB(A)** [1]" },
+      ],
+      "- 19 dB: no source says it.",
+    ),
+  ]);
+  helpers(work);
+  let checks = 0;
+  work.onCreate = (p) => {
+    if (p.system !== RESEARCH_CHECK_PROMPT) return undefined;
+    checks++;
+    return '{"problems": [{"text": "**19 dB** [1]", "why": "The quote says 22.4 dB(A).", "supported": false}]}';
+  };
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+
+  const leads = work.requests.filter((r) => !isHelper(r));
+  expect(resultsIn(leads[3])).toStartWith("Nothing changed.");
+  expect(checks).toBe(1);
+  expect(task.summary).toStartWith("Quiet: **22.4 dB(A)** [[1]]");
+  const report = await t.memory.read(task.reportPath as string);
+  expect(report).toContain("It runs at **22.4 dB(A)** [[1]]");
+  expect(report).toContain("It costs **2,399 zł** [[2]]");
+  expect(report).toContain("## Could not verify\n\n- 19 dB: no source says it.");
 });
 
 test("a quote is found in what the helper read, whatever the spaces and number format, but not a number copied wrong", () => {

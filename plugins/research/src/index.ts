@@ -6,6 +6,8 @@ import {
   ENDS_REPLY,
   hosts,
   invalidInput,
+  type RunnerCall,
+  type RunnerResult,
   ready,
   type TaskRunner,
   tool,
@@ -17,6 +19,7 @@ import {
   type Deps,
   FinishResearch,
   finishResearch,
+  fixedDraft,
   investigate,
   keepAfterRestart,
   keepUnfinished,
@@ -27,6 +30,7 @@ import {
   RESEARCH_LOOP_TOOLS,
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
+  type ResearchResult,
   type ResearchRun,
   ResearchState,
   readFindings,
@@ -149,8 +153,19 @@ const researchRunner = (d: Deps): TaskRunner => ({
     const run: ResearchRun = { d, ...r };
     const found = new ResearchState();
     let toldToFinish = false;
-    // A second finish_research in one turn would skip the check the first one got.
+    // A second finish in one turn would skip the check the first one got.
     let finishedIn = -1;
+    const finish = async (report: ResearchResult, c: RunnerCall): Promise<RunnerResult> => {
+      const broken = await c.checkCharts(`${report.answer}\n\n${report.report}`);
+      if (broken)
+        return {
+          content: `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
+          isError: true,
+        };
+      const res = await finishResearch(run, found, report);
+      if ("retry" in res) return { content: res.retry, isError: true };
+      return { finish: { outcome: report.outcome, summary: res.summary, notify: report.notify } };
+    };
     return {
       refuse: (text, who) => refusedLinks(run, found.sources, text, who),
       call: async (name, input, c) => {
@@ -158,19 +173,20 @@ const researchRunner = (d: Deps): TaskRunner => ({
         if (name === "read_source") return readSource(found.sources, input);
         if (name === "read_findings") return readFindings(found.sources, input, d.clock());
         if (finishedIn === c.step)
-          return { content: "Not run: call finish_research once a turn.", isError: true };
-        finishedIn = c.step;
-        const p = FinishResearch.safeParse(input);
-        if (!p.success) return { content: invalidInput(p.error), isError: true };
-        const broken = await c.checkCharts(`${p.data.answer}\n\n${p.data.report}`);
-        if (broken)
           return {
-            content: `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
+            content: "Not run: call finish_research or fix_report once a turn.",
             isError: true,
           };
-        const res = await finishResearch(run, found, p.data);
-        if ("retry" in res) return { content: res.retry, isError: true };
-        return { finish: { outcome: p.data.outcome, summary: res.summary, notify: p.data.notify } };
+        finishedIn = c.step;
+        if (name === "fix_report") {
+          const fixed = fixedDraft(found.draft, input);
+          return "error" in fixed
+            ? { content: fixed.error, isError: true }
+            : finish(fixed.result, c);
+        }
+        const p = FinishResearch.safeParse(input);
+        if (!p.success) return { content: invalidInput(p.error), isError: true };
+        return finish(p.data, c);
       },
       // Near its step cap or its limit, it finishes with what it has rather than stopping short.
       after: ({ stepsLeft, spentUsd, limitUsd }) => {
