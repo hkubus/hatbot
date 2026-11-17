@@ -489,6 +489,21 @@ test("a schedule whose runs make the same calls offers once, in the chat, to run
   expect(t.schedules.get(id)?.scriptId).toBe(s.id);
 });
 
+test("a schedule whose runs make the same one call is offered a script once; a reply's one call isn't", async () => {
+  const check = () => checking("lab_vms");
+  const once = () => [{ content: [toolUse("lab_vms", {})] }, { content: [text("All up.")] }];
+  const work = new FakeModel([...check(), ...check(), ...check(), ...check()]);
+  const chat = new FakeModel([...once(), ...once(), ...once(), ...once()]);
+  const { t, api } = await lab(chat, work);
+  await scheduled(t, api, 4);
+  const told = work.requests.map((r) =>
+    lastText(r).includes("offering to save these steps as a script"),
+  );
+  expect(told).toEqual([false, false, false, false, false, true, false, false]);
+  for (let i = 0; i < 4; i++) await t.thread.post("are the VMs up?").done;
+  expect(chat.requests.some((r) => lastText(r).includes("save it as a script"))).toBe(false);
+});
+
 test("a run that offered a script and then failed hasn't used the offer up", async () => {
   const check = () => checking("lab_vms", "lab_counter");
   const failing = [

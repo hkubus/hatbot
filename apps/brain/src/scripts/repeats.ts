@@ -10,7 +10,6 @@ import type { ScriptStore } from "./store";
 const WINDOW_MS = 30 * 86400_000;
 /** Replies or runs before this one that made the same calls. */
 const SEEN = 2;
-const MIN_CALLS = 2;
 const INPUT_CHARS = 600;
 const CALLS_CHARS = 6000;
 
@@ -21,6 +20,13 @@ export function callsKey(calls: string[]): string {
 
 /** A reply to the owner in the bot's chat, or a run of one of its schedules. */
 export type Doer = { botId: string; scheduleId?: number };
+
+/**
+ * A reply's one call is often another question about the same guest; a schedule's run asks the same
+ * thing each time, so one call that repeats is worth a script.
+ */
+const enough = (key: string, by: Doer) =>
+  (key ? key.split(" ").length : 0) >= (by.scheduleId === undefined ? 2 : 1);
 
 // Rows with offered = 0 are calls made, kept for the window; one with offered = 1 marks the offer,
 // kept so it's made once.
@@ -39,7 +45,7 @@ export class Repeats {
 
   record(by: Doer, calls: string[]) {
     const key = callsKey(calls);
-    if (key.split(" ").length < MIN_CALLS) return;
+    if (!enough(key, by)) return;
     this.db
       .query("INSERT INTO reply_calls (bot_id, schedule_id, calls, at) VALUES (?, ?, ?, ?)")
       .run(by.botId, by.scheduleId ?? null, key, new Date(this.clock()).toISOString());
@@ -76,7 +82,7 @@ export class Repeats {
   /** What to tell the bot, once, when this reply's calls so far are ones it has made before. */
   offer(botId: string, calls: string[]): string | null {
     const key = callsKey(calls);
-    if (key.split(" ").length < MIN_CALLS) return null;
+    if (!enough(key, { botId })) return null;
     const n = this.seen({ botId }, key);
     if (n === null) return null;
     return `(No message from the owner: the app noticed you've made these same calls for the owner ${n + 1} times in the last 30 days: ${key.split(" ").join(", ")}. Answer as usual, then offer in a sentence to save it as a script, which runs those steps without a model whenever they ask, or on a schedule or a watcher. Save it with script_save (find it with tool_search_tool_regex "script_") only if they say yes, with what changes from one time to the next as its inputs.)`;
@@ -85,9 +91,10 @@ export class Repeats {
   /** What to tell a schedule's run, once, when its calls so far are ones the schedule's runs keep making. */
   offerRun(task: Task, calls: string[]): string | null {
     if (task.scheduleId === null) return null;
+    const by = { botId: task.botId, scheduleId: task.scheduleId };
     const key = callsKey(calls);
-    if (key.split(" ").length < MIN_CALLS) return null;
-    const n = this.seen({ botId: task.botId, scheduleId: task.scheduleId }, key, task.id);
+    if (!enough(key, by)) return null;
+    const n = this.seen(by, key, task.id);
     if (n === null) return null;
     return `(No message from the owner: the app noticed this schedule's runs have made these same calls ${n + 1} times in the last 30 days: ${key.split(" ").join(", ")}. Carry on as usual. When you finish, end the summary with a sentence offering to save these steps as a script, which runs them without a model, and switch the schedule to run it. The owner answers in your chat, where it's done; don't save it yourself.)`;
   }
