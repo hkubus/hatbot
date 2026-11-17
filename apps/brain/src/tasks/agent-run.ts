@@ -5,6 +5,7 @@ import {
   localStamp,
   longPdf,
   type PluginTool,
+  type SchedulesService,
   type StreamParams,
   tagJson,
   untrustedBlock,
@@ -380,6 +381,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         plugins,
       });
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
+  // A schedule that runs again within the hour finds the bot's tools and system still cached.
+  const nextRun =
+    task.scheduleId === null
+      ? null
+      : d.plugins.service<SchedulesService>("schedules")?.get(task.scheduleId)?.nextRunAt;
+  const ttl =
+    nextRun && Date.parse(nextRun) - tasks.clock() < 3600_000 ? ({ ttl: "1h" } as const) : {};
   const taint = (source: string) => {
     sources.add(source);
     if (task.tainted) return;
@@ -970,7 +978,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         betas: runner?.betas ? [...BETAS, ...runner.betas] : BETAS,
         // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
         // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
-        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ...ttl } }],
         cache_control: { type: "ephemeral" },
         tools,
         thinking: thinkingFor(task.model),

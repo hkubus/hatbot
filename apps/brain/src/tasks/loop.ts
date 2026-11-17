@@ -49,10 +49,12 @@ export function requestsFor(tasks: Tasks, task: Task, signal: AbortSignal) {
     ceiling(params: Params): number {
       const cached = tasks.clock() - r.cache.at < 5 * 60_000 ? r.cache.tokens : 0;
       const prompt = estimateTokens(params.messages) + fixedTokens(params.system, params.tools);
+      const hour =
+        Array.isArray(params.system) && params.system.some((b) => b.cache_control?.ttl === "1h");
       return requestCeiling(params.model, {
         prompt: Math.max(prompt, cached),
         cached,
-        write: "5m",
+        write: hour ? "1h" : "5m",
         maxTokens: params.max_tokens,
         webSearches: searchesIn(params.tools ?? []),
       });
