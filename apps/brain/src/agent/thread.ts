@@ -2397,7 +2397,7 @@ export class Thread {
                 const most = this.d.settings.get().safety.chatCommands;
                 if (commands > most)
                   return {
-                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command that may change something counts, and a loop is too many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
+                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command that may change something counts, and a loop that may change something is too many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
                     isError: true,
                   };
               }

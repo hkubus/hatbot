@@ -244,18 +244,149 @@ export function destructiveOnWindows(command: string): { why: string; kind: Appr
 
 /**
  * The commands a line runs, for the chat's limit: one, and one more for each further part that may
- * change something; a loop, xargs or find -exec as any number. A look or a line of output (echo ---)
- * between them doesn't count.
+ * change something. Looks don't count, nor a line of output (echo ---) or setting a variable to what
+ * a look prints; a loop, xargs or find -exec counts as what it runs, and as any number if that may
+ * change something.
  */
 export function commandCount(command: string): number {
-  if (
-    /\b(for|while|until)\b[\s\S]*\bdo\b|\b(xargs|parallel)\b|\bfind\b[^|;&]*\s-exec/.test(command)
-  )
-    return Number.POSITIVE_INFINITY;
-  return Math.max(1, partsOf(command).filter((part) => !readOnly(part)).length);
+  return Math.max(1, changesIn(command));
 }
 
-/** A line's parts between ;, &&, || and new lines, outside quotes, brackets and here-documents. */
+function changesIn(line: string): number {
+  let n = 0;
+  const loops: number[] = [];
+  const add = (k: number) => {
+    if (loops.length) loops.push((loops.pop() ?? 0) + k);
+    else n += k;
+  };
+  // What a loop's or a group's output goes through (done | tail -n 5), or the file it reads.
+  const after = (rest: string) => {
+    const r = rest.replace(/^\s*<\s*[\w./-]+/, "").trim();
+    return r ? partCount(`echo ${r}`) : 0;
+  };
+  for (const p of partsOf(line)) {
+    const part = p.replace(/^((then|else|elif|if|do|!|\{)(\s+|$))+/, "");
+    if (/^(for|select)\s/.test(part)) {
+      for (const run of substituted(part).runs) add(changesIn(run));
+      loops.push(0);
+    } else if (/^(while|until)\s/.test(part)) {
+      loops.push(0);
+      add(partCount(part.replace(/^\S+\s+/, "")));
+    } else if (/^done(?![\w.-])/.test(part)) {
+      add(loops.pop() ? Number.POSITIVE_INFINITY : 0);
+      add(after(part.slice(4)));
+    } else if (/^(fi|\})(?![\w.-])/.test(part)) add(after(part.replace(/^(fi|\})/, "")));
+    else if (/^\((?!\()/.test(part)) {
+      const end = closing(part, 0);
+      const inside = changesIn(part.slice(1, end));
+      add(inside === Number.POSITIVE_INFINITY ? inside : Math.min(inside, 1));
+      add(after(part.slice(end + 1)));
+    } else if (part) add(partCount(part));
+  }
+  for (const body of loops) if (body) n = Number.POSITIVE_INFINITY;
+  return n;
+}
+
+/** 0 for a look, 1 for a command that may change something, and any number for xargs or find -exec. */
+function partCount(part: string): number {
+  if (countsAsLook(part)) return 0;
+  const ran = ranBy(part);
+  const left = ran?.runs.every(countsAsLook) ? ran.rest : part;
+  if (left !== part && countsAsLook(left)) return 0;
+  // sh -c 'for …; do …; done' may run anything any number of times.
+  return /\b(for|while|until)\b[\s\S]*\bdo\b|\b(xargs|parallel)\b|\bfind\b[^|;&]*\s-(exec|ok)/.test(
+    left,
+  )
+    ? Number.POSITIVE_INFINITY
+    : 1;
+}
+
+/**
+ * For the count only, also a look: one with quoted variables, as any word, and setting variables
+ * (f=$(find …)) to what looks print.
+ */
+function countsAsLook(part: string): boolean {
+  if (readOnly(part) || looks(part, "any")) return true;
+  const { runs, text } = substituted(part);
+  return (
+    /^([A-Za-z_]\w*=('[^']*'|"[^"`]*"|[^\s'"`;&|<>()])*(\s+|$))+$/.test(text) &&
+    runs.every((run) => changesIn(run) === 0)
+  );
+}
+
+/**
+ * The commands xargs and find -exec in a part run, with what they add as a quoted variable, and the
+ * part without them; null if it has neither.
+ */
+function ranBy(part: string): { runs: string[]; rest: string } | null {
+  const runs: string[] = [];
+  const arg = (cmd: string) => cmd.replace(/(^|\s)\{\}(?=\s|$)/g, '$1"$_"');
+  const rest = part
+    .replace(
+      /\s-(exec|execdir|ok|okdir)\s+(.*?)\s+(\\;|';'|";"|\+)(?=\s|$)/g,
+      (_, _op, cmd: string) => {
+        runs.push(arg(cmd));
+        return "";
+      },
+    )
+    .replace(
+      /(^|\|)\s*xargs((?:\s+(?:-[0rtpx]+|--[\w-]+(?:=\S+)?|-[aEdILnPs]\s*\S+|-[il]\S*))*)(\s+[^|]*)?/g,
+      (_, pipe: string, _opts, cmd = "") => {
+        runs.push(`${arg(cmd.trim() || "echo")} "$_"`);
+        return `${pipe} cat`;
+      },
+    );
+  return runs.length ? { runs, rest } : null;
+}
+
+/** The commands a line's $(…) and `…` run, and the line with each of them as _. */
+function substituted(line: string): { runs: string[]; text: string } {
+  const runs: string[] = [];
+  let text = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i] ?? "";
+    if (c === "\\") {
+      text += line.slice(i, i + 2);
+      i++;
+    } else if (c === "'" && !quoted) {
+      const end = line.indexOf("'", i + 1) >>> 0;
+      text += line.slice(i, end + 1);
+      i = end;
+    } else if (c === '"') {
+      quoted = !quoted;
+      text += c;
+    } else if (c === "`" || (c === "$" && line[i + 1] === "(")) {
+      const end = c === "`" ? line.indexOf("`", i + 1) >>> 0 : closing(line, i + 1);
+      // $((…)) is arithmetic.
+      if (c === "`" || line[i + 2] !== "(") runs.push(line.slice(i + (c === "`" ? 1 : 2), end));
+      text += "_";
+      i = end;
+    } else text += c;
+  }
+  return { runs, text };
+}
+
+/** Where the bracket at `open` closes, outside quotes; the line's end if it doesn't. */
+function closing(line: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < line.length; i++) {
+    const c = line[i];
+    if (c === "\\") i++;
+    else if (c === "'") i = line.indexOf("'", i + 1) >>> 0;
+    else if (c === '"') {
+      i++;
+      while (i < line.length && line[i] !== '"') i += line[i] === "\\" ? 2 : 1;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return line.length;
+}
+
+/**
+ * A line's parts between ;, &&, || and new lines, and before a pipe into a loop, outside quotes,
+ * brackets and here-documents.
+ */
 function partsOf(line: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -279,10 +410,13 @@ function partsOf(line: string): string[] {
     else if (c === ")") depth = Math.max(0, depth - 1);
     else if (
       depth === 0 &&
-      (c === ";" || c === "\n" || ((c === "&" || c === "|") && line[i + 1] === c))
+      (c === ";" ||
+        c === "\n" ||
+        ((c === "&" || c === "|") && line[i + 1] === c) ||
+        (c === "|" && /^\s*(for|while|until)\s/.test(line.slice(i + 1))))
     ) {
       parts.push(line.slice(from, i));
-      if (c === "&" || c === "|") i++;
+      if ((c === "&" || c === "|") && line[i + 1] === c) i++;
       from = i + 1;
     }
   }
@@ -454,6 +588,7 @@ const READERS: Record<string, string[] | null> = {
   test: null,
   "[": null,
   "rc-status": null,
+  read: null,
   systemctl: [
     "",
     "status",
@@ -617,7 +752,7 @@ export function readOnly(command: string): boolean {
 }
 
 /** Plain commands that only read. `vars`: variables that, quoted, stand for any word, as a glob does. */
-function looks(line: string, vars?: Set<string>): boolean {
+function looks(line: string, vars?: Vars): boolean {
   const parsed = pipelines(line, { globs: true, vars });
   if (!parsed?.lines.length || parsed.files.some((f) => f !== "/dev/null")) return false;
   return parsed.lines.every((p) =>
@@ -826,6 +961,9 @@ function plain(words: string[]): string[] {
 
 const VALUE_OPTS = ["-u", "-U", "-g", "-p", "-C", "-D", "-R", "-T"];
 
+/** Variables that, quoted, stand for any word; "any": all of them, for the chat's count. */
+type Vars = Set<string> | "any";
+
 /**
  * A shell line's plain commands as words, grouped into pipelines; null when it does more than run
  * plain commands with literal words (substitutions, variables, globs, input from files, subshells,
@@ -835,7 +973,7 @@ const VALUE_OPTS = ["-u", "-U", "-g", "-p", "-C", "-D", "-R", "-T"];
  */
 function pipelines(
   line: string,
-  { globs = false, vars }: { globs?: boolean; vars?: Set<string> } = {},
+  { globs = false, vars }: { globs?: boolean; vars?: Vars } = {},
 ): { lines: string[][][]; files: string[]; globbed: Set<string[]> } | null {
   const out: string[][][] = [[[]]];
   const files: string[] = [];
@@ -876,8 +1014,8 @@ function pipelines(
       for (; j < line.length && line[j] !== '"'; j++) {
         if (line[j] === "\\") j++;
         else if (line[j] === "`" || (line[j] === "$" && /[\w{(@*#?$!-]/.test(line[j + 1] ?? ""))) {
-          const v = /^\$(?:\{(\w+)\}|([A-Za-z_]\w*))/.exec(line.slice(j));
-          if (!v || !vars?.has(v[1] ?? v[2] ?? "")) return null;
+          const v = /^\$(?:\{(\w+)\}|([A-Za-z_]\w*|[?#]))/.exec(line.slice(j));
+          if (!v || !(vars === "any" || vars?.has(v[1] ?? v[2] ?? ""))) return null;
           const cmd = out.at(-1)?.at(-1);
           if (cmd) globbed.add(cmd);
           w += v[0];

@@ -917,7 +917,7 @@ test("copy_file moves bytes between hosts, containers, the sandbox and the chat"
   expect(reply?.attachments).toMatchObject([{ name: "blob.bin", from: "hatbot" }]);
 });
 
-test("a shell line counts each chained part that may change something, and a loop as many", () => {
+test("a shell line counts each chained part that may change something; loops, xargs and find -exec count by what they run", () => {
   expect(commandCount("apt list --upgradable 2>/dev/null | wc -l")).toBe(1);
   expect(commandCount("apt-get update && apt-get -y upgrade")).toBe(2);
   expect(commandCount("cd /srv; git pull\nsystemctl restart app")).toBe(2);
@@ -928,13 +928,40 @@ test("a shell line counts each chained part that may change something, and a loo
     "tail -n 60 loss.csv | awk -F, '{ s+=$3; n++ } END { print s/n }'",
     "systemctl restart caddy && systemctl is-active caddy",
     "python3 - <<'EOF'\nimport os; print(1)\nprint(2)\nEOF\necho done",
+    'for f in logs/*.log.gz; do echo "$f"; zcat "$f" | grep -c joined; done',
+    "cd /opt/mc && grep -i error logs/latest.log | tail -n 20",
+    'f=$(find /var/log -name "*.log" -newer /tmp/mark); wc -l "$f"; tail -n 5 "$f"',
+    "find /srv -name '*.conf' | xargs grep -l listen",
+    String.raw`find . -name '*.mca' -exec ls -la {} \;`,
   ])
     expect(commandCount(cmd), cmd).toBe(1);
   for (const cmd of [
     "for ct in 101 102 103; do pct exec $ct -- apt list --upgradable; done",
     "pct list | awk 'NR>1{print $1}' | xargs -n1 pct status",
+    "for s in a b; do systemctl restart $s; done",
+    String.raw`find . -exec rm {} \;`,
+    "ls /tmp/old | sudo xargs rm",
   ])
     expect(commandCount(cmd), cmd).toBe(Number.POSITIVE_INFINITY);
+});
+
+test("the chat runs a loop that only looks itself, and not one that restarts", async () => {
+  mkdirSync(join(dir, "logs"), { recursive: true });
+  writeFileSync(join(dir, "logs", "a.log"), "x joined\ny joined\n");
+  writeFileSync(join(dir, "logs", "b.log"), "x left\n");
+  writeFileSync(join(dir, "ssh.log"), "");
+  const chat = new FakeModel([
+    exec("nas", `for f in ${dir}/logs/*.log; do grep -c joined "$f"; done`),
+    exec("nas", "uptime"),
+    exec("nas", "for s in smbd nmbd; do systemctl restart $s; done"),
+    { content: [text("Done.")] },
+  ]);
+  const t = await ssh({ chat });
+  await t.thread.post("who joined, and restart samba").done;
+  const log = readFileSync(join(dir, "ssh.log"), "utf8");
+  expect(log).toContain("grep -c joined");
+  expect(log).not.toContain("systemctl restart");
+  expect(JSON.stringify(chat.requests[3]?.messages)).toContain("Not run");
 });
 
 test("a host's file is kept as a secret without the model reading it, and written into another by name", async () => {
