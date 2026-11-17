@@ -94,7 +94,7 @@ const CHAT_LINE = `- For a question that needs many searches and pages (comparin
 const researchTool = (d: Deps) =>
   tool({
     name: "research",
-    description: `Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead. ${ENDS_REPLY}`,
+    description: `Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually $1 to $3. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead. ${ENDS_REPLY}`,
     schema: ResearchInput,
     access: "own",
     places: ["chat"],
