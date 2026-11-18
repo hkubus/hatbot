@@ -130,6 +130,19 @@ export const minecraftPlugin = definePlugin({
   description: "Who's on your Minecraft servers, and server commands over RCON",
   needs: ["secrets"],
   config: Config,
+  ownerOnly: (before, after) => {
+    const was = new Map(before.servers.map((s) => [s.name, s]));
+    const moved = after.servers.find((s) => {
+      const old = was.get(s.name);
+      return (
+        s.rconSecret &&
+        (old?.rconSecret !== s.rconSecret || old.host !== s.host || old.rconPort !== s.rconPort)
+      );
+    });
+    return moved
+      ? `Only the owner says where ${moved.name}'s RCON password goes, on Minecraft's page in Settings → Plugins.`
+      : null;
+  },
   start: ({ config, service }) => {
     const secrets = service<SecretsHost>("secrets");
     const actions = {

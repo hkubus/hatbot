@@ -232,10 +232,20 @@ export const sshPlugin = definePlugin({
   id: "ssh",
   name: "SSH",
   description: "Run commands on your hosts",
-  env: [{ name: "HATBOT_BRAIN_ID", optional: true, hint: "101" }],
+  env: [{ name: "HATBOT_BRAIN_ID", optional: true, hint: "101", ownerOnly: true }],
   uses: ["sandbox"],
   needs: ["secrets"],
   config: Config,
+  ownerOnly: (before, after) => {
+    const was = new Map(before.hosts.map((h) => [h.name, h]));
+    const loosened = after.hosts.find((h) => {
+      const old = was.get(h.name);
+      return (old?.careful && !h.careful) || (h.trustOutput && !old?.trustOutput);
+    });
+    return loosened
+      ? `Only the owner takes the careful mark off ${loosened.name}, or trusts what it prints, on SSH's page in Settings → Plugins.`
+      : null;
+  },
   start: ({ env, config, files, configOf, optional, service, dataDir, clock }) => {
     const secrets = service<SecretsHost>("secrets");
     const home = env.HOME ?? homedir();

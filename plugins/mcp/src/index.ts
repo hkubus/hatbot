@@ -341,6 +341,18 @@ export const mcpPlugin = definePlugin({
   description: "Tools from Model Context Protocol servers",
   named: true,
   config: Config,
+  // A server runs code Hatbot didn't ship, or gets the secrets in its headers; its marks keep tools safe.
+  ownerOnly: (before, after) => {
+    const was = new Map(before.servers.map((s) => [s.name, s]));
+    const same = (a: Server, b: Server) =>
+      JSON.stringify({ ...a, enabled: true }) === JSON.stringify({ ...b, enabled: true });
+    return after.servers.every((s) => {
+      const old = was.get(s.name);
+      return old && same(old, s);
+    })
+      ? null
+      : "Only the owner adds MCP servers or changes them, on MCP's page in Settings → Plugins. A bot may turn one on or off, or take it out.";
+  },
   start: async ({ env, named, config }) => {
     const conns: Conn[] = config.servers
       .filter((s) => s.enabled)

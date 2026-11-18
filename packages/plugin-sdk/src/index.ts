@@ -558,6 +558,8 @@ export type PluginEnvVar = {
   secret?: boolean;
   optional?: boolean;
   hint?: string;
+  /** Only the owner sets it, on the plugin's page, not a bot: it keeps something safe. */
+  ownerOnly?: boolean;
 };
 
 export type Plugin<C = unknown> = {
@@ -569,6 +571,11 @@ export type Plugin<C = unknown> = {
    * page has one made from this, each field labelled by its `.describe()`.
    */
   config: z.ZodType<C>;
+  /**
+   * Why only the owner, on its page, may make this change to its settings, not a bot: a command it
+   * would run, or a mark that keeps something safe taken off. Null: a bot may, as Safety says.
+   */
+  ownerOnly?: (before: C, after: C) => string | null;
   /** Settings wins over /etc/hatbot/*.env; a change there restarts every plugin that reads it. */
   env?: PluginEnvVar[];
   /** It takes secrets by any name too (MCP's ${NAME}). */

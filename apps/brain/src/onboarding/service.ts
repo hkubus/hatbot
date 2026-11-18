@@ -43,6 +43,7 @@ import type { EventBus } from "../events";
 import type { MemoryStore } from "../memory/store";
 import { modelProblem } from "../models-known";
 import { guessableTopic } from "../notify";
+import { PluginChange, type PluginControl, stateText } from "../plugins/control";
 import type { Plugins } from "../plugins/registry";
 import type { Secrets } from "../secrets";
 import {
@@ -70,6 +71,7 @@ export type OnboardingDeps = {
   model: ModelClient;
   models: Models;
   plugins: Plugins;
+  control: PluginControl;
   bots: Bots;
   chats: Chats;
   memory: MemoryStore;
@@ -105,20 +107,8 @@ const ChangeSettings = z.object({
       "Only what changes, in the settings' own shape (see look settings). limits and safety.kinds may change one field at a time; safety.tools is replaced whole.",
     ),
 });
-const SwitchPlugin = z.object({ id: z.string(), on: z.boolean() });
-const SetPlugin = z.object({
-  id: z.string(),
-  config: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .describe("Its whole settings, as look shows them"),
-  values: z
-    .record(z.string(), z.string())
-    .optional()
-    .describe(
-      "Its values that aren't secret, such as an address; a secret goes through ask_secrets",
-    ),
-});
+const SwitchPlugin = PluginChange.pick({ id: true }).extend({ on: z.boolean() });
+const SetPlugin = PluginChange.omit({ on: true });
 const PluginId = z.object({ id: z.string() });
 const AskSecrets = z.object({
   plugin: z.string().describe('The plugin\'s id, or "ntfy" for notifications'),
@@ -462,17 +452,7 @@ export class Onboarding {
     if (now?.state !== "ready")
       return `Saved, but ${plugin.name} isn't ready${now?.message ? `: ${now.message}` : "."}`;
     if (!now.testable) return `Saved; ${plugin.name} is ready.`;
-    return `Saved. Its test: ${await this.test(plugin.id)}`;
-  }
-
-  private async test(id: string): Promise<string> {
-    try {
-      return await this.d.plugins.test(id);
-    } catch (err) {
-      if (err instanceof PluginError) return err.message;
-      console.error("plugin test failed", err);
-      return "The test failed.";
-    }
+    return `Saved. Its test: ${await this.d.control.test(plugin.id)}`;
   }
 
   private async run(
@@ -605,7 +585,7 @@ export class Onboarding {
     input: unknown,
     add: (item: SetupItem) => void,
   ): Promise<Outcome> {
-    const { plugins, bots, settings } = this.d;
+    const { plugins, control, bots, settings } = this.d;
     const change = (text: string) => add({ kind: "change", text });
     switch (name) {
       case "look":
@@ -624,28 +604,16 @@ export class Onboarding {
         for (const l of lines) change(l);
         return { text: lines.length ? `Changed:\n${lines.join("\n")}` : "Nothing changed." };
       }
-      case "switch_plugin": {
-        const { id, on } = input as z.infer<typeof SwitchPlugin>;
-        const p = await plugins.update(id, { enabled: on });
-        change(`Turned ${on ? "on" : "off"} ${p.name}`);
-        return { text: `${p.name} is ${on ? stateText(p.state, p.message) : "off"}.` };
-      }
+      case "switch_plugin":
       case "set_plugin": {
-        const { id, config, values } = input as z.infer<typeof SetPlugin>;
-        const p = plugins.get(id);
-        if (!p) return { error: `No plugin "${id}".` };
-        const secret = Object.keys(values ?? {}).find(
-          (k) => p.env.find((e) => e.name === k)?.secret,
-        );
-        if (secret) return { error: `${secret} is secret: use ask_secrets.` };
-        if (values && Object.keys(values).length) await plugins.setSecrets(id, values);
-        if (config) await plugins.update(id, { config });
-        const now = plugins.get(id) ?? p;
-        change(`Changed ${p.name}'s settings`);
-        return { text: `${p.name} is ${now.enabled ? stateText(now.state, now.message) : "off"}.` };
+        const c = input as PluginChange;
+        const why = control.problem(c);
+        if (why) return { error: why };
+        change(control.describe(c));
+        return { text: await control.change(c) };
       }
       case "test_plugin":
-        return { text: await this.test((input as z.infer<typeof PluginId>).id) };
+        return { text: await control.test((input as z.infer<typeof PluginId>).id) };
       case "ask_secrets": {
         const { plugin, why } = input as z.infer<typeof AskSecrets>;
         const itemId = this.newId();
@@ -706,7 +674,10 @@ export class Onboarding {
         };
       }
       case "make_bot": {
-        const bot = bots.create(CreateBot.parse(input));
+        const made = CreateBot.parse(input);
+        const wrong = control.idsProblem(made.plugins);
+        if (wrong) return { error: wrong };
+        const bot = bots.create(made);
         this.d.chats.changed(this.d.chats.direct(bot.id).conversationId);
         change(`Made a bot: ${bot.name}`);
         return { text: `Made ${bot.name} (id ${bot.id}).` };
@@ -715,6 +686,8 @@ export class Onboarding {
         const { id, ...patch } = input as z.infer<typeof ChangeBot>;
         const was = bots.active(id);
         if (!was) return { error: `No bot "${id}".` };
+        const wrong = patch.plugins === undefined ? null : control.idsProblem(patch.plugins);
+        if (wrong) return { error: wrong };
         const bot = bots.update(id, patch);
         const what = Object.keys(patch)
           .map((k) => (k === "color" ? "colour" : k))
@@ -758,7 +731,7 @@ export class Onboarding {
               name: p.name,
               description: p.description,
               on: p.enabled,
-              state: p.enabled ? stateText(p.state, p.message) : "off",
+              state: stateText(p),
               values: p.env.map((e) => ({
                 name: e.name,
                 secret: e.secret,
@@ -811,9 +784,6 @@ export class Onboarding {
     }
   }
 }
-
-const stateText = (state: string, message: string | null) =>
-  state === "ready" ? "ready" : `${state.replace("_", " ")}${message ? `: ${message}` : ""}`;
 
 const LABELS: Record<string, string> = {
   "owner.name": "Your name",
