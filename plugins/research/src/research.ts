@@ -45,6 +45,15 @@ const HELPER_USES = 3;
 const HELPER_PAGE_TOKENS = 10_000;
 /** About what a search's results add to the prompt. */
 const SEARCH_RESULT_TOKENS = 3_000;
+/** The most one helper request's searches, fetches and thinking may add to its prompt. */
+const REQUEST_GROWTH = 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS);
+/** Haiku 5.5 bills a request whose prompt is over this at 5x. */
+const LONG_PROMPT = 100_000;
+/**
+ * Past `trigger`, the server clears the results of all but a helper's last `keep` tool uses, if that
+ * clears `atLeast`.
+ */
+const CLEARING = { trigger: 40_000, keep: 3, atLeast: 20_000 };
 
 type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 
@@ -533,12 +542,28 @@ const isSeen = (link: string, seen: Set<string>) =>
  */
 const estimate = (d: Deps, model: string, messages: Anthropic.Beta.BetaMessageParam[]) =>
   d.spend.ceiling(model, {
-    prompt:
-      estimateTokens(messages) + 4000 + HELPER_USES * (HELPER_PAGE_TOKENS + SEARCH_RESULT_TOKENS),
+    prompt: estimateTokens(messages) + REQUEST_GROWTH,
     write: "5m",
     maxTokens: WORKER_TOKENS,
     webSearches: HELPER_USES,
   });
+
+/** A helper's next prompt, roughly, once the server has cleared from it what CLEARING says. */
+function promptAfterClearing(messages: Anthropic.Beta.BetaMessageParam[]): number {
+  const all = estimateTokens(messages);
+  if (all <= CLEARING.trigger) return all;
+  const blocks = messages.flatMap((m) => (typeof m.content === "string" ? [] : m.content));
+  const uses = blocks.flatMap((b) =>
+    (b.type === "tool_use" || b.type === "server_tool_use") && b.name !== "report_findings"
+      ? [b.id]
+      : [],
+  );
+  const old = new Set(uses.slice(0, Math.max(0, uses.length - CLEARING.keep)));
+  const cleared = estimateTokens(
+    blocks.filter((b) => "tool_use_id" in b && old.has(b.tool_use_id)),
+  );
+  return cleared >= CLEARING.atLeast ? all - cleared : all;
+}
 
 type HelperReport = Findings & {
   note?: string;
@@ -642,6 +667,8 @@ async function runWorker(
       if (!(err instanceof BudgetError)) throw err;
       mustReport = true;
     }
+    // What it keeps, a long PDF say, would take the next request past 100k: it reports instead.
+    if (promptAfterClearing(messages) + REQUEST_GROWTH > LONG_PROMPT) mustReport = true;
     const force = !paused && (mustReport || step >= MAX_WORKER_STEPS - 1);
     // Held against every limit until it's recorded, so the chat and other tasks count it too.
     const release = d.spend.hold(cost, limit);
@@ -668,9 +695,9 @@ async function runWorker(
             edits: [
               {
                 type: "clear_tool_uses_20250919",
-                trigger: { type: "input_tokens", value: 40_000 },
-                keep: { type: "tool_uses", value: 3 },
-                clear_at_least: { type: "input_tokens", value: 20_000 },
+                trigger: { type: "input_tokens", value: CLEARING.trigger },
+                keep: { type: "tool_uses", value: CLEARING.keep },
+                clear_at_least: { type: "input_tokens", value: CLEARING.atLeast },
                 exclude_tools: ["report_findings"],
               },
             ],

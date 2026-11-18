@@ -421,6 +421,39 @@ test("what context editing cleared from the lead's and the helpers' prompts is i
   ]);
 });
 
+test("a helper reports at once when what the server keeps of its prompt would take its next request past 100k", async () => {
+  // About 12k tokens a page: five of them are past 100k with what a request may add, but the server
+  // clears all but the last three.
+  const page = (n: number) => `${n ? "" : SPEC_PAGE} ${"word ".repeat(8400)}`;
+  const work = new FakeModel([
+    INVESTIGATE,
+    finish("It's **2,399 zł** [2] and quiet [1].", "The DS925+ [1, 2]."),
+  ]);
+  work.route = (p) => {
+    if (!isHelper(p)) return undefined;
+    const step = p.messages.filter((m) => m.role === "assistant").length;
+    if (JSON.stringify(p.messages[0]?.content).includes("noise"))
+      return step < 5
+        ? { content: fetched(`${NOISE.url}?p=${step}`, page(step), `srvtoolu_n${step}`) }
+        : { content: [toolUse("report_findings", { findings: [NOISE], gaps: "" })] };
+    // One page of about 60k tokens, kept as the last thing it read.
+    return step < 1
+      ? { content: fetched(PRICE.url, `${SHOP_PAGE} ${"word ".repeat(42_000)}`, "srvtoolu_p") }
+      : { content: [toolUse("report_findings", { findings: [PRICE], gaps: "" })] };
+  };
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+
+  const asked = (topic: string) =>
+    work.requests
+      .filter((r) => isHelper(r) && JSON.stringify(r.messages[0]?.content).includes(topic))
+      .map((r) => r.tool_choice);
+  expect(asked("noise")).toEqual(Array(6).fill(undefined));
+  expect(asked("price")).toEqual([undefined, { type: "tool", name: "report_findings" }]);
+  expect(task.status).toBe("done");
+});
+
 test("research gets lookups and memory, and no tool that changes things", async () => {
   const restarted: string[] = [];
   const lab = definePlugin({
