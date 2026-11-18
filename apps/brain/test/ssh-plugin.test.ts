@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { textOf } from "@hatbot/plugin-sdk";
+import { type ScriptsService, textOf } from "@hatbot/plugin-sdk";
 import { commandCount, destructive, readOnly, statusOnly } from "@hatbot/plugin-sdk/shell";
 import { spawnRun, sshPlugin } from "@hatbot/plugin-ssh";
-import type { Task } from "@hatbot/shared";
+import type { ScriptStep, Task } from "@hatbot/shared";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
 import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { type TestApp, waitFor } from "./helpers";
@@ -514,6 +514,52 @@ test("ssh_check and ssh_exec reach several hosts in one call, each under its nam
   expect(exec.commands?.({ hosts: ["nas", "gone"], command: "a; b" })).toBe(4);
 });
 
+test("a script reads a command's exit code, stdout and stderr; the model still gets text", async () => {
+  const t = await ssh();
+  const steps: ScriptStep[] = [
+    {
+      call: "ssh_exec",
+      input: { host: "nas", command: "echo up; echo slow >&2; exit 3" },
+      as: "r",
+    },
+    {
+      if: {
+        all: [
+          { value: "{{r.code}}", is: "equals", to: 3 },
+          { value: "{{r.stdout}}", is: "equals", to: "up" },
+        ],
+      },
+      do: [{ stop: "{{r.stderr}}" }],
+    },
+    { stop: "It didn't see the exit code.", failed: true },
+  ];
+  const s = t.scripts.save(
+    {
+      botId: "hatbot",
+      name: "nas-up",
+      description: "",
+      inputs: [],
+      steps,
+      writes: ["ssh_exec"],
+      enabled: true,
+    },
+    { via: "owner", approved: true, taintedBy: null },
+  );
+  const run = t.plugins.service<ScriptsService>("scripts")?.start(s, { origin: "chat", input: {} });
+  expect(await ended(t, run?.id ?? 0)).toMatchObject({ status: "done", summary: "slow" });
+
+  const r = await runPluginTool(
+    t.tool("ssh_exec"),
+    { hosts: ["nas", "router"], command: "echo hi" },
+    call,
+  );
+  expect(r.text).toStartWith("nas:\nExit code 0\nhi");
+  expect(r.data).toEqual([
+    { host: "nas", code: 0, stdout: "hi", stderr: "" },
+    { host: "router", code: 0, stdout: "hi", stderr: "" },
+  ]);
+});
+
 test("a careful host always asks; writing outside home, as root or to keys asks, by write or by copy", async () => {
   const t = await ssh({ hosts: [...HOSTS, PVE] });
   const v = (name: string, input: unknown) => verdictFor(t.tool(name), input, call);
@@ -594,7 +640,7 @@ test("containers: ssh_pct_exec quotes the command for the wrapper, a host's own 
   // A look inside one goes through the same wrapper, on its one host, and is untrusted.
   const check = t.tool("ssh_check");
   const inside = { hosts: ["pve"], guest: 900, what: "service", unit: "nginx" };
-  expect(await check.run(inside, call)).toBe("Exit code 0\nsystemctl here");
+  expect(textOf(await check.run(inside, call))).toBe("Exit code 0\nsystemctl here");
   expect(lastArgs()).toContain(
     "sudo -n /usr/local/sbin/hatbot-pct-exec 900 'systemctl status --no-pager --lines=0 -- nginx'",
   );
@@ -784,9 +830,11 @@ test("output is kept to its start and end, endless output is stopped, and a comm
     "Couldn't connect to nas",
   );
   expect(
-    await exec.run(
-      { hosts: ["nas"], command: "echo 'Host key verification failed.' >&2; exit 255" },
-      call,
+    textOf(
+      await exec.run(
+        { hosts: ["nas"], command: "echo 'Host key verification failed.' >&2; exit 255" },
+        call,
+      ),
     ),
   ).toBe("Exit code 255\nstderr:\nHost key verification failed.");
 });
@@ -809,13 +857,13 @@ test("calls to a host share one login, eight at most at once; it's retired after
   ).toHaveLength(8);
   expect(logged().filter((l) => l.includes("ControlPath=none"))).toHaveLength(1);
   writeFileSync(go, "");
-  expect(await Promise.all(nine)).toEqual(Array(9).fill("Exit code 0\nwent"));
+  expect((await Promise.all(nine)).map(textOf)).toEqual(Array(9).fill("Exit code 0\nwent"));
 
   // What ssh says when it logs in on its own after all isn't the command's.
   const note = "mux_client_request_session: session request failed: Session open refused by peer";
-  expect(await exec.run({ hosts: ["nas"], command: `echo '${note}' >&2; echo ok` }, call)).toBe(
-    "Exit code 0\nok",
-  );
+  expect(
+    textOf(await exec.run({ hosts: ["nas"], command: `echo '${note}' >&2; echo ok` }, call)),
+  ).toBe("Exit code 0\nok");
 
   const stops = () => logged().filter((l) => l.includes("-O stop"));
   for (let i = 0; i < 3; i++) {

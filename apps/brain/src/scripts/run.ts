@@ -256,7 +256,7 @@ export async function runScript(
     const r = await runPluginTool(t, input, cc, d.plugins.hideSecrets);
     if (r.untrusted) taint(describeCall(t, input));
     if (r.isError && !s.optional) throw new Failed(`${at}: ${t.name} failed: ${r.text}`);
-    if (s.as) vars[s.as] = r.isError ? { error: r.text } : answerOf(r.text);
+    if (s.as) vars[s.as] = r.isError ? { error: r.text } : (r.data ?? answerOf(r.text));
   };
 
   const step = async (s: ScriptStep) => {

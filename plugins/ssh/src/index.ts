@@ -17,6 +17,7 @@ import {
   SandboxError,
   type SecretsHost,
   sizeText,
+  type ToolOutput,
   tool,
   type Verdict,
 } from "@hatbot/plugin-sdk";
@@ -102,6 +103,8 @@ const silentOn = (names: string[], out: string | undefined) => {
   );
 };
 const distinct = (names: string[]) => [...new Set(names)];
+/** What a script's step gets from a command: on several hosts, a list of these with each host. */
+type Ran = { code: number; stdout: string; stderr: string };
 /** Why a look that changes nothing runs without asking, even after reading untrusted content. */
 const LOOKS = "It only looks; it changes nothing.";
 
@@ -361,7 +364,7 @@ export const sshPlugin = definePlugin({
       command: string,
       timeoutMs: number,
       signal?: AbortSignal,
-    ): Promise<{ text: string; ok: boolean }> => {
+    ): Promise<{ text: string; ok: boolean; data: Ran }> => {
       const r = await connect(h, command, { timeoutMs, signal });
       const parts = [
         r.flooded
@@ -372,7 +375,11 @@ export const sshPlugin = definePlugin({
       ];
       if (r.stdout.trim()) parts.push(cut(r.stdout.trimEnd()));
       if (r.stderr.trim()) parts.push(`stderr:\n${cut(r.stderr.trimEnd())}`);
-      return { text: parts.join("\n"), ok: r.code === 0 && !r.timedOut && !r.flooded };
+      return {
+        text: parts.join("\n"),
+        ok: r.code === 0 && !r.timedOut && !r.flooded,
+        data: { code: r.code, stdout: r.stdout.trimEnd(), stderr: r.stderr.trimEnd() },
+      };
     };
 
     /** The Proxmox plugin's guests whose power actions always ask, read live from its settings. */
@@ -442,22 +449,25 @@ export const sshPlugin = definePlugin({
       command: string,
       timeoutMs: number,
       signal: AbortSignal,
-    ) => {
+    ): Promise<ToolOutput> => {
       const each = distinct(names).map(hostOf);
-      if (each.length === 1) return (await exec(each[0] as Host, command, timeoutMs, signal)).text;
+      if (each.length === 1) return exec(each[0] as Host, command, timeoutMs, signal);
       const said = await Promise.all(
         each.map((h) =>
           exec(h, command, timeoutMs, signal).then(
-            (r) => ({ ok: true, text: r.text }),
+            (r) => ({ ok: true, text: r.text, data: { host: h.name, ...r.data } }),
             (err) => {
               if (!(err instanceof PluginError) || signal.aborted) throw err;
-              return { ok: false, text: err.message };
+              return { ok: false, text: err.message, data: { host: h.name, error: err.message } };
             },
           ),
         ),
       );
       if (!said.some((s) => s.ok)) throw new PluginError(said.map((s) => s.text).join("\n"));
-      return each.map((h, i) => `${h.name}:\n${said[i]?.text}`).join("\n\n");
+      return {
+        text: each.map((h, i) => `${h.name}:\n${said[i]?.text}`).join("\n\n"),
+        data: said.map((s) => s.data),
+      };
     };
 
     const trusts = (host: string) => hosts.get(host)?.trustOutput ?? false;
@@ -562,7 +572,7 @@ export const sshPlugin = definePlugin({
           if (!host || more.length)
             throw new PluginError("A container is looked at on its one Proxmox host.");
           const place = { host, guest, path: "/" };
-          return (await exec(placeOf(place), inPlace(place, look), 30_000, signal)).text;
+          return exec(placeOf(place), inPlace(place, look), 30_000, signal);
         },
       }),
       tool({
@@ -742,7 +752,7 @@ export const sshPlugin = definePlugin({
               run: async ({ host, guest, command, timeout_s }, { signal }) => {
                 const h = placeOf({ host, guest, path: "/" });
                 const cmd = `sudo -n /usr/local/sbin/hatbot-pct-exec ${guest} ${quote(command)}`;
-                return (await exec(h, cmd, (timeout_s ?? 120) * 1000, signal)).text;
+                return exec(h, cmd, (timeout_s ?? 120) * 1000, signal);
               },
             }),
           ]

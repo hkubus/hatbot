@@ -166,7 +166,8 @@ export type ToolImage = {
   data: string;
   mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
 };
-export type ToolOutput = string | { text: string; images: ToolImage[] };
+/** `data`: what a script's step gets in place of the text, when the text isn't all a script needs. */
+export type ToolOutput = string | { text: string; images?: ToolImage[]; data?: unknown };
 export const textOf = (out: ToolOutput) => (typeof out === "string" ? out : out.text);
 
 const ENTITIES: Record<string, string> = {

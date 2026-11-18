@@ -774,6 +774,7 @@ export async function runPluginTool(
   untrusted: boolean;
   text: string;
   images?: ToolImage[];
+  data?: unknown;
 }> {
   const parsed = t.schema.safeParse(input);
   if (!parsed.success) {
@@ -784,10 +785,12 @@ export async function runPluginTool(
     untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
   let images: ToolImage[] | undefined;
+  let data: unknown;
   try {
     const r = await t.run(parsed.data, call);
     out = hide(textOf(r));
-    if (typeof r !== "string" && r.images.length) images = r.images;
+    if (typeof r !== "string" && r.images?.length) images = r.images;
+    if (typeof r !== "string" && r.data !== undefined) data = hidden(r.data, hide);
   } catch (err) {
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
@@ -803,8 +806,17 @@ export async function runPluginTool(
   const untrusted = untrustedOf(t, parsed.data, out);
   if (out.length > MAX_OUTPUT_CHARS && !t.whole)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
-  return { content: label(out, untrusted), isError: false, untrusted, text: out, images };
+  return { content: label(out, untrusted), isError: false, untrusted, text: out, images, data };
 }
+
+const hidden = (v: unknown, hide: (text: string) => string): unknown =>
+  typeof v === "string"
+    ? hide(v)
+    : Array.isArray(v)
+      ? v.map((x) => hidden(x, hide))
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hidden(x, hide)]))
+        : v;
 
 /** Whether `t` is offered where the model is working. */
 export function offered(t: PluginTool, o: Offer): boolean {

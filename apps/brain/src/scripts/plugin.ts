@@ -42,7 +42,7 @@ const FOUND_CHARS = 8000;
 export type ScriptsDeps = { store: ScriptStore; tasks: Tasks; bots: Bots; events: EventBus };
 
 const STEPS = `Each step is one object:
-- {"call": tool, "input": {...}, "as": name, "optional": true}: calls one of your tools; its answer, parsed when it's JSON, goes in name. Without optional, a failure stops the script.
+- {"call": tool, "input": {...}, "as": name, "optional": true}: calls one of your tools; its answer, parsed when it's JSON, goes in name. A command's (ssh_exec and the like) is {code, stdout, stderr}, on several hosts a list of those with host. Without optional, a failure stops the script.
 - {"if": condition, "do": [steps], "else": [steps]}
 - {"each": "name.path", "as": "item", "do": [steps]}: for each item of a list.
 - {"set": name, "to": value}, and {"add": name, "value": value}, which adds to the list in name.
