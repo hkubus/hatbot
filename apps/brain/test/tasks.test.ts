@@ -2,9 +2,10 @@ import { expect, test } from "bun:test";
 import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "@hatbot/plugin-desktop";
 import type { Task, TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
+import { ALERT_SECTION, CODE_SECTION } from "../src/agent/prompt";
+import { HATBOT } from "../src/memory/store";
 import { limits } from "../src/tasks/desktop-run";
-import { browser, computer, FakeModel, text, toolUse } from "./fake-model";
+import { browser, computer, FakeModel, isReview, text, toolUse } from "./fake-model";
 import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
 
 const finish = (summary = "Booked it.") => ({
@@ -391,7 +392,7 @@ test("desktop_shell runs commands as text; the review blocks a destructive one y
     timedOut: false,
   });
   t.taskModel.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify(
           JSON.stringify(p.messages).includes("build")
             ? { safe: true, why: "Build output." }
@@ -466,7 +467,7 @@ test("each line break in typed text is checked on its own: the review looks at e
   };
   const verdicts = [true, true, false];
   t.taskModel.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify({ safe: verdicts.shift(), why: "The owner asked to write to Ann." })
       : undefined;
   const task = startTask(t, "Write to Ann");
@@ -513,7 +514,7 @@ test("a held click is reviewed where it is, without confirm_intent, unless it ch
   });
   let reviews = 0;
   t.taskModel.onCreate = (p) => {
-    if (p.system !== REVIEW_PROMPT) return undefined;
+    if (!isReview(p)) return undefined;
     reviews++;
     return JSON.stringify({ safe: true, why: "The owner asked for it." });
   };
@@ -549,7 +550,7 @@ test("with a wait set, a message the review lets through waits for you to stop i
     buttonsAfter: ["Send"],
   };
   t.taskModel.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify({ safe: true, why: "The owner asked to write to Ann." })
       : undefined;
   t.settings.update({ safety: { sendWaitS: 30 } });
@@ -626,6 +627,68 @@ test("a task's end says whether it was notified, so the desktop app shows only t
   expect(t.notifier.sent.map((n) => n.message)).toEqual(["A disk failed."]);
 });
 
+test("a finish without notify ends the task quietly", async () => {
+  const work = new FakeModel([
+    { content: [toolUse("finish_task", { outcome: "done", summary: "All fine." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = t.tasks.createBackgroundTask({
+    title: "Check the disks",
+    goal: "Check the disks",
+    origin: "schedule",
+    source: "nightly",
+    runKey: "schedule:1",
+  }) as Task;
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({ status: "done", summary: "All fine." });
+  expect(work.requests).toHaveLength(1);
+  expect(t.notifier.sent).toEqual([]);
+});
+
+test("a task at its step limit says once, without tools, where it got to; without the money for that, it doesn't ask", async () => {
+  const look = { content: [toolUse("memory_list", {})] };
+  const said = "Two of the three backups ran. I changed nothing. Left: why nas-2's failed.";
+  const work = new FakeModel([
+    ...Array.from({ length: 30 }, () => look),
+    { content: [text(said)] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const run = () =>
+    t.tasks.createBackgroundTask({
+      title: "Check the backups",
+      goal: "Check the backups",
+      origin: "schedule",
+      source: "nightly",
+    }) as Task;
+  const task = run();
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({
+    status: "failed",
+    summary: `Stopped at its step limit (30 steps).\n\n${said}`,
+  });
+  expect(work.requests).toHaveLength(31);
+  expect(work.requests[29]?.tool_choice).toBeUndefined();
+  expect(work.requests[30]?.tool_choice).toEqual({ type: "none" });
+  expect(lastText(work.requests[30])).toContain("can't call tools");
+
+  // The day's money ran out during its last step.
+  const last = Promise.withResolvers<void>();
+  work.script = Array.from({ length: 30 }, (_, i) =>
+    i < 29 ? look : { ...look, wait: last.promise },
+  );
+  work.requests = [];
+  const broke = run();
+  await waitFor(() => work.requests.length === 30);
+  t.settings.update({ limits: { dailyUsd: 0.0001, monthlyUsd: 200 } });
+  last.resolve();
+  await t.tasks.idle();
+  expect(t.tasks.get(broke.id)).toMatchObject({
+    status: "failed",
+    summary: "Stopped after 30 steps without finishing.",
+  });
+  expect(work.requests).toHaveLength(30);
+});
+
 test("a Haiku desktop task out of steps carries on, once, on Opus; one its budget stopped doesn't", async () => {
   const shot = { content: [computer("screenshot")] };
   const work = new FakeModel([shot, shot, shot, finish("Booked on Opus.")]);
@@ -666,6 +729,40 @@ test("a Haiku desktop task out of steps carries on, once, on Opus; one its budge
   await t2.tasks.idle();
   expect(t2.tasks.get(b.id)).toMatchObject({ status: "failed", model: "claude-haiku-5-5" });
   expect(broke.requests).toHaveLength(0);
+});
+
+test("a browser that can't say what's open fails the action, not the task", async () => {
+  const work = new FakeModel([{ content: [browser("screenshot")] }, finish()]);
+  const t = await testApp(new FakeModel(), work);
+  t.agent.browserState = async () => {
+    throw new DesktopError("Chromium isn't running, or isn't answering on its DevTools port.", 502);
+  };
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)?.status).toBe("done");
+  expect(work.requests[1]?.messages.at(-1)?.content).toMatchObject([
+    { type: "tool_result", is_error: true },
+  ]);
+});
+
+test("a desktop task Haiku finishes as failed isn't tried again on Opus", async () => {
+  const work = new FakeModel([
+    { content: [computer("screenshot")] },
+    {
+      content: [
+        toolUse("finish_task", { outcome: "failed", summary: "The restaurant is closed." }),
+      ],
+    },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const task = startTask(t);
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({
+    status: "failed",
+    summary: "The restaurant is closed.",
+    model: "claude-haiku-5-5",
+  });
+  expect(work.requests.map((r) => r.model)).toEqual(["claude-haiku-5-5", "claude-haiku-5-5"]);
 });
 
 test("cancelling a task cancels the desktop task it started, which then does nothing more", async () => {
@@ -797,6 +894,23 @@ test("an ended task runs again with its goal as you edited it, still tainted", a
   expect((await t.call("POST", `/tasks/${again.id}/rerun`, {}, { cookie })).status).toBe(409);
   await t.tasks.idle();
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("Deploy main again");
+});
+
+test("a task whose title runs past 80 characters starts with it cut short, not refused", async () => {
+  const title =
+    "Check every container on pve for pending updates and list what each one will upgrade";
+  const chat = new FakeModel([
+    { content: [toolUse("run_task", { title, goal: "Check the containers for updates" })] },
+    { content: [text("On it.")] },
+    { content: [text("All current.")] },
+  ]);
+  const t = await testApp(chat, new FakeModel([done("All current.")]));
+  t.thread.post("any updates on pve?");
+  await t.thread.idle();
+  const [task] = t.tasks.list();
+  expect(task?.title).toBe(`${title.slice(0, 79)}…`);
+  await t.tasks.idle();
+  await t.thread.idle();
 });
 
 test("the chat steers its running task: the note wakes it and comes with its next step, and the owner's words join its request", async () => {
@@ -954,4 +1068,87 @@ test("a task's summary may run past its limit with chart blocks, and a little ov
   expect(summary.replace(chart, "").length).toBeGreaterThan(2000);
   expect(JSON.stringify(work.requests[1]?.messages)).toContain("not counting chart blocks");
   expect(t.tasks.get(task.id)?.summary).toBe(summary);
+});
+
+test("a task's prompt has the alerts section only for an alert, and the code section only with a plugin for code", async () => {
+  const work = new FakeModel([done("a"), done("b"), done("c")]);
+  const t = await testApp(new FakeModel(), work);
+  const sections = async (origin: Task["origin"]) => {
+    t.tasks.createBackgroundTask({ title: "NAS", goal: "Look at the NAS.", origin });
+    await t.tasks.idle();
+    const system =
+      (work.requests.at(-1)?.system as { text: string }[] | undefined)?.[0]?.text ?? "";
+    return { alert: system.includes(ALERT_SECTION), code: system.includes(CODE_SECTION) };
+  };
+  expect(await sections("chat")).toEqual({ alert: false, code: false });
+  expect(await sections("alert")).toEqual({ alert: true, code: false });
+  await t.plugins.update("code", { enabled: true });
+  expect(await sections("chat")).toEqual({ alert: false, code: true });
+});
+
+test("a task the chat starts reads the chat's last messages in its first message, not the chat's tool calls", async () => {
+  const chat = new FakeModel([
+    { content: [toolUse("memory_read", { path: "homelab.md" })] },
+    { content: [text("The nas has one pool, tank. Scrub it?")] },
+    {
+      content: [
+        text("Scrubbing tank."),
+        toolUse("run_task", { title: "Scrub tank", goal: "Scrub tank on the nas" }),
+      ],
+    },
+    { content: [text("Tank is clean.")] },
+  ]);
+  const work = new FakeModel([done("Scrubbed tank: no errors.")]);
+  const t = await testApp(chat, work);
+  await t.memory.write("homelab.md", "nas: zpool tank, 4 disks", HATBOT, "Homelab");
+  await t.thread.post("what pools does the nas have?").done;
+  await t.thread.post("yeah do it").done;
+  await t.tasks.idle();
+  await t.thread.idle();
+  const first = JSON.stringify(work.requests[0]?.messages[0]?.content);
+  expect(first).toContain(
+    '<recent_chat>\\nThe chat\'s last messages before it started you, oldest first.\\n<message from=\\"Owner\\"',
+  );
+  for (const said of ["what pools does the nas have?", "The nas has one pool, tank. Scrub it?"])
+    expect(first).toContain(`>${said}</message>`);
+  expect(first).toContain(
+    ">yeah do it</message>\\n</recent_chat>\\n\\n<task>\\nScrub tank on the nas",
+  );
+  expect(first).not.toContain("4 disks");
+  expect(JSON.stringify(work.requests[0]?.system)).not.toContain("yeah do it");
+});
+
+test("a task reads at most the chat's last 6 messages, 2000 characters of each and 6000 in all, each cut from its start", async () => {
+  const long = (n: number) => `START${n}${"=".repeat(2500)}END${n}`;
+  const chat = new FakeModel([
+    { content: [text("one")] },
+    { content: [text(long(2))] },
+    { content: [text(long(3))] },
+    { content: [text(long(4))] },
+    { content: [text("On it."), toolUse("run_task", { title: "Go", goal: "Go" })] },
+    { content: [text("Done.")] },
+  ]);
+  const work = new FakeModel([done("Done.")]);
+  const t = await testApp(chat, work);
+  for (const said of ["first", "second", "third", "fourth", "fifth"])
+    await t.thread.post(said).done;
+  await t.tasks.idle();
+  await t.thread.idle();
+  const said = t.tasks.chatOf(t.tasks.list()[0]?.id as number) ?? "";
+  expect(said).not.toContain("first");
+  expect(said).not.toContain("one");
+  for (const n of [2, 3, 4]) {
+    expect(said).not.toContain(`START${n}`);
+    expect(said).toContain(`END${n}`);
+  }
+  expect(said.match(/\w+(?=<\/message>)/g)).toEqual([
+    "END2",
+    "third",
+    "END3",
+    "fourth",
+    "END4",
+    "fifth",
+  ]);
+  expect((said.match(/=/g) ?? []).length).toBeLessThan(6000);
+  expect(said.match(/>…=/g)).toHaveLength(3);
 });

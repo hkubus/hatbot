@@ -63,7 +63,7 @@ struct SettingsView: View {
               }
               if desktop.wrappedValue != expert, let escalate = settings.desktopEscalate {
                 Toggle(
-                  "Try desktop tasks again on \(models.name(expert)) when they fail",
+                  "Try desktop tasks again on \(models.name(expert)) when they get stuck",
                   isOn: setting(escalate, \.desktopEscalate))
               }
             }

@@ -28,6 +28,17 @@ export const approvableFromNotification = (kind: ApprovalKind) => NOTIFY_APPROVE
 
 export type Outcome = "approved" | "denied" | "expired" | "cancelled";
 
+const SAME_CALL_CHARS = 6000;
+
+/**
+ * Run anyway's word to the bot on the call to make again: it must be exactly the same, or it's
+ * reviewed again. Empty for one too long to repeat, which only the run that made it can.
+ */
+export const sameCall = (call: { tool: string; input: string } | null) =>
+  call && call.input.length <= SAME_CALL_CHARS
+    ? `call ${call.tool} with exactly this input:\n${call.input}`
+    : "";
+
 /** Your note on an approval, for the task's tool result: it's yours, so the task follows it. */
 export const ownerNote = (note: string) =>
   `The owner answered with this note. Follow it; it overrides your plan:\n<owner_note>\n${note}\n</owner_note>`;
@@ -420,6 +431,30 @@ export class Approvals {
     const approval = this.get(id);
     if (approval) this.events.emit({ type: "approval.resolved", approval });
     return approval;
+  }
+
+  /** The call a blocked change was for, as its input must be given again; null once it has run. */
+  callOf(id: number): { tool: string; input: string } | null {
+    return (
+      this.db
+        .query<{ tool: string; input: string }, [number]>(
+          "SELECT tool, input FROM approvals WHERE id = ? AND tool IS NOT NULL AND used_at IS NULL",
+        )
+        .get(id) ?? null
+    );
+  }
+
+  /** What you ran anyway in a chat's conversation that hasn't run since. */
+  ranAnyway(
+    episodeId: number,
+    botId: string,
+  ): { id: number; summary: string; tool: string; input: string }[] {
+    return this.db
+      .query<{ id: number; summary: string; tool: string; input: string }, [number, string]>(
+        `SELECT id, summary, tool, input FROM approvals WHERE episode_id = ? AND bot_id = ? AND task_id IS NULL
+         AND blocked = 1 AND status = 'approved' AND used_at IS NULL AND tool IS NOT NULL ORDER BY id`,
+      )
+      .all(episodeId, botId);
   }
 
   rules(): ApprovalRule[] {

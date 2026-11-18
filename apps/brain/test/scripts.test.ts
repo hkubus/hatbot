@@ -410,6 +410,52 @@ test("in the chat, script_run answers with what the script found, and the reply 
   expect(chat.requests).toHaveLength(2);
 });
 
+test("/run runs one of the bot's scripts without a model, as written, its result under the command; a wrong name lists them", async () => {
+  const { t, done } = await lab();
+  const fields = {
+    botId: "hatbot",
+    description: "",
+    inputs: [{ name: "vm", description: "Which VM" }],
+    writes: ["lab_start"],
+    enabled: true,
+  };
+  t.scripts.save(
+    {
+      ...fields,
+      name: "start-one",
+      steps: [
+        { call: "lab_start", input: { name: "{{input.vm}}" } },
+        { stop: "Started {{input.vm}}." },
+      ],
+    },
+    { via: "owner", approved: true, taintedBy: null },
+  );
+  t.scripts.save(
+    { ...fields, name: "start-db", steps: [{ call: "lab_start", input: { name: "db" } }] },
+    { via: "chat", approved: false, taintedBy: null },
+  );
+  const said = async (command: string) => {
+    await t.thread.post(command).done;
+    await t.tasks.idle();
+    return t.thread.list().at(-1)?.text;
+  };
+
+  expect(await said("/run")).toBe(
+    "Say which script, like /run check-backups. Scripts: start-db, start-one.",
+  );
+  expect(await said("/run start-on web")).toBe(
+    "No script called start-on. Scripts: start-db, start-one.",
+  );
+  expect(await said("/run start-one host=web")).toBe("There's no input host. start-one takes vm.");
+  expect(await said("/run start-one web")).toBe("Started web.");
+  expect(await said("/run start-db")).toBe(
+    "**Didn't finish.** Not run: start-db changes things, and you haven't approved it as it is.",
+  );
+  expect(done).toEqual(["start web"]);
+  expect(t.thread.list().filter((m) => m.kind === "task")).toEqual([]);
+  expect(t.model.requests.length + t.taskModel.requests.length).toBe(0);
+});
+
 test("asked for the same calls a third time, the bot offers to save them as a script, once", async () => {
   const twice = () => [
     { content: [toolUse("lab_vms", {}), toolUse("lab_counter", {})] },
@@ -487,6 +533,21 @@ test("a schedule whose runs make the same calls offers once, in the chat, to run
   expect(heard).toContain("<calls>\nlab_vms {}\nlab_counter {}\n</calls>");
   const s = t.scripts.byName("hatbot", "lab-check") as Script;
   expect(t.schedules.get(id)?.scriptId).toBe(s.id);
+});
+
+test("a schedule whose runs make the same one call is offered a script once; a reply's one call isn't", async () => {
+  const check = () => checking("lab_vms");
+  const once = () => [{ content: [toolUse("lab_vms", {})] }, { content: [text("All up.")] }];
+  const work = new FakeModel([...check(), ...check(), ...check(), ...check()]);
+  const chat = new FakeModel([...once(), ...once(), ...once(), ...once()]);
+  const { t, api } = await lab(chat, work);
+  await scheduled(t, api, 4);
+  const told = work.requests.map((r) =>
+    lastText(r).includes("offering to save these steps as a script"),
+  );
+  expect(told).toEqual([false, false, false, false, false, true, false, false]);
+  for (let i = 0; i < 4; i++) await t.thread.post("are the VMs up?").done;
+  expect(chat.requests.some((r) => lastText(r).includes("save it as a script"))).toBe(false);
 });
 
 test("a run that offered a script and then failed hasn't used the offer up", async () => {

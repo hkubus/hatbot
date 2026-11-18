@@ -143,12 +143,8 @@ export const approvalRoutes = new Hono<AppEnv>()
   .post("/approvals/:id/anyway", json(RunAnyway), (c) => {
     const approval = c.var.approvals.runAnyway(idParam(c), c.req.valid("json").always ?? false);
     if (!approval) return c.json({ error: "That isn't blocked any more." }, 409);
-    // A task still running hears at once; a chat's bot hears when you write.
-    if (approval.taskId && c.var.tasks.get(approval.taskId)?.finishedAt === null)
-      c.var.tasks.tell(
-        approval.taskId,
-        `The owner chose to run this anyway: ${approval.summary}. Do it again now, exactly as before.`,
-      );
+    // A chat's bot hears with your next message, which the apps send.
+    if (approval.taskId) c.var.tasks.ranAnyway(approval);
     return c.json(approval);
   })
   .post("/approvals/:id/dismiss", (c) =>

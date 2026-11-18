@@ -273,8 +273,37 @@ export class Plugins {
 
   /** What its schema finds wrong with these settings, or null. */
   configProblem(id: string, config: unknown): z.ZodError | null {
-    const parsed = this.slots.get(id)?.plugin.config.safeParse(config);
+    const parsed = this.parseConfig(id, config);
     return parsed && !parsed.success ? parsed.error : null;
+  }
+
+  parseConfig(id: string, config: unknown) {
+    return this.slots.get(id)?.plugin.config.safeParse(config) ?? null;
+  }
+
+  /** Why only the owner may give it these settings, as the plugin says, or null. */
+  ownerOnly(id: string, config: unknown): string | null {
+    const s = this.slots.get(id);
+    if (!s?.plugin.ownerOnly) return null;
+    const after = s.plugin.config.safeParse(config);
+    return after.success ? s.plugin.ownerOnly(s.config, after.data) : null;
+  }
+
+  /** The values it reads that only the owner sets, by name. */
+  ownersValues(id: string): string[] {
+    return (this.slots.get(id)?.plugin.env ?? []).filter((v) => v.ownerOnly).map((v) => v.name);
+  }
+
+  /** One of Hatbot's own parts, which Settings doesn't list. */
+  partOfHatbot(id: string): boolean {
+    return Boolean(this.slots.get(id)?.plugin.internal);
+  }
+
+  /** The plugins every bot gets, whatever its list says, by id. */
+  forEveryBot(): string[] {
+    return [...this.slots.values()]
+      .filter((s) => s.plugin.allBots && !s.plugin.internal)
+      .map((s) => s.plugin.id);
   }
 
   /** Deletes what a plugin that's off kept: its settings, values, secrets, files and own tables. */
@@ -774,6 +803,7 @@ export async function runPluginTool(
   untrusted: boolean;
   text: string;
   images?: ToolImage[];
+  data?: unknown;
 }> {
   const parsed = t.schema.safeParse(input);
   if (!parsed.success) {
@@ -784,10 +814,12 @@ export async function runPluginTool(
     untrusted ? untrustedBlock("tool_output", text, { tool: t.name }) : text;
   let out: string;
   let images: ToolImage[] | undefined;
+  let data: unknown;
   try {
     const r = await t.run(parsed.data, call);
     out = hide(textOf(r));
-    if (typeof r !== "string" && r.images.length) images = r.images;
+    if (typeof r !== "string" && r.images?.length) images = r.images;
+    if (typeof r !== "string" && r.data !== undefined) data = hidden(r.data, hide);
   } catch (err) {
     if (call.signal.aborted) throw err;
     // An untrusted source's error message is untrusted too.
@@ -803,8 +835,17 @@ export async function runPluginTool(
   const untrusted = untrustedOf(t, parsed.data, out);
   if (out.length > MAX_OUTPUT_CHARS && !t.whole)
     out = `${out.slice(0, MAX_OUTPUT_CHARS)}\n… (cut; ${out.length} characters in all)`;
-  return { content: label(out, untrusted), isError: false, untrusted, text: out, images };
+  return { content: label(out, untrusted), isError: false, untrusted, text: out, images, data };
 }
+
+const hidden = (v: unknown, hide: (text: string) => string): unknown =>
+  typeof v === "string"
+    ? hide(v)
+    : Array.isArray(v)
+      ? v.map((x) => hidden(x, hide))
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hidden(x, hide)]))
+        : v;
 
 /** Whether `t` is offered where the model is working. */
 export function offered(t: PluginTool, o: Offer): boolean {

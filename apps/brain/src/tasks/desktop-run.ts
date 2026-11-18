@@ -324,11 +324,34 @@ class Computer extends BetaAbstractComputerToolset20260801 {
 
 /** Like Computer, the run checks policy before calling it. */
 class Browser extends BetaAbstractBrowserToolset20260801 {
+  private seen: { tabs: BetaBrowserState["tabs"]; failed: boolean };
+
   constructor(
     private agent: DesktopAgent,
     private onImage: (bytes: Uint8Array) => Promise<void>,
   ) {
-    super({ browserState: async () => (await agent.browserState()) as BetaBrowserState });
+    // The SDK ends the whole run when this throws: a browser that stopped answering is the call's error.
+    const seen = { tabs: [] as BetaBrowserState["tabs"], failed: false };
+    super({
+      browserState: async () => {
+        try {
+          const state = (await agent.browserState()) as BetaBrowserState;
+          seen.tabs = state.tabs;
+          return state;
+        } catch {
+          seen.failed = true;
+          return { tabs: seen.tabs };
+        }
+      },
+    });
+    this.seen = seen;
+  }
+
+  async answer(call: Anthropic.Beta.BetaToolUseBlock): Promise<ToolResult> {
+    this.seen.failed = false;
+    const r = await this.toolResult(call);
+    if (!this.seen.failed) return r;
+    return { ...r, content: "The browser isn't responding.", is_error: true };
   }
 
   protected override async execute(
@@ -857,7 +880,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     let offering: "open" | "offer" | "accept" | null = null;
     /** A message to a person, which waits for the owner to stop it first. */
     let toSend: string | null = null;
-    let publishing = false;
+    /** The approved listing's publish, pressed here. */
+    let publishing: AgentElement | null = null;
     if (check) {
       const tab = typeof input.tab_id === "string" ? { tab_id: input.tab_id } : {};
       /** Where each look was, for a computer's screenshot check. */
@@ -945,13 +969,14 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       const posts = takeDown && takeDownCheck(el, lastUrl);
       if (posts) return notRun(call, posts);
       if (listing) {
-        const l = listingCheck(listing, kind, el, hold);
+        const text = async () => (await guest?.context(true).catch(() => null))?.text ?? null;
+        const l = await listingCheck(listing, kind, el, hold, text);
         if (l.action === "hold") return notRun(call, l.why);
         // Filling in its form, and the approved listing's publish, need no confirm_intent.
         if (l.action === "fill") hold = null;
         if (l.action === "publish") {
           hold = null;
-          publishing = true;
+          publishing = el;
         }
       }
       // One asked before trying is spent on the first held step, covered or not.
@@ -1014,7 +1039,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     try {
       if (isBrowser && !browser) return textResult(call, "There's no browser tool here.", true);
       if (machine) await whenFree();
-      r = await (isBrowser && browser ? browser : computer).toolResult(call);
+      r = isBrowser && browser ? await browser.answer(call) : await computer.toolResult(call);
     } finally {
       pendingStepId = undefined;
     }
@@ -1034,7 +1059,7 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     if (publishing && listing) {
       // Once, unless the form stays with the title in: the site refused it, most often a field it
       // wants written another way. A page that hung looks the same, so it may still have gone up.
-      const refused = await stayedInForm(listing, inspectAgain);
+      const refused = await stayedInForm(listing, inspectAgain, publishing);
       if (!refused) listing.published = true;
       tasks.listings?.publishPassed(id);
       tasks.addStep(id, {
@@ -1170,11 +1195,12 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
   const stayedInForm = async (
     g: NonNullable<typeof listing>,
     inspectAgain: (() => Promise<Inspected>) | null,
+    from: AgentElement,
   ): Promise<boolean> => {
     for (let i = 0; i < sendConfirm.tries; i++) {
       await Bun.sleep(sendConfirm.everyMs);
       const el = (await inspectAgain?.()) ?? (await screen.inspect().catch(() => null));
-      if (!stillInForm(g, el)) return false;
+      if (!stillInForm(g, el, from)) return false;
     }
     return true;
   };
@@ -1658,13 +1684,15 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
     thinking: thinkingFor(model),
     output_config: { effort: "medium" },
     // Old screenshots are cleared on the server; clearing them here would break cached reasoning.
+    // It clears well before 100k input tokens, past which Haiku charges five times as much; it keeps 8
+    // because a turn batches up to that many calls, and one cleared before the model saw it is lost.
     context_management: {
       edits: [
         {
           type: "clear_tool_uses_20250919",
-          trigger: { type: "input_tokens", value: 80_000 },
+          trigger: { type: "input_tokens", value: 60_000 },
           keep: { type: "tool_uses", value: 8 },
-          clear_at_least: { type: "input_tokens", value: 30_000 },
+          clear_at_least: { type: "input_tokens", value: 15_000 },
           exclude_tools: ["confirm_intent", "request_takeover", "finish_task"],
         },
       ],
@@ -1774,13 +1802,9 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
         );
       if (finished) {
         const prefix = finished.outcome === "blocked" ? "Blocked: " : "";
-        // Blocked is a login or captcha: the expert model can't get past it either.
-        throw new Stop(
-          finished.outcome === "done" ? "done" : "failed",
-          prefix + finished.summary,
-          true,
-          finished.outcome === "failed" && { account: "" },
-        );
+        // A model that says it can't be done has looked (a closed shop, a conversation that isn't
+        // there): the expert model would only find the same, at many times the cost.
+        throw new Stop(finished.outcome === "done" ? "done" : "failed", prefix + finished.summary);
       }
       if (signal.aborted) {
         record("user", results);

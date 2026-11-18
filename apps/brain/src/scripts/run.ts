@@ -1,9 +1,10 @@
 // Runs a script's steps as a task, without the model. A change runs through its tool's policy like a
 // task's, but the script's approval stands in for the review: only what always asks you still does.
 
-import { type CallContext, JobStop, type PluginTool } from "@hatbot/plugin-sdk";
+import { type CallContext, JobStop, PluginError, type PluginTool } from "@hatbot/plugin-sdk";
 import {
   HATBOT_ID,
+  type Script,
   type ScriptCondition,
   type ScriptJob,
   type ScriptStep,
@@ -144,6 +145,41 @@ export function holds(c: ScriptCondition, vars: Record<string, unknown>): boolea
   }
 }
 
+const typed = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
+
+/**
+ * What /run's words after the script's name give it: name=value pairs, or its one input's value,
+ * JSON where it reads as JSON. Throws why not.
+ */
+export function commandInput(script: Script, text: string): Record<string, unknown> {
+  const names = script.inputs.map((i) => i.name);
+  const takes = names.length
+    ? `${script.name} takes ${names.join(", ")}.`
+    : `${script.name} takes no inputs.`;
+  if (!text) return {};
+  if (!/^[\w-]+=/.test(text)) {
+    if (names.length === 1) return { [names[0] as string]: typed(text) };
+    throw new PluginError(names.length ? `Give its inputs as name=value. ${takes}` : takes);
+  }
+  const input: Record<string, unknown> = {};
+  const left = text.replace(
+    /([\w-]+)=("(?:[^"\\]|\\.)*"|\S+)\s*/g,
+    (_, name: string, value: string) => {
+      if (!names.includes(name)) throw new PluginError(`There's no input ${name}. ${takes}`);
+      input[name] = typed(value);
+      return "";
+    },
+  );
+  if (left.trim()) throw new PluginError(`Give its inputs as name=value. ${takes}`);
+  return input;
+}
+
 /** The tools a script of `botId`'s may call: what its tasks are offered, apart from the core's own. */
 export function scriptTools(tasks: Tasks, botId: string): PluginTool[] {
   const { d } = tasks;
@@ -256,7 +292,7 @@ export async function runScript(
     const r = await runPluginTool(t, input, cc, d.plugins.hideSecrets);
     if (r.untrusted) taint(describeCall(t, input));
     if (r.isError && !s.optional) throw new Failed(`${at}: ${t.name} failed: ${r.text}`);
-    if (s.as) vars[s.as] = r.isError ? { error: r.text } : answerOf(r.text);
+    if (s.as) vars[s.as] = r.isError ? { error: r.text } : (r.data ?? answerOf(r.text));
   };
 
   const step = async (s: ScriptStep) => {

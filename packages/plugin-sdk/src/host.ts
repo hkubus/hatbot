@@ -119,6 +119,7 @@ export type BackgroundTask = {
 export interface ScriptsService {
   get(id: number): Script | null;
   byName(botId: string, name: string): Script | null;
+  list(botId: string): Script[];
   /** A run, as a background task with `input`; null while its last run from `runKey` still goes. */
   start(
     script: Script,
@@ -132,6 +133,8 @@ export interface ScriptsService {
       | "runKey"
       | "payload"
       | "trusted"
+      | "conversationId"
+      | "message"
     > & {
       input: Record<string, unknown>;
       /** What started it had read untrusted content, this. */
@@ -229,7 +232,14 @@ export interface SpendHost {
   check(usd: number, task?: TaskLimit): void;
   /** Holds `usd` against the limits while a request is out; call what it returns once it's recorded. */
   hold(usd: number, task?: TaskLimit): () => void;
-  record(entry: { model: string; purpose: string; usage: ModelUsage; taskId?: number }): void;
+  record(entry: {
+    model: string;
+    purpose: string;
+    usage: ModelUsage;
+    taskId?: number;
+    /** The response's, for what context editing cleared. */
+    cleared?: ModelMessage["context_management"];
+  }): void;
   /** What a task and the tasks it started have spent. */
   treeSpend(taskId: number): number;
   /** Spent in the last `days` days, today's included, by purpose. */
@@ -302,9 +312,17 @@ export type TaskOrigin = {
   /** The standing instructions the owner gave, as the approval review may read them; null if untrusted. */
   standing?: (task: Task) => string | null;
   /** Splits an event (its payload, or news told it later) into what's trusted and what isn't. */
-  event?: (
-    text: string,
-  ) => { trusted: string; untrusted?: { source: string; text: string } } | null;
+  event?: (text: string) => {
+    trusted: string;
+    untrusted?: { source: string; text: string };
+    /** What an earlier task found, which may be out of date; `source` if that task had read untrusted content. */
+    earlier?: { text: string; source: string | null };
+  } | null;
+  /**
+   * News that leaves nothing to do while the task hasn't changed anything, such as a monitor back up
+   * by itself: the line it then ends with, in the chat and without a notification.
+   */
+  settles?: (event: string, task: Task) => string | null;
   /** It may spend what's kept back for alerts. */
   reserve?: boolean;
   /** What to tell the owner when a spend limit stops it. */

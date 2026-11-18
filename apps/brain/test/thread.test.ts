@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
+import { localStamp, type StreamHandlers, type StreamParams } from "@hatbot/plugin-sdk";
 import {
   type AskResult,
   type ConversationsExport,
@@ -9,6 +9,8 @@ import {
 import { activity, answered, markPrevious, parseSummary, titleOf } from "../src/agent/thread";
 import { runCoreTool } from "../src/agent/tools";
 import { EventBus } from "../src/events";
+import { HATBOT } from "../src/memory/store";
+import { RETOLD } from "../src/tasks/agent-run";
 import { FakeModel, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, testApp, toolNames, waitFor } from "./helpers";
 import { finish } from "./plugin-helpers";
@@ -158,6 +160,74 @@ test("a conversation goes on within 30 minutes; idle past that, it gets a recap 
   expect(lastUserText(model.requests[2])).toContain("2026-10-09: sdb on the NAS is failing.");
 });
 
+test("asked for the same check on three days, the bot offers once to run it on a schedule; stamps that aren't the owner's don't count", async () => {
+  const day = 86400_000;
+  const model = new FakeModel(
+    Array.from({ length: 5 }, () => ({ content: [text("Loss is low.")] })),
+  );
+  const t = await testApp(model);
+  const owner = /from="Owner" at="\w{3} (\S+ \S+)"/g;
+  model.onCreate = (p) => {
+    if (typeof p.system !== "string" || !p.system.includes("<checks>:")) return undefined;
+    const content = String(p.messages[0]?.content);
+    const asked = [...content.matchAll(owner)].map((m) => `${m[1]} packet loss`);
+    const made = [2, 3].map(
+      (k) => `${localStamp(new Date(t.clock() - k * day)).slice(4, 14)} 09:00 packet loss`,
+    );
+    return `<recap>Packet loss.</recap>\n<summary>Asked about packet loss.</summary>\n<checks>\n${[...asked, ...made].join("\n")}\n</checks>`;
+  };
+  for (let i = 0; i < 5; i++) {
+    await t.thread.post(i ? "check again" : "how's the packet loss?").done;
+    t.advance(day);
+    await t.thread.sweep();
+  }
+  const offered = model.requests.map((r) => JSON.stringify(r.messages).includes("on a schedule"));
+  expect(offered).toEqual([false, false, false, true, false]);
+  expect(String(model.creates.at(-1)?.messages[0]?.content)).toContain(
+    "<known_checks>\npacket loss\n</known_checks>",
+  );
+});
+
+test("preferences.md opens every conversation while it's short, and not once it's long", async () => {
+  const model = new FakeModel([{ content: [text("Noted.")] }, { content: [text("Noted.")] }]);
+  const t = await testApp(model);
+  const rule = "- Tomorrow at 3am means the same day.";
+  await t.memory.write("preferences.md", `# Preferences\n${rule}\n`, HATBOT, "Rule");
+  await t.thread.post("remind me tomorrow at 3am").done;
+  expect(lastUserText(model.requests[0])).toContain(rule);
+
+  await t.memory.write(
+    "preferences.md",
+    `# Preferences\n${rule}\n${"- x\n".repeat(600)}`,
+    HATBOT,
+    "Long",
+  );
+  t.advance(31 * 60_000);
+  await t.thread.post("and again").done;
+  expect(lastUserText(model.requests[1])).not.toContain(rule);
+});
+
+test("a summary well over its 300 words is asked once to be shortened, and the shorter one is kept", async () => {
+  const long = Array.from({ length: 450 }, (_, i) => `word${i}`).join(" ");
+  const model = new FakeModel(
+    [{ content: [text("Hi.")] }],
+    [
+      `<recap>Said hi.</recap>\n<summary>${long}</summary>`,
+      "<summary>2026-10-09: said hi.</summary>",
+    ],
+  );
+  const t = await testApp(model);
+  await t.thread.post("hello").done;
+  t.advance(31 * 60_000);
+  await t.thread.sweep();
+  expect(model.creates).toHaveLength(2);
+  expect(JSON.stringify(model.creates[1]?.messages)).toContain("word449");
+  expect(
+    t.db.query<{ summary: string }, []>("SELECT summary FROM conversations WHERE id = 1").get()
+      ?.summary,
+  ).toBe("2026-10-09: said hi.");
+});
+
 test("a new conversation starts when the prompt or tools change, the model switches, or the last request passed 90k", async () => {
   const model = new FakeModel([
     { content: [text("one")] },
@@ -204,17 +274,18 @@ test("a chat is kept cached for half an hour after its last request, while that 
   const model = new FakeModel(
     [
       { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
-      // Haiku: 200 tokens written for five minutes rather than an hour save what two reads cost. A
+      // Opus: 100 tokens written for five minutes rather than an hour save what two reads cost. A
       // read doesn't take away from that.
       {
         content: [text("Hi again.")],
-        usage: { cache_creation_input_tokens: 200, cache_read_input_tokens: 5000 },
+        usage: { cache_creation_input_tokens: 100, cache_read_input_tokens: 5000 },
         wait: slow.promise,
       },
     ],
     ["<recap>Said hi.</recap>\n<summary>2026-10-09: said hi.</summary>"],
   );
   const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-opus-5-5" });
   const pings = () => model.creates.filter((c) => c.max_tokens === 0);
   const minutes = async (n: number) => {
     for (let i = 0; i < n; i++) {
@@ -250,6 +321,20 @@ test("a chat is kept cached for half an hour after its last request, while that 
     .query<{ n: number }, []>("SELECT count(*) AS n FROM spend_ledger WHERE purpose = 'keep-warm'")
     .get();
   expect(spend?.n).toBe(11);
+});
+
+test("a chat on a model whose cache reads are a tenth of its input isn't kept cached", async () => {
+  const model = new FakeModel([
+    { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
+  ]);
+  const t = await testApp(model);
+  t.settings.update({ chatModel: "claude-haiku-5-5" });
+  await t.thread.post("hello").done;
+  for (let i = 0; i < 10; i++) {
+    t.advance(60_000);
+    await t.thread.sweep();
+  }
+  expect(model.creates.filter((c) => c.max_tokens === 0)).toHaveLength(0);
 });
 
 test("each request marks where the last one ended, after the same system and tools, within four breakpoints; tasks cache theirs too", async () => {
@@ -621,6 +706,9 @@ test("a task started from the chat keeps your words for its approval check, at t
     JSON.stringify(work.requests[i]?.messages[0]?.content).match(/Started by [^,]+/)?.[0];
   expect(startedBy(0)).toBe("Started by the bot in the chat");
   expect(startedBy(1)).toBe("Started by the owner");
+  const first = (i: number) => JSON.stringify(work.requests[i]?.messages[0]?.content);
+  expect(first(0)).toContain(RETOLD);
+  expect(first(1)).not.toContain(RETOLD);
 
   // The model hears about it with your next message.
   await t.thread.post("how's it going?").done;

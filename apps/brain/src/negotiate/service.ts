@@ -331,7 +331,9 @@ export class Negotiations {
   /** None without Scout, whose scout_listing_detail every negotiation starts from. */
   tools(bot: Bot, available: PluginTool[], where: { conversationId: number | null }): PluginTool[] {
     if (!scoutTool(available, "scout_listing_detail")) return [];
-    return negotiateTools(this, bot, available, where);
+    // Like Scout's own: loaded for the bot that has Scout among its plugins, found by search elsewhere.
+    const deferred = !bot.plugins?.includes("scout");
+    return negotiateTools(this, bot, available, where).map((t) => ({ ...t, deferred }));
   }
 
   mine(bot: Bot, id: number): Negotiation {
@@ -1122,7 +1124,7 @@ export class Negotiations {
     const text = collapse(input.text);
     const msg = claimed ?? this.claimSend(n, input);
     const task = this.desktopTask(n, call, {
-      title: `Message the seller: ${n.title}`.slice(0, 80),
+      title: `Message the ${n.role === "sell" ? "buyer" : "seller"}: ${n.title}`.slice(0, 80),
       goal: sendGoal(
         n,
         text,
@@ -1165,8 +1167,9 @@ export class Negotiations {
   }
 
   async check(n: Negotiation, call: CallContext): Promise<string> {
+    const other = n.role === "sell" ? "buyer" : "seller";
     const task = this.desktopTask(n, call, {
-      title: `Read the seller's messages: ${n.title}`.slice(0, 80),
+      title: `Read the ${other}'s messages: ${n.title}`.slice(0, 80),
       goal: readGoal(n),
       successCriteria: "Every message in the conversation is recorded.",
       messageId: null,

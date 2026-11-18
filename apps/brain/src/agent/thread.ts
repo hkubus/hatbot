@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
+import type { CallContext, PluginTool, ScriptsService, Verdict } from "@hatbot/plugin-sdk";
 import {
   BudgetError,
   type CreateParams,
@@ -15,6 +15,7 @@ import {
   localStamp,
   longPdf,
   modelErrorText,
+  PluginError,
   untrustedBlock,
 } from "@hatbot/plugin-sdk";
 import {
@@ -38,7 +39,7 @@ import {
   withTodo,
 } from "@hatbot/shared";
 import { z } from "zod";
-import { type Approvals, ownerNote } from "../approvals";
+import { type Approvals, ownerNote, sameCall } from "../approvals";
 import type { Attachments } from "../attachments";
 import { type Bots, botIndex, promptFor } from "../bots";
 import { brokenChartsOf, chartProblemOf } from "../chart-data";
@@ -59,6 +60,7 @@ import {
   verdictFor,
 } from "../plugins/registry";
 import type { Repeats } from "../scripts/repeats";
+import { commandInput } from "../scripts/run";
 import type { SettingsStore } from "../settings";
 import { priceOf, requestCeiling, type Spend, searchesIn, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
@@ -72,7 +74,8 @@ import {
   groupPrompt,
   INCOGNITO_PROMPT,
   MAX_GROUP_REPLIES,
-  SUMMARY_PROMPT,
+  SHORTEN_PROMPT,
+  summaryPrompt,
   systemPrompt,
 } from "./prompt";
 import {
@@ -88,12 +91,12 @@ import {
 import {
   addSources,
   CHAT_WEB_TOOLS,
-  chatToolParam,
   containerOf,
   imageBlocks,
   inBatches,
   invalidInput,
   liveTool,
+  offeredToolParam,
   runOffered,
   startEarly,
   TOOL_SEARCH,
@@ -112,12 +115,25 @@ const CACHE_MS = 5 * 60_000;
  * again at no output: a cache read, far cheaper than an hour-long write, while you might reply.
  */
 const WARM_AFTER_MS = 3 * 60_000;
+/**
+ * Only a model whose cache reads cost under this share of its input is kept warm: at Haiku's tenth,
+ * the owner's replies came too seldom within the half hour for its pings to cost less than writing
+ * again.
+ */
+const WARM_READ_DISCOUNT = 15;
 const MAX_SUMMARY_TRIES = 3;
 /** A conversation whose last request was this long carries on in a new one. */
 const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 /** The most of your words in a conversation the review reads, the newest kept. */
 const OWNER_SAID_CHARS = 12_000;
+/**
+ * What a task the chat starts reads of it: in the owner's export, 6 messages came to 2.2k characters
+ * at the median and 3.6k at p90, and these caps cut 9 of 222 tasks' chats.
+ */
+const TASK_CHAT_MESSAGES = 6;
+const TASK_CHAT_CHARS = 6000;
+const TASK_CHAT_EACH = 2000;
 const MAX_STEPS = 25;
 /** A chat request's output limit, and ask_opus's: the check before each counts on all of it. */
 const MAX_TOKENS = 32000;
@@ -239,6 +255,8 @@ export type ThreadDeps = {
 const RESOLVED_SHOWN_MS = 7 * 86400_000;
 /** The most of a thread thread_read hands the main chat. */
 const READ_THREAD_MESSAGES = 40;
+/** The summary prompt asks for 300; past this it's asked once to shorten it. */
+const MAX_SUMMARY_WORDS = 400;
 
 export function parseSummary(out: string): { recap: string | null; summary: string } {
   const tag = (name: string) =>
@@ -264,6 +282,8 @@ export class Thread {
   private handoffAnswers = new Map<number, Handoff>();
   /** The approval the reply in progress waits for; your next message cancels it. */
   private waiting: number | null = null;
+  /** What you ran anyway that the bot has been told how to run. */
+  private toldAnyway = new Set<number>();
   /** The text of the reply being written, by message id, as it is now: for a chat opened mid-reply. */
   private live = new Map<number, string>();
   /** And what it has thought and done so far. */
@@ -535,6 +555,41 @@ export class Thread {
         at: new Date(m.created_at),
       }))
       .filter((m) => m.text);
+  }
+
+  /**
+   * The chat's latest messages before the reply `before`, for a task it starts: yours and the bots'
+   * replies, without their tool calls. `taintedBy`: what the first untrusted one carries.
+   */
+  recentChat(before: number, episodeId: number): { text: string; taintedBy: string | null } {
+    const rows = this.d.db
+      .query<
+        { id: number; role: string; bot_id: string | null; text: string; created_at: string },
+        [number, number, number, number]
+      >(
+        `SELECT m.id, m.role, m.bot_id, m.text, m.created_at FROM messages m, episodes e
+         WHERE e.id = ?3 AND m.conversation_id = ?1 AND m.id < ?2 AND m.kind = 'text'
+           AND m.status = 'done' AND m.text != '' AND m.incognito = e.incognito
+           AND (e.fresh = 0 OR m.episode_id = e.id)
+         ORDER BY m.id DESC LIMIT ?4`,
+      )
+      .all(this.conversationId, before, episodeId, TASK_CHAT_MESSAGES);
+    const kept: typeof rows = [];
+    let left = TASK_CHAT_CHARS;
+    for (const m of rows) {
+      if (left <= 0) break;
+      const most = Math.min(left, TASK_CHAT_EACH);
+      const text = m.text.length > most ? `…${m.text.slice(-most)}` : m.text;
+      kept.unshift({ ...m, text });
+      left -= text.length;
+    }
+    const untrusted = this.untrusted(kept.map((m) => m.id));
+    return {
+      text: kept
+        .map((m) => this.transcript({ ...m, tainted_by: untrusted.get(m.id)?.source ?? null }))
+        .join("\n"),
+      taintedBy: [...untrusted.values()][0]?.source ?? null,
+    };
   }
 
   private ownerSaid(episodeId: number): string {
@@ -860,6 +915,43 @@ export class Thread {
         if (!(err instanceof MemoryError)) console.error("/remember failed", err);
         note(`Couldn't save it: ${err instanceof MemoryError ? err.message : "memory failed"}`);
       }
+    } else if (c.name === "run") {
+      const scripts = this.d.plugins.service<ScriptsService>("scripts");
+      if (!scripts || !tasks) return void note("Scripts aren't available.");
+      const [, name = "", rest = ""] = /^(\S*)\s*([\s\S]*)$/.exec(c.arg) ?? [];
+      const script = scripts.byName(bot.id, name);
+      if (!script) {
+        const names = scripts.list(bot.id).map((s) => s.name);
+        const which = name
+          ? `No script called ${name}.`
+          : "Say which script, like /run check-backups.";
+        return void note(
+          names.length
+            ? `${which} Scripts: ${names.join(", ")}.`
+            : `${bot.name} has no scripts yet.`,
+        );
+      }
+      if (!script.enabled) return void note(`${script.name} is switched off.`);
+      if (tasks.paused()) return void note("Hatbot is paused. Resume to start tasks.");
+      const runKey = `script:${script.id}`;
+      if (tasks.activeFor(runKey)) return void note(`${script.name}'s last run is still going.`);
+      let input: Record<string, unknown>;
+      try {
+        input = commandInput(script, rest.trim());
+      } catch (err) {
+        if (err instanceof PluginError) return void note(err.message);
+        throw err;
+      }
+      const started = note(`Running ${script.name}.`);
+      // As Run now: your own command, so what the conversation read doesn't taint it.
+      scripts.start(script, {
+        origin: "chat",
+        source: script.name,
+        input,
+        runKey,
+        conversationId: this.conversationId,
+        message: started.id,
+      });
     } else if (c.name === "todo") {
       if (!c.arg) {
         const open = parseTodos((await memory.readOrNull(TODO_FILE)) ?? "").filter((t) => !t.done);
@@ -934,7 +1026,7 @@ export class Thread {
     const expert = settings.get().expertModel;
     const asksExpert = chatModel !== expert;
     const tools = [
-      ...pluginTools.map(chatToolParam),
+      ...pluginTools.map((t) => offeredToolParam(t, offer)),
       ASK_OWNER,
       TOOL_SEARCH,
       ...(asksExpert ? [askExpert(modelName(expert))] : []),
@@ -1202,8 +1294,8 @@ export class Thread {
 
   /**
    * Sends each bot's last request again, at no output, before its cache runs out: for half an hour
-   * after it, while the episode is open, and while these reads cost less than the episode saved by
-   * writing for five minutes rather than an hour.
+   * after it, while the episode is open, while these reads cost less than the episode saved by
+   * writing for five minutes rather than an hour, and only on a model whose reads are cheap enough.
    */
   private async keepWarm() {
     const { db, settings, spend, model } = this.d;
@@ -1221,9 +1313,11 @@ export class Thread {
            FROM spend_ledger WHERE episode_id = ? AND bot_id = ?`,
         )
         .get(w.episodeId, botId);
+      const price = priceOf(w.params.model);
       // An hour's write is 2x input, five minutes' 1.25x.
-      const saved = ((r?.written ?? 0) * priceOf(w.params.model).input * 0.75) / 1_000_000;
+      const saved = ((r?.written ?? 0) * price.input * 0.75) / 1_000_000;
       if (
+        price.input < price.cacheRead * WARM_READ_DISCOUNT ||
         !open ||
         now - w.at >= EPISODE_IDLE_MS ||
         now - sent.at >= CACHE_MS ||
@@ -1370,6 +1464,7 @@ export class Thread {
         db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
       }
       db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodeIds}`).run(is);
+      db.query(`DELETE FROM asked_checks WHERE episode_id IN ${episodeIds}`).run(is);
       db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodeIds}`).run(
         is,
       );
@@ -1522,28 +1617,51 @@ export class Thread {
 
   private async writeSummary(episodeId: number) {
     if (this.summarized(episodeId)) return;
-    const transcript = this.d.db
+    const rows = this.d.db
       .query<{ role: string; bot_id: string | null; text: string; created_at: string }, [number]>(
         "SELECT role, bot_id, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
       )
-      .all(episodeId)
-      .map((m) => this.transcript(m))
-      .join("\n");
+      .all(episodeId);
+    const transcript = rows.map((m) => this.transcript(m)).join("\n");
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
-      const content = `<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
-      const out = await oneShot(this.d, this.summaryRequest(SUMMARY_PROMPT, content), {
-        purpose: "summary",
-        episodeId,
-        botId: this.bot().id,
-      });
+      const botId = this.bot().id;
+      // A bot's own chat notes what the owner asked it to check, to offer a schedule for one they keep asking.
+      const checks = this.group() === null && this.parent() === null ? this.d.repeats : undefined;
+      const known = checks
+        ? `\n\n<known_checks>\n${tagText(checks.checkNames(botId).join("\n")) || "(none)"}\n</known_checks>`
+        : "";
+      const content = `Today is ${localStamp(new Date(this.clock()))}.\n\n<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>${known}\n\n<conversation>\n${transcript}\n</conversation>`;
+      const ledger = { purpose: "summary", episodeId, botId };
+      const out = await oneShot(
+        this.d,
+        this.summaryRequest(summaryPrompt(!!checks), content),
+        ledger,
+      );
       const { recap, summary } = parseSummary(out.trim());
       if (!summary) throw new Error(`no summary for episode ${episodeId}`);
-      this.saveSummary(summary);
+      this.saveSummary(await this.shortened(summary, ledger));
       if (recap)
         this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
+      const asked = rows
+        .filter((m) => m.role === "user")
+        .map((m) => localStamp(new Date(m.created_at)).slice(4));
+      const listed = /<checks>([\s\S]*?)<\/checks>/.exec(out)?.[1];
+      if (checks && listed) checks.recordChecks(botId, episodeId, listed, new Set(asked));
     }
     this.markSummarized(episodeId);
+  }
+
+  /** Nothing else holds a summary to its 300 words, and one that grows is in every conversation. */
+  private async shortened(
+    summary: string,
+    ledger: { purpose: string; episodeId: number; botId: string },
+  ): Promise<string> {
+    const words = summary.split(/\s+/).length;
+    if (words <= MAX_SUMMARY_WORDS) return summary;
+    const content = `It's ${words} words.\n\n<summary>\n${summary}\n</summary>`;
+    const out = await oneShot(this.d, this.summaryRequest(SHORTEN_PROMPT, content), ledger);
+    return parseSummary(out.trim()).summary || summary;
   }
 
   private summarized(episodeId: number): boolean {
@@ -2065,6 +2183,27 @@ export class Thread {
         userBlocks.push(...this.d.attachments.refs(user.attachments));
         this.taint(episode.id, `Attached file "${user.attachments[0]?.name}"`);
       }
+      // The apps write for you after Run anyway, but only the same call goes, so the bot is told it.
+      const anyway = (this.d.approvals?.ranAnyway(episode.id, bot.id) ?? []).filter(
+        (a) => !this.toldAnyway.has(a.id),
+      );
+      for (const a of anyway) {
+        this.toldAnyway.add(a.id);
+        const exact = sameCall(a) || "make the same call exactly as before";
+        const ran = `(The owner chose to run what the safety review blocked anyway: ${a.summary}. To run it, ${exact})`;
+        note = note ? `${note}\n\n${ran}` : ran;
+      }
+      // A check the owner keeps asking this bot for: a schedule is offered, once.
+      const schedule =
+        user &&
+        !asked &&
+        !group &&
+        !incognito &&
+        this.parent() === null &&
+        offered.has("automation_schedule_create")
+          ? this.d.repeats?.offerSchedule(bot.id)
+          : null;
+      if (schedule) note = note ? `${note}\n\n${schedule}` : schedule;
       // A system message follows a user turn; with nothing else to say, the note is that turn.
       if (note && !userBlocks.length) {
         userBlocks.push({ type: "text", text: note });
@@ -2385,7 +2524,7 @@ export class Thread {
                 const most = this.d.settings.get().safety.chatCommands;
                 if (commands > most)
                   return {
-                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command that may change something counts, and a loop is too many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
+                    content: `Not run: that would take this reply past ${most} commands (each part of a chained command that may change something counts, and a loop that may change something is too many), the most the chat runs itself. Start run_task for the work, with everything you've found so far in its goal, and tell the owner it's running.`,
                     isError: true,
                   };
               }
@@ -2797,7 +2936,18 @@ export async function memoryIndex(memory: MemoryStore, botId: string): Promise<s
   const index = (await memory.readOrNull("INDEX.md")) ?? "(no INDEX.md yet)";
   const own = botIndex(botId);
   const mine = own ? await memory.readOrNull(own) : null;
-  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}${await openTodos(memory)}`;
+  return `<memory_index>\n${index.trim()}\n</memory_index>${mine === null ? "" : `\n<your_memory_index path="${own}">\n${mine.trim()}\n</your_memory_index>`}${await preferences(memory)}${await openTodos(memory)}`;
+}
+
+const PREFERENCES_FILE = "preferences.md";
+/** Shown whole while it's short: the owner's rules matter in replies that wouldn't think to read it. */
+const PREFERENCES_SHOWN_CHARS = 2000;
+
+async function preferences(memory: MemoryStore): Promise<string> {
+  const text = (await memory.readOrNull(PREFERENCES_FILE))?.trim() ?? "";
+  // Only headings, as it starts out, says nothing.
+  if (!/^[^#\s]/m.test(text) || text.length > PREFERENCES_SHOWN_CHARS) return "";
+  return `\n<preferences path="${PREFERENCES_FILE}">\n${text}\n</preferences>`;
 }
 
 const TODOS_SHOWN = 20;

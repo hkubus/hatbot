@@ -51,10 +51,14 @@ export const proxmoxPlugin = definePlugin({
     { name: "PROXMOX_NODE", hint: "pve" },
     { name: "PROXMOX_TOKEN_ID", hint: "hatbot@pve!hatbot" },
     { name: "PROXMOX_TOKEN_SECRET", secret: true },
-    { name: "PROXMOX_TLS_FINGERPRINT", hint: "AB:CD:EF:…" },
-    { name: "HATBOT_BRAIN_ID", optional: true, hint: "101" },
+    { name: "PROXMOX_TLS_FINGERPRINT", hint: "AB:CD:EF:…", ownerOnly: true },
+    { name: "HATBOT_BRAIN_ID", optional: true, hint: "101", ownerOnly: true },
   ],
   config: Config,
+  ownerOnly: (before, after) =>
+    before.careful.some((id) => !after.careful.includes(id))
+      ? "Only the owner takes a guest off the careful list, on Proxmox's page in Settings → Plugins."
+      : null,
   start: ({ env, config }) => {
     const pve = new Proxmox(env);
     if (!pve.hasApi)

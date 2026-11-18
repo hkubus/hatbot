@@ -65,7 +65,7 @@ export const pbsPlugin = definePlugin({
     { name: "PBS_URL", hint: "https://192.168.1.11:8007" },
     { name: "PBS_TOKEN_ID", hint: "hatbot@pbs!hatbot" },
     { name: "PBS_TOKEN_SECRET", secret: true },
-    { name: "PBS_TLS_FINGERPRINT", hint: "AB:CD:EF:…" },
+    { name: "PBS_TLS_FINGERPRINT", hint: "AB:CD:EF:…", ownerOnly: true },
   ],
   config: z.object({}),
   start: async ({ env }) => {

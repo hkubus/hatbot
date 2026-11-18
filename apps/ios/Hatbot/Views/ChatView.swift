@@ -1449,7 +1449,7 @@ struct SendingBody: View {
   }
 }
 
-/// What the safety review stopped. It runs anyway only while its task is still going, or in a chat.
+/// What the safety review stopped. Run anyway on a task that has ended goes on in a new run.
 struct BlockedBody: View {
   let approval: Approval
   /// In a chat: tells its bot, which hears only when you write.
@@ -1472,17 +1472,15 @@ struct BlockedBody: View {
           Text("Dismiss").frame(maxWidth: .infinity)
         }
         .buttonStyle(.material(.tonal))
-        if live {
-          Button {
-            act {
-              try await store.runAnyway(a.id)
-              try await onRan?()
-            }
-          } label: {
-            Text("Run anyway").frame(maxWidth: .infinity)
+        Button {
+          act {
+            try await store.runAnyway(a.id)
+            try await onRan?()
           }
-          .buttonStyle(.material(.filled))
+        } label: {
+          Text("Run anyway").frame(maxWidth: .infinity)
         }
+        .buttonStyle(.material(.filled))
       }
       .controlSize(.large)
       if (a.scopes ?? []).contains("always") {

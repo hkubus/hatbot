@@ -317,6 +317,8 @@ export type ApprovalKind =
   | "computer"
   /** A secret you type in, which Hatbot keeps under a name the model knows it by. */
   | "secret"
+  /** Turning a plugin on or off, changing its settings, or which plugins a bot has. */
+  | "plugins"
   | "other";
 
 /** Where one channel of a flip Scout marked ready to list is. */
@@ -341,6 +343,7 @@ export const SAFETY_KINDS = [
   "computer",
   /** Starting a negotiation: asks or goes ahead, never reviewed. */
   "mandate",
+  "plugins",
 ] as const satisfies readonly ApprovalKind[];
 export type SafetyKind = (typeof SAFETY_KINDS)[number];
 /** Ask you; let the safety review answer first; or go ahead. */

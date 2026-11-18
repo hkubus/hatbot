@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
 import type { StreamParams } from "@hatbot/plugin-sdk";
-import { CLICK_CHECK_PROMPT, COMPUTER_PROMPT, REVIEW_PROMPT } from "../src/agent/prompt";
+import { CLICK_CHECK_PROMPT, COMPUTER_PROMPT } from "../src/agent/prompt";
 import { FakeComputer, withComputer } from "./fake-computer";
-import { computer, FakeModel, type Scripted, text, toolUse } from "./fake-model";
+import { computer, FakeModel, isReview, type Scripted, text, toolUse } from "./fake-model";
 import { type TestApp, testApp, waitFor } from "./helpers";
 import { ended } from "./plugin-helpers";
 
@@ -145,7 +145,7 @@ test("on a computer, a click nothing can name is judged from a zoomed screenshot
   work.onCreate = (p) =>
     p.system === CLICK_CHECK_PROMPT
       ? verdicts.shift()
-      : p.system === REVIEW_PROMPT
+      : isReview(p)
         ? JSON.stringify({ safe: false, why: "The owner didn't ask to delete anything." })
         : undefined;
   const t = await testApp(new FakeModel(), work);

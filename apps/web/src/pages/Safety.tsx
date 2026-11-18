@@ -23,6 +23,7 @@ const KINDS: readonly (readonly [SafetyKind, string])[] = [
   ["access", "Doors, locks and the alarm"],
   ["computer", "Using your computers"],
   ["mandate", "Starting negotiations"],
+  ["plugins", "Changing plugins"],
 ];
 const LEVELS: readonly (readonly [ApprovalLevel, string])[] = [
   ["ask", "Ask me"],
@@ -30,7 +31,14 @@ const LEVELS: readonly (readonly [ApprovalLevel, string])[] = [
   ["allow", "Don't ask"],
 ];
 const MANDATE_LEVELS = LEVELS.filter(([level]) => level !== "review");
-const RISKY: SafetyKind[] = ["purchase", "payment", "account_security", "access", "computer"];
+const RISKY: SafetyKind[] = [
+  "purchase",
+  "payment",
+  "account_security",
+  "access",
+  "computer",
+  "plugins",
+];
 
 export const TOOL_LEVELS = [
   ["plugin", "As the plugin says"],

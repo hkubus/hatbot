@@ -233,7 +233,7 @@ function SettingsHome({ toast, onSignOut }: { toast: Toast; onSignOut: () => voi
             settings.desktopModel !== settings.expertModel &&
             models?.find((m) => m.id === settings.expertModel)?.computerUse && (
               <Row
-                label={`Try desktop tasks again on ${modelNameIn(models, settings.expertModel)} when they fail`}
+                label={`Try desktop tasks again on ${modelNameIn(models, settings.expertModel)} when they get stuck`}
               >
                 <Switch
                   on={settings.desktopEscalate}

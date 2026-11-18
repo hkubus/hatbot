@@ -86,6 +86,7 @@ struct ChatCommand: Identifiable, Equatable, Sendable {
     ChatCommand(name: "remember", args: "<fact>", description: "Save it to memory as written"),
     ChatCommand(
       name: "todo", args: "[item]", description: "Add it to the to-do list, or show the list"),
+    ChatCommand(name: "run", args: "<script>", description: "Run one of the bot's scripts"),
   ]
 
   /// The ones that work in incognito: the rest would outlast it.

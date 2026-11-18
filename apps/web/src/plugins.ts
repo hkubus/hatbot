@@ -2,6 +2,7 @@
 import { web as computer } from "@hatbot/plugin-computer/web";
 import { web as homeassistant } from "@hatbot/plugin-homeassistant/web";
 import { web as mcp } from "@hatbot/plugin-mcp/web";
+import { web as minecraft } from "@hatbot/plugin-minecraft/web";
 import { web as openai } from "@hatbot/plugin-openai/web";
 import { web as proxmox } from "@hatbot/plugin-proxmox/web";
 import { web as scout } from "@hatbot/plugin-scout/web";
@@ -14,6 +15,7 @@ export const PLUGIN_WEB: Record<string, PluginWeb> = {
   computer,
   homeassistant,
   mcp,
+  minecraft,
   openai,
   proxmox,
   scout,

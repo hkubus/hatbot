@@ -1482,6 +1482,24 @@ test("after a deal the seller's messages are read but go to you, and a dispute s
   );
 });
 
+test("the conversation isn't read before anything has reached the seller", async () => {
+  const t = await testApp();
+  const n = openNegotiation(t);
+  const check = named(negotiateTools(t), "negotiate_check");
+  const input = check.schema.parse({ negotiation: n.id });
+  const failed = t.negotiations.claimSend(n, {
+    text: TEXT,
+    offer: 1060,
+    agree: false,
+    stated: null,
+  });
+  t.negotiations.dropSend(failed);
+  expect(verdictFor(check, input, call(), true).action).toBe("block");
+
+  sent(t, n);
+  expect(verdictFor(check, input, call(), true).action).toBe("allow");
+});
+
 test("the seller's own words in the title can't pass for the mandate's terms", () => {
   const n = {
     ...({} as Negotiation),
@@ -1531,6 +1549,16 @@ test("the scam screen catches paying or talking off the platform however it's wr
     "Płatna rezerwacja, 50 zł.",
     "Wyślę po przedpłacie.",
   ])
+    expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
+});
+
+test("a Vinted username with a dot isn't a link, while a host with a real top-level domain is", () => {
+  for (const text of [
+    "Hej, jestem benedict.ioan Rumunia, Timișoara Ostatnie logowanie: 1 godzinę temu",
+    "Hej, jestem rasmus-85. Ostatnie logowanie: 21 minut temu",
+  ])
+    expect([text, scamSignals(text, [])]).toEqual([text, []]);
+  for (const text of ["zapłać na olx-pay.top/x", "zapłać na olx-pay.top", "https://foo.xyz"])
     expect([text, scamSignals(text, []).length > 0]).toEqual([text, true]);
 });
 
@@ -1666,6 +1694,31 @@ test("a seller's reply in Scout's inbox gets an answer, with nobody in the chat"
   t.negotiations.due();
   expect(calls().filter((c) => c === "scout_conversation")).toHaveLength(2);
   expect(answerTasks(t)).toHaveLength(1);
+  await t.plugins.stopAll();
+});
+
+test("a Scout inbox that can't be read is said in the chat once it has failed for half an hour, not on a passing failure", async () => {
+  const t = await testApp(new FakeModel(), new FakeModel(), {}, [mcpPlugin], {});
+  const dir = mkdtempSync(join(tmpdir(), "hatbot-inbox-"));
+  tempDirs.push(dir);
+  const file = join(dir, "inbox.json");
+  await withScout(t, { scout_inbox: "chat", scout_conversation: "chat" }, { SCOUT_INBOX: file });
+  const n = openNegotiation(t, { conversationUrl: CHAT_URL });
+  sent(t, n);
+  const notes = () => t.chats.direct(n.botId).list().length;
+  const before = notes();
+  const read = async (ok: boolean, after = 10 * 60_000) => {
+    t.advance(after);
+    writeFileSync(file, ok ? JSON.stringify({ conversations: [], messages: {} }) : "down");
+    await t.sellerInbox.tick();
+  };
+  await read(false);
+  await read(true);
+  for (let i = 0; i < 3; i++) await read(false);
+  expect(notes()).toBe(before);
+  await read(false);
+  await read(false);
+  expect(notes()).toBe(before + 1);
   await t.plugins.stopAll();
 });
 

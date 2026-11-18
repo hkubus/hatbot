@@ -12,8 +12,7 @@ import {
 } from "@hatbot/plugin-sdk";
 import type { PluginInfo, Task } from "@hatbot/shared";
 import { z } from "zod";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { signIn, testApp, waitFor } from "./helpers";
 import {
   call,
@@ -286,9 +285,7 @@ test("the review blocks a risky change in the chat; Run anyway lets the next rep
     say("Blocked again."),
   ]);
   chat.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
-      ? JSON.stringify({ safe: false, why: "Nothing you said asks for it." })
-      : undefined;
+    isReview(p) ? JSON.stringify({ safe: false, why: "Nothing you said asks for it." }) : undefined;
   const t = await lab(chat, new FakeModel(), calls);
   await t.thread.post("bounce the database").done;
   const [blocked] = t.approvals.list(true);
@@ -299,6 +296,8 @@ test("the review blocks a risky change in the chat; Run anyway lets the next rep
   expect(anyway.status).toBe(200);
   await t.thread.post("Run it anyway.").done;
   expect(calls).toEqual(["restart db"]);
+  // Told the exact call, as text: a call made differently is reviewed again.
+  expect(said(chat, 2)).toContain('{\\"guest\\":\\"db\\"}');
   // Once: the same change is reviewed again after that.
   await t.thread.post("and again").done;
   expect(calls).toEqual(["restart db"]);

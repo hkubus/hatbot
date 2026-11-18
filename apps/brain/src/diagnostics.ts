@@ -73,6 +73,7 @@ const SOURCES: Source[] = [
   { type: "watcher", table: "watchers" },
   { type: "script", table: "scripts" },
   { type: "reply_calls", table: "reply_calls" },
+  { type: "asked_checks", table: "asked_checks" },
   {
     type: "spend",
     table: "spend_ledger",

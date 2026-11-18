@@ -422,8 +422,9 @@ export function PendingApproval({
 }
 
 /**
- * What the safety review blocked: nothing waits on it. Run anyway lets it go once, for a task still
- * running or the chat's next reply; Always lets this exact call skip the review from now on.
+ * What the safety review blocked: nothing waits on it. Run anyway lets it go once: a task still running
+ * does it, one that has ended goes on in a new run, and a chat's bot hears with your next message.
+ * Always lets this exact call skip the review from now on.
  */
 export function BlockedApproval({
   a,
@@ -482,21 +483,19 @@ export function BlockedApproval({
             Always
           </button>
         )}
-        {live && (
-          <button
-            type="button"
-            className="btn primary"
-            disabled={busy}
-            onClick={() =>
-              act(async () => {
-                await runAnyway(a.id);
-                await onRan?.();
-              })
-            }
-          >
-            Run anyway
-          </button>
-        )}
+        <button
+          type="button"
+          className="btn primary"
+          disabled={busy}
+          onClick={() =>
+            act(async () => {
+              await runAnyway(a.id);
+              await onRan?.();
+            })
+          }
+        >
+          Run anyway
+        </button>
       </div>
     </div>
   );

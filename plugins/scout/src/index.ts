@@ -6,8 +6,10 @@ import { callFailure, resultText, unsent } from "@hatbot/plugin-mcp";
 import {
   allow,
   block,
+  type CallContext,
   definePlugin,
   needsSetup,
+  type Offer,
   PluginError,
   type PluginTool,
   ready,
@@ -23,6 +25,8 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 const CALL_TIMEOUT_MS = 120_000;
+/** Scout turns away a live search while this many run. */
+const SEARCHES_AT_ONCE = 3;
 const refusedBy = (err: unknown) =>
   err instanceof StreamableHTTPError && (err.code === 401 || err.code === 403);
 const Marketplace = z.enum(["OLX", "Allegro Lokalnie", "Vinted"]);
@@ -103,6 +107,14 @@ function searchAnswer(text: string): string {
   const rows = JSON.stringify(parsed, (_, v) => (v === null ? undefined : v));
   return notes.length ? `${notes.join("\n")}\n\n${rows}` : rows;
 }
+
+/**
+ * The marketplace bot, which has Scout among its own plugins, has these loaded; any other bot finds
+ * them with tool search.
+ */
+const MARKET_WORK = /^scout_(market|watch|flip|analytics|queue_scan)/;
+const deferred = (name: string) =>
+  MARKET_WORK.test(name) ? (o: Offer) => !o.bot.plugins?.includes("scout") : undefined;
 
 /** Scout's tools as Hatbot offers them. */
 const READS: Read[] = [
@@ -533,6 +545,8 @@ Finding something to buy:
 - When the owner says they bought something to sell again, or sold one, write it in Scout's flip ledger (scout_flip_create, scout_flip_update), so Scout can work out the profit.
 - Negotiate with several sellers at once only when the owner asks for it: one negotiate_start, the other listings in alongside. The first agreement ends the others.`;
 
+const FIND = `- When Scout's tools for watches, market research, flips and analytics, or negotiate_*, aren't in your list, they load when you need them: find them with tool_search_tool_regex (a pattern like "scout_watch", "scout_market", "scout_flip" or "negotiate_").`;
+
 const FlipListed = z.object({
   flipId: z.number().int().positive(),
   channel: z.string().trim().min(1).max(80),
@@ -658,6 +672,24 @@ export const scoutPlugin = definePlugin({
         if (r.isError) throw new PluginError(`Scout says: ${text.slice(0, 2000)}`);
         return text;
       });
+    let searching = 0;
+    let freed: (() => void)[] = [];
+    const searchSlot = async <T>(c: CallContext, fn: () => Promise<T>): Promise<T> => {
+      if (searching >= SEARCHES_AT_ONCE) c.progress?.("Waiting for Scout's other searches to end.");
+      while (searching >= SEARCHES_AT_ONCE) {
+        await new Promise<void>((go) => freed.push(go));
+        c.signal.throwIfAborted();
+      }
+      searching++;
+      try {
+        return await fn();
+      } finally {
+        searching--;
+        const waiting = freed;
+        freed = [];
+        for (const go of waiting) go();
+      }
+    };
 
     const tools: PluginTool[] = [
       ...READS.map((r) =>
@@ -667,13 +699,12 @@ export const scoutPlugin = definePlugin({
           schema: r.schema,
           access: "read",
           untrusted: true,
+          deferred: deferred(r.name),
           ...(r.brainOnly ? { brainOnly: true } : {}),
           run: async (input, c) => {
-            const text = await call(
-              r.name,
-              r.with ? r.with(input as Input, Boolean(c.task)) : input,
-              c.signal,
-            );
+            const send = () =>
+              call(r.name, r.with ? r.with(input as Input, Boolean(c.task)) : input, c.signal);
+            const text = await (r.name === "scout_search" ? searchSlot(c, send) : send());
             return r.answer ? r.answer(text) : text;
           },
         }),
@@ -684,6 +715,7 @@ export const scoutPlugin = definePlugin({
           description: w.description,
           schema: w.schema,
           access: "write",
+          deferred: deferred(w.name),
           run: (input, c) => call(w.name, input, c.signal),
         }),
       ),
@@ -724,6 +756,7 @@ export const scoutPlugin = definePlugin({
     return ready(tools, {
       actions,
       guidance: GUIDANCE,
+      prompt: { chat: FIND, task: FIND },
       test: async () => {
         const names = await session(async (c) => (await c.listTools()).tools.map((t) => t.name));
         const missing = tools.map((t) => t.name).filter((n) => !names.includes(n));

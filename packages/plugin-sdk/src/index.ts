@@ -166,7 +166,8 @@ export type ToolImage = {
   data: string;
   mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
 };
-export type ToolOutput = string | { text: string; images: ToolImage[] };
+/** `data`: what a script's step gets in place of the text, when the text isn't all a script needs. */
+export type ToolOutput = string | { text: string; images?: ToolImage[]; data?: unknown };
 export const textOf = (out: ToolOutput) => (typeof out === "string" ? out : out.text);
 
 const ENTITIES: Record<string, string> = {
@@ -208,8 +209,11 @@ export type PluginTool<I = unknown> = {
   places?: Place[];
   /** Offered in an incognito conversation; without it, a read is. */
   incognito?: boolean;
-  /** In the chat, loaded only when the model looks for it, to keep the prompt short. */
-  deferred?: boolean;
+  /**
+   * In the chat and tasks, loaded only when the model looks for it, to keep the prompt short. A
+   * function decides it for each bot.
+   */
+  deferred?: boolean | ((o: Offer) => boolean);
   /** Offered only when this says so. */
   when?: (o: Offer) => boolean;
   /** Its output isn't cut short. */
@@ -554,6 +558,8 @@ export type PluginEnvVar = {
   secret?: boolean;
   optional?: boolean;
   hint?: string;
+  /** Only the owner sets it, on the plugin's page, not a bot: it keeps something safe. */
+  ownerOnly?: boolean;
 };
 
 export type Plugin<C = unknown> = {
@@ -565,6 +571,11 @@ export type Plugin<C = unknown> = {
    * page has one made from this, each field labelled by its `.describe()`.
    */
   config: z.ZodType<C>;
+  /**
+   * Why only the owner, on its page, may make this change to its settings, not a bot: a command it
+   * would run, or a mark that keeps something safe taken off. Null: a bot may, as Safety says.
+   */
+  ownerOnly?: (before: C, after: C) => string | null;
   /** Settings wins over /etc/hatbot/*.env; a change there restarts every plugin that reads it. */
   env?: PluginEnvVar[];
   /** It takes secrets by any name too (MCP's ${NAME}). */

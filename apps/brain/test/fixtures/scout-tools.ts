@@ -17,6 +17,8 @@ export type ScoutOptions = {
   flips?: string;
   sessions?: string;
   inbox?: string;
+  /** Live searches running; each waits for `held`, and Scout turns away a fourth. */
+  searches?: { running: number; held: Promise<void> };
 };
 
 export function scoutServer(o: ScoutOptions): McpServer {
@@ -277,7 +279,17 @@ export function scoutServer(o: ScoutOptions): McpServer {
         annotations: { readOnlyHint: true },
       },
       async (input) => {
+        const at = o.searches;
+        if (at && at.running >= 3)
+          return {
+            ...json({ error: "Three manual searches are already running. Try again shortly." }),
+            isError: true,
+          };
         log("scout_search", input);
+        if (at) {
+          at.running++;
+          await at.held.finally(() => at.running--);
+        }
         const source = (name: string) =>
           name === "OLX" && input.query.includes("blocked")
             ? {

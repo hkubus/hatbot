@@ -108,6 +108,21 @@ const MADE_MOST = 20;
 const MADE_FIELD = 150;
 const MADE_CHARS = 400;
 
+/** The sources the review sees: the first, which tainted the work, and the latest, each cut short. */
+const SOURCES_MOST = 20;
+const SOURCE_CHARS = 200;
+
+export function sourcesSeen(sources: string[]): string[] {
+  const cut = (s: string) => (s.length > SOURCE_CHARS ? `${s.slice(0, SOURCE_CHARS)}…` : s);
+  if (sources.length <= SOURCES_MOST) return sources.map(cut);
+  const left = sources.length - SOURCES_MOST;
+  return [
+    cut(sources[0] ?? ""),
+    `and ${left} more`,
+    ...sources.slice(-(SOURCES_MOST - 1)).map(cut),
+  ];
+}
+
 /** Whether a call is a change the review is told of afterwards. */
 export function changes(t: PluginTool, input: unknown): boolean {
   if (t.access === "read") return false;
@@ -134,7 +149,14 @@ export type Review = { safe: boolean; why: string; by: string };
 export async function safeToRun(
   d: { model: ModelClient; spend: Spend; settings: SettingsStore },
   ref: { taskId?: number; episodeId?: number },
-  context: { ownerSaid: string | null; goal: string; sources: string[]; made?: string[] },
+  context: {
+    ownerSaid: string | null;
+    goal: string;
+    sources: string[];
+    made?: string[];
+    /** Changes asked for in the same step, reviewed at once with this one. */
+    alongside?: string[];
+  },
   action: { tool: string; input: unknown; what: string; why: string; change?: string },
   { reserve = false }: { reserve?: boolean } = {},
 ): Promise<Review> {
@@ -144,7 +166,12 @@ export async function safeToRun(
     `<owner_said>\n${context.ownerSaid === null ? "(nothing the owner wrote is available for this task)" : tagText(context.ownerSaid)}\n</owner_said>`,
     `<task_goal>\n${tagText(context.goal)}\n</task_goal>`,
     `<changes_made>\n${tagJson((context.made ?? []).slice(-MADE_MOST))}\n</changes_made>`,
-    `<untrusted_sources>\n${tagJson(context.sources)}\n</untrusted_sources>`,
+    ...(context.alongside?.length
+      ? [
+          `<changes_alongside>\n${tagJson(context.alongside.slice(0, MADE_MOST))}\n</changes_alongside>`,
+        ]
+      : []),
+    `<untrusted_sources>\n${tagJson(sourcesSeen(context.sources))}\n</untrusted_sources>`,
     `<action>\n${tagJson({
       tool: action.tool,
       ...(action.change === undefined ? { input: action.input } : { change: action.change }),
@@ -167,7 +194,8 @@ export async function safeToRun(
           thinking: { type: "adaptive" },
           // Low and medium effort stopped many safe changes the owner then had to approve.
           output_config: { effort: "high", format: { type: "json_schema", schema: VERDICT } },
-          system: REVIEW_PROMPT,
+          // Reviews mostly come in runs, minutes apart: the prompt is read from the cache.
+          system: [{ type: "text", text: REVIEW_PROMPT, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content }],
         },
         { purpose: "review", ...ref },

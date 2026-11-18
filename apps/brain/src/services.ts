@@ -25,6 +25,7 @@ import { Chats } from "./agent/chats";
 import { corePlugins } from "./agent/core-tools";
 import { type ModelClient, oneShot } from "./agent/model";
 import { Models } from "./agent/models";
+import { pluginsPlugin } from "./agent/plugin-tools";
 import { secretsPlugin } from "./agent/secret-tools";
 import { CORE_TOOL_NAMES } from "./agent/tools";
 import { createApp } from "./app";
@@ -49,6 +50,7 @@ import { Negotiations } from "./negotiate/service";
 import { LinkingNotifier } from "./notify";
 import { Onboarding } from "./onboarding/service";
 import { DeadManPing } from "./ping";
+import { PluginControl } from "./plugins/control";
 import { Installer } from "./plugins/installer";
 import { Plugins } from "./plugins/registry";
 import { Questions } from "./questions";
@@ -138,6 +140,7 @@ export async function createServices(o: Outside) {
     researchPlugin,
     boxesPlugin(o.hatbox),
     secretsPlugin(secrets),
+    pluginsPlugin(() => control),
     scriptsPlugin(() => ({ store: scripts, tasks, bots, events })),
     ...corePlugins(() => ({
       db,
@@ -249,6 +252,7 @@ export async function createServices(o: Outside) {
       bots.update(haggler.id, { plugins: [...haggler.plugins, "scout"] });
   });
   const bots = new Bots(db, events, clock);
+  const control = new PluginControl({ plugins, bots, settings, secrets });
   // Not given the rest at first: attach() hands it what needs the chats in turn.
   const chats = new Chats({
     db,
@@ -348,6 +352,7 @@ export async function createServices(o: Outside) {
     model,
     models,
     plugins,
+    control,
     bots,
     chats,
     memory,

@@ -124,8 +124,37 @@ export function outside(
     );
   const text = plain(input.text);
   const r = read(input.text, n.title, n.asking);
-  const amounts = r.found.filter((a) =>
-    buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit,
+  // A message that reads as agreeing agrees to the other side's price, so it must name its own: a number
+  // read from the seller's message is never trusted for a bare "Zgoda". While their price is past the
+  // limit or unreadable, only a message naming a price of ours inside the mandate goes at all.
+  const theirs = theirPrice(n, f.seller);
+  const pastTheirs = theirs === null || beyond(theirs);
+  const sized = (v: number) => !beyond(v) && v >= priceFloor(m);
+  const named = r.found.some((a) => a.values.some(sized));
+  const offer = input.offer;
+  const namesOffer =
+    offer !== null &&
+    sized(offer) &&
+    r.found.some((a) => a.values.some((v) => Math.abs(v - offer) < 0.01));
+  const agreeing =
+    input.agree ||
+    acceptance(text) !== null ||
+    AGREES.test(text) ||
+    AFFIRMATIVE_ONLY.test(text) ||
+    (pastTheirs && AFFIRMATIVE_OPENING.test(text));
+  // Selling, "319,10 zł to za mało, mogę zejść do 419,99 zł" quotes the buyer's price to turn it
+  // down. Buying, the two add up past the ceiling anyway.
+  const turnedDown = (a: Found) =>
+    !buying &&
+    theirs !== null &&
+    namesOffer &&
+    !agreeing &&
+    a.values.every((v) => !beyond(v) || Math.abs(v - theirs) < 0.01) &&
+    refused(r.s, a);
+  const amounts = r.found.filter(
+    (a) =>
+      (buying ? Math.max(...a.values) > m.limit : Math.min(...a.values) < m.limit) &&
+      !turnedDown(a),
   );
   if (amounts.length)
     why.push(`The text says ${amounts.map((a) => `"${a.raw}"`).join(", ")}, ${past} ${limit}.`);
@@ -177,24 +206,6 @@ export function outside(
       `It's about more than one item ("${SEVERAL_ITEMS.exec(text)?.[0]}"), and the mandate covers this listing only.`,
     );
 
-  // A message that reads as agreeing agrees to the other side's price, so it must name its own: a number
-  // read from the seller's message is never trusted for a bare "Zgoda". While their price is past the
-  // limit or unreadable, only a message naming a price of ours inside the mandate goes at all.
-  const theirs = theirPrice(n, f.seller);
-  const pastTheirs = theirs === null || beyond(theirs);
-  const sized = (v: number) => !beyond(v) && v >= priceFloor(m);
-  const named = r.found.some((a) => a.values.some(sized));
-  const offer = input.offer;
-  const namesOffer =
-    offer !== null &&
-    sized(offer) &&
-    r.found.some((a) => a.values.some((v) => Math.abs(v - offer) < 0.01));
-  const agreeing =
-    input.agree ||
-    acceptance(text) !== null ||
-    AGREES.test(text) ||
-    AFFIRMATIVE_ONLY.test(text) ||
-    (pastTheirs && AFFIRMATIVE_OPENING.test(text));
   if (agreeing && !namesOffer)
     why.push(
       "It reads as agreeing but doesn't name the price it agrees to, inside the mandate, in both the text and offer.",
@@ -363,6 +374,28 @@ const AFFIRMATIVE_OPENING =
   /^\s*(?:ok(?:ay|ej|i)?|tak|dobrze|dobra|jasne|pewnie|spoko|super|[śs]wietnie|git|zgoda|fine|sure|yes|yeah|yep|great|perfect|alright|all\s+right|cool|sold|deal|w\s+porz[ąa]dku|czemu\s+nie|why\s+not)(?![\p{L}])/iu;
 /** The least that's a price rather than a fee or a count: half the opening offer, or of the limit. */
 const priceFloor = (m: Negotiation["mandate"]) => Math.min(m.opening, m.limit) / 2;
+
+const TOO_LOW =
+  /(?<!(?:nie|not|n['’]t)\s+(?:jest\s+|is\s+)?)(?:za\s+ma[łl]o|za\s+nisk\p{L}*|too?\s+low)(?![\p{L}])/iu;
+/** With a verb that turns it down: "nie ma sprawy" agrees. */
+const NO =
+  /(?<![\p{L}])nie\s+(?:zgodz|zgadz|przyjm|akceptuj|sprzeda|zejd|schodz|dam|oddam|ma\s+mowy|pasuje|odpowiada)\p{L}*/iu;
+/** Right before the amount: "419,99 zł, nie 319,10", "nie za 319,10". */
+const NOT_THIS = /(?<![\p{L}])nie\s+(?:(?:za|na)\s+)?$/iu;
+
+/** A word turning the amount down in its own clause, with no other number or sentence between. */
+function refused(s: string, a: { index: number; end: number }): boolean {
+  const before =
+    s
+      .slice(Math.max(0, a.index - 40), a.index)
+      .split(/[.!?\d]/)
+      .at(-1) ?? "";
+  const after = s.slice(a.end, a.end + 40).split(/[.!?\d]/)[0] ?? "";
+  return (
+    [NO, NOT_THIS, TOO_LOW].some((re) => re.test(before)) ||
+    [NO, TOO_LOW].some((re) => re.test(after))
+  );
+}
 
 export function acceptance(raw: string): string | null {
   return ACCEPT.exec(plain(raw))?.[0] ?? null;
@@ -1234,6 +1267,11 @@ export function contactsIn(raw: string): { kind: MandateContact; raw: string }[]
 /** A spaced-out dot before these is a host's dot even with nothing after it. */
 const TLDS =
   "pl|com|net|org|eu|io|me|ly|info|app|xyz|shop|link|co|online|top|site|store|club|biz|cc|tk|ml|ga|cf|gq|icu|live|vip|win|fun|space|website|tech|pro|ru|cn|de|cz|uk|us";
+/** A host with no scheme, www. or path ends in one of these, so "jestem benedict.ioan" is a name. */
+const REAL_TLD = new RegExp(
+  `^(?:${TLDS}|xn--[a-z0-9-]+|${"gov edu int mil name mobi asia tel travel jobs dev page cloud host email blog news one best cam work run sale deals market center company group network systems solutions agency zone tools fyi cash bid loan trade review date download stream party racing science men kim gdn ooo uno ink mom bond buzz cfd sbs cyou click rest monster quest lol life today world press digital money finance services support help express delivery global city art design studio photo media social chat bet casino games plus inc llc ltd xxx porn sex adult wiki moe fit health care bank pay ac ad ae af ag ai al am ao aq ar as at au aw ax az ba bb bd be bf bg bh bi bj bm bn bo bq br bs bt bw by bz ca cd cg ch ci ck cl cm cr cu cv cw cx cy dj dk dm do dz ec ee eg er es et fi fj fk fm fo fr gb gd ge gf gg gh gi gl gm gn gp gr gs gt gu gw gy hk hm hn hr ht hu id ie il im in iq ir is it je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ma mc md mg mh mk mm mn mo mp mq mr ms mt mu mv mw mx my mz na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pm pn pr ps pt pw py qa re ro rs rw sa sb sc sd se sg sh si sk sl sm sn so sr ss st su sv sx sy sz tc td tf tg th tj tl tm tn to tr tt tv tw tz ua ug uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw рф бел укр".replaceAll(" ", "|")})$`,
+  "iu",
+);
 /** Dots and schemes written so a filter misses them: olx[.]pl, olx (dot) pl, hxxps://. */
 const undefang = (s: string) =>
   s
@@ -1251,7 +1289,7 @@ const undefang = (s: string) =>
     .replace(/([\p{L}\p{N}-]+)\s+\.(?=(?:\p{L}{2,24}|xn--[a-z0-9-]+)(?![\p{L}\p{N}-]))/giu, "$1.")
     .replace(/h(?:tt|xx|\*\*)p(s?)\s*(?:\[:\]|\(:\)|:)?\s*\/\//giu, "http$1://");
 const LINK =
-  /(?:https?|ftp):\/\/\S+|www\.\S+|(?<![\p{N}.])(?:\d{1,3}\.){3}\d{1,3}(?![\p{N}]|\.\d)(?::\d{2,5})?(?:\/\S*)?|(?<![\p{L}\p{N}@._-])((?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+)(?:\p{L}{2,24}|xn--[a-z0-9-]{2,59})(?![\p{L}\p{N}-])(?::\d{2,5})?(?:\/\S*)?/giu;
+  /(?:https?|ftp):\/\/\S+|www\.\S+|(?<![\p{N}.])(?:\d{1,3}\.){3}\d{1,3}(?![\p{N}]|\.\d)(?::\d{2,5})?(?:\/\S*)?|(?<![\p{L}\p{N}@._-])((?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+)(\p{L}{2,24}|xn--[a-z0-9-]{2,59})(?![\p{L}\p{N}-])((?::\d{2,5})?(?:\/\S*)?)/giu;
 /** A sentence can run into these without a space: "np.zdjęcie", "tys.zł". */
 const ABBREVIATIONS = new Set(
   "np ok tzn itd itp tj ul al os pl nr godz tys zł zl r m św sw dr mgr inż inz prof ds pt jw wg ww tel ps kpl szt min max st".split(
@@ -1268,6 +1306,7 @@ export function linksIn(raw: string): string[] {
       const labels = m[1];
       if (labels === undefined) return true;
       if (!/\p{L}/u.test(labels)) return false;
+      if (!m[3] && !REAL_TLD.test(m[2] ?? "")) return false;
       const parts = labels.split(".").filter(Boolean);
       return !(parts.length === 1 && ABBREVIATIONS.has(parts[0]?.toLowerCase() ?? ""));
     })

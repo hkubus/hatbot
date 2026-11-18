@@ -85,6 +85,7 @@ pub enum ApprovalKind {
     Listing,
     Computer,
     Secret,
+    Plugins,
     Other,
     #[default]
     #[serde(other)]

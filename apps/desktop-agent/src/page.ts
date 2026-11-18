@@ -517,7 +517,7 @@ export const PAGE_TEXT = `(o) => {
   if (!body) return '';
   let text = (main && main.innerText.trim().length > 200 ? main : body).innerText;
   text = text.replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
-  return text.length > o.maxChars ? text.slice(0, o.maxChars) + '\\n[Cut at ' + o.maxChars + ' characters.]' : text;
+  return text.length > o.maxChars ? text.slice(0, o.maxChars) + '\\n[Cut at ' + o.maxChars + ' characters. For the rest: find, or read_page with the ref of a section.]' : text;
 }`;
 
 /** The element for the click policy: by ref, at a viewport point, or the focused one. */

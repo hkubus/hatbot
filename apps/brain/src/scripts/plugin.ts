@@ -42,7 +42,7 @@ const FOUND_CHARS = 8000;
 export type ScriptsDeps = { store: ScriptStore; tasks: Tasks; bots: Bots; events: EventBus };
 
 const STEPS = `Each step is one object:
-- {"call": tool, "input": {...}, "as": name, "optional": true}: calls one of your tools; its answer, parsed when it's JSON, goes in name. Without optional, a failure stops the script.
+- {"call": tool, "input": {...}, "as": name, "optional": true}: calls one of your tools; its answer, parsed when it's JSON, goes in name. A command's (ssh_exec and the like) is {code, stdout, stderr}, on several hosts a list of those with host. Without optional, a failure stops the script.
 - {"if": condition, "do": [steps], "else": [steps]}
 - {"each": "name.path", "as": "item", "do": [steps]}: for each item of a list.
 - {"set": name, "to": value}, and {"add": name, "value": value}, which adds to the list in name.
@@ -139,15 +139,13 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
   const service: ScriptsService = {
     get: (id) => deps().store.get(id),
     byName: (botId, name) => deps().store.byName(botId, name),
+    list: (botId) => deps().store.list(botId),
     start: (script, o) => start(script, o),
   };
 
   function start(
     script: Script,
-    o: Parameters<ScriptsService["start"]>[1] & {
-      message?: number;
-      parent?: Task;
-    },
+    o: Parameters<ScriptsService["start"]>[1] & { parent?: Task },
   ): Task | null {
     const { tasks } = deps();
     const job: ScriptJob = { script: script.id, input: o.input };
@@ -168,6 +166,7 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
       payload: o.payload,
       trusted: o.trusted,
       botId: script.botId,
+      conversationId: o.conversationId,
       message: o.message,
       parent: o.parent,
       runner: "script",
@@ -401,7 +400,7 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
         },
         prompt: {
           chat: `- Scripts are steps you save once that run without a model: from the chat (script_run), a schedule, a watcher or a webhook. Their tools load when you need them: find them with tool_search_tool_regex ("script_"). When the owner asks for something one of your scripts does, run it rather than doing it by hand; when they ask for the same thing again and again, offer to save it as one.`,
-          task: `- A script (script_run) does its fixed steps without a model: use one of yours when it does what this task needs.`,
+          task: `- A script (script_run) does its fixed steps without a model: use one of yours when it does what this task needs. Its tools load when you need them: find them with tool_search_tool_regex ("script_").`,
         },
         stop: unlisten,
       });

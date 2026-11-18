@@ -198,3 +198,28 @@ test("a provider key that fails isn't saved, and one that works is, with the rol
     expertModel: "anthropic/claude-opus-5.5",
   });
 });
+
+test("setup turns a plugin on and sets its address as a bot would, and never its token", async () => {
+  const model = new FakeModel([
+    {
+      content: [
+        toolUse("set_plugin", {
+          id: "homeassistant",
+          values: { HOMEASSISTANT_URL: "http://ha.lan:8123", HOMEASSISTANT_TOKEN: "typed-in" },
+        }),
+        toolUse("set_plugin", {
+          id: "homeassistant",
+          values: { HOMEASSISTANT_URL: "http://ha.lan:8123" },
+        }),
+        toolUse("switch_plugin", { id: "homeassistant", on: true }),
+      ],
+    },
+    { content: [text("It's on.")] },
+  ]);
+  const t = track(await testApp(model, undefined, {}, [homeassistantPlugin]));
+  const { cookie } = signIn(t);
+  await turn(t, cookie, { start: { timezone: "" } });
+  expect(t.plugins.env()).toMatchObject({ HOMEASSISTANT_URL: "http://ha.lan:8123" });
+  expect(t.plugins.env().HOMEASSISTANT_TOKEN).toBeUndefined();
+  expect(t.plugins.get("homeassistant")?.enabled).toBe(true);
+});

@@ -28,7 +28,9 @@ import { webp } from "./x11";
 
 const CDP = process.env.HATBOT_CDP ?? "http://127.0.0.1:9222";
 const COMMAND_TIMEOUT_MS = 30_000;
-const MAX_READ_CHARS = 50_000;
+/** How long a page's network is quiet before wait counts it as loaded. */
+const QUIET_MS = 500;
+const MAX_READ_CHARS = 20_000;
 
 /** A failure the model should read: becomes an error result. */
 export class BrowserError extends Error {}
@@ -48,8 +50,8 @@ type Pending = {
 };
 type Listener = (method: string, params: Json, sessionId?: string) => void;
 /**
- * What event() reads. A target's own changes (a page's console, its network: thousands a second on a
- * scripted page) never come through, so they never cost a tab's state being asked again either.
+ * What event() reads. A target's own changes (a page's console, its responses' data: thousands a second
+ * on a scripted page) never come through, so they never cost a tab's state being asked again either.
  */
 const EVENTS = new Set([
   "closed",
@@ -59,6 +61,10 @@ const EVENTS = new Set([
   "Target.detachedFromTarget",
   "Page.lifecycleEvent",
   "Page.frameStartedLoading",
+  "Page.frameStoppedLoading",
+  "Network.requestWillBeSent",
+  "Network.loadingFinished",
+  "Network.loadingFailed",
   "Page.javascriptDialogOpening",
   "Browser.downloadWillBegin",
   "Browser.downloadProgress",
@@ -372,6 +378,8 @@ export class Browser {
   private nextDownload = 1;
   private lifecycle: Lifecycle[] = [];
   private seq = 0;
+  /** Per session, whether its top frame is loading, its requests in flight, and when either last changed. */
+  private traffic = new Map<string, { loading: boolean; requests: Set<string>; at: number }>();
   private buttons = 0;
   /** Where the pointer last was in each tab, so the next move starts there. */
   private pointers = new Map<string, Point>();
@@ -432,6 +440,7 @@ export class Browser {
     this.targets.clear();
     this.sessions.clear();
     this.worlds.clear();
+    this.traffic.clear();
     const { targetInfos } = await this.cdp.send<{ targetInfos: TargetInfo[] }>("Target.getTargets");
     for (const t of targetInfos) this.targets.set(t.targetId, t);
     // A tab still open keeps its name and its refs over a dropped connection; the rest are gone.
@@ -454,6 +463,7 @@ export class Browser {
       case "closed":
         this.sessions.clear();
         this.worlds.clear();
+        this.traffic.clear();
         this.touches++;
         return;
       case "Target.targetCreated":
@@ -472,12 +482,32 @@ export class Browser {
       }
       case "Target.detachedFromTarget":
         for (const [t, s] of this.sessions) if (s === p.sessionId) this.sessions.delete(t);
+        this.traffic.delete(p.sessionId as string);
         return;
+      case "Network.requestWillBeSent":
+      case "Network.loadingFinished":
+      case "Network.loadingFailed": {
+        const t = sessionId && this.traffic.get(sessionId);
+        if (!t) return;
+        const id = p.requestId as string;
+        if (method !== "Network.requestWillBeSent") t.requests.delete(id);
+        // An event stream stays open as long as the page does.
+        else if (p.type !== "EventSource") t.requests.add(id);
+        t.at = Date.now();
+        return;
+      }
       case "Page.lifecycleEvent":
       case "Page.frameStartedLoading":
+      case "Page.frameStoppedLoading": {
         if (!sessionId) return;
         // Only the top frame's: its frame id is the target id.
         if (p.frameId && this.sessions.get(p.frameId as string) !== sessionId) return;
+        const t = this.traffic.get(sessionId);
+        if (t && method !== "Page.lifecycleEvent") {
+          t.loading = method === "Page.frameStartedLoading";
+          t.at = Date.now();
+        }
+        if (method === "Page.frameStoppedLoading") return;
         this.lifecycle.push({
           seq: ++this.seq,
           sessionId,
@@ -486,6 +516,7 @@ export class Browser {
         });
         if (this.lifecycle.length > 200) this.lifecycle.splice(0, 100);
         return;
+      }
       case "Page.javascriptDialogOpening": {
         if (!sessionId) return;
         // Dismiss it: a dialog blocks the page, and answering one is the owner's call, not the model's.
@@ -552,6 +583,7 @@ export class Browser {
         this.pointers.delete(id);
       }
     if (targetId === null) return;
+    this.traffic.delete(this.sessions.get(targetId) ?? "");
     this.targets.delete(targetId);
     this.sessions.delete(targetId);
     this.worlds.delete(targetId);
@@ -674,8 +706,11 @@ export class Browser {
       flatten: true,
     });
     this.sessions.set(targetId, sessionId);
+    this.traffic.set(sessionId, { loading: false, requests: new Set(), at: 0 });
     await this.cdp.send("Page.enable", {}, sessionId);
     await this.cdp.send("Page.setLifecycleEventsEnabled", { enabled: true }, sessionId);
+    // For wait, which only needs to know a request started and ended: no bodies kept.
+    await this.cdp.send("Network.enable", { maxTotalBufferSize: 0 }, sessionId);
     return sessionId;
   }
 
@@ -834,6 +869,19 @@ export class Browser {
     }
     const loadBy = Math.min(deadline, Date.now() + 3000);
     while (!after("load") && Date.now() < loadBy) await sleep(50);
+  }
+
+  /** Waits `ms`, or less once the tab isn't loading and its network has been quiet for QUIET_MS. */
+  private async quiet(targetId: string | null, ms: number) {
+    const start = Date.now();
+    const end = start + ms;
+    const s = targetId && (await this.session(targetId));
+    while (Date.now() < end) {
+      const t = s && this.traffic.get(s);
+      if (t && !t.loading && !t.requests.size && Date.now() - Math.max(start, t.at) >= QUIET_MS)
+        return;
+      await sleep(Math.min(50, end - Date.now()));
+    }
   }
 
   /** After input: if it started a navigation, wait for the new page. */
@@ -1007,7 +1055,7 @@ export class Browser {
     const r = await this.run<{ lines: string[]; next: number; truncated: boolean; error?: string }>(
       targetId,
       READ_PAGE,
-      { ...opts, next, maxChars: MAX_READ_CHARS },
+      { maxChars: MAX_READ_CHARS, ...opts, next },
     );
     if (r.error) throw new BrowserError(r.error);
     this.nextRef.set(targetId, r.next);
@@ -1154,7 +1202,7 @@ export class Browser {
       case "wait": {
         const secs = Number(input.duration);
         if (!(secs >= 0 && secs <= 30)) throw new BrowserError("duration must be 0 to 30 seconds.");
-        await sleep(secs * 1000);
+        await this.quiet(this.active || input.tab_id ? tab() : null, secs * 1000);
         return { kind: "none" };
       }
       case "read_page": {
@@ -1171,7 +1219,8 @@ export class Browser {
       case "find": {
         const query = String(input.query ?? "").trim();
         if (!query) throw new BrowserError("query must describe the element to find.");
-        const r = await this.read(tab(), { find: true, depth: 50 });
+        // It answers with 20 lines, so it can look through more than a read shows.
+        const r = await this.read(tab(), { find: true, depth: 50, maxChars: 50_000 });
         const words = query
           .toLowerCase()
           .split(/[^\p{L}\p{N}]+/u)

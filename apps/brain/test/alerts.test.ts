@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { Task } from "@hatbot/shared";
+import { z } from "zod";
 import { FakeModel, toolUse } from "./fake-model";
 import { testApp, waitFor } from "./helpers";
 
@@ -107,4 +109,117 @@ test("a flapping monitor goes on its last task's timeline for an hour; a trigger
   t.advance(24 * 3600_000);
   expect(t.triggers.receiveKuma(triggerId, other(8)).status).toBe("started");
   await t.tasks.idle();
+});
+
+/** A lab whose check and restart run `meanwhile` first, as if Kuma's news came while they ran. */
+const lab = (meanwhile: () => void) =>
+  definePlugin({
+    id: "lab",
+    name: "Lab",
+    description: "",
+    config: z.object({}),
+    start: () =>
+      ready(
+        (["read", "write"] as const).map((access) =>
+          tool({
+            name: access === "read" ? "lab_status" : "lab_restart",
+            description: "",
+            access,
+            schema: z.object({}),
+            run: async () => {
+              meanwhile();
+              return "Done.";
+            },
+          }),
+        ),
+      ),
+  });
+
+test("a monitor back up before its task changed anything ends the task in a line, without a notification; after a change, it reports", async () => {
+  let meanwhile = () => {};
+  const work = new FakeModel([
+    { content: [toolUse("lab_status", {})] },
+    { content: [toolUse("lab_restart", {})] },
+    done("Restarted Plex."),
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [lab(() => meanwhile())]);
+  await t.plugins.update("lab", { enabled: true });
+  const triggerId = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Fix it" }).id;
+  const kuma = (status: number, id: number, name: string, time: string) =>
+    t.triggers.receiveKuma(triggerId, {
+      heartbeat: { status, msg: status ? "200 - OK" : "timeout", time },
+      monitor: { id, name },
+    }) as { task: Task };
+  const ended = (task: Task) =>
+    waitFor(() => {
+      const now = t.tasks.get(task.id);
+      return now?.finishedAt ? now : null;
+    });
+
+  meanwhile = () => kuma(1, 3, "Jellyfin", "2026-10-09 12:03:10.000");
+  const quiet = await ended(kuma(0, 3, "Jellyfin", "2026-10-09 12:00:00.000").task);
+  expect(quiet).toMatchObject({ status: "done", summary: expect.stringContaining("3 min") });
+  expect(work.requests).toHaveLength(1);
+  expect(
+    t.thread
+      .list()
+      .filter((m) => m.kind === "task")
+      .map((m) => m.taskId),
+  ).toEqual([quiet.id]);
+  expect(t.notifier.sent).toHaveLength(0);
+
+  meanwhile = () => kuma(1, 4, "Plex", "2026-10-09 12:05:00.000");
+  const fixed = await ended(kuma(0, 4, "Plex", "2026-10-09 12:01:00.000").task);
+  expect(fixed.summary).toBe("Restarted Plex.");
+  expect(t.notifier.sent.map((n) => n.click)).toEqual([`https://hatbot.test/tasks/${fixed.id}`]);
+});
+
+test("an alert task hears what the last one on its monitor found, as untrusted if that one had read untrusted content", async () => {
+  const work = new FakeModel([
+    done("The limiter answers the check with 429."),
+    done("Restarted Plex."),
+    done("Still the limiter."),
+    done("Restarted it again."),
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const triggerId = t.triggers.create({ name: "Kuma", kind: "kuma", prompt: "Fix it" }).id;
+  const alert = (id: number, name: string, msg: string) => {
+    const r = t.triggers.receiveKuma(triggerId, {
+      heartbeat: { status: 0, msg },
+      monitor: { id, name },
+    }) as { task: Task };
+    return waitFor(() => {
+      const now = t.tasks.get(r.task.id);
+      return now?.finishedAt ? now : null;
+    });
+  };
+  const opening = (i: number) =>
+    ((work.requests[i]?.messages[0]?.content ?? []) as { text?: string }[])
+      .map((b) => b.text)
+      .join("");
+
+  const searx = await alert(2, "SearXNG", 'keyword "searx" not found');
+  await alert(5, "Plex", "timeout of 48000ms exceeded");
+  // One that only saw it come back has nothing to pass on.
+  const at = new Date(t.clock()).toISOString();
+  t.db
+    .query(
+      `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, finished_at, trigger_id, run_key, summary)
+       VALUES ('SearXNG is down', 'g', '', 'alert', 'background', 'm', 'done', 0, ?1, ?1, ?2, ?3, 'SearXNG was down 2 min and came back by itself.')`,
+    )
+    .run(at, triggerId, `kuma:${triggerId}:2`);
+  t.advance(2 * 3600_000);
+  const again = await alert(2, "SearXNG", "timeout of 48000ms exceeded");
+  const plex = await alert(5, "Plex", "timeout of 48000ms exceeded");
+
+  expect(opening(0)).not.toContain("earlier_findings");
+  expect(opening(2)).toContain('<earlier_findings trusted="false">');
+  expect(opening(2)).toContain("The limiter answers the check with 429.");
+  expect(again).toMatchObject({
+    tainted: true,
+    taintedBy: `Task #${searx.id}, which had read: The message in the alert for "SearXNG"`,
+  });
+  expect(opening(3)).toContain('<earlier_findings trusted="true">');
+  expect(opening(3)).toContain("Restarted Plex.");
+  expect(plex.tainted).toBe(false);
 });

@@ -9,8 +9,9 @@ import type { PluginTool } from "@hatbot/plugin-sdk";
 import { BOT_TEMPLATES, type Mandate } from "@hatbot/shared";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { runPluginTool, verdictFor } from "../src/plugins/registry";
+import { FakeModel, text, toolUse } from "./fake-model";
 import { scoutServer } from "./fixtures/scout-tools";
-import { ORIGIN, type TestApp, tempDirs, testApp } from "./helpers";
+import { bot, ORIGIN, type TestApp, tempDirs, testApp, waitFor } from "./helpers";
 
 const SCOUT = "http://scout.lan:3001";
 const call = () => ({ task: null, signal: new AbortController().signal });
@@ -49,6 +50,7 @@ function fakeScout(metadata: Record<string, string> | null = {}, full = false) {
     tokens: new Set<string>(),
     bearers: [] as string[],
     posts: [] as string[],
+    searches: { running: 0, held: Promise.resolve() },
   };
   const handle = async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
@@ -85,7 +87,14 @@ function fakeScout(metadata: Record<string, string> | null = {}, full = false) {
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
         });
-        await scoutServer({ log, full, search: true, flips, sessions }).connect(transport);
+        await scoutServer({
+          log,
+          full,
+          search: true,
+          flips,
+          sessions,
+          searches: s.searches,
+        }).connect(transport);
         return transport.handleRequest(new Request(url, init));
       }
     }
@@ -351,6 +360,27 @@ test("a search gets Scout's compact rows, says which marketplaces were paused or
   expect(blocked.text.split("\n\n")[0]).toBe("OLX wasn't searched: OLX answered 403 (blocked).");
 });
 
+test("searches past the three Scout runs at once wait their turn instead of failing", async () => {
+  const t = await testApp();
+  const scout = fakeScout();
+  await connected(t, scout);
+  const search = named(t.plugins.tools(), "scout_search");
+  const { promise, resolve } = Promise.withResolvers<void>();
+  scout.s.searches.held = promise;
+  const waiting: string[] = [];
+  const all = [1, 2, 3, 4].map((i) =>
+    runPluginTool(
+      search,
+      { query: `rtx 30${i}0`, sources: ["OLX"] },
+      { ...call(), progress: (line) => waiting.push(line) },
+    ),
+  );
+  await waitFor(() => waiting.length === 1 && scout.s.searches.running === 3);
+  resolve();
+  for (const r of await Promise.all(all)) expect(r.isError).toBe(false);
+  expect(scout.calls("scout_search")).toHaveLength(4);
+});
+
 test("flag lists and watch ids that Scout would refuse are stopped before the call", async () => {
   const t = await testApp();
   await connected(t, fakeScout());
@@ -496,4 +526,75 @@ test("Haggler's tasks sign its browser in with the logins shared in Scout, once 
   t.advance(10 * 60_000);
   await look(haggler.id);
   expect(t.agent.signIns).toHaveLength(2);
+});
+
+/** How each of `names` was sent: loaded, deferred to tool search, or not at all. */
+const loading = (req: { tools?: unknown[] } | undefined, names: string[]) =>
+  Object.fromEntries(
+    names.map((n) => {
+      const sent = req?.tools?.find((x) => (x as { name?: string }).name === n);
+      if (!sent) return [n, "absent"];
+      return [n, (sent as { defer_loading?: boolean }).defer_loading ? "deferred" : "loaded"];
+    }),
+  );
+const MARKET = ["scout_watch_create", "scout_market_trend", "negotiate_start", "scout_search"];
+
+test("Scout's market work and haggling are loaded in the chat of the bot that has Scout, and found by search in another's", async () => {
+  const chat = new FakeModel([{ content: [text("Hi.")] }, { content: [text("Hi.")] }]);
+  const t = await testApp(chat);
+  await connected(t, fakeScout());
+  const haggler = t.bots.create({
+    name: "Haggler",
+    instructions: "",
+    chatModel: null,
+    chatEffort: null,
+    plugins: ["scout"],
+  });
+  const sysadmin = bot(t, "Sysadmin");
+
+  await t.chats.direct(sysadmin.id).post("hi").done;
+  expect(loading(chat.requests[0], [...MARKET, "tool_search_tool_regex"])).toEqual({
+    scout_watch_create: "deferred",
+    scout_market_trend: "deferred",
+    negotiate_start: "deferred",
+    scout_search: "loaded",
+    tool_search_tool_regex: "loaded",
+  });
+  await t.chats.direct(haggler.id).post("hi").done;
+  expect(loading(chat.requests[1], MARKET)).toEqual({
+    scout_watch_create: "loaded",
+    scout_market_trend: "loaded",
+    negotiate_start: "loaded",
+    scout_search: "loaded",
+  });
+});
+
+test("a task defers what the chat does, but keeps its own tools loaded and any its goal names", async () => {
+  const done = {
+    content: [toolUse("finish_task", { outcome: "done", summary: "Ok.", notify: false })],
+  };
+  const work = new FakeModel([done, done]);
+  const t = await testApp(new FakeModel(), work);
+  await connected(t, fakeScout());
+  const sysadmin = bot(t, "Sysadmin");
+  const run = async (goal: string) => {
+    t.tasks.createBackgroundTask({ title: "Look", goal, origin: "chat", botId: sysadmin.id });
+    await t.tasks.idle();
+    return work.requests.at(-1);
+  };
+
+  const plain = await run("What do Steam Decks go for?");
+  expect(loading(plain, [...MARKET, "finish_task", "tool_search_tool_regex"])).toEqual({
+    scout_watch_create: "deferred",
+    scout_market_trend: "deferred",
+    negotiate_start: "deferred",
+    scout_search: "loaded",
+    finish_task: "loaded",
+    tool_search_tool_regex: "loaded",
+  });
+  const named = await run("Make a Scout watch for a Steam Deck with scout_watch_create.");
+  expect(loading(named, ["scout_watch_create", "negotiate_start"])).toEqual({
+    scout_watch_create: "loaded",
+    negotiate_start: "deferred",
+  });
 });

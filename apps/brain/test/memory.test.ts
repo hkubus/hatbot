@@ -149,3 +149,16 @@ test("memory_edit adds lines, making the file if it isn't there, and changes tex
   ).toBe(true);
   expect(await t.memory.read("log.md")).toBe("# Log\n- 08:15 2%\n- 08:30 0%\n- 08:45 1%\n");
 });
+
+test("memory_write makes a file or rewrites a short one, but a long one only through memory_edit", async () => {
+  const t = await testApp();
+  const ctx = { db: t.db, memory: t.memory, events: new EventBus(), bot: t.bots.hatbot() };
+  const write = (path: string, content: string) =>
+    runCoreTool("memory_write", { path, content }, ctx);
+  expect((await write("notes/new.md", "# New\n")).isError).toBe(false);
+  expect((await write("notes/new.md", "# New, again\n")).isError).toBe(false);
+  const report = `# Report\n${"A finding.\n".repeat(1000)}`;
+  await t.memory.write("notes/report.md", report, HATBOT, "Report");
+  expect((await write("notes/report.md", "# Report\nShorter.\n")).isError).toBe(true);
+  expect(await t.memory.read("notes/report.md")).toBe(report);
+});

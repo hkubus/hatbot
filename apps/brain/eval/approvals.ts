@@ -82,7 +82,11 @@ const model: ModelClient = {
   },
 };
 
-const ENV = { HATBOT_BRAIN_ID: "125", HATBOT_DESKTOP_ID: "126" };
+const ENV = {
+  HATBOT_BRAIN_ID: "125",
+  HATBOT_DESKTOP_ID: "126",
+  HOMEASSISTANT_URL: "http://192.168.55.208:8123",
+};
 const t = await testApp(undefined, undefined, ENV, PLUGINS, ENV);
 t.settings.update({
   smallModel: args.small,
@@ -103,6 +107,7 @@ t.settings.update({
       account_security: "ask",
       access: "ask",
       mandate: "allow",
+      plugins: "review",
     },
   },
 });

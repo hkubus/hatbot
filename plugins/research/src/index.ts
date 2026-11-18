@@ -1,10 +1,13 @@
 // Research: a background task that plans a question, hands its parts to helpers that search at once,
 // checks what it cites against what the pages said, and ends in a saved, cited report.
 import {
+  clip,
   definePlugin,
   ENDS_REPLY,
   hosts,
   invalidInput,
+  type RunnerCall,
+  type RunnerResult,
   ready,
   type TaskRunner,
   tool,
@@ -16,6 +19,7 @@ import {
   type Deps,
   FinishResearch,
   finishResearch,
+  fixedDraft,
   investigate,
   keepAfterRestart,
   keepUnfinished,
@@ -26,8 +30,10 @@ import {
   RESEARCH_LOOP_TOOLS,
   RESEARCH_TOKENS,
   RESEARCH_TOOLS,
+  type ResearchResult,
   type ResearchRun,
   ResearchState,
+  readFindings,
   readSource,
   refusedLinks,
   researchPrompt,
@@ -37,11 +43,17 @@ export { RESEARCH_CHECK_PROMPT, RESEARCH_PROMPT, RESEARCH_WORKER_PROMPT } from "
 export { plain, quoteFound } from "./research";
 
 const ResearchInput = z.object({
-  title: z.string().min(1).max(80).describe('Short title, e.g. "Quiet NAS for four drives"'),
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    // Cut rather than refused: a refusal costs the whole call again.
+    .transform((s) => clip(s, 80))
+    .describe('Short title, e.g. "Quiet NAS for four drives"'),
   question: z
     .string()
     .min(1)
-    .max(4000)
+    .max(8000)
     .describe(
       "What to find out, with everything from the conversation that bears on it: what it's for, the budget, where the owner is, must-haves, what they already know or ruled out, and what the answer should cover",
     ),
@@ -82,7 +94,7 @@ const CHAT_LINE = `- For a question that needs many searches and pages (comparin
 const researchTool = (d: Deps) =>
   tool({
     name: "research",
-    description: `Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually under $1. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead. ${ENDS_REPLY}`,
+    description: `Start a research task, for a question that needs many searches and pages: comparing products or options, prices across shops, a technical question whose sources disagree. It plans the question and hands parts to helpers that search at once, what it cites is checked against the quotes the helpers copied from the pages, and it ends in a report with numbered sources, saved in memory and attached. It takes a few minutes and costs more than a task, usually $1 to $3. Its short answer shows under your reply. It can't see this conversation, so put everything that bears on the question in it. For a fact or two, search yourself instead. ${ENDS_REPLY}`,
     schema: ResearchInput,
     access: "own",
     places: ["chat"],
@@ -125,6 +137,8 @@ const researchRunner = (d: Deps): TaskRunner => ({
   webTools: LEAD_WEB_TOOLS,
   loopTools: RESEARCH_LOOP_TOOLS,
   tools: RESEARCH_TOOLS,
+  // Its findings come back with read_findings and its draft is kept here, so their calls may go.
+  clearInputs: true,
   prompt: researchPrompt,
   handOver: RESEARCH_ASK_BOT,
   nudge: {
@@ -139,27 +153,40 @@ const researchRunner = (d: Deps): TaskRunner => ({
     const run: ResearchRun = { d, ...r };
     const found = new ResearchState();
     let toldToFinish = false;
-    // A second finish_research in one turn would skip the check the first one got.
+    // A second finish in one turn would skip the check the first one got.
     let finishedIn = -1;
+    const finish = async (report: ResearchResult, c: RunnerCall): Promise<RunnerResult> => {
+      const broken = await c.checkCharts(`${report.answer}\n\n${report.report}`);
+      if (broken)
+        return {
+          content: `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
+          isError: true,
+        };
+      const res = await finishResearch(run, found, report);
+      if ("retry" in res) return { content: res.retry, isError: true };
+      return { finish: { outcome: report.outcome, summary: res.summary, notify: report.notify } };
+    };
     return {
       refuse: (text, who) => refusedLinks(run, found.sources, text, who),
       call: async (name, input, c) => {
         if (name === "investigate") return investigate(run, found.sources, input);
         if (name === "read_source") return readSource(found.sources, input);
+        if (name === "read_findings") return readFindings(found.sources, input, d.clock());
         if (finishedIn === c.step)
-          return { content: "Not run: call finish_research once a turn.", isError: true };
-        finishedIn = c.step;
-        const p = FinishResearch.safeParse(input);
-        if (!p.success) return { content: invalidInput(p.error), isError: true };
-        const broken = await c.checkCharts(`${p.data.answer}\n\n${p.data.report}`);
-        if (broken)
           return {
-            content: `Not finished: ${broken} Call finish_research again with it fixed. Don't guess where a value belongs; if you can't tell, leave the chart out.`,
+            content: "Not run: call finish_research or fix_report once a turn.",
             isError: true,
           };
-        const res = await finishResearch(run, found, p.data);
-        if ("retry" in res) return { content: res.retry, isError: true };
-        return { finish: { outcome: p.data.outcome, summary: res.summary, notify: p.data.notify } };
+        finishedIn = c.step;
+        if (name === "fix_report") {
+          const fixed = fixedDraft(found.draft, input);
+          return "error" in fixed
+            ? { content: fixed.error, isError: true }
+            : finish(fixed.result, c);
+        }
+        const p = FinishResearch.safeParse(input);
+        if (!p.success) return { content: invalidInput(p.error), isError: true };
+        return finish(p.data, c);
       },
       // Near its step cap or its limit, it finishes with what it has rather than stopping short.
       after: ({ stepsLeft, spentUsd, limitUsd }) => {

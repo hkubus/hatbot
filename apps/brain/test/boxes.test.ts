@@ -4,8 +4,7 @@ import { FRAME_CSP, pitfalls, previewed } from "@hatbot/plugin-boxes";
 import { definePlugin, ready, tool } from "@hatbot/plugin-sdk";
 import type { BoxActionRun, BoxDetail, BoxFeedValue, Script } from "@hatbot/shared";
 import { z } from "zod";
-import { REVIEW_PROMPT } from "../src/agent/prompt";
-import { FakeModel, text, toolUse } from "./fake-model";
+import { FakeModel, isReview, text, toolUse } from "./fake-model";
 import { bot, lastUserText, signIn, type TestApp, testApp, toolNames, waitFor } from "./helpers";
 
 const PAGE = "<!doctype html><title>Habits</title><button>Walk</button>";
@@ -393,7 +392,7 @@ test("after reading untrusted content, a feed for a box goes to the review, whic
     { content: [text("One added.")] },
   ]);
   model.onCreate = (p) =>
-    p.system === REVIEW_PROMPT
+    isReview(p)
       ? JSON.stringify({ safe: !JSON.stringify(p.messages).includes("x.test"), why: "" })
       : undefined;
   const t = await testApp(model, new FakeModel(), {}, [lab({ load: 1 })]);

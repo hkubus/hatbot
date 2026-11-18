@@ -27,6 +27,7 @@ const KINDS: Record<SafetyKind, string> = {
   access: "home access",
   computer: "using your computers",
   mandate: "starting negotiations",
+  plugins: "changing plugins",
 };
 const LEVELS = { ask: "asks you", review: "the safety review decides", allow: "goes ahead" };
 

@@ -135,6 +135,10 @@ export const homeassistantPlugin = definePlugin({
     { name: "HOMEASSISTANT_TOKEN", secret: true },
   ],
   config: Config,
+  ownerOnly: (before, after) =>
+    before.access.some((id) => !after.access.includes(id))
+      ? "Only the owner takes an entity off the list of ones that let someone in, on Home Assistant's page in Settings → Plugins."
+      : null,
   start: ({ env, config }) => {
     const base = env.HOMEASSISTANT_URL?.replace(/\/$/, "");
     const token = env.HOMEASSISTANT_TOKEN;

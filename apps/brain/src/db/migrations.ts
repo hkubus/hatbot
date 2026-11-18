@@ -1210,4 +1210,27 @@ export const migrations: string[] = [
   `ALTER TABLE teach_sessions ADD COLUMN screen TEXT;`,
   // 83: a webhook that runs one of its bot's scripts, with the event as its input.
   "ALTER TABLE triggers ADD COLUMN script_id INTEGER REFERENCES scripts(id);",
+  // 84: the chat's latest messages when the chat started the task, which its first message holds.
+  "ALTER TABLE tasks ADD COLUMN chat TEXT;",
+  // 85: what context editing cleared from a request's prompt, as its response said; null if nothing.
+  `
+  ALTER TABLE spend_ledger ADD COLUMN cleared_tool_uses INTEGER;
+  ALTER TABLE spend_ledger ADD COLUMN cleared_input_tokens INTEGER;
+  `,
+  // 86: the checks the owner asked a bot for in its chat, as its summaries name them, to offer a
+  // schedule for one asked on several days.
+  `
+  CREATE TABLE asked_checks (
+    id INTEGER PRIMARY KEY,
+    bot_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    -- The owner's local day (YYYY-MM-DD) and time (HH:MM) they asked.
+    day TEXT NOT NULL,
+    time TEXT NOT NULL,
+    episode_id INTEGER,
+    -- A schedule was offered for it: kept, so it's offered once.
+    offered INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX asked_checks_by ON asked_checks (bot_id, name);
+  `,
 ];

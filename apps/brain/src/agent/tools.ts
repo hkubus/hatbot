@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { type DesktopAgent, DesktopError } from "@hatbot/plugin-desktop";
-import type { CallContext, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
+import type { CallContext, Offer, PluginTool, ToolImage } from "@hatbot/plugin-sdk";
 import {
   botFolder,
   clip,
@@ -108,8 +108,15 @@ export const NeedsYou = z
     "True when you need the owner's answer or view before you go on. The thread shows as needing them until they write in it. Not for news or a report.",
   );
 
+/** Cut to fit rather than refused: a refusal costs the whole call again. */
+const Title = z
+  .string()
+  .trim()
+  .min(1)
+  .transform((s) => clip(s, 80));
+
 export const ThreadOpenInput = z.object({
-  title: z.string().trim().min(1).max(80).describe('Short, e.g. "Backups failing on pve"'),
+  title: Title.describe('Short, e.g. "Backups failing on pve"'),
   message: z
     .string()
     .min(1)
@@ -128,15 +135,11 @@ export const ThreadOpenInput = z.object({
 });
 
 export const DesktopTaskInput = z.object({
-  title: z
-    .string()
-    .min(1)
-    .max(80)
-    .describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
+  title: Title.describe('Short title for the card, e.g. "Book a table at Luigi\'s"'),
   goal: z
     .string()
     .min(1)
-    .max(4000)
+    .max(8000)
     .describe("What to do, with every detail from the conversation it needs"),
   success_criteria: z.string().max(1000).describe("How to tell it's done"),
   skill: z
@@ -173,17 +176,13 @@ export const AskBotInput = z.object({
 });
 
 export const RunTaskInput = z.object({
-  title: z
-    .string()
-    .min(1)
-    .max(80)
-    .describe('Short title, e.g. "Restart Jellyfin" or "Fix the failing CI on hatbot"'),
+  title: Title.describe('Short title, e.g. "Restart Jellyfin" or "Fix the failing CI on hatbot"'),
   goal: z
     .string()
     .min(1)
-    .max(4000)
+    .max(8000)
     .describe(
-      "What to do and what to report back, with every detail from the conversation it needs",
+      "What to do, and where, with what your tools found that bears on it; the task reads the last few messages, so leave out what they say, and the steps it can work out",
     ),
   effort: z
     .enum(["low", "medium", "high"])
@@ -213,7 +212,8 @@ function authorOf(ctx: ToolContext, path: string) {
 }
 
 /** Files every later chat and task reads and trusts. */
-const TRUSTED_FILE = /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|todo\.md)$/;
+const TRUSTED_FILE =
+  /^(skills\/.+|INDEX\.md|bots\/[^/]+\/INDEX\.md|homelab\.md|preferences\.md|todo\.md)$/;
 
 /** Research's reports and notes: written from what it read on the web. */
 const RESEARCH_FILE = /^(bots\/[^/]+\/)?research\//;
@@ -278,6 +278,18 @@ function editedFile(
 const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted ?? true;
 
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
+
+/** The chat's latest messages for a task it starts, and what taints the task: the chat, or them. */
+const chatFor = (ctx: ToolContext) => {
+  const recent =
+    ctx.messageId !== undefined && ctx.episodeId !== undefined && ctx.conversationId !== undefined
+      ? ctx.chats?.thread(ctx.conversationId)?.recentChat(ctx.messageId, ctx.episodeId)
+      : undefined;
+  return {
+    chat: recent?.text || undefined,
+    taintedBy: chatTaint(ctx.tainted?.() ?? recent?.taintedBy),
+  };
+};
 
 export type { ToolImage };
 
@@ -350,6 +362,9 @@ export function dueInput(due: string): string {
 
 const def = <S extends z.ZodType>(t: ToolDef<S>) => t;
 
+/** Rewriting a long file whole takes a minute of output; memory_edit changes the part that changes. */
+const REWRITE_MAX_CHARS = 8000;
+
 export const TOOLS = [
   def({
     name: "memory_list",
@@ -373,7 +388,7 @@ export const TOOLS = [
   def({
     name: "memory_write",
     description:
-      "Create or replace a markdown file in your memory repo, written whole. To add to a file or change part of it, use memory_edit. Each write is a git commit the owner can see and revert. Keep INDEX.md current when you add or remove files.",
+      "Create or replace a markdown file in your memory repo, written whole. To add to a file or change part of it, use memory_edit, which is also the only way to change a file over 8 KB. Each write is a git commit the owner can see and revert. Keep INDEX.md current when you add or remove files.",
     schema: z.object({
       path: z.string().describe("Path relative to the repo root, ending in .md"),
       content: z.string().describe("The complete new file content"),
@@ -381,6 +396,11 @@ export const TOOLS = [
     }),
     run: async ({ path, content, reason = `Write ${path}` }, ctx, signal) => {
       const author = authorOf(ctx, path);
+      const was = (await ctx.memory.readOrNull(path))?.length ?? 0;
+      if (was > REWRITE_MAX_CHARS)
+        throw new MemoryError(
+          `${path} is ${Math.round(was / 1000)} KB: change it with memory_edit rather than write it whole.`,
+        );
       const call = { tool: "memory_write", input: { path, content } };
       const blocked = await reviewed(ctx, call, path, reason, signal, content);
       if (blocked) return blocked;
@@ -446,13 +466,16 @@ export const TOOLS = [
   def({
     name: "memory_search",
     description:
-      "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt.",
+      "Search your memory by words, in any form (runs finds run). The best-matching sections first, each as file:line: excerpt; research notes, which come from the web, as file:line only.",
     schema: z.object({ query: z.string().min(1) }),
-    run: async ({ query }, ctx) => {
-      const hits = await ctx.memory.search(query);
-      const out = hits.map((h) => `${h.path}:${h.line}: ${h.text}`).join("\n") || "No matches.";
-      const research = hits.find((h) => RESEARCH_FILE.test(h.path));
-      return research ? researchNotes(ctx, "memory_search", research.path, out) : out;
+    run: async ({ query }, { memory }) => {
+      const hits = await memory.search(query);
+      // Research's notes come from the web and would taint the search: reading one is a step of its own.
+      const line = (h: { path: string; line: number; text: string }) =>
+        RESEARCH_FILE.test(h.path)
+          ? `${h.path}:${h.line} (research notes: memory_read the file to see it)`
+          : `${h.path}:${h.line}: ${h.text}`;
+      return hits.map(line).join("\n") || "No matches.";
     },
   }),
   def({
@@ -629,12 +652,10 @@ export const TOOLS = [
   }),
   def({
     name: "run_task",
-    description: `Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs. For a command or two, use the plugin tools yourself instead. ${ENDS_REPLY}`,
+    description: `Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It reads the last few messages here, but not your tool results. For a command or two, use the plugin tools yourself instead. ${ENDS_REPLY}`,
     schema: RunTaskInput,
-    run: async (
-      { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, answering },
-    ) => {
+    run: async ({ title, goal, effort }, ctx) => {
+      const { tasks, messageId, ownerSaid, bot, conversationId, answering } = ctx;
       if (!tasks) return "Tasks aren't available.";
       const task = tasks.createBackgroundTask({
         title,
@@ -644,7 +665,7 @@ export const TOOLS = [
         conversationId,
         effort,
         message: messageId,
-        taintedBy: chatTaint(tainted?.()),
+        ...chatFor(ctx),
         request: ownerSaid?.(),
         askedIn: answering,
       });
@@ -654,7 +675,7 @@ export const TOOLS = [
   }),
   def({
     name: "todo_work",
-    description: `Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It can't see this conversation, so put what it needs beyond the item in details. ${ENDS_REPLY}`,
+    description: `Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It reads the last few messages here, but not your tool results: put what else it needs in details. ${ENDS_REPLY}`,
     schema: z.object({
       item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
       details: z
@@ -663,10 +684,8 @@ export const TOOLS = [
         .optional()
         .describe("What the task needs to know that the item doesn't say"),
     }),
-    run: async (
-      { item, details },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, answering },
-    ) => {
+    run: async ({ item, details }, ctx) => {
+      const { tasks, memory, messageId, ownerSaid, bot, conversationId, answering } = ctx;
       if (!tasks) return "Tasks aren't available.";
       const t = findTodo((await memory.readOrNull(TODO_FILE)) ?? "", item);
       if (typeof t === "string") return t;
@@ -678,7 +697,7 @@ export const TOOLS = [
         botId: bot?.id,
         conversationId,
         message: messageId,
-        taintedBy: chatTaint(tainted?.()),
+        ...chatFor(ctx),
         request: ownerSaid?.(),
         askedIn: answering,
       });
@@ -887,10 +906,15 @@ export const TOOL_SEARCH: Anthropic.Beta.BetaToolUnion = {
 
 /**
  * A deferred tool loads only when the model searches for it: about a third of the chat prompt's
- * tokens, paid on every cold cache, for things most conversations never touch.
+ * tokens, paid on every cold cache, for things most conversations never touch. Research has no tool
+ * search, so it loads them all.
  */
-export const chatToolParam = (t: PluginTool): Anthropic.Beta.BetaTool =>
-  t.deferred ? { ...toolParam(t), defer_loading: true } : toolParam(t);
+export const deferredIn = (t: PluginTool, o: Offer) =>
+  o.place !== "research" &&
+  (typeof t.deferred === "function" ? t.deferred(o) : Boolean(t.deferred));
+
+export const offeredToolParam = (t: PluginTool, o: Offer, load = false): Anthropic.Beta.BetaTool =>
+  !load && deferredIn(t, o) ? { ...toolParam(t), defer_loading: true } : toolParam(t);
 
 type Ran = { content: string; isError: boolean; untrusted?: boolean; images?: ToolImage[] };
 
@@ -954,11 +978,12 @@ export async function runOffered(
 /**
  * Calls in a row run together when `parallel` allows (true, or the thing a change acts on), changes
  * each on a different thing. Lookups and changes don't share a batch. Results keep the calls' order.
+ * `run` gets the batch a call runs in.
  */
 export async function inBatches<C, R>(
   calls: C[],
   parallel: (call: C) => boolean | string | string[],
-  run: (call: C) => Promise<R>,
+  run: (call: C, batch: C[]) => Promise<R>,
 ): Promise<R[]> {
   const out: R[] = [];
   for (let i = 0; i < calls.length; ) {
@@ -975,7 +1000,8 @@ export async function inBatches<C, R>(
       }
       j++;
     }
-    out.push(...(await Promise.all(calls.slice(i, j).map(run))));
+    const batch = calls.slice(i, j);
+    out.push(...(await Promise.all(batch.map((call) => run(call, batch)))));
     i = j;
   }
   return out;

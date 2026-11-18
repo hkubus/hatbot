@@ -5,6 +5,7 @@ import {
   localStamp,
   longPdf,
   type PluginTool,
+  type SchedulesService,
   type StreamParams,
   tagJson,
   untrustedBlock,
@@ -41,9 +42,11 @@ import {
   liveTool,
   missingSkill,
   NeedsYou,
+  offeredToolParam,
   serverToolWaiting,
   startEarly,
   ThreadOpenInput,
+  TOOL_SEARCH,
   type ToolImage,
   toolParam,
   WEB_TOOLS,
@@ -52,7 +55,7 @@ import {
 import { tagText } from "../agent/untrusted";
 import { ownerNote } from "../approvals";
 import type { Attachments } from "../attachments";
-import { promptFor } from "../bots";
+import { CODE_WORK, promptFor } from "../bots";
 import { brokenChartsOf } from "../chart-data";
 import { UserError } from "../errors";
 import {
@@ -97,6 +100,9 @@ type BlockParam = Anthropic.Beta.BetaContentBlockParam;
 const SUMMARY_WORDS = 2000;
 // Models can't count characters: a summary a little over what it's told is kept, not written again.
 const SUMMARY_KEPT = 2500;
+/** Said with the task, not in the prompt its bot's other tasks share from the cache. */
+export const RETOLD =
+  "Write your summary for that bot, not the owner: a few short plain lines with the answer and the facts, numbers and links behind it, without Markdown or bold, besides any chart blocks.";
 // Chart blocks don't count: five listings with their photos' addresses take most of it.
 const wordsOf = (summary: string) =>
   chartBlocks(summary).reduceRight((s, b) => s.slice(0, b.start) + s.slice(b.end), summary);
@@ -117,8 +123,9 @@ const FinishTask = z.object({
     ),
   notify: z
     .boolean()
+    .default(false)
     .describe(
-      "true only if the owner should hear about this now: something needs them, went wrong or changed in a way they care about. false for a routine result (nothing new, all fine, much like last time); it stays in the Tasks list. A scheduled run is routine unless it found something",
+      "true only if the owner should hear about this now: something needs them, went wrong or changed in a way they care about. Leave it out for a routine result (nothing new, all fine, much like last time); it stays in the Tasks list. A scheduled run is routine unless it found something",
     ),
 });
 
@@ -206,12 +213,67 @@ const LOOP_TOOLS: Anthropic.Beta.BetaTool[] = [
   }),
 ];
 
-/** An event's trusted part, then the part whoever reaches its source could write. */
+/** Reviewed changes a step runs at once, so a long step on many hosts doesn't run one at a time. */
+const REVIEWED_AT_ONCE = 4;
+
+/**
+ * Changes a step makes at once, each on a different thing. Every one is checked first, and the
+ * review sees the others; those it passed run once all are checked.
+ */
+class Together {
+  private unchecked: Set<string>;
+  private checked: Promise<void>;
+  private release = () => {};
+  private free = REVIEWED_AT_ONCE;
+  private queue: (() => void)[] = [];
+
+  constructor(readonly calls: Anthropic.Beta.BetaToolUseBlock[]) {
+    this.unchecked = new Set(calls.map((c) => c.id));
+    this.checked = new Promise((r) => {
+      this.release = r;
+    });
+  }
+
+  /** `id` is checked, or won't run after all. */
+  done(id: string) {
+    if (!this.unchecked.delete(id) || this.unchecked.size) return;
+    this.release();
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    await this.checked;
+    if (this.free) this.free--;
+    else await new Promise<void>((r) => this.queue.push(r));
+    try {
+      return await fn();
+    } finally {
+      const next = this.queue.shift();
+      if (next) next();
+      else this.free++;
+    }
+  }
+}
+
+/** An event's trusted part, the part whoever reaches its source could write, then what an earlier task found. */
 const eventBlock = (
-  { trusted, untrusted }: { trusted: string; untrusted?: { text: string } },
+  {
+    trusted,
+    untrusted,
+    earlier,
+  }: {
+    trusted: string;
+    untrusted?: { text: string };
+    earlier?: { text: string; source: string | null };
+  },
   encode: (text: string) => string,
 ) =>
-  `\n<event trusted="true">\n${encode(trusted)}\n</event>${untrusted?.text ? `\n${untrustedBlock("event_message", untrusted.text)}` : ""}`;
+  `\n<event trusted="true">\n${encode(trusted)}\n</event>${untrusted?.text ? `\n${untrustedBlock("event_message", untrusted.text)}` : ""}${
+    !earlier
+      ? ""
+      : earlier.source
+        ? `\n${untrustedBlock("earlier_findings", earlier.text)}`
+        : `\n<earlier_findings trusted="true">\n${encode(earlier.text)}\n</earlier_findings>`
+  }`;
 
 export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal): Promise<void> {
   const { d } = tasks;
@@ -224,6 +286,10 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const { attachments } = ctx;
   const messages: Anthropic.Beta.BetaMessageParam[] = [];
   const children = new Set<number>();
+  /** It handed work on, or talked with the owner: news alone doesn't end it then. */
+  let involved = false;
+  /** Ended by news that left nothing to do (`TaskOrigin.settles`). */
+  let settled = false;
   const sources = new Set<string>();
   let slot = false;
   let notified = 0;
@@ -288,8 +354,9 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       onlyLooks: runner?.onlyLooks,
     });
   };
-  const tools = [
-    ...[...pluginTools.values()].map(toolParam),
+  const tools: Anthropic.Beta.BetaToolUnion[] = [
+    // One its goal names is loaded: a negotiation's follow-up names negotiate_send.
+    ...[...pluginTools.values()].map((t) => offeredToolParam(t, offer, task.goal.includes(t.name))),
     ...LOOP_TOOLS.filter(
       (t) =>
         (others.length || t.name !== "ask_bot") &&
@@ -299,19 +366,33 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     ...(runner?.tools ?? []),
     ...(runner?.webTools ?? WEB_TOOLS),
   ];
+  if (tools.some((t) => "defer_loading" in t && t.defer_loading)) tools.push(TOOL_SEARCH);
   const sent = new Set(tools.flatMap((t) => ("name" in t ? [t.name] : [])));
   const runnerTools = new Set((runner?.tools ?? []).flatMap((t) => ("name" in t ? [t.name] : [])));
-  /** Results never cleared: a research task's findings are what it cites. */
-  const keptTools = ["finish_task", ...runnerTools].filter((n) => sent.has(n));
+  /** A search's results are what loaded the tools it found, so they're never cleared. */
+  const keptTools = ["finish_task", "tool_search_tool_regex"].filter((n) => sent.has(n));
   const left = d.bots.leftToOthers(bot);
   const guidance = d.plugins.guidance(bot.plugins, left);
   const plugins = (b: Bot) => d.plugins.names(b.plugins, d.bots.leftToOthers(b));
   const prompt = runner
     ? promptFor(runner.prompt(bot), bot, others, { plugins, handOver: runner.handOver })
-    : promptFor(agentPrompt(d.plugins.prompt("task", bot.plugins, left)), bot, others, {
-        plugins,
-      });
+    : promptFor(
+        agentPrompt(d.plugins.prompt("task", bot.plugins, left), {
+          alert: task.origin === "alert",
+          code: CODE_WORK.some((id) => d.plugins.readyFor(id, bot.plugins, left)),
+        }),
+        bot,
+        others,
+        { plugins },
+      );
   const system = guidance ? `${prompt}\n\nYour plugins\n\n${guidance}` : prompt;
+  // A schedule that runs again within the hour finds the bot's tools and system still cached.
+  const nextRun =
+    task.scheduleId === null
+      ? null
+      : d.plugins.service<SchedulesService>("schedules")?.get(task.scheduleId)?.nextRunAt;
+  const ttl =
+    nextRun && Date.parse(nextRun) - tasks.clock() < 3600_000 ? ({ ttl: "1h" } as const) : {};
   const taint = (source: string) => {
     sources.add(source);
     if (task.tainted) return;
@@ -342,6 +423,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   /** Without holding a slot: one on the screen or another bot's may need it. */
   const waitForChild = async (childId: number, name?: string): Promise<Task> => {
     children.add(childId);
+    involved = true;
     tasks.addStep(id, {
       kind: "task",
       name: name ?? tasks.get(childId)?.title ?? `Task #${childId}`,
@@ -452,9 +534,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       : standingWords();
   };
 
+  /** The owner's answers to ask_owner, with what was asked: a "yes" means nothing without it. */
+  const answered: string[] = [];
+
   const withNotes = (words: string | null): string | null =>
-    notes.length
-      ? `${words ?? ""}\n\nWhat the owner told this task on its approvals:\n${notes.join("\n")}`.trim()
+    notes.length || answered.length
+      ? [
+          words ?? "",
+          notes.length
+            ? `What the owner told this task on its approvals:\n${notes.join("\n")}`
+            : "",
+          answered.length ? `What the owner answered this task:\n${answered.join("\n")}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n")
       : words;
 
   const blocks = new Blocks();
@@ -462,6 +555,8 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const made: string[] = [];
   /** Why the run stops, once the review has blocked too much. */
   let gaveUp: string | null = null;
+  /** A step's blocks count once: the bot hears of them all at once. */
+  let blockedThisStep = false;
 
   /** As Settings → Safety says; by default never for money, accounts, doors or what's careful. */
   const reviewed = async (
@@ -469,6 +564,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     call: Anthropic.Beta.BetaToolUseBlock,
     what: string,
     verdict: Extract<Verdict, { action: "ask" }>,
+    alongside: string[],
   ): Promise<{ safe: boolean; why: string; by?: string }> => {
     const level = levelOf(d.settings.get(), verdict);
     if (level === "allow") {
@@ -508,6 +604,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         goal: task.goal,
         sources: [...sources],
         made,
+        alongside,
       },
       { tool: t.name, input: call.input, what, why: verdict.why },
       { reserve: tasks.reserves(task) },
@@ -529,6 +626,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   const pluginCall = async (
     t: PluginTool,
     call: Anthropic.Beta.BetaToolUseBlock,
+    turn?: Together,
   ): Promise<BlockParam> => {
     const cc: CallContext = {
       task: { id, tainted: task.tainted },
@@ -562,7 +660,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       return result(call, `Refused: ${verdict.why}`, true);
     }
     if (verdict.action === "ask") {
-      const check = await reviewed(t, call, what, verdict);
+      const alongside = (turn?.calls ?? []).flatMap((c) => {
+        const other = c.id === call.id ? undefined : pluginTools.get(c.name);
+        return other ? [changeMade(other, c.input)] : [];
+      });
+      const check = await reviewed(t, call, what, verdict, alongside);
       const target = targetOf(t, call.input);
       // Never for money, accounts or what you said to always ask about; doors only in one schedule.
       const scopes = scopable(verdict)
@@ -587,10 +689,13 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           detail: `${what}. ${check.why}`,
           url: null,
         });
-        gaveUp ??= blocks.blocked();
+        if (!blockedThisStep) gaveUp ??= blocks.blocked();
+        blockedThisStep = true;
         return result(call, blockedText(check.why), true);
       }
       if (!check.safe) {
+        // Yours to decide: the others in its step don't wait for you.
+        turn?.done(call.id);
         const answer = await askApproval({
           kind: verdict.kind ?? "other",
           summary: what,
@@ -610,6 +715,23 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         byOwner = true;
       }
     }
+    turn?.done(call.id);
+    return turn && verdict.action === "ask" && !byOwner
+      ? turn.run(() => runChecked(t, call, cc, what, verdict, byOwner, note))
+      : runChecked(t, call, cc, what, verdict, byOwner, note);
+  };
+
+  /** A plugin's call once it may go: a message to people may wait to be stopped first. */
+  const runChecked = async (
+    t: PluginTool,
+    call: Anthropic.Beta.BetaToolUseBlock,
+    cc: CallContext,
+    what: string,
+    verdict: Verdict,
+    byOwner: boolean,
+    note: string | null,
+  ): Promise<BlockParam> => {
+    if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
     const wait = byOwner || !sends(t, call.input) ? 0 : d.settings.get().safety.sendWaitS;
     if (wait) {
       tasks.addStep(id, { kind: "note", name: `Sending in ${wait} s`, detail: what, url: null });
@@ -669,6 +791,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
   let asks = 0;
   let threadOpened = false;
   const thread = (call: Anthropic.Beta.BetaToolUseBlock) => {
+    involved = true;
     try {
       if (call.name === "thread_open") {
         const p = ThreadOpenInput.safeParse(call.input);
@@ -719,6 +842,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         true,
       );
     asks++;
+    involved = true;
     const { questions, wait_hours: hours } = p.data;
     const asked = questions.map((q) =>
       d.questions.create({
@@ -738,13 +862,19 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const answers = await withoutSlot(() =>
       Promise.all(asked.map((q) => d.questions.wait(q.id, signal))),
     );
-    for (const [i, answer] of answers.entries())
+    for (const [i, answer] of answers.entries()) {
       tasks.addStep(id, {
         kind: "note",
         name: answer === null ? "No answer" : "Your answer",
         detail: answer ?? asked[i]?.question ?? "",
         url: null,
       });
+      // Quoted, so a question written from what the task read can't forge an answer.
+      if (answer !== null)
+        answered.push(
+          `[${localStamp(new Date(tasks.clock()))}] Asked: ${JSON.stringify(asked[i]?.question ?? "")} — The owner answered: ${JSON.stringify(answer)}`,
+        );
+    }
     const unanswered = `No answer within ${hours === 1 ? "an hour" : `${hours} hours`}. Carry on with what's safest and say what you assumed, or finish_task and say what you need.`;
     if (asked.length === 1) {
       const [answer] = answers;
@@ -785,22 +915,25 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     const skills = d.skills.prompt();
     const source = task.source ?? "";
     const event = task.payload ? (origin?.event?.(task.payload) ?? null) : null;
+    if (event?.earlier?.source) taint(event.earlier.source);
     const payload = event
       ? eventBlock(event, tagJson)
       : task.payload
         ? `\n<event trusted="${task.tainted ? "false" : "true"}">\n${tagJson(task.payload)}\n</event>`
         : "";
+    const retold = task.origin === "chat" && tasks.retold(task);
     const startedBy = `Started by ${
       task.origin !== "chat"
         ? (origin?.startedBy(source) ?? `${task.origin} "${source}"`)
-        : tasks.retold(task)
+        : retold
           ? "the bot in the chat, which answers the owner from your summary"
           : "the owner, from the chat"
     }`;
+    const chat = task.origin === "chat" ? tasks.chatOf(id) : null;
     record("user", [
       {
         type: "text",
-        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.`,
+        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}${chat ? `<recent_chat>\nThe chat's last messages before it started you, oldest first.\n${chat}\n</recent_chat>\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.${retold ? ` ${RETOLD}` : ""}`,
       },
     ]);
 
@@ -832,6 +965,33 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ]);
       return true;
     };
+    /** At its step limit a task says once, without tools, where it got to; a runner's keeps its own. */
+    const atLimit = async (params: Omit<StreamParams, "stream">, maxSteps: number) => {
+      const bare = new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
+      // After a server tool that's still waiting, only its result may come.
+      if (runner || messages.at(-1)?.role !== "user") return bare;
+      record("user", [
+        {
+          type: "text",
+          text: `(No message from the owner: this task has used its ${maxSteps} steps and stops here, so you can't call tools any more. In a few short lines, say what you found, what you changed, and what's left to do. This is the task's summary.)`,
+        },
+      ]);
+      // Its prompt is never read again, so it isn't written to the cache.
+      const ask = { ...params, cache_control: undefined, tool_choice: { type: "none" as const } };
+      try {
+        requests.hold(requests.ceiling(ask));
+        const res = await requests.stream(ask);
+        record("assistant", res.content);
+        const said = textOf(res);
+        if (!said || cutOff(res) || said.length > 20_000 || wordsOf(said).length > SUMMARY_KEPT)
+          return bare;
+        return new Stop("failed", `Stopped at its step limit (${maxSteps} steps).\n\n${said}`);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        if (!(err instanceof Stop)) console.error(`task ${id}: no summary at its step limit`, err);
+        return bare;
+      }
+    };
     // Code work writes whole files into tool calls; the chat's high efforts think longer.
     const effort = runner ? runner.effort : (task.effort ?? d.settings.get().chatEffort);
     const roomy = task.effort || (effort !== "low" && effort !== "medium");
@@ -839,8 +999,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = runner ? runner.maxSteps : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
-      if (step >= maxSteps)
-        throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       if (ownMs() >= MAX_RUN_MS)
         throw new Stop(
           "failed",
@@ -852,7 +1010,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         betas: runner?.betas ? [...BETAS, ...runner.betas] : BETAS,
         // Tools and system end here, the same for each of this bot's tasks, so they share the entry; the
         // top-level breakpoint follows the conversation. Two of the four breakpoints allowed.
-        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ...ttl } }],
         cache_control: { type: "ephemeral" },
         tools,
         thinking: thinkingFor(task.model),
@@ -873,13 +1031,15 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
               trigger: { type: "input_tokens", value: 70_000 },
               keep: { type: "tool_uses", value: 6 },
               clear_at_least: { type: "input_tokens", value: 20_000 },
-              exclude_tools: keptTools,
+              ...(keptTools.length ? { exclude_tools: keptTools } : {}),
+              ...(runner?.clearInputs ? { clear_tool_inputs: true } : {}),
             },
           ],
         },
         ...(container ? { container } : {}),
         messages,
       };
+      if (step >= maxSteps) throw await atLimit(params, maxSteps);
       reserveUsd = requests.ceiling(params);
       const overLimit =
         origin?.overLimit &&
@@ -887,10 +1047,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       requests.hold(reserveUsd, overLimit);
 
       let finished: (z.infer<typeof FinishTask> & { summary: string }) | null = null;
+      blockedThisStep = false;
       /** What this reply wrote alongside its calls. */
       let said = "";
-      // Lookups in a row run at once, and so do changes allowed without asking, each on a different
-      // thing (checking updates on every host); anything that asks runs on its own.
+      // Lookups in a row run at once, and so do changes allowed without asking or reviewed, each on a
+      // different thing (updating every host); anything that asks you runs on its own.
       const parallel = (call: Anthropic.Beta.BetaToolUseBlock): boolean | string[] => {
         const t = pluginTools.has(call.name) ? current(call.name) : null;
         if (!t || typeof t === "string") return false;
@@ -899,15 +1060,20 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         const parsed = t.schema.safeParse(call.input);
         if (!parsed.success) return false;
         const cc = { task: { id, tainted: task.tainted }, signal };
-        if (verdictFor(t, call.input, cc, task.tainted, d.settings.get().safety).action !== "allow")
-          return false;
+        const settings = d.settings.get();
+        const verdict = verdictFor(t, call.input, cc, task.tainted, settings.safety);
+        if (verdict.action === "block") return false;
+        if (verdict.action === "ask" && levelOf(settings, verdict) === "ask") return false;
+        // What one reads would make the others asked about; once the task has read untrusted
+        // content, they are anyway.
+        if (!task.tainted && untrustedOf(t, parsed.data)) return false;
         const plugin = t.name.split("_")[0];
-        return (
-          !untrustedOf(t, parsed.data) &&
-          [t.target(parsed.data)].flat().map((x) => `${plugin}:${x}`)
-        );
+        return [t.target(parsed.data)].flat().map((x) => `${plugin}:${x}`);
       };
-      const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
+      const run = async (
+        call: Anthropic.Beta.BetaToolUseBlock,
+        turn?: Together,
+      ): Promise<BlockParam> => {
         if (signal.aborted) return result(call, "Not run: the task was cancelled.", true);
         if (finished) return result(call, "Not run: the task already finished.", true);
         if (!sent.has(call.name)) return result(call, `Unknown tool "${call.name}".`, true);
@@ -974,7 +1140,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           // Its description is in the prompt: a server untrusted now, though not at the start, taints too.
           const foreign = untrustedDefinitions([plugin]);
           if (foreign) taint(foreign);
-          return pluginCall(plugin, call);
+          return pluginCall(plugin, call, turn);
         }
         return result(call, `Unknown tool "${call.name}".`, true);
       };
@@ -1020,16 +1186,32 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       if (!calls) continue;
       said = textOf(res);
 
+      const together = new Map<Anthropic.Beta.BetaToolUseBlock[], Together>();
+      const turnOf = (batch: Anthropic.Beta.BetaToolUseBlock[]) => {
+        const known = together.get(batch);
+        if (known || batch.length < 2) return known;
+        const made = new Together(batch);
+        together.set(batch, made);
+        return made;
+      };
       const results: BlockParam[] = await inBatches(
         calls,
         (call) => !cutOff(res) && parallel(call),
-        (call) =>
-          early.started(call) ??
-          (cutOff(res)
-            ? Promise.resolve(
-                result(call, "Input was cut off at max_tokens. Retry with a shorter input.", true),
-              )
-            : run(call)),
+        (call, batch) => {
+          const turn = turnOf(batch);
+          const ran =
+            early.started(call) ??
+            (cutOff(res)
+              ? Promise.resolve(
+                  result(
+                    call,
+                    "Input was cut off at max_tokens. Retry with a shorter input.",
+                    true,
+                  ),
+                )
+              : run(call, turn));
+          return turn ? ran.finally(() => turn.done(call.id)) : ran;
+        },
       );
       wrote = "";
       if (repeats)
@@ -1048,21 +1230,32 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       // What happened meanwhile, e.g. the monitor came back up. Trusted: it comes from the trigger,
       // apart from an event's untrusted part. Not while the web tools' code is still running: then only tool
       // results may follow.
-      if (!serverToolWaiting(res.content))
-        for (const { kind, text: event } of tasks.takeInbox(id)) {
-          if (kind === "note") {
-            results.push({ type: "text", text: steerNote(event) });
-            continue;
-          }
-          const parts = origin?.event?.(event) ?? null;
-          if (parts?.untrusted) taint(parts.untrusted.source);
-          results.push({
-            type: "text",
-            text: parts
-              ? eventBlock(parts, tagText).trim()
-              : `<event trusted="true">\n${tagText(event)}\n</event>`,
-          });
+      const news = serverToolWaiting(res.content) ? [] : tasks.takeInbox(id);
+      if (news.some((n) => n.kind === "note")) involved = true;
+      const last = news.at(-1);
+      const over =
+        last?.kind === "event" && !made.length && !involved
+          ? (origin?.settles?.(last.text, task) ?? null)
+          : null;
+      if (over) {
+        settled = true;
+        throw new Stop("done", over);
+      }
+      for (const { kind, text: event } of news) {
+        if (kind === "note") {
+          results.push({ type: "text", text: steerNote(event) });
+          continue;
         }
+        const parts = origin?.event?.(event) ?? null;
+        if (parts?.untrusted) taint(parts.untrusted.source);
+        if (parts?.earlier?.source) taint(parts.earlier.source);
+        results.push({
+          type: "text",
+          text: parts
+            ? eventBlock(parts, tagText).trim()
+            : `<event trusted="true">\n${tagText(event)}\n</event>`,
+        });
+      }
       const told =
         !serverToolWaiting(res.content) &&
         state?.after?.({
@@ -1089,7 +1282,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     // One that didn't finish never showed you its offer.
     else if (offeredScript) repeats?.withdraw(id);
     // Its offer is answered in the chat, so a routine run's report goes there too, quietly.
-    if (offeredScript && ended.status === "done" && ended.notify === false)
+    if (settled || (offeredScript && ended.status === "done" && ended.notify === false))
       tasks.finish(id, "done", ended.summary, true, { ntfy: false });
     else tasks.finish(id, ended.status, ended.summary, ended.notify);
   } finally {

@@ -107,6 +107,28 @@ test("a once-off runs at the moment picked, one run at a time, waits out a pause
   expect((await make({ cron: "*/15 * * * *" })).status).toBe(201);
 });
 
+test("a schedule that runs again within the hour keeps its task's tools and system cached for an hour", async () => {
+  const work = new FakeModel([finish("a", false), finish("b", false), finish("c", false)]);
+  const t = await testApp(new FakeModel(), work);
+  const call = await owner(t);
+  const make = async (cron: string) =>
+    (await (
+      await call("POST", "/schedules", { name: cron, prompt: "Check the NAS.", cron })
+    ).json()) as Schedule;
+  const ttl = () =>
+    (work.requests.at(-1)?.system as { cache_control: unknown }[] | undefined)?.[0]?.cache_control;
+
+  await call("POST", `/schedules/${(await make("*/15 * * * *")).id}/run`);
+  await t.tasks.idle();
+  expect(ttl()).toEqual({ type: "ephemeral", ttl: "1h" });
+  await call("POST", `/schedules/${(await make("0 8 * * *")).id}/run`);
+  await t.tasks.idle();
+  expect(ttl()).toEqual({ type: "ephemeral" });
+  t.tasks.createBackgroundTask({ title: "NAS", goal: "Check the NAS.", origin: "chat" });
+  await t.tasks.idle();
+  expect(ttl()).toEqual({ type: "ephemeral" });
+});
+
 test("a signed webhook starts an untrusted task; oversized, unsigned or replayed ones don't", async () => {
   const work = new FakeModel(
     ["One.", "Two.", "Three.", "Four.", "Five."].map((s) => finish(s, false)),

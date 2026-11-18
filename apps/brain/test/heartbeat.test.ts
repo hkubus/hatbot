@@ -239,6 +239,63 @@ test("the triage's spend check is what its request may cost, which it holds whil
   expect(() => t.spend.check(0.004)).not.toThrow();
 });
 
+test("what the review blocked and nobody ran isn't an approval that expired unanswered", async () => {
+  const t = await testApp();
+  const asked = t.approvals.create({ taskId: null, kind: "other", summary: "Restart the NAS" });
+  const blocked = t.approvals.block({ taskId: null, kind: "other", summary: "Wipe the NAS" });
+  t.advance(25 * 3600_000);
+  t.approvals.expireDue();
+  expect(t.approvals.get(blocked.id)?.status).toBe("expired");
+  const since = new Date(t.clock() - 30 * 60_000).toISOString();
+  expect((await t.heartbeat.gather(since)).map((s) => s.key)).toEqual([`approval:${asked.id}`]);
+  expect((await t.report.make()).line).toEndWith(", 1 approval expired.");
+});
+
+test("the weekly report says which automations spent most, and tells apart bots that share a name", async () => {
+  const t = await testApp();
+  const schedule = (name: string) =>
+    t.schedules.create({ name, prompt: "Check it.", cron: "0 8 * * *" }, "owner").id;
+  const haggler = () =>
+    t.bots.create({
+      name: "Haggler",
+      instructions: "",
+      chatModel: null,
+      chatEffort: null,
+      plugins: null,
+    }).id;
+  const old = haggler();
+  t.bots.delete(old);
+  const now = haggler();
+  const ran = (scheduleId: number | null, costs: number[], botId = "hatbot") => {
+    const at = new Date(t.clock()).toISOString();
+    const task = t.db
+      .query<{ id: number }, [number | null, string, string]>(
+        `INSERT INTO tasks (title, goal, success_criteria, origin, lane, model, status, budget_usd, created_at, schedule_id, bot_id)
+         VALUES ('Run', 'g', '', 'schedule', 'background', 'm', 'done', 0, ?2, ?1, ?3) RETURNING id`,
+      )
+      .get(scheduleId, at, botId);
+    for (const usd of costs)
+      t.db
+        .query(
+          `INSERT INTO spend_ledger (created_at, model, purpose, task_id, input_tokens, cache_write_5m_tokens, cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd, bot_id)
+           VALUES (?, 'm', 'task', ?, 0, 0, 0, 0, 0, ?, ?)`,
+        )
+        .run(at, task?.id ?? 0, usd, botId);
+  };
+  const backups = schedule("Backups");
+  const loss = schedule("Packet loss");
+  ran(backups, [1.25]);
+  ran(loss, [1]);
+  ran(loss, [2, 1.5]);
+  ran(null, [0.5], old);
+  ran(null, [0.25], now);
+  const { text } = await t.report.make();
+  expect(text).toContain(
+    'schedule "Packet loss" $4.50 in 2 runs, schedule "Backups" $1.25 in 1 run.',
+  );
+  expect(text).toContain(`Haggler (${old}) $0.50, Haggler (${now}) $0.25`);
+});
+
 test("the weekly report goes out once when it's due, and one that fails is tried again an hour later", async () => {
   const t = await testApp();
   const send = t.report.send.bind(t.report);

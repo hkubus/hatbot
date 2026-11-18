@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CreateParams, StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
 import type { ModelClient } from "../src/agent/model";
+import { REVIEW_PROMPT } from "../src/agent/prompt";
 
 type Block = Anthropic.Beta.BetaContentBlock;
 export type Scripted = {
@@ -16,6 +17,7 @@ export type Scripted = {
   failedWith?: string;
   failedUsage?: Partial<Anthropic.Beta.BetaUsage>;
   container?: string;
+  context_management?: Anthropic.Beta.BetaContextManagementResponse;
 };
 
 const usage = (over: Partial<Anthropic.Beta.BetaUsage> = {}) =>
@@ -28,6 +30,10 @@ const usage = (over: Partial<Anthropic.Beta.BetaUsage> = {}) =>
     iterations: null,
     ...over,
   }) as Anthropic.Beta.BetaUsage;
+
+/** Whether a request is a change's safety review. */
+export const isReview = (p: { system?: unknown }) =>
+  Array.isArray(p.system) && p.system[0]?.text === REVIEW_PROMPT;
 
 export const text = (t: string): Block => ({ type: "text", text: t, citations: null }) as Block;
 export const toolUse = (
@@ -76,6 +82,7 @@ export class FakeModel implements ModelClient {
       next.stop_reason ??
       (next.content.some((b) => b.type === "tool_use") ? "tool_use" : "end_turn");
     const res = message(next.model ?? params.model, next.content, stop, next.usage);
+    if (next.context_management) res.context_management = next.context_management;
     if (next.container)
       res.container = { id: next.container, expires_at: "2026-10-17T00:00:00Z", skills: null };
     return res;
