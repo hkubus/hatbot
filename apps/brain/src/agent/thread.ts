@@ -125,6 +125,13 @@ const LONG_EPISODE_TOKENS = 90_000;
 const RECENT_MESSAGES = 10;
 /** The most of your words in a conversation the review reads, the newest kept. */
 const OWNER_SAID_CHARS = 12_000;
+/**
+ * What a task the chat starts reads of it: in the owner's export, 6 messages came to 2.2k characters
+ * at the median and 3.6k at p90, and these caps cut 9 of 222 tasks' chats.
+ */
+const TASK_CHAT_MESSAGES = 6;
+const TASK_CHAT_CHARS = 6000;
+const TASK_CHAT_EACH = 2000;
 const MAX_STEPS = 25;
 /** A chat request's output limit, and ask_opus's: the check before each counts on all of it. */
 const MAX_TOKENS = 32000;
@@ -546,6 +553,41 @@ export class Thread {
         at: new Date(m.created_at),
       }))
       .filter((m) => m.text);
+  }
+
+  /**
+   * The chat's latest messages before the reply `before`, for a task it starts: yours and the bots'
+   * replies, without their tool calls. `taintedBy`: what the first untrusted one carries.
+   */
+  recentChat(before: number, episodeId: number): { text: string; taintedBy: string | null } {
+    const rows = this.d.db
+      .query<
+        { id: number; role: string; bot_id: string | null; text: string; created_at: string },
+        [number, number, number, number]
+      >(
+        `SELECT m.id, m.role, m.bot_id, m.text, m.created_at FROM messages m, episodes e
+         WHERE e.id = ?3 AND m.conversation_id = ?1 AND m.id < ?2 AND m.kind = 'text'
+           AND m.status = 'done' AND m.text != '' AND m.incognito = e.incognito
+           AND (e.fresh = 0 OR m.episode_id = e.id)
+         ORDER BY m.id DESC LIMIT ?4`,
+      )
+      .all(this.conversationId, before, episodeId, TASK_CHAT_MESSAGES);
+    const kept: typeof rows = [];
+    let left = TASK_CHAT_CHARS;
+    for (const m of rows) {
+      if (left <= 0) break;
+      const most = Math.min(left, TASK_CHAT_EACH);
+      const text = m.text.length > most ? `…${m.text.slice(-most)}` : m.text;
+      kept.unshift({ ...m, text });
+      left -= text.length;
+    }
+    const untrusted = this.untrusted(kept.map((m) => m.id));
+    return {
+      text: kept
+        .map((m) => this.transcript({ ...m, tainted_by: untrusted.get(m.id)?.source ?? null }))
+        .join("\n"),
+      taintedBy: [...untrusted.values()][0]?.source ?? null,
+    };
   }
 
   private ownerSaid(episodeId: number): string {

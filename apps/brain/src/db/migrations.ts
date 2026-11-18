@@ -1210,4 +1210,6 @@ export const migrations: string[] = [
   `ALTER TABLE teach_sessions ADD COLUMN screen TEXT;`,
   // 83: a webhook that runs one of its bot's scripts, with the event as its input.
   "ALTER TABLE triggers ADD COLUMN script_id INTEGER REFERENCES scripts(id);",
+  // 84: the chat's latest messages when the chat started the task, which its first message holds.
+  "ALTER TABLE tasks ADD COLUMN chat TEXT;",
 ];

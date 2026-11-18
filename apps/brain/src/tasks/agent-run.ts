@@ -929,10 +929,11 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
           ? "the bot in the chat, which answers the owner from your summary"
           : "the owner, from the chat"
     }`;
+    const chat = task.origin === "chat" ? tasks.chatOf(id) : null;
     record("user", [
       {
         type: "text",
-        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.${retold ? ` ${RETOLD}` : ""}`,
+        text: `${index}\n\n${skills ? `${skills}\n\n` : ""}${chat ? `<recent_chat>\nThe chat's last messages before it started you, oldest first.\n${chat}\n</recent_chat>\n\n` : ""}<task>\n${task.goal}\n</task>${payload}\n\n${startedBy} at ${localStamp(new Date(tasks.clock()))}, the owner's local time.${retold ? ` ${RETOLD}` : ""}`,
       },
     ]);
 

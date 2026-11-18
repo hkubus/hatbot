@@ -3,6 +3,7 @@ import { type DesktopAgent, DesktopError, HttpDesktopAgent } from "@hatbot/plugi
 import type { Task, TaskStep } from "@hatbot/shared";
 import type { AgentElement } from "@hatbot/shared/desktop";
 import { ALERT_SECTION, CODE_SECTION } from "../src/agent/prompt";
+import { HATBOT } from "../src/memory/store";
 import { limits } from "../src/tasks/desktop-run";
 import { browser, computer, FakeModel, isReview, text, toolUse } from "./fake-model";
 import { bot, signIn, type TestApp, testApp, waitFor } from "./helpers";
@@ -1039,4 +1040,71 @@ test("a task's prompt has the alerts section only for an alert, and the code sec
   expect(await sections("alert")).toEqual({ alert: true, code: false });
   await t.plugins.update("code", { enabled: true });
   expect(await sections("chat")).toEqual({ alert: false, code: true });
+});
+
+test("a task the chat starts reads the chat's last messages in its first message, not the chat's tool calls", async () => {
+  const chat = new FakeModel([
+    { content: [toolUse("memory_read", { path: "homelab.md" })] },
+    { content: [text("The nas has one pool, tank. Scrub it?")] },
+    {
+      content: [
+        text("Scrubbing tank."),
+        toolUse("run_task", { title: "Scrub tank", goal: "Scrub tank on the nas" }),
+      ],
+    },
+    { content: [text("Tank is clean.")] },
+  ]);
+  const work = new FakeModel([done("Scrubbed tank: no errors.")]);
+  const t = await testApp(chat, work);
+  await t.memory.write("homelab.md", "nas: zpool tank, 4 disks", HATBOT, "Homelab");
+  await t.thread.post("what pools does the nas have?").done;
+  await t.thread.post("yeah do it").done;
+  await t.tasks.idle();
+  await t.thread.idle();
+  const first = JSON.stringify(work.requests[0]?.messages[0]?.content);
+  expect(first).toContain(
+    '<recent_chat>\\nThe chat\'s last messages before it started you, oldest first.\\n<message from=\\"Owner\\"',
+  );
+  for (const said of ["what pools does the nas have?", "The nas has one pool, tank. Scrub it?"])
+    expect(first).toContain(`>${said}</message>`);
+  expect(first).toContain(
+    ">yeah do it</message>\\n</recent_chat>\\n\\n<task>\\nScrub tank on the nas",
+  );
+  expect(first).not.toContain("4 disks");
+  expect(JSON.stringify(work.requests[0]?.system)).not.toContain("yeah do it");
+});
+
+test("a task reads at most the chat's last 6 messages, 2000 characters of each and 6000 in all, each cut from its start", async () => {
+  const long = (n: number) => `START${n}${"=".repeat(2500)}END${n}`;
+  const chat = new FakeModel([
+    { content: [text("one")] },
+    { content: [text(long(2))] },
+    { content: [text(long(3))] },
+    { content: [text(long(4))] },
+    { content: [text("On it."), toolUse("run_task", { title: "Go", goal: "Go" })] },
+    { content: [text("Done.")] },
+  ]);
+  const work = new FakeModel([done("Done.")]);
+  const t = await testApp(chat, work);
+  for (const said of ["first", "second", "third", "fourth", "fifth"])
+    await t.thread.post(said).done;
+  await t.tasks.idle();
+  await t.thread.idle();
+  const said = t.tasks.chatOf(t.tasks.list()[0]?.id as number) ?? "";
+  expect(said).not.toContain("first");
+  expect(said).not.toContain("one");
+  for (const n of [2, 3, 4]) {
+    expect(said).not.toContain(`START${n}`);
+    expect(said).toContain(`END${n}`);
+  }
+  expect(said.match(/\w+(?=<\/message>)/g)).toEqual([
+    "END2",
+    "third",
+    "END3",
+    "fourth",
+    "END4",
+    "fifth",
+  ]);
+  expect((said.match(/=/g) ?? []).length).toBeLessThan(6000);
+  expect(said.match(/>…=/g)).toHaveLength(3);
 });

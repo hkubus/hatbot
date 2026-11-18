@@ -475,6 +475,8 @@ export class Tasks {
     message?: number;
     /** Your own recent chat messages, when you started it from the chat: what the approval check reads. */
     request?: string;
+    /** The chat's latest messages when it started the task, which its first message holds. */
+    chat?: string;
     /** The bot doing it; Hatbot by default. */
     botId?: string;
     /** The chat it reports to; the bot's own by default. */
@@ -531,6 +533,7 @@ export class Tasks {
       job: input.job === undefined ? null : JSON.stringify(input.job),
       payload: input.payload ?? null,
       request: input.request ?? null,
+      chat: input.chat ?? null,
       tainted: taintedBy ? 1 : 0,
       tainted_by: taintedBy,
       ...(runner?.budgetUsd ? { budget_usd: runner.budgetUsd() } : {}),
@@ -649,13 +652,14 @@ export class Tasks {
       .query<
         {
           request: string | null;
+          chat: string | null;
           run_key: string | null;
           conversation_id: number | null;
           asked_in: number | null;
           job: string | null;
         },
         [number]
-      >("SELECT request, run_key, conversation_id, asked_in, job FROM tasks WHERE id = ?")
+      >("SELECT request, chat, run_key, conversation_id, asked_in, job FROM tasks WHERE id = ?")
       .get(id);
     return this.createBackgroundTask({
       title: t.title,
@@ -672,6 +676,7 @@ export class Tasks {
       taintedBy: t.tainted ? (t.taintedBy ?? "The task it runs again") : null,
       effort: t.effort ?? undefined,
       request: r?.request ?? undefined,
+      chat: r?.chat ?? undefined,
       botId: t.botId,
       conversationId: r?.conversation_id ?? undefined,
       // The bot that asked for it hears how this one ends too.
@@ -743,6 +748,14 @@ export class Tasks {
       this.d.db
         .query<{ request: string | null }, [number]>("SELECT request FROM tasks WHERE id = ?")
         .get(id)?.request ?? null
+    );
+  }
+
+  chatOf(id: number): string | null {
+    return (
+      this.d.db
+        .query<{ chat: string | null }, [number]>("SELECT chat FROM tasks WHERE id = ?")
+        .get(id)?.chat ?? null
     );
   }
 

@@ -182,7 +182,7 @@ export const RunTaskInput = z.object({
     .min(1)
     .max(8000)
     .describe(
-      "What to do and what to report back, with every detail from the conversation it needs",
+      "What to do, and where, with what your tools found that bears on it; the task reads the last few messages, so leave out what they say, and the steps it can work out",
     ),
   effort: z
     .enum(["low", "medium", "high"])
@@ -278,6 +278,18 @@ function editedFile(
 const untrustedAsks = (ctx: ToolContext) => ctx.settings?.get().safety.untrusted ?? true;
 
 const chatTaint = (by: string | null | undefined) => by && `The chat had read: ${by}`;
+
+/** The chat's latest messages for a task it starts, and what taints the task: the chat, or them. */
+const chatFor = (ctx: ToolContext) => {
+  const recent =
+    ctx.messageId !== undefined && ctx.episodeId !== undefined && ctx.conversationId !== undefined
+      ? ctx.chats?.thread(ctx.conversationId)?.recentChat(ctx.messageId, ctx.episodeId)
+      : undefined;
+  return {
+    chat: recent?.text || undefined,
+    taintedBy: chatTaint(ctx.tainted?.() ?? recent?.taintedBy),
+  };
+};
 
 export type { ToolImage };
 
@@ -640,12 +652,10 @@ export const TOOLS = [
   }),
   def({
     name: "run_task",
-    description: `Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It can't see this conversation, so give it everything it needs. For a command or two, use the plugin tools yourself instead. ${ENDS_REPLY}`,
+    description: `Start a background task for longer work: several steps that depend on each other, anything that takes more than a minute or two, writing code, or work that should go on after this reply. It gets your memory, every tool your plugins offer and the desktop, and it asks the owner before risky steps. Its progress and result show under your reply; you're told how it ended at the start of a later turn. It reads the last few messages here, but not your tool results. For a command or two, use the plugin tools yourself instead. ${ENDS_REPLY}`,
     schema: RunTaskInput,
-    run: async (
-      { title, goal, effort },
-      { tasks, messageId, tainted, ownerSaid, bot, conversationId, answering },
-    ) => {
+    run: async ({ title, goal, effort }, ctx) => {
+      const { tasks, messageId, ownerSaid, bot, conversationId, answering } = ctx;
       if (!tasks) return "Tasks aren't available.";
       const task = tasks.createBackgroundTask({
         title,
@@ -655,7 +665,7 @@ export const TOOLS = [
         conversationId,
         effort,
         message: messageId,
-        taintedBy: chatTaint(tainted?.()),
+        ...chatFor(ctx),
         request: ownerSaid?.(),
         askedIn: answering,
       });
@@ -665,7 +675,7 @@ export const TOOLS = [
   }),
   def({
     name: "todo_work",
-    description: `Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It can't see this conversation, so put what it needs beyond the item in details. ${ENDS_REPLY}`,
+    description: `Start a background task on an item of the owner's to-do list, when they want you to get it done. Its goal is the item's text, with the details you add; when the task ends done, the item is ticked off. Its progress and result show under your reply. It reads the last few messages here, but not your tool results: put what else it needs in details. ${ENDS_REPLY}`,
     schema: z.object({
       item: z.string().min(1).describe("The item's text, or enough of it to pick it out"),
       details: z
@@ -674,10 +684,8 @@ export const TOOLS = [
         .optional()
         .describe("What the task needs to know that the item doesn't say"),
     }),
-    run: async (
-      { item, details },
-      { tasks, memory, messageId, tainted, ownerSaid, bot, conversationId, answering },
-    ) => {
+    run: async ({ item, details }, ctx) => {
+      const { tasks, memory, messageId, ownerSaid, bot, conversationId, answering } = ctx;
       if (!tasks) return "Tasks aren't available.";
       const t = findTodo((await memory.readOrNull(TODO_FILE)) ?? "", item);
       if (typeof t === "string") return t;
@@ -689,7 +697,7 @@ export const TOOLS = [
         botId: bot?.id,
         conversationId,
         message: messageId,
-        taintedBy: chatTaint(tainted?.()),
+        ...chatFor(ctx),
         request: ownerSaid?.(),
         askedIn: answering,
       });
