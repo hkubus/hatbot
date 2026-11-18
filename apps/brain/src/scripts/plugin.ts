@@ -139,15 +139,13 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
   const service: ScriptsService = {
     get: (id) => deps().store.get(id),
     byName: (botId, name) => deps().store.byName(botId, name),
+    list: (botId) => deps().store.list(botId),
     start: (script, o) => start(script, o),
   };
 
   function start(
     script: Script,
-    o: Parameters<ScriptsService["start"]>[1] & {
-      message?: number;
-      parent?: Task;
-    },
+    o: Parameters<ScriptsService["start"]>[1] & { parent?: Task },
   ): Task | null {
     const { tasks } = deps();
     const job: ScriptJob = { script: script.id, input: o.input };
@@ -168,6 +166,7 @@ export function scriptsPlugin(deps: () => ScriptsDeps) {
       payload: o.payload,
       trusted: o.trusted,
       botId: script.botId,
+      conversationId: o.conversationId,
       message: o.message,
       parent: o.parent,
       runner: "script",

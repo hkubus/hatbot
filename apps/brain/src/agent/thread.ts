@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { CallContext, PluginTool, Verdict } from "@hatbot/plugin-sdk";
+import type { CallContext, PluginTool, ScriptsService, Verdict } from "@hatbot/plugin-sdk";
 import {
   BudgetError,
   type CreateParams,
@@ -15,6 +15,7 @@ import {
   localStamp,
   longPdf,
   modelErrorText,
+  PluginError,
   untrustedBlock,
 } from "@hatbot/plugin-sdk";
 import {
@@ -59,6 +60,7 @@ import {
   verdictFor,
 } from "../plugins/registry";
 import type { Repeats } from "../scripts/repeats";
+import { commandInput } from "../scripts/run";
 import type { SettingsStore } from "../settings";
 import { priceOf, requestCeiling, type Spend, searchesIn, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
@@ -913,6 +915,43 @@ export class Thread {
         if (!(err instanceof MemoryError)) console.error("/remember failed", err);
         note(`Couldn't save it: ${err instanceof MemoryError ? err.message : "memory failed"}`);
       }
+    } else if (c.name === "run") {
+      const scripts = this.d.plugins.service<ScriptsService>("scripts");
+      if (!scripts || !tasks) return void note("Scripts aren't available.");
+      const [, name = "", rest = ""] = /^(\S*)\s*([\s\S]*)$/.exec(c.arg) ?? [];
+      const script = scripts.byName(bot.id, name);
+      if (!script) {
+        const names = scripts.list(bot.id).map((s) => s.name);
+        const which = name
+          ? `No script called ${name}.`
+          : "Say which script, like /run check-backups.";
+        return void note(
+          names.length
+            ? `${which} Scripts: ${names.join(", ")}.`
+            : `${bot.name} has no scripts yet.`,
+        );
+      }
+      if (!script.enabled) return void note(`${script.name} is switched off.`);
+      if (tasks.paused()) return void note("Hatbot is paused. Resume to start tasks.");
+      const runKey = `script:${script.id}`;
+      if (tasks.activeFor(runKey)) return void note(`${script.name}'s last run is still going.`);
+      let input: Record<string, unknown>;
+      try {
+        input = commandInput(script, rest.trim());
+      } catch (err) {
+        if (err instanceof PluginError) return void note(err.message);
+        throw err;
+      }
+      const started = note(`Running ${script.name}.`);
+      // As Run now: your own command, so what the conversation read doesn't taint it.
+      scripts.start(script, {
+        origin: "chat",
+        source: script.name,
+        input,
+        runKey,
+        conversationId: this.conversationId,
+        message: started.id,
+      });
     } else if (c.name === "todo") {
       if (!c.arg) {
         const open = parseTodos((await memory.readOrNull(TODO_FILE)) ?? "").filter((t) => !t.done);

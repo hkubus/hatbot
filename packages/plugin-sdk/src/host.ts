@@ -119,6 +119,7 @@ export type BackgroundTask = {
 export interface ScriptsService {
   get(id: number): Script | null;
   byName(botId: string, name: string): Script | null;
+  list(botId: string): Script[];
   /** A run, as a background task with `input`; null while its last run from `runKey` still goes. */
   start(
     script: Script,
@@ -132,6 +133,8 @@ export interface ScriptsService {
       | "runKey"
       | "payload"
       | "trusted"
+      | "conversationId"
+      | "message"
     > & {
       input: Record<string, unknown>;
       /** What started it had read untrusted content, this. */

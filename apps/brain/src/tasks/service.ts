@@ -1177,11 +1177,13 @@ export class Tasks {
     // mind, whether or not the task notifies, since the answer may hang on what was said before. A
     // command's result stands unless it notifies. A bot that asked another always passes on what came
     // of it, also from a hand-off with its own card, the second one a reply asked for.
-    const told = status !== "cancelled" && (this.retold(task) || (!!under && tell));
+    // A job's run under its command (/run) took no model, and its result stands as it is, failed too.
+    const stands = under === "command" && !!task.runner && !!this.d.plugins.job(task.runner);
+    const told = status !== "cancelled" && !stands && (this.retold(task) || (!!under && tell));
     if (under && status !== "cancelled") this.d.chats.endReply(task, told);
     if (card.changes || (under && !told)) this.d.chats.markEdited(id);
     if (told) void this.d.chats.taskEnded(conversationId, reporter);
-    else if (tell && task.lane === "background" && !card.changes)
+    else if (tell && !stands && task.lane === "background" && !card.changes)
       this.d.chats.addCard(conversationId, reporter, "task", text, { taskId: id });
     this.emit(id);
     if (status === "done" && task.todo) this.tickTodo(task, task.todo);
