@@ -2,14 +2,15 @@
 // whether the answer is right, how many helpers' quotes were found on their pages, what the check sent
 // back, and what each cost. Rerun it after a change to research to see what the change did.
 //
-//   ANTHROPIC_API_KEY=… bun apps/brain/eval/research.ts [--only id,id] [--limit n] [--usd 2] [--parallel 2]
+//   ANTHROPIC_API_KEY=… bun apps/brain/eval/research.ts [--only id,id] [--limit n] [--usd 2] [--parallel 2] [--lead-effort high]
 //
 // Each question is a research task within --usd, so the whole set costs up to its size times that.
+// --lead-effort runs the lead at another effort than research's own (xhigh), to compare the two.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import type { Notifier } from "@hatbot/plugin-sdk";
+import type { Effort, Notifier } from "@hatbot/plugin-sdk";
 import { ACTIVE_TASK_STATUSES } from "@hatbot/shared";
 import { oneShot } from "../src/agent/model";
 import { loadConfig } from "../src/config";
@@ -27,11 +28,18 @@ const { values: args } = parseArgs({
     usd: { type: "string", default: "2" },
     parallel: { type: "string", default: "2" },
     out: { type: "string" },
+    "lead-effort": { type: "string" },
   },
 });
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("Set ANTHROPIC_API_KEY: the eval runs research against the real API.");
+  process.exit(1);
+}
+const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+const leadEffort = args["lead-effort"] as Effort | undefined;
+if (leadEffort && !EFFORTS.includes(leadEffort)) {
+  console.error(`--lead-effort is one of ${EFFORTS.join(", ")}.`);
   process.exit(1);
 }
 
@@ -63,6 +71,11 @@ await brain.plugins.startAll();
 brain.settings.update({
   limits: { researchUsd: usd, dailyUsd: usd * questions.length + 10, monthlyUsd: 10_000 },
 });
+const runner = brain.plugins.runner("research");
+if (!runner) throw new Error("The research plugin is off.");
+// The runner is read for each of the lead's requests, so this one changes them all.
+if (leadEffort) runner.effort = leadEffort;
+const effort = runner.effort;
 
 type Grade = "right" | "partly" | "wrong";
 type Result = {
@@ -70,6 +83,8 @@ type Result = {
   status: string;
   grade: Grade | "not graded";
   why: string;
+  /** The lead's. */
+  effort: Effort;
   usd: number;
   /** By purpose and model: what the lead, the helpers and the check each cost. */
   spent: Record<string, Spent>;
@@ -262,6 +277,7 @@ async function run(q: (typeof QUESTIONS)[number]): Promise<Result> {
     id: q.id,
     status: task?.status ?? "gone",
     ...graded,
+    effort,
     usd: brain.spend.treeSpend(created.id),
     spent: spentOn(created.id),
     minutes: (Date.now() - started) / 60_000,
@@ -297,7 +313,7 @@ const all = sum((r) => r.quotes.all);
 console.log(
   [
     "",
-    `${results.length} questions: ${count("right")} right, ${count("partly")} partly, ${count("wrong")} wrong, ${results.length - count("right") - count("partly") - count("wrong")} not graded.`,
+    `${results.length} questions, the lead at ${effort} effort: ${count("right")} right, ${count("partly")} partly, ${count("wrong")} wrong, ${results.length - count("right") - count("partly") - count("wrong")} not graded.`,
     `Quotes found on their pages: ${all ? Math.round((100 * sum((r) => r.quotes.found)) / all) : 0}% of ${all}, ${sum((r) => r.quotes.unchecked)} unchecked.`,
     `Sent back by the check: ${sum((r) => r.problems)}. Reports with "Could not verify": ${results.filter((r) => r.couldNotVerify).length}.`,
     `Spent $${sum((r) => r.usd).toFixed(2)}, $${(sum((r) => r.usd) / Math.max(1, results.length)).toFixed(2)} a question.`,
