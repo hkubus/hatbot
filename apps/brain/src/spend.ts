@@ -17,6 +17,11 @@ export type UsageLike = {
   } | null;
 };
 
+/** What server-side context editing cleared from a request's prompt, as a response says. */
+export type Cleared = {
+  applied_edits: { cleared_input_tokens: number; cleared_tool_uses?: number }[];
+} | null;
+
 export type Tokens = {
   input: number;
   cacheWrite5m: number;
@@ -154,14 +159,17 @@ export class Spend {
     endedAt?: number;
     /** The system prompt and tools it was sent with, for what its cache entry holds. */
     prefix?: string;
+    cleared?: Cleared;
   }): number {
     const t = tokensOf(entry.usage);
     const cost = costOf(entry.model, t) + (entry.extraUsd ?? 0);
+    const edits = entry.cleared?.applied_edits ?? [];
     this.db
       .query(
         `INSERT INTO spend_ledger (created_at, ended_at, prefix, model, purpose, episode_id, task_id, bot_id, input_tokens,
-           cache_write_5m_tokens, cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd)
-         VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, (SELECT bot_id FROM tasks WHERE id = ?)), ?, ?, ?, ?, ?, ?)`,
+           cache_write_5m_tokens, cache_write_1h_tokens, cache_read_tokens, output_tokens, cost_usd,
+           cleared_tool_uses, cleared_input_tokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, coalesce(?, (SELECT bot_id FROM tasks WHERE id = ?)), ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         new Date(this.clock()).toISOString(),
@@ -179,6 +187,8 @@ export class Spend {
         t.cacheRead,
         t.output,
         cost,
+        edits.length ? edits.reduce((n, e) => n + (e.cleared_tool_uses ?? 0), 0) : null,
+        edits.length ? edits.reduce((n, e) => n + e.cleared_input_tokens, 0) : null,
       );
     const { todayUsd, monthUsd } = this.spent();
     this.events.emit({ type: "spend.updated", todayUsd, monthUsd });
@@ -199,15 +209,18 @@ export class Spend {
     episodeId?: number;
     taskId?: number;
     botId?: string;
+    cleared?: Cleared;
   }): number {
     const parts = entry.usage.iterations?.length ? entry.usage.iterations : [entry.usage];
-    // Web searches cost $10 per 1,000 on top of tokens; they go on the first part.
+    // Web searches cost $10 per 1,000 on top of tokens; they and what was cleared go on the first part.
     let extraUsd = (entry.usage.server_tool_use?.web_search_requests ?? 0) * WEB_SEARCH_USD;
+    let cleared = entry.cleared;
     let total = 0;
     for (const part of parts) {
       const model = "model" in part && part.model ? part.model : entry.model;
-      total += this.record({ ...entry, model, usage: part, extraUsd });
+      total += this.record({ ...entry, model, usage: part, extraUsd, cleared });
       extraUsd = 0;
+      cleared = null;
     }
     return total;
   }

@@ -381,6 +381,46 @@ test("research's older findings and tool calls may be cleared, and read_findings
   expect(task.status).toBe("done");
 });
 
+test("what context editing cleared from the lead's and the helpers' prompts is in the ledger", async () => {
+  const cleared = (uses: number, tokens: number) => ({
+    applied_edits: [
+      {
+        type: "clear_tool_uses_20250919" as const,
+        cleared_tool_uses: uses,
+        cleared_input_tokens: tokens,
+      },
+    ],
+  });
+  const work = new FakeModel([
+    { ...ONE_PART, context_management: cleared(4, 30_000) },
+    finish("It's **2,399 zł** [1].", "The DS925+ [1]."),
+  ]);
+  work.route = (p) =>
+    isHelper(p)
+      ? {
+          content: [
+            ...fetched(PRICE.url, SHOP_PAGE, "srvtoolu_shop"),
+            toolUse("report_findings", { findings: [PRICE], gaps: "" }),
+          ],
+          context_management: cleared(2, 21_000),
+        }
+      : undefined;
+  work.onCreate = (p) => (p.system === RESEARCH_CHECK_PROMPT ? '{"problems": []}' : undefined);
+  const t = await testApp(new FakeModel(), work);
+  const task = await startResearch(t);
+
+  const rows = t.db
+    .query<{ purpose: string; uses: number; tokens: number }, [number]>(
+      `SELECT purpose, cleared_tool_uses AS uses, cleared_input_tokens AS tokens FROM spend_ledger
+       WHERE task_id = ? AND cleared_input_tokens IS NOT NULL ORDER BY purpose`,
+    )
+    .all(task.id);
+  expect(rows).toEqual([
+    { purpose: "research", uses: 2, tokens: 21_000 },
+    { purpose: "task", uses: 4, tokens: 30_000 },
+  ]);
+});
+
 test("research gets lookups and memory, and no tool that changes things", async () => {
   const restarted: string[] = [];
   const lab = definePlugin({

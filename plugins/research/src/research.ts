@@ -692,6 +692,7 @@ async function runWorker(
       purpose: "research",
       usage: res.usage,
       taskId: task.id,
+      cleared: res.context_management,
     });
     // Whatever followed it goes too, unrun: thinking after a block left out wouldn't be accepted.
     const pdf = longPdf(res.content);

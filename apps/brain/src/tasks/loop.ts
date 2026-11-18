@@ -95,7 +95,13 @@ export function requestsFor(tasks: Tasks, task: Task, signal: AbortSignal) {
         tokens: (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
         at: sent,
       };
-      d.spend.recordResponse({ model: params.model, purpose: "task", usage, taskId: id });
+      d.spend.recordResponse({
+        model: params.model,
+        purpose: "task",
+        usage,
+        taskId: id,
+        cleared: res.context_management,
+      });
       return res;
     },
   };

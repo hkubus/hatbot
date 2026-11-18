@@ -229,7 +229,14 @@ export interface SpendHost {
   check(usd: number, task?: TaskLimit): void;
   /** Holds `usd` against the limits while a request is out; call what it returns once it's recorded. */
   hold(usd: number, task?: TaskLimit): () => void;
-  record(entry: { model: string; purpose: string; usage: ModelUsage; taskId?: number }): void;
+  record(entry: {
+    model: string;
+    purpose: string;
+    usage: ModelUsage;
+    taskId?: number;
+    /** The response's, for what context editing cleared. */
+    cleared?: ModelMessage["context_management"];
+  }): void;
   /** What a task and the tasks it started have spent. */
   treeSpend(taskId: number): number;
   /** Spent in the last `days` days, today's included, by purpose. */

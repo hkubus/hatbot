@@ -1212,4 +1212,9 @@ export const migrations: string[] = [
   "ALTER TABLE triggers ADD COLUMN script_id INTEGER REFERENCES scripts(id);",
   // 84: the chat's latest messages when the chat started the task, which its first message holds.
   "ALTER TABLE tasks ADD COLUMN chat TEXT;",
+  // 85: what context editing cleared from a request's prompt, as its response said; null if nothing.
+  `
+  ALTER TABLE spend_ledger ADD COLUMN cleared_tool_uses INTEGER;
+  ALTER TABLE spend_ledger ADD COLUMN cleared_input_tokens INTEGER;
+  `,
 ];

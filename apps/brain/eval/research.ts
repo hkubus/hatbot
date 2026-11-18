@@ -91,6 +91,10 @@ type Spent = {
   usd: number;
   /** What's left of the cost once the tokens are priced: web search fees. */
   searchUsd: number;
+  /** Requests whose prompt context editing cleared, and what it cleared from them in all. */
+  cleared: number;
+  clearedUses: number;
+  clearedTokens: number;
 };
 
 type Row = {
@@ -102,6 +106,8 @@ type Row = {
   cache_read_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  cleared_tool_uses: number | null;
+  cleared_input_tokens: number | null;
 };
 
 function spentOn(taskId: number) {
@@ -124,6 +130,9 @@ function spentOn(taskId: number) {
       output: 0,
       usd: 0,
       searchUsd: 0,
+      cleared: 0,
+      clearedUses: 0,
+      clearedTokens: 0,
     };
     const s = by[what];
     const tokens = {
@@ -142,6 +151,9 @@ function spentOn(taskId: number) {
     s.output += tokens.output;
     s.usd += r.cost_usd;
     s.searchUsd += Math.max(0, r.cost_usd - costOf(r.model, tokens));
+    if (r.cleared_input_tokens) s.cleared++;
+    s.clearedUses += r.cleared_tool_uses ?? 0;
+    s.clearedTokens += r.cleared_input_tokens ?? 0;
   }
   return by;
 }
@@ -273,7 +285,7 @@ await Promise.all(
       );
       for (const [what, s] of Object.entries(r.spent))
         console.log(
-          `  ${what.padEnd(30)} $${s.usd.toFixed(3)}  ${s.requests} req (${s.long} long)  in ${k(s.input)} write ${k(s.cacheWrite)} read ${k(s.cacheRead)} out ${k(s.output)}  searches $${s.searchUsd.toFixed(2)}`,
+          `  ${what.padEnd(30)} $${s.usd.toFixed(3)}  ${s.requests} req (${s.long} long)  in ${k(s.input)} write ${k(s.cacheWrite)} read ${k(s.cacheRead)} out ${k(s.output)}  searches $${s.searchUsd.toFixed(2)}  cleared ${s.cleared} req (${s.clearedUses} tool uses, ${k(s.clearedTokens)})`,
         );
     }
   }),
