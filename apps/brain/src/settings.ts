@@ -105,6 +105,7 @@ export const DEFAULT_SETTINGS: Settings = {
       access: "ask",
       computer: "ask",
       mandate: "allow",
+      plugins: "ask",
     },
     untrusted: true,
     tools: {},

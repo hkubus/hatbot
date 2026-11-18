@@ -19,9 +19,17 @@ fn approve_and_deny_answer_the_approval() {
 
 #[test]
 fn money_keys_doors_and_suspicions_open_the_window_instead() {
-    for kind in
-        ["purchase", "payment", "mandate", "account_security", "access", "computer", "budget", "injection_warning"]
-    {
+    for kind in [
+        "purchase",
+        "payment",
+        "mandate",
+        "account_security",
+        "access",
+        "computer",
+        "plugins",
+        "budget",
+        "injection_warning",
+    ] {
         let n = Notice::Approval(approval(kind));
         assert_eq!(n.shown("Hatbot").actions.len(), 1, "{kind}");
         assert_eq!(n.reply("approve"), Reply::Open(Target("/?approval=8".into())), "{kind}");
