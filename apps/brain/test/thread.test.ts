@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { StreamHandlers, StreamParams } from "@hatbot/plugin-sdk";
+import { localStamp, type StreamHandlers, type StreamParams } from "@hatbot/plugin-sdk";
 import {
   type AskResult,
   type ConversationsExport,
@@ -158,6 +158,34 @@ test("a conversation goes on within 30 minutes; idle past that, it gets a recap 
   expect(model.creates.length).toBe(1);
   expect(model.requests[2]?.messages.length).toBe(1);
   expect(lastUserText(model.requests[2])).toContain("2026-10-09: sdb on the NAS is failing.");
+});
+
+test("asked for the same check on three days, the bot offers once to run it on a schedule; stamps that aren't the owner's don't count", async () => {
+  const day = 86400_000;
+  const model = new FakeModel(
+    Array.from({ length: 5 }, () => ({ content: [text("Loss is low.")] })),
+  );
+  const t = await testApp(model);
+  const owner = /from="Owner" at="\w{3} (\S+ \S+)"/g;
+  model.onCreate = (p) => {
+    if (typeof p.system !== "string" || !p.system.includes("<checks>:")) return undefined;
+    const content = String(p.messages[0]?.content);
+    const asked = [...content.matchAll(owner)].map((m) => `${m[1]} packet loss`);
+    const made = [2, 3].map(
+      (k) => `${localStamp(new Date(t.clock() - k * day)).slice(4, 14)} 09:00 packet loss`,
+    );
+    return `<recap>Packet loss.</recap>\n<summary>Asked about packet loss.</summary>\n<checks>\n${[...asked, ...made].join("\n")}\n</checks>`;
+  };
+  for (let i = 0; i < 5; i++) {
+    await t.thread.post(i ? "check again" : "how's the packet loss?").done;
+    t.advance(day);
+    await t.thread.sweep();
+  }
+  const offered = model.requests.map((r) => JSON.stringify(r.messages).includes("on a schedule"));
+  expect(offered).toEqual([false, false, false, true, false]);
+  expect(String(model.creates.at(-1)?.messages[0]?.content)).toContain(
+    "<known_checks>\npacket loss\n</known_checks>",
+  );
 });
 
 test("preferences.md opens every conversation while it's short, and not once it's long", async () => {

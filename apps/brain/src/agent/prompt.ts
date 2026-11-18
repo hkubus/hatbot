@@ -74,7 +74,10 @@ export function groupPrompt(title: string | null, me: string, names: string[]): 
 - There's no incognito here.`;
 }
 
-export const SUMMARY_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. You get today's date, the previous summary and the transcript of the latest conversation. Write two things.
+/** `checks`: a bot's own chat also lists what the person asked it to check, to offer a schedule. */
+export const summaryPrompt = (
+  checks: boolean,
+) => `You maintain a running summary of a long chat between a person and their assistant, Hatbot. You get today's date, the previous summary${checks ? ", the names of checks they asked for before" : ""} and the transcript of the latest conversation. Write ${checks ? "three" : "two"} things.
 
 <recap>: what the latest conversation was about, for the person scrolling back through the chat, where it stands folded up in its place. One or two plain sentences, at most 40 words, about what was asked and what came of it ("Asked about the NAS disks; Hatbot found one failing and scheduled a weekly check."). No dates, no preamble.
 
@@ -85,10 +88,16 @@ export const SUMMARY_PROMPT = `You maintain a running summary of a long chat bet
 - Durable facts about the person belong in Hatbot's memory files, not here; mention them only if they matter to an open question.
 - Leave out Hatbot's own settings, limits and abilities (its spending limits, how many calls it may make, what it can or can't run, the time zone): Hatbot reads them live, and a copy here goes stale.
 - Plain text, at most 300 words, newest matters first. Include dates (YYYY-MM-DD) for things that happened.
-
+${
+  checks
+    ? `
+<checks>: each time in the latest conversation the person asked Hatbot to look at something that changes, which a schedule could look at for them (a service's state, packet loss, a price, the backups, new mail), one line: the stamp of their message, without the weekday, then a short lowercase name for what they wanted looked at, like "2026-10-16 21:29 packet loss". "Check again" asks for what they asked before. Use a name from <known_checks> when it's the same thing. Only the person's own asks, and not changes, things to do or one-off questions. None: leave it empty.
+`
+    : ""
+}
 Output exactly:
 <recap>...</recap>
-<summary>...</summary>`;
+<summary>...</summary>${checks ? "\n<checks>...</checks>" : ""}`;
 
 export const SHORTEN_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. This one is over its limit. Shorten it to at most 300 words: keep the open questions, to-dos and promises that are still current, newest first, with their dates; drop the oldest and settled matters first, and anything about Hatbot's own settings and limits.
 

@@ -75,7 +75,7 @@ import {
   INCOGNITO_PROMPT,
   MAX_GROUP_REPLIES,
   SHORTEN_PROMPT,
-  SUMMARY_PROMPT,
+  summaryPrompt,
   systemPrompt,
 } from "./prompt";
 import {
@@ -1464,6 +1464,7 @@ export class Thread {
         db.query(`DELETE FROM messages WHERE id IN (${list})`).run(...ids);
       }
       db.query(`DELETE FROM episode_turns WHERE episode_id IN ${episodeIds}`).run(is);
+      db.query(`DELETE FROM asked_checks WHERE episode_id IN ${episodeIds}`).run(is);
       db.query(`UPDATE spend_ledger SET episode_id = NULL WHERE episode_id IN ${episodeIds}`).run(
         is,
       );
@@ -1616,23 +1617,37 @@ export class Thread {
 
   private async writeSummary(episodeId: number) {
     if (this.summarized(episodeId)) return;
-    const transcript = this.d.db
+    const rows = this.d.db
       .query<{ role: string; bot_id: string | null; text: string; created_at: string }, [number]>(
         "SELECT role, bot_id, text, created_at FROM messages WHERE episode_id = ? AND status != 'streaming' ORDER BY id",
       )
-      .all(episodeId)
-      .map((m) => this.transcript(m))
-      .join("\n");
+      .all(episodeId);
+    const transcript = rows.map((m) => this.transcript(m)).join("\n");
     // One with only commands in it (/new and nothing after) has nothing to summarize.
     if (transcript && this.hasTurns(episodeId)) {
-      const content = `Today is ${localStamp(new Date(this.clock()))}.\n\n<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>\n\n<conversation>\n${transcript}\n</conversation>`;
-      const ledger = { purpose: "summary", episodeId, botId: this.bot().id };
-      const out = await oneShot(this.d, this.summaryRequest(SUMMARY_PROMPT, content), ledger);
+      const botId = this.bot().id;
+      // A bot's own chat notes what the owner asked it to check, to offer a schedule for one they keep asking.
+      const checks = this.group() === null && this.parent() === null ? this.d.repeats : undefined;
+      const known = checks
+        ? `\n\n<known_checks>\n${tagText(checks.checkNames(botId).join("\n")) || "(none)"}\n</known_checks>`
+        : "";
+      const content = `Today is ${localStamp(new Date(this.clock()))}.\n\n<previous_summary>\n${this.threadSummary() || "(none)"}\n</previous_summary>${known}\n\n<conversation>\n${transcript}\n</conversation>`;
+      const ledger = { purpose: "summary", episodeId, botId };
+      const out = await oneShot(
+        this.d,
+        this.summaryRequest(summaryPrompt(!!checks), content),
+        ledger,
+      );
       const { recap, summary } = parseSummary(out.trim());
       if (!summary) throw new Error(`no summary for episode ${episodeId}`);
       this.saveSummary(await this.shortened(summary, ledger));
       if (recap)
         this.d.db.query("UPDATE episodes SET recap = ? WHERE id = ?").run(recap, episodeId);
+      const asked = rows
+        .filter((m) => m.role === "user")
+        .map((m) => localStamp(new Date(m.created_at)).slice(4));
+      const listed = /<checks>([\s\S]*?)<\/checks>/.exec(out)?.[1];
+      if (checks && listed) checks.recordChecks(botId, episodeId, listed, new Set(asked));
     }
     this.markSummarized(episodeId);
   }
@@ -2178,6 +2193,17 @@ export class Thread {
         const ran = `(The owner chose to run what the safety review blocked anyway: ${a.summary}. To run it, ${exact})`;
         note = note ? `${note}\n\n${ran}` : ran;
       }
+      // A check the owner keeps asking this bot for: a schedule is offered, once.
+      const schedule =
+        user &&
+        !asked &&
+        !group &&
+        !incognito &&
+        this.parent() === null &&
+        offered.has("automation_schedule_create")
+          ? this.d.repeats?.offerSchedule(bot.id)
+          : null;
+      if (schedule) note = note ? `${note}\n\n${schedule}` : schedule;
       // A system message follows a user turn; with nothing else to say, the note is that turn.
       if (note && !userBlocks.length) {
         userBlocks.push({ type: "text", text: note });
