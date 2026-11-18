@@ -965,6 +965,33 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
       ]);
       return true;
     };
+    /** At its step limit a task says once, without tools, where it got to; a runner's keeps its own. */
+    const atLimit = async (params: Omit<StreamParams, "stream">, maxSteps: number) => {
+      const bare = new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
+      // After a server tool that's still waiting, only its result may come.
+      if (runner || messages.at(-1)?.role !== "user") return bare;
+      record("user", [
+        {
+          type: "text",
+          text: `(No message from the owner: this task has used its ${maxSteps} steps and stops here, so you can't call tools any more. In a few short lines, say what you found, what you changed, and what's left to do. This is the task's summary.)`,
+        },
+      ]);
+      // Its prompt is never read again, so it isn't written to the cache.
+      const ask = { ...params, cache_control: undefined, tool_choice: { type: "none" as const } };
+      try {
+        requests.hold(requests.ceiling(ask));
+        const res = await requests.stream(ask);
+        record("assistant", res.content);
+        const said = textOf(res);
+        if (!said || cutOff(res) || said.length > 20_000 || wordsOf(said).length > SUMMARY_KEPT)
+          return bare;
+        return new Stop("failed", `Stopped at its step limit (${maxSteps} steps).\n\n${said}`);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        if (!(err instanceof Stop)) console.error(`task ${id}: no summary at its step limit`, err);
+        return bare;
+      }
+    };
     // Code work writes whole files into tool calls; the chat's high efforts think longer.
     const effort = runner ? runner.effort : (task.effort ?? d.settings.get().chatEffort);
     const roomy = task.effort || (effort !== "low" && effort !== "medium");
@@ -972,8 +999,6 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
     for (let step = 0; ; step++) {
       if (signal.aborted) throw signal.reason;
       const maxSteps = runner ? runner.maxSteps : task.effort ? MAX_CODE_STEPS : MAX_STEPS;
-      if (step >= maxSteps)
-        throw new Stop("failed", `Stopped after ${maxSteps} steps without finishing.`);
       if (ownMs() >= MAX_RUN_MS)
         throw new Stop(
           "failed",
@@ -1014,6 +1039,7 @@ export async function runAgentTask(tasks: Tasks, id: number, signal: AbortSignal
         ...(container ? { container } : {}),
         messages,
       };
+      if (step >= maxSteps) throw await atLimit(params, maxSteps);
       reserveUsd = requests.ceiling(params);
       const overLimit =
         origin?.overLimit &&

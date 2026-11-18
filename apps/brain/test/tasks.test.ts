@@ -645,6 +645,50 @@ test("a finish without notify ends the task quietly", async () => {
   expect(t.notifier.sent).toEqual([]);
 });
 
+test("a task at its step limit says once, without tools, where it got to; without the money for that, it doesn't ask", async () => {
+  const look = { content: [toolUse("memory_list", {})] };
+  const said = "Two of the three backups ran. I changed nothing. Left: why nas-2's failed.";
+  const work = new FakeModel([
+    ...Array.from({ length: 30 }, () => look),
+    { content: [text(said)] },
+  ]);
+  const t = await testApp(new FakeModel(), work);
+  const run = () =>
+    t.tasks.createBackgroundTask({
+      title: "Check the backups",
+      goal: "Check the backups",
+      origin: "schedule",
+      source: "nightly",
+    }) as Task;
+  const task = run();
+  await t.tasks.idle();
+  expect(t.tasks.get(task.id)).toMatchObject({
+    status: "failed",
+    summary: `Stopped at its step limit (30 steps).\n\n${said}`,
+  });
+  expect(work.requests).toHaveLength(31);
+  expect(work.requests[29]?.tool_choice).toBeUndefined();
+  expect(work.requests[30]?.tool_choice).toEqual({ type: "none" });
+  expect(lastText(work.requests[30])).toContain("can't call tools");
+
+  // The day's money ran out during its last step.
+  const last = Promise.withResolvers<void>();
+  work.script = Array.from({ length: 30 }, (_, i) =>
+    i < 29 ? look : { ...look, wait: last.promise },
+  );
+  work.requests = [];
+  const broke = run();
+  await waitFor(() => work.requests.length === 30);
+  t.settings.update({ limits: { dailyUsd: 0.0001, monthlyUsd: 200 } });
+  last.resolve();
+  await t.tasks.idle();
+  expect(t.tasks.get(broke.id)).toMatchObject({
+    status: "failed",
+    summary: "Stopped after 30 steps without finishing.",
+  });
+  expect(work.requests).toHaveLength(30);
+});
+
 test("a Haiku desktop task out of steps carries on, once, on Opus; one its budget stopped doesn't", async () => {
   const shot = { content: [computer("screenshot")] };
   const work = new FakeModel([shot, shot, shot, finish("Booked on Opus.")]);
