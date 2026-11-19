@@ -2690,6 +2690,13 @@ a:is(.btn, .nav-item, .tb-btn, .live-task, .msg-act):hover,
   background: none;
   padding: 0;
 }
+.md .math {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md .math .katex-display {
+  margin: var(--sp-xs) 0;
+}
 .md blockquote {
   margin-left: 0;
   margin-right: 0;

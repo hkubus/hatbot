@@ -1,8 +1,14 @@
-import Markdown from "react-markdown";
+import Markdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import type { MD_COMPONENTS } from "./markdown";
+import { mathMarkdown } from "./md-math";
 
-export const REMARK = [remarkGfm];
+// mathMarkdown writes maths in double dollars, so a price's lone $ stays text.
+export const REMARK: Options["remarkPlugins"] = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+];
 
 /** The parser alone, in its own chunk: markdown.tsx loads it beside the thread (markdownLoaded). */
 export default function Parse({
@@ -14,7 +20,7 @@ export default function Parse({
 }) {
   return (
     <Markdown remarkPlugins={REMARK} components={components}>
-      {text}
+      {mathMarkdown(text)}
     </Markdown>
   );
 }

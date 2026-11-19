@@ -1,4 +1,4 @@
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+export const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /**
  * Each finished block is parsed once; once the reply is done it's parsed whole, so anything the

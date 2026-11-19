@@ -2,7 +2,7 @@
 // the app's own pictures load. Streaming a block at a time as it is here re-parses from the block's
 // start on each delta, but only that block: showing the text as it arrives either way.
 import { API_PREFIX } from "@hatbot/shared";
-import { createContext, lazy, memo, useContext, useEffect, useRef, useState } from "react";
+import { createContext, lazy, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Components } from "react-markdown";
 import { Chart, ChartPending, FileChart } from "./chart";
 import { parseChart, parseChartFile } from "./chartspec";
@@ -29,6 +29,43 @@ function CodeBlock({ code, children }: { code: string; children: React.ReactNode
         <Icon name={copied ? "check" : "copy"} />
       </button>
     </div>
+  );
+}
+
+type Katex = typeof import("katex").default;
+let katex: Katex | undefined;
+let katexLoading: Promise<Katex> | undefined;
+export const loadKatex = () =>
+  (katexLoading ??= import("./katex").then((m) => {
+    katex = m.default;
+    return katex;
+  }));
+
+/** LaTeX, drawn once KaTeX has come; its source until then, or if it doesn't read. */
+function TeX({ tex, display }: { tex: string; display: boolean }) {
+  const [K, setK] = useState(katex);
+  useEffect(() => {
+    if (!K) void loadKatex().then(setK, () => {});
+  }, [K]);
+  const html = useMemo(() => {
+    try {
+      return K?.renderToString(tex, { displayMode: display, throwOnError: true, strict: "ignore" });
+    } catch {
+      return undefined;
+    }
+  }, [K, tex, display]);
+  if (!html)
+    return display ? (
+      <pre>
+        <code>{tex}</code>
+      </pre>
+    ) : (
+      <code>{tex}</code>
+    );
+  const Tag = display ? "div" : "span";
+  return (
+    // biome-ignore lint/security/noDangerouslySetInnerHtml: KaTeX's own markup; with trust off it takes no links, classes or styles from the source
+    <Tag className={display ? "math" : undefined} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 
@@ -78,6 +115,14 @@ export const MD_COMPONENTS: Components = {
       </a>
     );
   },
+  code: ({ node, className, children, ...props }) =>
+    className?.split(" ").includes("math-inline") && node ? (
+      <TeX tex={textOf(node as Node)} display={false} />
+    ) : (
+      <code {...props} className={className}>
+        {children}
+      </code>
+    ),
   pre: function Pre({ node, children }) {
     const streaming = useContext(Streaming);
     const code = node?.children.find((c) => c.type === "element" && c.tagName === "code");
@@ -86,6 +131,7 @@ export const MD_COMPONENTS: Components = {
         ? String(code.properties.className[0] ?? "").replace(/^language-/, "")
         : "";
     const text = code ? textOf(code as Node) : "";
+    if (lang === "math") return <TeX tex={text} display />;
     if (lang === "chart") {
       const spec = parseChart(text);
       if (spec) return <Chart spec={spec} />;

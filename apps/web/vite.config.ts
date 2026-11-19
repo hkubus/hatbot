@@ -6,7 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 
 export default defineConfig({
-  plugins: [react(), preloadParser(), precompress()],
+  plugins: [react(), katexWoff2(), preloadParser(), precompress()],
   // @hatbot/shared's schemas would bring all of zod; the web checks nothing with them (zod-stub.ts).
   resolve: { alias: { zod: fileURLToPath(new URL("src/zod-stub.ts", import.meta.url)) } },
   server: {
@@ -14,6 +14,18 @@ export default defineConfig({
   },
   build: { outDir: "dist", sourcemap: true },
 });
+
+/** KaTeX's fonts as woff2 alone, which every browser the app runs in reads, as the app's own are. */
+function katexWoff2(): Plugin {
+  return {
+    name: "hatbot-katex-woff2",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/\/katex\/dist\/[^/]+\.css$/.test(id)) return;
+      return code.replace(/,\s*url\([^)]+\.(?:woff|ttf)\) format\("(?:woff|truetype)"\)/g, "");
+    },
+  };
+}
 
 /**
  * The Markdown parser's chunk, fetched with the entry rather than once the entry has run and asked

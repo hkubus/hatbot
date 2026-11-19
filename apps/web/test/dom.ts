@@ -107,6 +107,7 @@ export function installDom(start = "/") {
     document: Object.assign(new EventTarget(), {
       visibilityState: "visible",
       hasFocus: () => true,
+      compatMode: "CSS1Compat",
     }),
     location,
     history,
