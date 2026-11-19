@@ -2086,7 +2086,7 @@ function followUpGoal(n: Negotiation, giveUp: boolean): string {
     `1. negotiate_get ${n.id}.`,
     giveUp
       ? "2. Close it as lost with negotiate_close, with a line on how it went. Don't message the seller again."
-      : "2. With one negotiate_send, ask briefly whether it's still for sale, and name your last offer again, with that price in offer.",
+      : "2. With one negotiate_send, ask briefly whether it's still for sale, without naming it, and name your last offer again, with that price in offer.",
     "3. Finish with what you did, in a line.",
   ].join("\n");
 }
@@ -2096,7 +2096,7 @@ function openingGoal(n: Negotiation, note: string | null): string {
     `Negotiation #${n.id} is open: the owner approved its mandate. Send the seller the opening message now, then finish.`,
     "",
     `1. negotiate_get ${n.id} for the listing, the mandate and anything said so far.`,
-    "2. Write a brief opening message as your instructions say, in the listing's language, as the buyer asking the seller to sell, offering exactly the mandate's opening price.",
+    "2. Write a brief opening message as your instructions say, in the listing's language, as the buyer asking the seller to sell, offering exactly the mandate's opening price, without naming the item.",
     "3. Send it once with negotiate_send: the price in offer, and what it claims about our side in stated.",
     "4. Finish with what you sent, or why nothing went.",
     ...(note ? ["", `The owner's note on the mandate, which you follow: ${note}`] : []),

@@ -1233,4 +1233,12 @@ export const migrations: string[] = [
   );
   CREATE INDEX asked_checks_by ON asked_checks (bot_id, name);
   `,
+  // 87: Haggler's instructions, where they're still as made: its messages don't name the item.
+  `
+  UPDATE bots SET instructions = replace(replace(instructions,
+    'not "weźmie pan dysk za 140 zł?", which is what a seller asks',
+    'not "weźmie pan za 140 zł?", which is what a seller asks'),
+    'with amounts in digits. Use pan or pani',
+    'with amounts in digits. Don''t name the item: the conversation is on its listing already. Use pan or pani');
+  `,
 ];
