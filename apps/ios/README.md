@@ -12,7 +12,8 @@ API with a bearer token. Notifications still come from the ntfy app.
   Shortcuts actions are in `Hatbot/App/Intents.swift`.
 - `Share`: the share extension. It sends what you share, with a note, to Hatbot's chat.
 - `Widgets`: the home-screen widget (today's spend and what needs you) and the Pause all control.
-- `project.yml`: the Xcode project, generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+- `project.yml`: the Xcode project, generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen). Its one
+  package is [SwiftMath](https://github.com/mgriebling/SwiftMath) (MIT), which draws LaTeX.
 - `Hatbot/Resources/Fonts`: Google Sans Flex and Google Sans Code (SIL OFL 1.1, licences beside them), cut
   into static faces from Google Fonts' variable files by `python3 make-fonts.py` (needs fontTools).
 

@@ -555,6 +555,39 @@ final class ChatTests: XCTestCase {
       [.code(language: "md", code: "```js\nx\n```"), .paragraph("After")])
   }
 
+  /// LaTeX on lines of its own is a block of maths, inside a list too; a $$ closed only after a blank
+  /// line isn't, and a block still streaming is maths so far.
+  func testDisplayMaths() {
+    XCTAssertEqual(
+      Markdown.parse("Roots:\n$$x = \\frac{-b}{2a}$$\n\\[\n  a = 1\n\\]\n```math\ny\n```"),
+      [.paragraph("Roots:"), .math("x = \\frac{-b}{2a}"), .math("a = 1"), .math("y")])
+    XCTAssertEqual(
+      Markdown.parse("1. Solve:\n   \\[x^2 = 4\\]\n2. Check."),
+      [
+        .list([.init(depth: 0, marker: "1.", text: "Solve:")]), .math("x^2 = 4"),
+        .list([.init(depth: 0, marker: "2.", text: "Check.")]),
+      ])
+    XCTAssertEqual(Markdown.parse("$$\na\n\nMore."), [.paragraph("$$\na"), .paragraph("More.")])
+    XCTAssertEqual(Markdown.parse("$$a$$ and $$b$$"), [.paragraph("$$a$$ and $$b$$")])
+    XCTAssertEqual(Markdown.parse("Then:\n$$\nx ="), [.paragraph("Then:"), .math("x =")])
+  }
+
+  /// In a line, \\(…\\) and $$…$$ are maths, and a single $ only by Pandoc's rule, so prices and code
+  /// stay text.
+  func testMathsInALine() {
+    XCTAssertEqual(
+      Markdown.mathRuns("Let $x_1$ and \\(y\\) be $$\\$5$$."),
+      [.text("Let "), .math("x_1"), .text(" and "), .math("y"), .text(" be "), .math("\\$5"), .text(".")])
+    XCTAssertEqual(Markdown.mathRuns("the $n$th term"), [.text("the "), .math("n"), .text("th term")])
+    for text in [
+      "Between $5 and $10.", "$20,000 and $30,000", "From $5/$10 a month", "Set $HOME and $PATH.",
+      "$ x$ and $x $", "A run costs **$1 to $3**, and `$HOME` stays code.", "`$x$` and `\\(y\\)`",
+      "$a\nb$",
+    ] {
+      XCTAssertEqual(Markdown.mathRuns(text), [.text(text)], text)
+    }
+  }
+
   /// A chart is drawn once its block is whole and lines up; until then a placeholder, and if it
   /// doesn't, the code.
   func testChartBlocks() {

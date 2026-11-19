@@ -23,6 +23,16 @@ enum MDBlock: Equatable, Sendable {
   case chartPending
   case table(header: [String], rows: [[String]])
   case rule
+  /// LaTeX on lines of its own: $$…$$, \[…\] or a ```math block.
+  case math(String)
+}
+
+/// A line's text and the LaTeX in it, as the web reads them (apps/web/src/md-math.ts).
+enum MathRun: Equatable, Sendable {
+  case text(String)
+  case math(String)
+
+  var isMath: Bool { if case .math = self { true } else { false } }
 }
 
 /// A value in an NSCache, which keeps objects.
@@ -63,7 +73,7 @@ enum Markdown {
       case let .heading(_, text), let .paragraph(text), let .quote(text): inline(text)
       case let .list(items):
         items.map { ($0.marker == "•" ? "" : "\($0.marker) ") + inline($0.text) }.joined(separator: "\n")
-      case let .code(_, code): code
+      case let .code(_, code), let .math(code): code
       case let .chart(spec): spec.title ?? "A chart."
       case let .chartFile(file): file.title ?? "A chart."
       case .chartPending, .rule: ""
@@ -136,6 +146,10 @@ enum Markdown {
         let closed = i < lines.count
         i += 1
         let source = code.joined(separator: "\n")
+        if language == "math", !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+          blocks.append(.math(source))
+          continue
+        }
         if language == "chart" {
           if let spec = ChartSpec.parse(source) {
             blocks.append(.chart(spec))
@@ -151,6 +165,13 @@ enum Markdown {
           }
         }
         blocks.append(.code(language: language.isEmpty ? nil : language, code: source))
+        continue
+      }
+
+      if let (tex, end) = displayMath(lines, i) {
+        flush()
+        blocks.append(.math(tex))
+        i = end + 1
         continue
       }
 
@@ -188,7 +209,9 @@ enum Markdown {
           let t = lines[i].trimmingCharacters(in: .whitespaces)
           if let item = listItem(lines[i]) {
             items.append(item)
-          } else if !t.isEmpty, lines[i].hasPrefix("  "), !items.isEmpty, fenceMarker(t) == nil {
+          } else if !t.isEmpty, lines[i].hasPrefix("  "), !items.isEmpty, fenceMarker(t) == nil,
+            displayMath(lines, i) == nil
+          {
             // A wrapped line continues the item above; code under it is a block of its own.
             items[items.count - 1].text += "\n" + t
           } else {
@@ -218,6 +241,133 @@ enum Markdown {
     }
     flush()
     return (blocks, settled)
+  }
+
+  /// Display maths from line `i`, and its last line: $$ or \[ starting the line and its closing ending
+  /// it, there or on a later line with no blank one between. Unclosed at the end, it's still streaming.
+  private static func displayMath(_ lines: [String], _ i: Int) -> (String, Int)? {
+    let first = lines[i].trimmingCharacters(in: .whitespaces)
+    guard let open = ["$$", "\\["].first(where: { first.hasPrefix($0) }) else { return nil }
+    let close = open == "$$" ? "$$" : "\\]"
+    var body: [String] = []
+    var text = String(first.dropFirst(open.count))
+    for j in i..<lines.count {
+      if j > i {
+        text = lines[j].trimmingCharacters(in: .whitespaces)
+        if text.isEmpty { return nil }
+      }
+      guard let at = text.range(of: close) else {
+        if !text.isEmpty { body.append(text) }
+        continue
+      }
+      // A closing before the line's end is maths in the line: "$$a$$ and $$b$$".
+      guard at.upperBound == text.endIndex else { return nil }
+      let before = text[..<at.lowerBound].trimmingCharacters(in: .whitespaces)
+      if !before.isEmpty { body.append(before) }
+      return body.isEmpty ? nil : (body.joined(separator: "\n"), j)
+    }
+    return body.isEmpty ? nil : (body.joined(separator: "\n"), lines.count - 1)
+  }
+
+  /// \(…\), \[…\], $$…$$ and $…$ in a line, outside code; a lone $ (prices) stays text.
+  static func mathRuns(_ text: String) -> [MathRun] {
+    guard text.contains("$") || text.contains("\\(") || text.contains("\\[") else { return [.text(text)] }
+    let chars = Array(text)
+    var runs: [MathRun] = []
+    var plain = ""
+    var i = 0
+
+    /// Where `run` next starts in this line, from `from`.
+    func find(_ run: [Character], from: Int) -> Int? {
+      var j = from
+      while j + run.count <= chars.count, chars[j] != "\n" {
+        if Array(chars[j..<j + run.count]) == run { return j }
+        j += 1
+      }
+      return nil
+    }
+    func math(_ tex: String) {
+      if !plain.isEmpty { runs.append(.text(plain)) }
+      plain = ""
+      runs.append(.math(tex))
+    }
+
+    while i < chars.count {
+      let c = chars[i]
+      if c == "`" {
+        var n = 0
+        while i + n < chars.count, chars[i + n] == "`" { n += 1 }
+        let stop = find(Array(repeating: "`", count: n), from: i + n).map { $0 + n } ?? i + n
+        plain += String(chars[i..<stop])
+        i = stop
+        continue
+      }
+      if c == "\\" {
+        let next = i + 1 < chars.count ? chars[i + 1] : nil
+        let close: [Character]? = next == "(" ? ["\\", ")"] : next == "[" ? ["\\", "]"] : nil
+        if let close, let end = find(close, from: i + 2) {
+          let tex = String(chars[i + 2..<end])
+          if !tex.trimmingCharacters(in: .whitespaces).isEmpty, !tex.contains("$$") {
+            math(tex)
+            i = end + 2
+            continue
+          }
+        }
+        plain += String(chars[i..<min(i + 2, chars.count)])
+        i += 2
+        continue
+      }
+      if c == "$" {
+        var n = 0
+        while i + n < chars.count, chars[i + n] == "$" { n += 1 }
+        if n > 1 {
+          if let end = find(Array(repeating: "$", count: n), from: i + n), end > i + n {
+            math(String(chars[i + n..<end]))
+            i = end + n
+          } else {
+            plain += String(chars[i..<i + n])
+            i += n
+          }
+          continue
+        }
+        if let end = closingDollar(chars, i) {
+          math(String(chars[i + 1..<end]))
+          i = end + 1
+        } else {
+          plain.append(c)
+          i += 1
+        }
+        continue
+      }
+      plain.append(c)
+      i += 1
+    }
+    if !plain.isEmpty || runs.isEmpty { runs.append(.text(plain)) }
+    return runs
+  }
+
+  /// Pandoc's rule, so "$5 and $10" stays text: no space just inside either dollar, no dollar after a
+  /// space in between, no digit right after the closing one, and no backtick in between.
+  private static func closingDollar(_ chars: [Character], _ open: Int) -> Int? {
+    guard open + 1 < chars.count, !chars[open + 1].isWhitespace else { return nil }
+    var j = open + 1
+    while j < chars.count {
+      let c = chars[j]
+      if c == "\n" || c == "`" { return nil }
+      if c == "\\" {
+        j += 2
+        continue
+      }
+      if c == "$" {
+        let after = j + 1 < chars.count ? chars[j + 1] : nil
+        if chars[j - 1].isWhitespace || after == "$" || (after.map { $0.isASCII && $0.isNumber } ?? false) {
+          return nil
+        }
+        return j
+      }
+      j += 1
+    }
+    return nil
   }
 
   /// The opening run of three or more backticks or tildes, all of it.

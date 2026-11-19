@@ -12,6 +12,11 @@ settings:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
+# SwiftMath (MIT) draws LaTeX in the chat; its fonts are MIT, OFL and GUST-licensed.
+packages:
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    exactVersion: 1.7.3
 targets:
   Hatbot:
     type: application
@@ -81,6 +86,7 @@ targets:
         script: '"$SRCROOT/mac-agent.sh"'
         basedOnDependencyAnalysis: false
     dependencies:
+      - package: SwiftMath
       - target: HatbotShare
         platformFilter: iOS
       - target: HatbotWidgets
