@@ -129,7 +129,12 @@ export class Attachments {
     taskId?: number;
     forChat?: boolean;
   }): Promise<Attachment> {
-    const name = input.name.replace(/[\r\n/\\]/g, "_").slice(0, 200) || "file";
+    // `..` would leave a folder in a client that joins the name onto one itself.
+    const name =
+      input.name
+        .replace(/[\r\n/\\]/g, "_")
+        .replaceAll("..", "__")
+        .slice(0, 200) || "file";
     const row = this.d.db
       .query<
         { id: number },

@@ -2,6 +2,7 @@
 // git, which runs nothing, and pushes.
 import { join } from "node:path";
 import {
+  ask,
   definePlugin,
   httpApi,
   needsSetup,
@@ -377,6 +378,10 @@ export const selfPlugin = definePlugin({
         }),
         describe: ({ pull, message }) =>
           `Push to pull request #${pull} on ${repo}: ${message.trim().split("\n")[0]}`,
+        target: ({ pull }) => String(pull),
+        // A commit on a branch is taken back only by rewriting it, which the owner reviews first.
+        policy: () =>
+          ask("A commit on a pull request's branch can only be undone by rewriting it."),
         run: async ({ pull, message }, call) => {
           const pr = await ownPull(pull);
           const branch = pr.head.ref;
