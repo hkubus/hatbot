@@ -98,7 +98,7 @@ export class FakeModel implements ModelClient {
     const key = JSON.stringify([params.system, params.tools]);
     const sent = JSON.stringify(params.messages);
     const tokens = Math.ceil(sent.length / 3.5);
-    const at = [...sent.matchAll(/"cache_control":\{"type":"ephemeral"\}/g)].map(
+    const at = [...sent.matchAll(/"cache_control":\{"type":"ephemeral"(,"ttl":"1h")?\}/g)].map(
       (m) => m.index ?? 0,
     );
     const last = this.cached.get(key);
@@ -114,13 +114,6 @@ export class FakeModel implements ModelClient {
 
   async create(params: CreateParams) {
     this.creates.push(structuredClone(params));
-    // A keep-warm: read from the cache, nothing written.
-    if (params.max_tokens === 0)
-      return message(params.model, [], "max_tokens", {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_read_input_tokens: 1000,
-      });
     // Injection screening finds nothing unless a test says otherwise; it takes no summary's place.
     const reply =
       this.onCreate?.(params) ??

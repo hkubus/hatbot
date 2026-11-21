@@ -28,6 +28,7 @@ const PURPOSE_NAMES: Record<string, string> = {
   check: "Check everything",
   teach: "Teaching",
   tidy: "Memory tidy-ups",
+  reflect: "Looking back on conversations",
   "skill-fix": "Skill fixes",
   boxes: "Boxes",
 };

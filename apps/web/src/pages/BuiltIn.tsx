@@ -106,6 +106,12 @@ export function BuiltInGroup({ toast }: { toast: Toast }) {
           onChange={(todoHour) => update({ todoHour })}
         />
       </Row>
+      <Row label="Remember what each conversation taught">
+        <Switch
+          on={settings.memoryReflect}
+          onChange={(memoryReflect) => update({ memoryReflect })}
+        />
+      </Row>
       <Row label="Propose a memory tidy-up weekly">
         <Switch on={settings.memoryTidy} onChange={(memoryTidy) => update({ memoryTidy })} />
       </Row>

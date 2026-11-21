@@ -262,7 +262,12 @@ async function held(
   if (!by || !TRUSTED_FILE.test(rel)) return null;
   if (!ctx.proposals)
     throw new MemoryError(`${rel} can't be changed after reading untrusted content.`);
-  const p = await ctx.proposals.hold(rel, content, reason, by);
+  const p = await ctx.proposals.hold(
+    rel,
+    content,
+    reason,
+    `Written after reading untrusted content: ${by}. Skills and indexes are trusted from then on, so this waits for you.`,
+  );
   if (!p)
     return content === null
       ? `Nothing to delete: ${rel} doesn't exist.`

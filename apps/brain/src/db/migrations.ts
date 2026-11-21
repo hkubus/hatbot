@@ -867,4 +867,9 @@ export const migrations: string[] = [
   ALTER TABLE episodes ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';
   UPDATE episodes SET sources = json_array(tainted_by) WHERE tainted_by IS NOT NULL;
   `,
+  // 53: a conversation is looked back on once, when it's folded; those before this already were.
+  `
+  ALTER TABLE episodes ADD COLUMN reflected INTEGER NOT NULL DEFAULT 0;
+  UPDATE episodes SET reflected = 1;
+  `,
 ];

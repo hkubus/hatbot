@@ -38,7 +38,7 @@ test("a message gets a streamed reply, stored, and /thread/ask answers with one"
     display: "summarized",
     block_binding: { prefix_mismatch_behavior: "drop_block" },
   });
-  expect(req?.cache_control).toEqual({ type: "ephemeral" });
+  expect(req?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   // New episode: context block first, then the timestamped message.
   expect(lastUserText(req)).toContain("<memory_index>");
   expect(lastUserText(req)).toContain("hello there");
@@ -193,58 +193,6 @@ test("a new conversation starts when the prompt or tools change, the model switc
   expect(toolNames(opus)).not.toContain("ask_opus");
 });
 
-test("a chat is kept cached for half an hour after its last request, while that costs less than an hour's cache", async () => {
-  const slow = Promise.withResolvers<void>();
-  const model = new FakeModel(
-    [
-      { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
-      // Haiku: 200 tokens written for five minutes rather than an hour save what two reads cost. A
-      // read doesn't take away from that.
-      {
-        content: [text("Hi again.")],
-        usage: { cache_creation_input_tokens: 200, cache_read_input_tokens: 5000 },
-        wait: slow.promise,
-      },
-    ],
-    ["<recap>Said hi.</recap>\n<summary>2026-10-09: said hi.</summary>"],
-  );
-  const t = await testApp(model);
-  const pings = () => model.creates.filter((c) => c.max_tokens === 0);
-  const minutes = async (n: number) => {
-    for (let i = 0; i < n; i++) {
-      t.advance(60_000);
-      await t.thread.sweep();
-    }
-  };
-  await t.thread.post("hello").done;
-  await minutes(2);
-  expect(pings()).toHaveLength(0);
-  await minutes(1);
-  const { max_tokens, ...ping } = pings()[0] ?? {};
-  const { max_tokens: _, ...sent } = model.requests[0] ?? {};
-  expect(JSON.stringify(ping)).toBe(JSON.stringify(sent));
-  // Every three minutes until half an hour after the request.
-  await minutes(40);
-  expect(pings()).toHaveLength(9);
-
-  // A reply that takes four minutes isn't pinged while it runs; three minutes after it ends, it is.
-  const again = t.thread.post("hello again");
-  await minutes(4);
-  expect(pings()).toHaveLength(9);
-  slow.resolve();
-  await again.done;
-  await minutes(2);
-  expect(pings()).toHaveLength(9);
-  await minutes(1);
-  expect(pings()).toHaveLength(10);
-  await minutes(30);
-  expect(pings()).toHaveLength(11);
-  const spend = t.db
-    .query<{ n: number }, []>("SELECT count(*) AS n FROM spend_ledger WHERE purpose = 'keep-warm'")
-    .get();
-  expect(spend?.n).toBe(11);
-});
-
 test("each request marks where the last one ended, after the same system and tools, within four breakpoints; tasks cache theirs too", async () => {
   const search = (id: string) => [
     { type: "server_tool_use", id, name: "web_search", input: { query: "x" } },
@@ -281,7 +229,7 @@ test("each request marks where the last one ended, after the same system and too
               : [],
           ),
     );
-  const mark = { type: "ephemeral" } as const;
+  const mark = { type: "ephemeral", ttl: "1h" } as const;
   expect(marks(0)).toEqual([]);
   // The second request: where the first request ended. A search's results are written with it, so
   // there's nothing since for a third breakpoint to save.

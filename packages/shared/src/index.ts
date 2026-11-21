@@ -712,6 +712,8 @@ export type AppSettings = {
   heartbeat: HeartbeatSettings;
   /** A tidy-up of memory proposed weekly, at the weekly report's time. */
   memoryTidy: boolean;
+  /** Each bot looks back on a conversation once it's over and keeps what it learned in memory. */
+  memoryReflect: boolean;
   weeklyReport: WeeklyReportSettings;
   /** The local hour the to-do list's morning reminder goes out. */
   todoHour: number;

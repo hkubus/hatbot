@@ -161,7 +161,7 @@ export class Proposals {
     this.tell(title, why);
   }
 
-  private tell(title: string, message: string, priority: 2 | 3 = 3) {
+  tell(title: string, message: string, priority: 2 | 3 = 3) {
     void this.d.notifier.send({
       title,
       message,
@@ -238,15 +238,12 @@ export class Proposals {
     return this.store("skill", out.title, out.reason, changes, name);
   }
 
-  /**
-   * Every later chat and task trusts skills and INDEX.md files, so a write to one from work that read
-   * untrusted content (`by`) waits for you. Content null deletes the file.
-   */
-  async hold(path: string, content: string | null, what: string, by: string) {
+  /** A write (content null: a delete) that waits for you, for `why`. */
+  async hold(path: string, content: string | null, what: string, why: string) {
     const p = await this.store(
       "write",
       what,
-      `Written after reading untrusted content: ${by}. Skills and indexes are trusted from then on, so this waits for you.`,
+      why,
       [content === null ? { path, delete: true } : { path, content }],
       null,
     );
