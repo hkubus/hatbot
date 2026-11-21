@@ -1241,4 +1241,10 @@ export const migrations: string[] = [
     'with amounts in digits. Use pan or pani',
     'with amounts in digits. Don''t name the item: the conversation is on its listing already. Use pan or pani');
   `,
+  // 88: an episode a bot has looked back on, once folded, to keep what it learned; the ones
+  // before this are done.
+  `
+  ALTER TABLE episodes ADD COLUMN reflected INTEGER NOT NULL DEFAULT 0;
+  UPDATE episodes SET reflected = 1;
+  `,
 ];

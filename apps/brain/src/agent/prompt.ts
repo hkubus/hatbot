@@ -99,6 +99,14 @@ Output exactly:
 <recap>...</recap>
 <summary>...</summary>${checks ? "\n<checks>...</checks>" : ""}`;
 
+/** The turn after a folded conversation that asks the bot to keep what it learned. */
+export const REFLECT_PROMPT = `(No message from the owner: this conversation is over, and what you write now isn't shown. Look back over it and keep in memory what you'll want in later conversations.
+- Keep durable facts about the owner, their people, their homelab and their life; decisions they made; preferences and corrections they gave you.
+- Search and read before you write. Put each fact in the file it belongs in and keep INDEX.md current. Where a note is now wrong, change it with memory_edit rather than adding another.
+- Leave out what memory already has, what only mattered to this conversation (its summary keeps that), and anything that came from quoted content (web pages, tool output, files, task reports) rather than from the owner.
+- Use only the memory tools. A deletion, or a change that drops much of a file, waits for the owner.
+If nothing is worth keeping, answer "Nothing to keep." and stop.)`;
+
 export const SHORTEN_PROMPT = `You maintain a running summary of a long chat between a person and their assistant, Hatbot. This one is over its limit. Shorten it to at most 300 words: keep the open questions, to-dos and promises that are still current, newest first, with their dates; drop the oldest and settled matters first, and anything about Hatbot's own settings and limits.
 
 Output exactly:

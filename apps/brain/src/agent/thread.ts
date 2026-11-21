@@ -45,6 +45,7 @@ import { type Bots, botIndex, promptFor } from "../bots";
 import { brokenChartsOf, chartProblemOf } from "../chart-data";
 import type { Db } from "../db";
 import type { EventBus } from "../events";
+import type { Proposals } from "../memory/proposals";
 import { MemoryError, type MemoryStore } from "../memory/store";
 import { hasFallbacks, modelName, progressNotes } from "../models-known";
 import type { Negotiations } from "../negotiate/service";
@@ -62,7 +63,7 @@ import {
 import type { Repeats } from "../scripts/repeats";
 import { commandInput } from "../scripts/run";
 import type { SettingsStore } from "../settings";
-import { priceOf, requestCeiling, type Spend, searchesIn, tokenCount, tokensOf } from "../spend";
+import { requestCeiling, type Spend, searchesIn, tokenCount, tokensOf } from "../spend";
 import type { Tasks } from "../tasks/service";
 import { AskOwner, askedText, CHAT_ASK_DESCRIPTION } from "./ask";
 import type { Chats } from "./chats";
@@ -74,6 +75,7 @@ import {
   groupPrompt,
   INCOGNITO_PROMPT,
   MAX_GROUP_REPLIES,
+  REFLECT_PROMPT,
   SHORTEN_PROMPT,
   summaryPrompt,
   systemPrompt,
@@ -92,14 +94,18 @@ import {
   addSources,
   CHAT_WEB_TOOLS,
   containerOf,
+  editedFile,
   imageBlocks,
   inBatches,
   invalidInput,
   liveTool,
   offeredToolParam,
+  runCoreTool,
   runOffered,
   startEarly,
   TOOL_SEARCH,
+  TOOLS,
+  type ToolContext,
   type ToolImage,
   toolParam,
   webCalls,
@@ -108,19 +114,22 @@ import {
 import { messageTag, TRUST_JOINS, tagText, UNTRUSTED_SOURCE } from "./untrusted";
 
 const EPISODE_IDLE_MS = 30 * 60_000;
-/** A chat's cache entries last five minutes from the request that last wrote or read them. */
-const CACHE_MS = 5 * 60_000;
 /**
- * Past this, the sweep (once a minute, and it may wait on summaries) sends the bot's last request
- * again at no output: a cache read, far cheaper than an hour-long write, while you might reply.
+ * A chat's cache entries last an hour from the request that last wrote or read them: past a
+ * conversation's 30 idle minutes, so looking back on it reads them too.
  */
-const WARM_AFTER_MS = 3 * 60_000;
-/**
- * Only a model whose cache reads cost under this share of its input is kept warm: at Haiku's tenth,
- * the owner's replies came too seldom within the half hour for its pings to cost less than writing
- * again.
- */
-const WARM_READ_DISCOUNT = 15;
+const CACHE_MS = 60 * 60_000;
+const CACHE_MARK = { type: "ephemeral", ttl: "1h" } as const;
+/** Requests a look back at a conversation may take. */
+const REFLECT_STEPS = 8;
+const REFLECT_TOOLS = [
+  "memory_list",
+  "memory_read",
+  "memory_search",
+  "memory_write",
+  "memory_edit",
+  "memory_delete",
+];
 const MAX_SUMMARY_TRIES = 3;
 /** A conversation whose last request was this long carries on in a new one. */
 const LONG_EPISODE_TOKENS = 90_000;
@@ -240,6 +249,7 @@ export type ThreadDeps = {
   attachments?: Attachments;
   /** Notices a bot doing the same for you again, to offer a script. */
   repeats?: Repeats;
+  proposals?: Proposals;
   db: Db;
   memory: MemoryStore;
   events: EventBus;
@@ -290,13 +300,6 @@ export class Thread {
   private live = new Map<number, string>();
   /** And what it has thought and done so far. */
   private liveProgress = new Map<number, string>();
-  /** When each bot's last request ended, which its cache entry's five minutes run from; Infinity while it runs. */
-  private sentAt = new Map<string, { episodeId: number; at: number }>();
-  /** Each bot's last chat request, sent again to keep it cached for half an hour after it. */
-  private warm = new Map<
-    string,
-    { episodeId: number; params: CreateParams; prefix: string; at: number }
-  >();
   private clock: () => number;
   private kindOf?: { kind: string; parentId: number | null };
 
@@ -1078,6 +1081,37 @@ export class Thread {
     };
   }
 
+  /** A reply's request, or a look back after it, which reads what the reply left in the cache. */
+  private chatParams(
+    { chatModel, system, tools }: ReturnType<Thread["turnSetup"]>,
+    messages: Turn[],
+    effort: Effort,
+    container?: string,
+  ) {
+    return {
+      model: chatModel,
+      max_tokens: MAX_TOKENS,
+      betas: BETAS,
+      // Without a server-side fallback, a refusal ends the reply with a note.
+      ...(hasFallbacks(chatModel) ? { fallbacks: "default" as const } : {}),
+      // An hour, past a conversation's 30 idle minutes: an hour's cache costs 2x input to write, five minutes' 1.25x.
+      system: [{ type: "text" as const, text: system, cache_control: CACHE_MARK }],
+      cache_control: CACHE_MARK,
+      tools,
+      // If a replayed thinking block fails the conversation check anyway, lose that reasoning
+      // rather than the reply.
+      // A model that writes no progress notes between tools shows its thinking summarized.
+      thinking: {
+        type: "adaptive" as const,
+        display: progressNotes(chatModel) ? ("updates" as const) : ("summarized" as const),
+        block_binding: { prefix_mismatch_behavior: "drop_block" as const },
+      },
+      output_config: { effort },
+      ...(container ? { container } : {}),
+      messages: markPrevious(messages),
+    };
+  }
+
   private prefixFor(bot: Bot, incognito: boolean): string {
     if (!this.group()) return this.turnSetup(bot, incognito).prefix;
     return hash16(
@@ -1283,17 +1317,13 @@ export class Thread {
    */
   private cachedTokens(episodeId: number, botId: string, prefix: string): number {
     const last = this.d.db
-      .query<
-        { tokens: number; left: number; prefix: string | null; ended_at: string | null },
-        [number, string]
-      >(
-        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens,
-           cache_read_tokens + cache_write_5m_tokens AS left, prefix, ended_at
+      .query<{ tokens: number; prefix: string | null; ended_at: string | null }, [number, string]>(
+        `SELECT cache_read_tokens + cache_write_5m_tokens + cache_write_1h_tokens AS tokens, prefix, ended_at
          FROM spend_ledger WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1`,
       )
       .get(episodeId, botId);
     const at = last?.ended_at ? Date.parse(last.ended_at) : 0;
-    if (!last || !at || this.clock() - at >= CACHE_MS || last.prefix !== prefix || !last.left)
+    if (!last || !at || this.clock() - at >= CACHE_MS || last.prefix !== prefix || !last.tokens)
       return 0;
     return last.tokens;
   }
@@ -1326,74 +1356,8 @@ export class Thread {
       .all(...ids);
   }
 
-  /**
-   * Sends each bot's last request again, at no output, before its cache runs out: for half an hour
-   * after it, while the episode is open, while these reads cost less than the episode saved by
-   * writing for five minutes rather than an hour, and only on a model whose reads are cheap enough.
-   */
-  private async keepWarm() {
-    const { db, settings, spend, model } = this.d;
-    for (const [botId, w] of this.warm) {
-      const now = this.clock();
-      const sent = this.sentAt.get(botId);
-      if (!sent || sent.episodeId !== w.episodeId || now - sent.at < WARM_AFTER_MS) continue;
-      const open = db
-        .query<{ id: number }, [number]>("SELECT id FROM episodes WHERE id = ? AND summarized = 0")
-        .get(w.episodeId);
-      const r = db
-        .query<{ written: number; spent: number }, [number, string]>(
-          `SELECT coalesce(sum(CASE WHEN purpose = 'thread' THEN cache_write_5m_tokens END), 0) AS written,
-             coalesce(sum(CASE WHEN purpose = 'keep-warm' THEN cost_usd END), 0) AS spent
-           FROM spend_ledger WHERE episode_id = ? AND bot_id = ?`,
-        )
-        .get(w.episodeId, botId);
-      const price = priceOf(w.params.model);
-      // An hour's write is 2x input, five minutes' 1.25x.
-      const saved = ((r?.written ?? 0) * price.input * 0.75) / 1_000_000;
-      if (
-        price.input < price.cacheRead * WARM_READ_DISCOUNT ||
-        !open ||
-        now - w.at >= EPISODE_IDLE_MS ||
-        now - sent.at >= CACHE_MS ||
-        (r?.spent ?? 0) >= saved ||
-        settings.get().paused
-      ) {
-        this.warm.delete(botId);
-        continue;
-      }
-      const cached = this.cachedTokens(w.episodeId, botId, w.prefix);
-      this.sentAt.set(botId, { episodeId: w.episodeId, at: now });
-      try {
-        const release = spend.hold(
-          requestCeiling(w.params.model, { prompt: cached, cached, maxTokens: 0 }),
-        );
-        try {
-          const res = await model.create({ ...w.params, max_tokens: 0 });
-          // The entry the ping kept lasts from now, if it's the last request's.
-          db.query(
-            `UPDATE spend_ledger SET ended_at = ? WHERE prefix = ? AND id = (SELECT id FROM spend_ledger
-               WHERE episode_id = ? AND bot_id = ? AND purpose = 'thread' ORDER BY id DESC LIMIT 1)`,
-          ).run(new Date(this.clock()).toISOString(), w.prefix, w.episodeId, botId);
-          spend.recordResponse({
-            model: w.params.model,
-            purpose: "keep-warm",
-            usage: res.usage,
-            episodeId: w.episodeId,
-            botId,
-          });
-        } finally {
-          release();
-        }
-      } catch (err) {
-        if (!(err instanceof BudgetError)) console.error("keeping a chat cached failed", err);
-        this.warm.delete(botId);
-      }
-    }
-  }
-
   /** Folds up episodes idle for 30 minutes and ends an idle incognito conversation. */
   async sweep() {
-    await this.keepWarm();
     const incognitoAt = this.d.db
       .query<{ at: string | null }, [number, number]>(
         `SELECT max(at) AS at FROM (
@@ -1433,6 +1397,169 @@ export class Thread {
         this.summaryFailures.delete(e.id);
         this.markSummarized(e.id);
       }
+    }
+    const folded = this.d.db
+      .query<{ id: number }, [number]>(
+        "SELECT id FROM episodes WHERE conversation_id = ? AND summarized = 1 AND reflected = 0 AND incognito = 0 ORDER BY id",
+      )
+      .all(this.conversationId);
+    for (const e of folded) await this.reflect(e.id);
+  }
+
+  /**
+   * Once a conversation is folded, each bot in it looks back on it and keeps what it learned in
+   * memory: once, as one more turn on the conversation's own cache, so only while that lasts.
+   */
+  private async reflect(episodeId: number) {
+    const { db, settings, bots } = this.d;
+    const claimed = db
+      .query("UPDATE episodes SET reflected = 1 WHERE id = ? AND reflected = 0")
+      .run(episodeId).changes;
+    const s = settings.get();
+    if (!claimed || !s.memoryReflect || s.paused) return;
+    const spoke = db
+      .query<{ bot_id: string }, [number]>(
+        "SELECT DISTINCT bot_id FROM episode_turns WHERE episode_id = ?",
+      )
+      .all(episodeId);
+    for (const { bot_id } of spoke) {
+      const bot = bots.get(bot_id);
+      if (!bot) continue;
+      try {
+        await this.reflectAs(episodeId, bot);
+      } catch (err) {
+        if (!(err instanceof BudgetError))
+          console.error(`looking back on episode ${episodeId} failed`, err);
+      }
+    }
+  }
+
+  private async reflectAs(episodeId: number, bot: Bot) {
+    const { spend, model, proposals } = this.d;
+    const setup = this.turnSetup(bot, false);
+    const memoryTools = setup.pluginTools.filter((t) => REFLECT_TOOLS.includes(t.name));
+    if (!memoryTools.some((t) => t.name === "memory_write")) return;
+    const cached = this.cachedTokens(episodeId, bot.id, setup.prefix);
+    // Out of the cache, looking back would cost the whole conversation again.
+    if (!cached) return;
+    const { turns, effort } = await this.loadTurns(episodeId, bot.id, new Map());
+    const ask: BlockParam = { type: "text", text: REFLECT_PROMPT };
+    const end = turns.at(-1);
+    let messages: Turn[];
+    if (end?.role === "assistant") messages = [...turns, { role: "user", content: [ask] }];
+    else if (
+      end?.role === "user" &&
+      typeof end.content !== "string" &&
+      end.content.every((b) => b.type === "tool_result")
+    )
+      messages = [...turns.slice(0, -1), { role: "user", content: [...end.content, ask] }];
+    // It ended on your message, unanswered.
+    else return;
+    const ctx: ToolContext = {
+      ...this.d,
+      bot,
+      conversationId: this.conversationId,
+      episodeId,
+      tainted: () => this.tainted(episodeId),
+      taint: (by) => this.taint(episodeId, by),
+    };
+    const kept = new Set<string>();
+    const bill = (m: string, usage: Anthropic.Beta.BetaUsage) =>
+      spend.recordResponse({ model: m, purpose: "reflect", usage, episodeId, botId: bot.id });
+    for (let step = 0; step < REFLECT_STEPS; step++) {
+      const release = spend.hold(
+        requestCeiling(setup.chatModel, {
+          prompt: Math.max(
+            estimateTokens(messages) + fixedTokens(setup.system, setup.tools),
+            cached,
+          ),
+          cached,
+          write: "1h",
+          maxTokens: MAX_TOKENS,
+          webSearches: searchesIn(setup.tools),
+          fallbacks: true,
+        }),
+      );
+      let res: Anthropic.Beta.BetaMessage;
+      try {
+        const params = this.chatParams(setup, messages, effort ?? setup.chatEffort);
+        res = await model.stream(params, { onFailedUsage: bill });
+      } finally {
+        release();
+      }
+      bill(setup.chatModel, res.usage);
+      const content = afterFallback(res.content);
+      const web = webReads(res.content);
+      if (web.length) this.taint(episodeId, web[0] as string);
+      messages = [...messages, { role: "assistant", content: content as BlockParam[] }];
+      if (res.stop_reason === "pause_turn") continue;
+      const calls = content.filter(
+        (b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use",
+      );
+      if (res.stop_reason !== "tool_use" || !calls.length) break;
+      const results: BlockParam[] = [];
+      for (const call of calls) {
+        const r = memoryTools.some((t) => t.name === call.name)
+          ? await this.reflectCall(episodeId, call, ctx, kept)
+          : { content: "Not now: only the memory tools run while you look back.", isError: true };
+        results.push(toolResult(call.id, r.content, r.isError));
+      }
+      messages = [...messages, { role: "user", content: results }];
+    }
+    if (kept.size) proposals?.tell(`${bot.name} remembered`, [...kept].join(", "), 2);
+  }
+
+  /** A change that could lose something, or learned after untrusted content, waits for you. */
+  private async reflectCall(
+    episodeId: number,
+    call: Anthropic.Beta.BetaToolUseBlock,
+    ctx: ToolContext,
+    kept: Set<string>,
+  ): Promise<{ content: string; isError: boolean }> {
+    const writes = ["memory_write", "memory_edit", "memory_delete"];
+    const parsed = TOOLS.find((t) => t.name === call.name)?.schema.safeParse(call.input);
+    if (!parsed?.success || !writes.includes(call.name))
+      return runCoreTool(call.name, call.input, ctx);
+    const input = parsed.data as unknown as {
+      path: string;
+      reason?: string;
+      content?: string;
+      append?: string;
+      edits?: { old: string; new: string }[];
+    };
+    const { memory, proposals } = this.d;
+    try {
+      const { rel } = memory.resolve(input.path, { markdown: true });
+      const before = await memory.readOrNull(rel);
+      const after =
+        call.name === "memory_delete"
+          ? null
+          : call.name === "memory_write"
+            ? (input.content ?? "")
+            : editedFile(rel, before, input.edits ?? [], input.append);
+      const reason = input.reason ?? `Update ${rel}`;
+      const by = this.tainted(episodeId);
+      const why = by
+        ? `Learned from a conversation that read untrusted content: ${by}.`
+        : after === null
+          ? "Deleting a file when looking back on a conversation waits for you."
+          : before && after.length < before.length * 0.75
+            ? "It drops more than a quarter of the file."
+            : null;
+      if (why) {
+        if (!proposals) return { content: "Not saved: this needs the owner.", isError: true };
+        const p = await proposals.hold(rel, after, reason, why);
+        return {
+          content: p ? "Saved as a proposal; the owner applies it." : "No change.",
+          isError: false,
+        };
+      }
+      const r = await runCoreTool(call.name, { ...input, reason: `Looking back: ${reason}` }, ctx);
+      if (!r.isError) kept.add(rel);
+      return r;
+    } catch (err) {
+      if (err instanceof MemoryError) return { content: err.message, isError: true };
+      throw err;
     }
   }
 
@@ -2084,8 +2211,8 @@ export class Thread {
     const incognito = !!(user ?? again)?.incognito;
     const userId = user?.id ?? Number.MAX_SAFE_INTEGER;
     const asked = user?.kind === "handoff" ? (this.currentHandoff?.task ?? null) : null;
-    const { system, pluginTools, chatModel, chatEffort, expert, asksExpert, tools, prefix } =
-      this.turnSetup(bot, incognito);
+    const setup = this.turnSetup(bot, incognito);
+    const { system, pluginTools, chatModel, chatEffort, expert, asksExpert, tools, prefix } = setup;
     const offered = new Set(tools.map((t) => ("name" in t ? t.name : "")));
     // A group's episode is bound to every bot's prefix.
     const episode = again
@@ -2514,7 +2641,7 @@ export class Thread {
             requestCeiling(chatModel, {
               prompt: Math.max(estimateTokens(messages) + fixedTokens(system, tools), cached),
               cached,
-              write: "5m",
+              write: "1h",
               maxTokens: MAX_TOKENS,
               webSearches: searchesIn(tools),
               fallbacks: true,
@@ -2526,30 +2653,7 @@ export class Thread {
         }
 
         progress("Thinking…");
-        const params = {
-          model: chatModel,
-          max_tokens: MAX_TOKENS,
-          betas: BETAS,
-          // Without a server-side fallback, a refusal ends the reply with a note.
-          ...(hasFallbacks(chatModel) ? { fallbacks: "default" as const } : {}),
-          // Five minutes, kept warm by keepWarm: an hour's cache costs 2x input to write, five minutes' 1.25x.
-          system: [
-            { type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } },
-          ],
-          cache_control: { type: "ephemeral" as const },
-          tools,
-          // If a replayed thinking block fails the conversation check anyway, lose that reasoning
-          // rather than the reply.
-          // A model that writes no progress notes between tools shows its thinking summarized.
-          thinking: {
-            type: "adaptive" as const,
-            display: progressNotes(chatModel) ? ("updates" as const) : ("summarized" as const),
-            block_binding: { prefix_mismatch_behavior: "drop_block" as const },
-          },
-          output_config: { effort: effort ?? chatEffort },
-          ...(container ? { container } : {}),
-          messages: markPrevious(messages),
-        };
+        const params = this.chatParams(setup, messages, effort ?? chatEffort, container);
         const run = async (call: Anthropic.Beta.BetaToolUseBlock): Promise<BlockParam> => {
           if (abort.signal.aborted)
             return toolResult(call.id, "Not run: the reply was stopped.", true);
@@ -2650,9 +2754,6 @@ export class Thread {
         // Not when another model may take over: the declined one's calls never run.
         const early = startEarly((call) => !("fallbacks" in params) && lookup(call), run);
         const restore = checkpoint();
-        // No keep-warm while it runs: its entry's five minutes start when it ends.
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: Number.POSITIVE_INFINITY });
-        this.warm.set(bot.id, { episodeId: episode.id, params, prefix, at: this.clock() });
         const res = await model.stream(params, {
           onBlock: early.onBlock,
           onText: say,
@@ -2673,7 +2774,6 @@ export class Thread {
           signal: abort.signal,
         });
         held();
-        this.sentAt.set(bot.id, { episodeId: episode.id, at: this.clock() });
         // A paused turn picks up mid-thought; only text after tools starts a new part.
         separate = res.stop_reason !== "pause_turn";
         container = containerOf(res, container);
@@ -2868,7 +2968,7 @@ export function markPrevious(turns: Turn[]): Turn[] {
   const i = turn.content.findLastIndex((b) => CACHEABLE.includes(b.type));
   if (i < 0) return turns;
   const content = [...turn.content];
-  content[i] = { ...content[i], cache_control: { type: "ephemeral" } } as BlockParam;
+  content[i] = { ...content[i], cache_control: CACHE_MARK } as BlockParam;
   const out = [...turns];
   out[at] = { ...turn, content };
   return out;

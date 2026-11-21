@@ -58,6 +58,7 @@ export const Settings = z.object({
     instructions: z.string().trim().min(1).max(4000),
   }),
   memoryTidy: z.boolean(),
+  memoryReflect: z.boolean(),
   weeklyReport: z.object({
     enabled: z.boolean(),
     weekday: z.number().int().min(0).max(6),
@@ -126,6 +127,7 @@ export const DEFAULT_SETTINGS: Settings = {
       "Tell me about anything that needs me: a service down for more than a moment, failed backups, tasks that keep failing, approvals I missed. If a service is down and a restart is likely to fix it, restart it once and check it's back. Don't change configuration or delete anything. Leave alone what fixes itself or that I'd already know about.",
   },
   memoryTidy: false,
+  memoryReflect: true,
   weeklyReport: { enabled: true, weekday: 1, hour: 9 },
   todoHour: 9,
   saleMarginPct: 10,

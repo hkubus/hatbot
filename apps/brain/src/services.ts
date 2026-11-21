@@ -316,6 +316,7 @@ export async function createServices(o: Outside) {
     attachments,
     negotiations,
     repeats,
+    proposals,
   });
 
   const updates = new Updates(config, clock);

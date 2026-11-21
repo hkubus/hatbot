@@ -811,6 +811,7 @@ const LABELS: Record<string, string> = {
   "heartbeat.botId": "Heartbeat's bot",
   "heartbeat.instructions": "Heartbeat's instructions",
   memoryTidy: "Weekly memory tidy",
+  memoryReflect: "Remember what each conversation taught",
   "weeklyReport.enabled": "Weekly report",
   "weeklyReport.weekday": "Weekly report's day",
   "weeklyReport.hour": "Weekly report's hour",

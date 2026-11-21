@@ -23,7 +23,10 @@ import {
   titleOf,
 } from "./thread";
 
-type Parts = Pick<ThreadDeps, "tasks" | "approvals" | "attachments" | "negotiations" | "repeats">;
+type Parts = Pick<
+  ThreadDeps,
+  "tasks" | "approvals" | "attachments" | "negotiations" | "repeats" | "proposals"
+>;
 
 /** Must stay word for word messages_unread's condition. */
 const UNREAD = `role = 'assistant' AND status != 'streaming' AND incognito = 0

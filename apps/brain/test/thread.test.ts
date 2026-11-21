@@ -46,7 +46,7 @@ test("a message gets a streamed reply, stored, and /thread/ask answers with one"
     display: "summarized",
     block_binding: { prefix_mismatch_behavior: "drop_block" },
   });
-  expect(req?.cache_control).toEqual({ type: "ephemeral" });
+  expect(req?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   // New episode: context block first, then the timestamped message.
   expect(lastUserText(req)).toContain("<memory_index>");
   expect(lastUserText(req)).toContain("hello there");
@@ -269,74 +269,6 @@ test("a new conversation starts when the prompt or tools change, the model switc
   expect(toolNames(opus)).not.toContain("ask_expert");
 });
 
-test("a chat is kept cached for half an hour after its last request, while that costs less than an hour's cache", async () => {
-  const slow = Promise.withResolvers<void>();
-  const model = new FakeModel(
-    [
-      { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
-      // Opus: 100 tokens written for five minutes rather than an hour save what two reads cost. A
-      // read doesn't take away from that.
-      {
-        content: [text("Hi again.")],
-        usage: { cache_creation_input_tokens: 100, cache_read_input_tokens: 5000 },
-        wait: slow.promise,
-      },
-    ],
-    ["<recap>Said hi.</recap>\n<summary>2026-10-09: said hi.</summary>"],
-  );
-  const t = await testApp(model);
-  t.settings.update({ chatModel: "claude-opus-5-5" });
-  const pings = () => model.creates.filter((c) => c.max_tokens === 0);
-  const minutes = async (n: number) => {
-    for (let i = 0; i < n; i++) {
-      t.advance(60_000);
-      await t.thread.sweep();
-    }
-  };
-  await t.thread.post("hello").done;
-  await minutes(2);
-  expect(pings()).toHaveLength(0);
-  await minutes(1);
-  const { max_tokens, ...ping } = pings()[0] ?? {};
-  const { max_tokens: _, ...sent } = model.requests[0] ?? {};
-  expect(JSON.stringify(ping)).toBe(JSON.stringify(sent));
-  // Every three minutes until half an hour after the request.
-  await minutes(40);
-  expect(pings()).toHaveLength(9);
-
-  // A reply that takes four minutes isn't pinged while it runs; three minutes after it ends, it is.
-  const again = t.thread.post("hello again");
-  await waitFor(() => model.requests.length === 2);
-  await minutes(4);
-  expect(pings()).toHaveLength(9);
-  slow.resolve();
-  await again.done;
-  await minutes(2);
-  expect(pings()).toHaveLength(9);
-  await minutes(1);
-  expect(pings()).toHaveLength(10);
-  await minutes(30);
-  expect(pings()).toHaveLength(11);
-  const spend = t.db
-    .query<{ n: number }, []>("SELECT count(*) AS n FROM spend_ledger WHERE purpose = 'keep-warm'")
-    .get();
-  expect(spend?.n).toBe(11);
-});
-
-test("a chat on a model whose cache reads are a tenth of its input isn't kept cached", async () => {
-  const model = new FakeModel([
-    { content: [text("Hi.")], usage: { cache_creation_input_tokens: 1_000_000 } },
-  ]);
-  const t = await testApp(model);
-  t.settings.update({ chatModel: "claude-haiku-5-5" });
-  await t.thread.post("hello").done;
-  for (let i = 0; i < 10; i++) {
-    t.advance(60_000);
-    await t.thread.sweep();
-  }
-  expect(model.creates.filter((c) => c.max_tokens === 0)).toHaveLength(0);
-});
-
 test("each request marks where the last one ended, after the same system and tools, within four breakpoints; tasks cache theirs too", async () => {
   const search = (id: string) => [
     { type: "server_tool_use", id, name: "web_search", input: { query: "x" } },
@@ -373,7 +305,7 @@ test("each request marks where the last one ended, after the same system and too
               : [],
           ),
     );
-  const mark = { type: "ephemeral" } as const;
+  const mark = { type: "ephemeral", ttl: "1h" } as const;
   expect(marks(0)).toEqual([]);
   // The second request: on the opening message, where the first request ended.
   expect(marks(1)).toEqual([[0, true, mark]]);
@@ -429,7 +361,7 @@ test("the chat stops at the spending limit: before a reply that could pass it, a
   expect(t.spend.summary().todayUsd).toBeCloseTo((1000 * 0.1 + 200 * 0.5) / 1e6, 9);
 
   // Room for Haiku's reply, not for asking Opus.
-  t.settings.update({ limits: { dailyUsd: 0.1, monthlyUsd: 200, alertReserveUsd: 0 } });
+  t.settings.update({ limits: { dailyUsd: 0.12, monthlyUsd: 200, alertReserveUsd: 0 } });
   await t.thread.post("a hard one").done;
   expect(model.requests).toHaveLength(2);
   expect(t.thread.list().at(-1)).toMatchObject({

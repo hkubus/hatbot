@@ -254,7 +254,7 @@ async function reviewed(
   return r.isError ? r.content : null;
 }
 
-function editedFile(
+export function editedFile(
   path: string,
   md: string | null,
   edits: { old: string; new: string }[],

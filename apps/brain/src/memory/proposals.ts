@@ -163,7 +163,20 @@ export class Proposals {
     this.tell(title, why);
   }
 
-  private tell(title: string, message: string, priority: 2 | 3 = 3) {
+  /** A change to one memory file that waits for you, and why it does. */
+  async hold(path: string, content: string | null, what: string, why: string) {
+    const p = await this.store(
+      "write",
+      what,
+      why,
+      [content === null ? { path, delete: true } : { path, content }],
+      null,
+    );
+    if (p) this.tell("A memory change is waiting", what, 2);
+    return p;
+  }
+
+  tell(title: string, message: string, priority: 2 | 3 = 3) {
     void this.d.notifier.send({
       title,
       message,

@@ -885,6 +885,8 @@ export type AppSettings = {
   heartbeat: HeartbeatSettings;
   /** A tidy-up of memory proposed weekly, at the weekly report's time. */
   memoryTidy: boolean;
+  /** Each conversation, once over, is looked back on to keep what it taught in memory. */
+  memoryReflect: boolean;
   weeklyReport: WeeklyReportSettings;
   /** The local hour the to-do list's morning reminder goes out. */
   todoHour: number;
