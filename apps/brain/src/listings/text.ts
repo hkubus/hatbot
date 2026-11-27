@@ -38,10 +38,15 @@ const CONDITIONS: Record<string, Record<"label" | Channel, string>> = {
   "like-new": {
     label: "Used, like new",
     OLX: "Używane",
-    "Allegro Lokalnie": "Używany",
+    "Allegro Lokalnie": "Bardzo dobry",
     Vinted: "Bardzo dobry",
   },
-  good: { label: "Used, good", OLX: "Używane", "Allegro Lokalnie": "Używany", Vinted: "Dobry" },
+  good: {
+    label: "Used, good",
+    OLX: "Używane",
+    "Allegro Lokalnie": "Ze śladami użytkowania",
+    Vinted: "Dobry",
+  },
   damaged: {
     label: "Damaged or for parts",
     OLX: "Uszkodzone",
