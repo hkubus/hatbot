@@ -246,6 +246,11 @@ const COMMON = `
     if (el.checkVisibility && !el.checkVisibility({ checkVisibilityCSS: true })) return false;
     return true;
   };
+  const passesOn = (el) => {
+    if (el.getAttribute('aria-hidden') === 'true' || el.hidden) return false;
+    const s = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+    return s.display === 'contents' || (s.display !== 'none' && s.visibility !== 'visible' && s.contentVisibility !== 'hidden');
+  };
   const textOf = (el) => clean(el.innerText ?? el.textContent, 120);
   const nameOf = (el, role) => {
     const by = el.getAttribute('aria-labelledby');
@@ -368,7 +373,13 @@ export const READ_PAGE = `(o) => {
     chars += line.length + 1; lines.push(line);
   };
   const walk = (el, depth) => {
-    if (truncated || !visible(el)) return;
+    if (truncated) return;
+    if (!visible(el)) {
+      // A wrapper with no box of its own (display: contents), or hidden with what's in it shown, still
+      // holds what shows: Vinted's title and description are in one.
+      if (passesOn(el)) for (const c of childrenOf(el)) walk(c, depth);
+      return;
+    }
     const tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE' || tag === 'HEAD') return;
     let role = roleOf(el);
@@ -449,7 +460,7 @@ export const SCROLL_TO = `(o) => {
  * form_input: sets a field's value the way typing would leave it, then fires input and change so the page's own
  * handlers (React and the like) see it. { text } or { error }.
  */
-export const FORM_INPUT = `(o) => {
+export const FORM_INPUT = `async (o) => {
   ${COMMON}
   const el = byRef(o.ref);
   if (!el) return { error: o.ref + ' is stale or not found on the current page. Re-read the page to get fresh references.' };
@@ -482,9 +493,27 @@ export const FORM_INPUT = `(o) => {
     return { text: 'Set ' + o.ref + ' to "' + clean(String(v), 80) + '".' };
   }
   if (el.isContentEditable) {
-    el.focus(); el.textContent = String(v);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    return { text: 'Set ' + o.ref + ' to "' + clean(String(v), 80) + '".' };
+    // A rich editor keeps its own copy of the text and undoes a write to the page, so the text goes in as a
+    // paste, which editors take line breaks and all; a box with no editor behind it takes it as typed text.
+    let box = el;
+    while (box.parentElement?.isContentEditable) box = box.parentElement;
+    const doc = box.ownerDocument, text = String(v);
+    box.focus();
+    const all = doc.createRange();
+    all.selectNodeContents(box);
+    doc.getSelection().removeAllRanges();
+    doc.getSelection().addRange(all);
+    // Editors pick the selection up from selectionchange, a task later (Slate's waits 100 ms).
+    await new Promise((r) => setTimeout(r, 150));
+    const data = new DataTransfer();
+    data.setData('text/plain', text);
+    const pasted = !box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    if (!pasted) doc.execCommand('insertText', false, text);
+    await new Promise((r) => setTimeout(r, 50));
+    const flat = (s) => clean(String(s).replace(/[\\u200b-\\u200d\\u2060\\ufeff]/g, ''), 100000);
+    if (flat(box.innerText) !== flat(text))
+      return { error: o.ref + ' shows "' + clean(box.innerText, 120) + '" now, not the text given.' };
+    return { text: 'Set ' + o.ref + ' to "' + clean(text, 80) + '".' };
   }
   return { error: o.ref + ' is a <' + el.tagName.toLowerCase() + '>, not a form field.' };
 }`;
