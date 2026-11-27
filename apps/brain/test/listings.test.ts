@@ -398,6 +398,9 @@ test("on its add-listing page, a listing task fills in the form without asking, 
   // Allegro Lokalnie's way past its promotions was asked as a purchase.
   const none = formButton("Nie chcę wyróżniać Zapłacisz: 0 zł");
   expect(await listingCheck(g, "click", none, { label: none.label })).toEqual(fill);
+  // And its pickup, paid by the buyer on the spot.
+  const pickup = formButton("Odbiór osobisty - płatność przy odbiorze", { type: "checkbox" });
+  expect(await listingCheck(g, "click", pickup, { label: pickup.label })).toEqual(fill);
   for (const label of ["Wyróżnij ogłoszenie Zapłacisz: 9,99 zł", "Zapłacisz: 0 zł, potem 9,99 zł"])
     expect(await listingCheck(g, "click", formButton(label), { label })).toEqual(usual);
   const elsewhere = formButton("Dalej", { url: OLX_URL });
@@ -418,6 +421,66 @@ test("a description longer than what desktop-agent sends of a box still publishe
   expect(await listingCheck(gateFor({ description: long }), "click", cut, null)).toMatchObject({
     action: "hold",
   });
+});
+
+test("a description typed with its line breaks goes into a box that takes several lines, and its line breaks nowhere else", async () => {
+  // Vinted's description box had no ref for form_input, so it's clicked into and typed.
+  const work = new FakeModel([
+    { content: [browser("navigate", { url: VINTED_ADD })] },
+    { content: [browser("form_input", { target: { type: "ref", ref: "ref_1" }, value: TITLE })] },
+    { content: [browser("type", { text: DESCRIPTION })] },
+    { content: [browser("left_click", { target: { type: "coordinate", x: 400, y: 300 } })] },
+    { content: [browser("type", { text: DESCRIPTION })] },
+    { content: [browser("form_input", { target: { type: "ref", ref: "ref_3" }, value: 1249 })] },
+    { content: [browser("left_click", { target: { type: "ref", ref: "ref_9" } })] },
+    { content: [toolUse("record_listing", { url: VINTED_URL })] },
+    { content: [toolUse("finish_task", { outcome: "done", summary: "Listed." })] },
+  ]);
+  const t = await testApp(new FakeModel(), work, {}, [mcpPlugin], {});
+  const scout = await withScout(t, [flip({ channels: { Vinted: "ready" } })]);
+  t.agent.health = { features: ["profiles", "exec", "files", "fields", "upload"] };
+  t.agent.page = { url: VINTED_ADD, title: "Vinted", text: "" };
+  let title = "";
+  let description = "";
+  let price = "";
+  let inBox = false;
+  const el = (over: Partial<AgentElement>): AgentElement => ({
+    ...formButton("Dodaj", { url: t.agent.page.url ?? "", submitLabel: "Dodaj" }),
+    fields: [title, description, price].filter(Boolean),
+    ...over,
+  });
+  t.agent.browserInspect = async (at) =>
+    at.ref === "ref_9"
+      ? el({})
+      : el({ tag: inBox ? "textarea" : "input", type: null, label: "", editable: true });
+  t.agent.afterAction = (name, input) => {
+    if (name === "form_input" && input.value === TITLE) title = TITLE;
+    if (name === "form_input" && input.value === 1249) price = "1249";
+    if (name === "left_click") inBox = !("ref" in (input.target as object));
+    if (name === "type" && inBox) description += String(input.text);
+    if (name === "left_click" && !inBox) t.agent.page = { url: VINTED_URL, title: "", text: "" };
+  };
+  await t.listings.tick();
+  await waitFor(() => scout.calls("scout_flip_listed").length === 1);
+  await t.tasks.idle();
+
+  // In the title box, Enter could send the form: the first line went in, its line break didn't.
+  expect(JSON.stringify(work.requests[3]?.messages.at(-1))).toContain("Click into the description");
+  expect(description).toBe(DESCRIPTION);
+  expect(t.approvals.list(false)).toEqual([]);
+  expect(scout.calls("scout_flip_listed")).toEqual([
+    { flipId: 7, channel: "Vinted", status: "listed", url: VINTED_URL },
+  ]);
+  // A rich editor takes them too; off the add-listing page they're held.
+  const g = gateFor();
+  const box = (over: Partial<AgentElement>) => formButton("", { editable: true, ...over });
+  expect(await listingCheck(g, "newline", box({ tag: "div", role: "textbox" }), null)).toEqual({
+    action: "fill",
+  });
+  expect(
+    await listingCheck(g, "newline", box({ tag: "textarea", url: OLX_URL }), null),
+  ).toMatchObject({ action: "hold" });
+  await t.plugins.stopAll();
 });
 
 test("a title the site wants in other capitals still publishes, and one with a word changed doesn't", async () => {
@@ -459,6 +522,13 @@ test("on a summary page with no form, a listing task publishes only what the pag
   });
   expect(await listingCheck(g, "click", publish, held, shows("999 zł"))).toMatchObject({
     action: "hold",
+  });
+  // Its Kup teraz summary, as it reads: the price says what it's for.
+  const buyNow = formButton("WYSTAW JAKO KUP TERAZ", { url: AL_SUMMARY, fields: [] });
+  const kupTeraz = async () =>
+    `Podsumowanie\n${TITLE}\nStan: Bardzo dobry\nWystaw jako: Kup teraz\n\nCena za sztukę: 1199,00 zł\n\nLiczba sztuk: 1\n\nDostawa: Allegro One Box\n\nZapłacisz po sprzedaży:\n58\n,75\n zł\nWYSTAW JAKO KUP TERAZ`;
+  expect(await listingCheck(g, "click", buyNow, { label: buyNow.label }, kupTeraz)).toEqual({
+    action: "publish",
   });
   // A Wystaw it doesn't know would post past this check.
   const unknown = formButton("Wystaw jako ogłoszenie z dostawą", { url: AL_SUMMARY, fields: [] });

@@ -970,7 +970,8 @@ export async function runDesktopTask(tasks: Tasks, id: number, signal: AbortSign
       if (posts) return notRun(call, posts);
       if (listing) {
         const text = async () => (await guest?.context(true).catch(() => null))?.text ?? null;
-        const l = await listingCheck(listing, kind, el, hold, text);
+        const press = kind === "enter" && typing ? "newline" : kind;
+        const l = await listingCheck(listing, press, el, hold, text);
         if (l.action === "hold") return notRun(call, l.why);
         // Filling in its form, and the approved listing's publish, need no confirm_intent.
         if (l.action === "fill") hold = null;

@@ -55,11 +55,13 @@ const PAID =
 const DECLINE = /^(?:nie chce|nie,? dziekuje|bez )/;
 const NOTHING =
   /(?<![\p{L}\p{N}])(?:0(?:[.,]0+)? ?(?:zl|pln)(?![\p{L}])|za darmo|bezplatn|darmow)/u;
+/** The buyer pays, as with Allegro Lokalnie's "Odbiór osobisty - płatność przy odbiorze". */
+const BUYER_PAYS = /przy odbiorze|(?:pokrywa|placi) kupujacy/;
 
 function free(label: string): boolean {
   const l = fold(label);
   if (/(?!0)\p{N}/u.test(l)) return false;
-  return DECLINE.test(l) || (NOTHING.test(l) && !PAID.test(l));
+  return DECLINE.test(l) || ((NOTHING.test(l) || BUYER_PAYS.test(l)) && !PAID.test(l));
 }
 
 function mayCost(held: Hold | null, labels: string[]): boolean {
@@ -84,9 +86,18 @@ const isTitle = (g: ListingGate) => (field: string) => caseless(field) === casel
 function allowedText(g: ListingGate, text: string): boolean {
   const t = exact(text);
   if (!t || samePrice(t, g.price) || isTitle(g)(t)) return true;
-  if ([g.description, ...g.choices].some((v) => exact(v) === t)) return true;
+  // type sends the description a line at a time.
+  if ([g.description, ...g.description.split("\n"), ...g.choices].some((v) => exact(v) === t))
+    return true;
   return t.length <= MAX_FREE_TEXT && !CONTACT.test(t);
 }
+
+/** A box that takes several lines, where Enter is a line break rather than the form's submit. */
+const multiLine = (el: AgentElement) =>
+  el.editable &&
+  el.tag !== "input" &&
+  !["searchbox", "combobox"].includes(el.role ?? "") &&
+  !el.search;
 
 /** What a listing task may never do, before the click and Enter checks. */
 export function listingRefused(
@@ -100,8 +111,6 @@ export function listingRefused(
   const value = name === "form_input" ? input.value : input.text;
   // form_input also takes a number, which could be a phone number.
   const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
-  if (name === "type" && /[\r\n]/.test(text))
-    return "Put text with line breaks in with form_input, which keeps them: type presses Enter at each.";
   if (typesText(name, input) && !allowedText(g, text))
     return `Type only the approved title, description and price, or a short search or choice (up to ${MAX_FREE_TEXT} characters, with no links, e-mail addresses or phone numbers).`;
   if (name === "navigate" && typeof input.url !== "string")
@@ -131,8 +140,8 @@ function leaves(host: string, name: string, input: Record<string, unknown>, text
   );
 }
 
-/** "Cena: 229,99 zł" on a page that sums the listing up, or "Cena wywoławcza: …". */
-const PRICE_SHOWN = /(?<![\p{L}])cena(?: \p{L}+)?:? ?(\d[\d .,]*?) ?(?:zl|pln)(?![\p{L}])/gu;
+/** "Cena: 229,99 zł" on a page that sums the listing up, "Cena za sztukę: …" or "Cena wywoławcza: …". */
+const PRICE_SHOWN = /(?<![\p{L}])cena(?: \p{L}+){0,3}:? ?(\d[\d .,]*?) ?(?:zl|pln)(?![\p{L}])/gu;
 
 // desktop-agent sends a box's first 4000 characters.
 const descriptions = (g: ListingGate) => [
@@ -147,22 +156,31 @@ function notShown(g: ListingGate, text: string): string[] {
     ...(caseless(text).includes(caseless(g.title)) ? [] : ["title"]),
     // It's typed in the form, and a summary may not show it.
     ...(g.described ? [] : ["description"]),
-    ...(prices.length && prices.every((p) => samePrice(p, g.price)) ? [] : ["price"]),
+    // Delivery may show a price of its own.
+    ...(prices.some((p) => samePrice(p, g.price)) ? [] : ["price"]),
   ];
 }
 
 /**
  * `held`: the ordinary check's answer for this element. `pageText`: the tab's text, for a publish on a
- * page with no boxes.
+ * page with no boxes. A "newline" is a line break in typed text, which presses Enter.
  */
 export async function listingCheck(
   g: ListingGate,
-  kind: "click" | "enter",
+  kind: "click" | "enter" | "newline",
   el: AgentElement | null,
   held: Hold | null,
   pageText: () => Promise<string | null> = async () => null,
 ): Promise<ListingCheck> {
-  if (!el?.url || uploadPage(el.url)?.channel !== g.channel) return { action: "usual" };
+  const onForm = !!el?.url && uploadPage(el.url)?.channel === g.channel;
+  if (kind === "newline")
+    return el && onForm && multiLine(el)
+      ? { action: "fill" }
+      : {
+          action: "hold",
+          why: "type presses Enter at each line break, which may send the form. Click into the description box first, or use form_input.",
+        };
+  if (!el || !onForm) return { action: "usual" };
   const fields = el.fields?.map(exact) ?? [];
   if (fields.some(isTitle(g))) g.described = fields.some((f) => descriptions(g).includes(f));
   // A click or a space in a text box types.
